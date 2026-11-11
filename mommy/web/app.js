@@ -989,8 +989,7 @@
    * quran_text with scope "phrase" in mode dictation, lang_mismatch).
    */
   async function checkText(text, lang, mode) {
-    const json = { text, lang };
-    if (mode && mode !== 'strict') json.mode = mode;
+    const json = { text, lang, mode: mode === 'contextual' || mode === 'dictation' ? mode : 'strict' };
     const res = await api('api/text/check', { json });
     return {
       ok: res && res.ok === true,

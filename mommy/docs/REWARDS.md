@@ -252,3 +252,64 @@ Tabs or sections:
   Arabic UI (RTL, digits) at 360 px, no console errors, no external requests.
 - Backend: tests for `/api/text/check` and the contextual Quran threshold.
 - The existing `smoke.cjs` keeps passing (update it where the start screen changed).
+
+## Decisions and deviations recorded while building the web client (first half)
+
+The first half of "Web client" is built: loading and hooks, Prepare's "Confirm text" on
+`/api/text/check`, first run and start, the PIN dialog, the child's home, the task
+runner, the dictation shortcut, and the parent area's Children and Tasks sections. To
+review, Rewards and most of Settings are real sections with a placeholder, for the next
+step. Where this differs from the text above, or the text left a choice open:
+
+- **Consent is stored** (`parent.consentAt`, `parent.aiConsentAt`), as the data model
+  says, instead of being asked again each session. One consent box sets both (its notice
+  names what goes to Claude when Claude is configured). It is in the family setup and in
+  the parent area under Settings (the only live control there for now). The AI
+  disclosure is still shown at the start of every session: on the setup or on "Who is
+  learning?", which every session starts with (never straight on a child's screen).
+- **Languages.** The child's screens (home, Prepare, Recite, Dictation, Quran) are in
+  the child's language; the setup, "Who is learning?", the parent area and the PIN
+  dialog are in the parent's (`parent.uiLang`). The PIN dialog stays in the parent's
+  language on top of a child's screen (dictation shortcut).
+- **The active child is per tab.** `activeChildId` is written as the last choice, but a
+  tab keeps its own child: another tab picking a child does not move this one. The
+  `storage` event reloads the document; a removed child, or a task that went away,
+  sends this tab back to "Who is learning?" or the home.
+- **The parent area locks when it is left** (any navigation), and a typed `#parent`
+  address does not open it. Without consent it opens on Settings, where the box is.
+- **Migration.** A v1 user lands on "Who is learning?" with one child; the first opening
+  of the parent area asks for a new PIN (twice); consent is ticked in Settings (v1 never
+  stored it).
+- **Prepare.** "Confirm text" sends `{text, lang, mode: "strict"}` once. `dictation:
+  false` rules out dictation (the existing reason, `error_quran_phrase`); `contextual:
+  false` disables "The meaning", selects "Word by word" and shows why. The second,
+  line-by-line `/api/dictation/phrases` request is gone. `words: 0` is "no words".
+- **Task form.** The text is checked in the mode of the task: `strict` or `contextual`
+  for recite, `dictation` for dictation. When `contextual` refuses with `quran_text`, one
+  more check in `strict` tells "Quran text: create a Quran task" from "Quran words (the
+  basmala): word by word only". An edit that keeps the text, language and mode is not
+  checked again (it was checked when saved). Offline (no answer) says so and keeps the
+  form; nothing is saved without a successful check. A page photo goes through the same
+  reader as Prepare, with its review notes; a page with Quran text points to a Quran
+  task (no button to the child's Quran screen from the parent area).
+- **Quran task title.** The default title is the surah name and range in the child's
+  language ("سورة الإخلاص ١–٤", "Al-Ikhlaas 1–4"), since the child reads it.
+- **Task runner.** Only To do tasks have "Start". The free-practice page is kept aside
+  during a task and comes back after it. The nav tabs are hidden during a task; the
+  banner ("Back to my tasks") or the home button leaves it, and so does any other way of
+  leaving its screen. Recite: the mode radios are set to the task's mode and disabled.
+  Quran: the surah, the range, Juz' Amma and looking/from memory are disabled, and "Where
+  am I?" shows no "Go there" (the task's range never changes); a check counts only for
+  exactly the task's range. Dictation: the result counted is the one the parent
+  confirms ("Confirm result"), not the checks made before a correction of the reading.
+- **Outcome.** Under the usual feedback: the improvement line (`improvement(task) > 0`),
+  then the celebration card (stars and reward) on a pass, or "Try again whenever you are
+  ready". Nothing is spoken by the voice for it (and never on the Quran screen).
+- **Child's home.** Unseen surprises are already shown once as a card ("Thank you" marks
+  them seen); giving one is the Rewards section's job. Star counts use "label: number"
+  wording in Arabic so that number agreement is never wrong.
+- **Storage.** A document that cannot be read is copied to
+  `mommy.data.v2.corrupt.<ISO time>`, the main key is removed and the setup starts, with
+  a notice; a document that needed repairs is copied there too and used repaired, with a
+  notice. A full storage (`QuotaExceededError`) and blocked storage (private mode) are
+  shown in a notice; the session goes on in memory.

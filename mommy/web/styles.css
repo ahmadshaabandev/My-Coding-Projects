@@ -38,6 +38,10 @@
   --ins-fg: #5b3aa8;
   --ins-bg: #f1ecfb;
 
+  --celebrate-bg: #fff6dc;
+  --celebrate-border: #e6b84a;
+  --star-track: #ece5d8;
+
   --radius: 16px;
   --radius-small: 10px;
   --gutter: 16px;
@@ -80,6 +84,9 @@
     --ins-fg: #c9b6ff;
     --ins-bg: rgb(180 150 255 / 13%);
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+    --celebrate-bg: #2d2610;
+    --celebrate-border: #8a6d1e;
+    --star-track: #2b3038;
   }
 }
 
@@ -437,6 +444,8 @@ main {
 
 input[type="text"],
 input[type="number"],
+input[type="password"],
+input[type="date"],
 select,
 textarea {
   font: inherit;
@@ -1234,6 +1243,563 @@ fieldset {
 .cand-preview {
   font-size: 1.5rem;
   line-height: 2;
+}
+
+/* ---------------------------------------------------------------- family (family.js) */
+
+/* A notice for the parent about the stored data (kept aside, storage full, private mode). */
+.data-notice {
+  max-width: 760px;
+  margin: 12px auto 0;
+  padding: 12px var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  border: 2px solid var(--badge-border);
+  border-radius: var(--radius-small);
+  background: var(--badge-bg);
+  color: var(--badge-fg);
+}
+
+.data-notice p {
+  margin: 0;
+  font-weight: 600;
+  flex: 1 1 220px;
+}
+
+.btn-row-end {
+  justify-content: flex-end;
+}
+
+.btn-parent {
+  border-style: dashed;
+}
+
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-primary);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(1.08);
+}
+
+.btn-danger-ghost {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* Emoji pickers (avatars, reward pictures): radios shown as big tiles. */
+.emoji-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 10px;
+}
+
+.emoji-pick legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.emoji-opt {
+  position: relative;
+  display: inline-flex;
+}
+
+.emoji-radio {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.emoji-face {
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.emoji-radio:checked + .emoji-face {
+  border-color: var(--primary);
+  background: var(--notice-bg);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+.emoji-radio:focus-visible + .emoji-face {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.segmented-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Who is learning? Big targets. */
+.who-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.who-btn {
+  width: 100%;
+  min-height: 128px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border: 3px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.who-btn:hover {
+  border-color: var(--primary);
+}
+
+.who-avatar {
+  font-size: 3rem;
+  line-height: 1;
+}
+
+.who-name {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* The child's home. */
+.home-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.home-avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 2px solid var(--border);
+  font-size: 2.6rem;
+  line-height: 1;
+}
+
+.home-who {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-who h1 {
+  margin-bottom: 4px;
+}
+
+.jar {
+  margin: 0 0 6px;
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+
+.jar::before {
+  content: "⭐ ";
+}
+
+.goal-bar {
+  height: 14px;
+  border-radius: 999px;
+  background: var(--star-track);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.goal-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, var(--celebrate-border), var(--sub-line));
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left center;
+}
+
+[dir="rtl"] .goal-fill {
+  transform-origin: right center;
+}
+
+.goal-line {
+  margin: 0;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.home-sec {
+  margin: 0 0 16px;
+}
+
+.task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.task-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-inline-start: 6px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.task-card.task-waiting {
+  border-inline-start-color: var(--sub-line);
+}
+
+.task-card.task-done {
+  border-inline-start-color: var(--celebrate-border);
+  background: var(--celebrate-bg);
+}
+
+.task-card p {
+  margin: 0 0 4px;
+}
+
+.task-card-head,
+.ptask-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-title {
+  margin: 0;
+  font-size: 1.15rem;
+  min-width: 0;
+}
+
+.kind-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--notice-bg);
+  color: var(--primary);
+}
+
+.kind-icon .icon {
+  width: 22px;
+  height: 22px;
+}
+
+.task-meta,
+.task-pass,
+.task-due {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.task-reward {
+  font-weight: 700;
+}
+
+.task-note {
+  padding: 6px 10px;
+  border-inline-start: 4px solid var(--notice-border);
+  background: var(--notice-bg);
+  border-radius: 6px;
+}
+
+.reward-state {
+  font-weight: 700;
+}
+
+.reward-state.is-unlocked::before {
+  content: "🔓 ";
+}
+
+.reward-state.is-given::before {
+  content: "✓ ";
+}
+
+.task-start {
+  margin-top: 6px;
+}
+
+.practice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* The task being done: title, pass level, the way back. */
+.task-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 2px solid var(--primary);
+  border-radius: var(--radius-small);
+  background: var(--notice-bg);
+}
+
+.task-banner-text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.task-banner p {
+  margin: 0;
+}
+
+.task-banner-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+
+.task-banner-pass {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* The outcome of a task result, under the usual feedback. */
+.task-outcome {
+  margin-top: 12px;
+}
+
+.improve {
+  font-weight: 700;
+  color: var(--match-fg);
+}
+
+.improve::before {
+  content: "↑ ";
+}
+
+.celebrate {
+  padding: 12px 14px;
+  border: 2px solid var(--celebrate-border);
+  border-radius: var(--radius-small);
+  background: var(--celebrate-bg);
+}
+
+.celebrate-title {
+  font-size: 1.2rem;
+  font-weight: 800;
+  margin: 0 0 6px;
+}
+
+.surprise-reward {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.big-emoji {
+  font-size: 2.2rem;
+  vertical-align: middle;
+}
+
+.try-again {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.shortcut {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--celebrate-border);
+}
+
+.confirmed {
+  font-weight: 700;
+}
+
+/* The parent area. */
+.psec-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
+.psec-tab {
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  overflow-wrap: normal;
+}
+
+.psec-tab[aria-current="true"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+  box-shadow: inset 0 -4px 0 rgb(0 0 0 / 22%);
+}
+
+.placeholder {
+  font-style: italic;
+}
+
+.pchild-list,
+.ptask-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.pchild,
+.ptask {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.pchild {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.pchild-avatar {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.pchild-text {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.pchild-text p,
+.ptask p {
+  margin: 0;
+}
+
+.pchild-name,
+.ptask-title {
+  font-weight: 700;
+  min-width: 0;
+}
+
+.pchild-actions,
+.ptask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ptask-actions {
+  margin-top: 6px;
+}
+
+.ptask.status-ready {
+  border-inline-start: 5px solid var(--sub-line);
+}
+
+.ptask.status-done {
+  border-inline-start: 5px solid var(--celebrate-border);
+}
+
+.confirm-box {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 2px solid var(--danger);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+.confirm-box:focus {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.task-form,
+.child-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 2px dashed var(--border);
+}
+
+.task-form h3:focus,
+.child-form h3:focus,
+.psec h2:focus,
+.shortcut:focus {
+  outline: none;
+}
+
+/* The PIN dialog (native <dialog>: focus stays inside, Escape cancels). */
+.pin-dialog {
+  width: min(420px, calc(100vw - 2 * var(--gutter)));
+  max-width: 100%;
+  padding: 18px;
+  border: 2px solid var(--primary);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 30%);
+}
+
+.pin-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.pin-dialog input[type="password"],
+.pin-dialog input[type="text"] {
+  font-size: 1.4rem;
+  letter-spacing: 0.15em;
+  text-align: center;
 }
 
 /* ---------------------------------------------------------------- small screens and motion */
