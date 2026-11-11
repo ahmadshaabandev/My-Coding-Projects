@@ -64,9 +64,14 @@ log = logging.getLogger(__name__)
 LANGS: tuple[Lang, ...] = ("ar", "en", "fr")
 LANG_NAMES: dict[str, str] = {"ar": "Arabic", "en": "English", "fr": "French"}
 
-#: Output budgets from the contract: OCR can be a full page of text.
-MAX_TOKENS_VISION = 4000
-MAX_TOKENS_TEXT = 800
+#: Output ceilings (contract rule 7). On current Claude models adaptive thinking is on by
+#: default (on some it cannot be turned off), and thinking tokens count toward
+#: ``max_tokens`` even when they are not returned, so a tight cap can cut off a dense
+#: Arabic page or a feedback reply and force the offline fallback. ``max_tokens`` is only
+#: a ceiling: billing is for the tokens used. Both stay well below the size at which the
+#: SDK refuses a non-streaming request for its expected duration (about 21,000).
+MAX_TOKENS_VISION = 16000
+MAX_TOKENS_TEXT = 4000
 
 #: Seconds before one HTTP attempt gives up; the SDK retries transient errors itself.
 REQUEST_TIMEOUT_S = 90.0
@@ -381,6 +386,11 @@ _MEANING_TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
             "10-13": "Great job! You got the meaning right.",
             "14-18": "Well done. You got the meaning right.",
         },
+        "same_meaning_missing": {
+            "6-9": 'Great job, nearly all there! Next time, also say "{word}".',
+            "10-13": 'Well done, you got nearly all of it. Also mention "{word}".',
+            "14-18": 'Nearly all there. Also mention "{word}".',
+        },
         "partly": {
             "6-9": 'Good try! You remembered part of it. Don\'t forget "{word}"!',
             "10-13": 'Good effort, you got part of the meaning. Remember "{word}" too.',
@@ -402,6 +412,11 @@ _MEANING_TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
             "6-9": "Bravo ! Tu l'as très bien raconté !",
             "10-13": "Très bien ! Tu as compris le sens.",
             "14-18": "Bien joué. Le sens est juste.",
+        },
+        "same_meaning_missing": {
+            "6-9": "Bravo, presque tout y est ! La prochaine fois, dis aussi « {word} ».",
+            "10-13": "Très bien, presque tout y est. Pense aussi à dire « {word} ».",
+            "14-18": "Presque tout y est. Mentionne aussi « {word} ».",
         },
         "partly": {
             "6-9": "Bien essayé ! Tu as retenu une partie. N'oublie pas « {word} » !",
@@ -425,6 +440,11 @@ _MEANING_TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
             "10-13": "أحسنت! فهمت المعنى جيدًا.",
             "14-18": "أحسنت. المعنى صحيح.",
         },
+        "same_meaning_missing": {
+            "6-9": "أحسنت، المعنى كامل تقريبًا! ينقصه ذكر «{word}».",
+            "10-13": "أحسنت، المعنى شبه كامل. ينقصه ذكر «{word}» أيضًا.",
+            "14-18": "المعنى شبه كامل. ينقصه ذكر «{word}».",
+        },
         "partly": {
             "6-9": "محاولة جميلة! تذكرت جزءًا من المعنى، ونسيت «{word}». هيا مرة أخرى!",
             "10-13": "محاولة جيدة، فهمت جزءًا من المعنى. فاتتك «{word}».",
@@ -447,14 +467,23 @@ _MEANING_TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
 def meaning_feedback(verdict: str, missing_ideas: list[str], lang: Lang, age: AgeBand) -> str:
     """Template feedback for a contextual-mode verdict (offline, and Claude's fallback).
 
-    For ``"partly"`` the first missing idea is quoted when there is one.
+    For ``"partly"`` the first missing idea is quoted when there is one. For
+    ``"same_meaning"`` with missing ideas the praise is "nearly all there, also mention
+    <idea>", never "just right": full praise next to a list of ideas to add would
+    contradict itself. Strict-mode praise (:func:`mommy.feedback.praise`, "every word
+    was right") is never used for contextual mode.
     """
     _check_lang(lang)
     _check_age(age)
     if verdict not in VERDICTS:
         raise ValueError(f"unknown meaning verdict: {verdict!r}")
     word = " ".join((missing_ideas[0] if missing_ideas else "").split())
-    kind = "partly_no_word" if verdict == "partly" and not word else verdict
+    if verdict == "partly" and not word:
+        kind = "partly_no_word"
+    elif verdict == "same_meaning" and word:
+        kind = "same_meaning_missing"
+    else:
+        kind = verdict
     return _MEANING_TEMPLATES[lang][kind][age].format(word=word)
 
 
@@ -649,7 +678,10 @@ result is final: you only put it into words.
 "heard" instead of "expected"; "del" means the child skipped the word "expected"; "ins" \
 means the child added the extra word "heard";
 - optionally "activity": "recitation" (spoken) or "dictation" (written). Use it to say \
-"said" or "wrote"; without it, use wording that fits both.
+"said" or "wrote"; without it, use wording that fits both;
+- optionally "stopped_at": the child stopped before this word, and the rest of the text \
+was not said or written. If the first error is that word, say where the child stopped \
+and encourage going on to the end, instead of calling it a skipped word.
 Rules:
 - Never contradict or change the verdict, and never re-judge the words. If the verdict is \
 "correct", do not mention any mistake. If it is "mistakes", do not say that everything \
@@ -785,11 +817,13 @@ def compact_summary(result_summary: Mapping[str, Any]) -> dict[str, Any]:
 
     Accepts the dict of :func:`mommy.align.result_summary` or a ``dataclasses.asdict``
     CheckResult (its ``ops`` then give the errors). Unknown keys are dropped; at most
-    five errors are kept, in text order.
+    five errors are kept, in text order. Words a reader marked unreadable (``[?]``) are
+    not errors of the child and are left out.
     """
     errors = result_summary.get("errors")
     if errors is None:
         errors = [op for op in result_summary.get("ops") or [] if op.get("kind") != "match"]
+    errors = [e for e in errors if e.get("heard") != feedback.UNREADABLE_MARK]
     summary: dict[str, Any] = {
         "verdict": result_summary.get("verdict"),
         "n_expected": result_summary.get("n_expected"),
@@ -801,6 +835,8 @@ def compact_summary(result_summary: Mapping[str, Any]) -> dict[str, Any]:
     }
     if result_summary.get("activity") in ("recitation", "dictation"):
         summary["activity"] = result_summary["activity"]
+    if isinstance(result_summary.get("stopped_at"), str) and result_summary["stopped_at"]:
+        summary["stopped_at"] = result_summary["stopped_at"]
     return summary
 
 
@@ -1040,9 +1076,10 @@ class ClaudeBrain:
 
         ``result_summary`` is :func:`mommy.align.result_summary` (or an ``asdict``
         CheckResult), optionally with ``"activity": "recitation" | "dictation"``. An
-        unclear result gets the say-again template without an API call. The template is
-        also used when the call fails, or when the reply is empty, too long to be spoken,
-        or does not quote the first error's expected word.
+        unclear result, or one whose only errors are unreadable words, gets the template
+        without an API call. The template is also used when the call fails, or when the
+        reply is empty, too long to be spoken, or does not quote the first error's
+        expected word.
         """
         _check_lang(lang)
         _check_age(age)
@@ -1050,6 +1087,8 @@ class ClaudeBrain:
         if result_summary.get("say_again") or result_summary.get("verdict") not in ("correct", "mistakes"):
             return template
         summary = compact_summary(result_summary)
+        if summary["verdict"] == "mistakes" and not summary["errors"]:
+            return template  # only unreadable words: nothing for the model to word
         content = [
             {
                 "type": "text",

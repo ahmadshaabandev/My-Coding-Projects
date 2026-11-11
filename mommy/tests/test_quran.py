@@ -28,7 +28,9 @@ from mommy.align import recitation_key
 from mommy.quran import (
     ATTRIBUTION,
     ISTIADHA,
+    LETTER_NAMES,
     MAX_MERGE,
+    MUQATTAAT_AYAT,
     N_AYAT,
     N_SURAHS,
     Ayah,
@@ -450,7 +452,7 @@ def test_anchored_maps_equal_the_full_search(q: Quran) -> None:
             continue
         checked += 1
         assert search_word_map(mk, dk) == a.word_map, (a.surah, a.ayah)
-    assert checked == 699  # measured: ayat whose keys are not all equal
+    assert checked == 683  # measured: ayat whose keys are not all equal (699 before the hamza folding)
 
 
 @pytest.mark.parametrize(
@@ -801,14 +803,30 @@ def test_locate_reports_display_index_and_preview(q: Quran) -> None:
     json.dumps(found, ensure_ascii=False)
 
 
-def test_locate_preview_stops_at_the_end_of_the_surah(q: Quran) -> None:
+def test_locate_preview_stops_at_the_end_of_the_ayah(q: Quran) -> None:
+    # Regression: the preview ran the next ayah's words into it with no boundary.
     last = q.ayat(114, 6, 6)[0]
     previous = q.ayat(114, 5, 5)[0]
     heard = " ".join(previous.match_words[-2:] + last.match_words)
     found = q.locate(heard, within_surah=114)
     assert (found[0]["ayah"], found[0]["match_word_index"]) == (5, len(previous.match_words) - 2)
-    assert found[0]["display_preview"] == " ".join(previous.display_words[-2:] + last.display_words)
-    assert len(found[0]["display_preview"].split()) <= 8
+    assert found[0]["display_preview"] == " ".join(previous.display_words[-2:])
+    assert previous.display.endswith(found[0]["display_preview"])
+
+
+def test_locate_preview_is_cut_verbatim_from_the_uthmani_line(q: Quran) -> None:
+    # Regression: the preview dropped the pause marks between words (2:2 has two).
+    a = q.ayat(2, 2, 2)[0]
+    assert a.display != " ".join(a.display_words)  # it has pause marks
+    found = q.locate(" ".join(a.match_words), top_k=1)
+    assert (found[0]["surah"], found[0]["ayah"], found[0]["word_index"]) == (2, 2, 0)
+    preview = found[0]["display_preview"]
+    assert preview == a.display  # the whole ayah, marks included, and nothing after it
+    for b in all_ayat(q)[::97]:
+        for w in (0, len(b.display_words) // 2):
+            p = q._preview(b.surah, b.ayah, w)
+            assert p in b.display and p.startswith(b.display_words[w])
+            assert len([t for t in p.split() if not is_pause_mark_token(t)]) == min(8, len(b.display_words) - w)
 
 
 def test_locate_within_surah(q: Quran) -> None:
@@ -912,3 +930,91 @@ def test_quran_module_uses_no_llm_tts_or_network() -> None:
         "numpy", ".align", ".textnorm",
     }
     assert imported <= allowed, imported - allowed
+
+
+# ---------------------------------------------------------------------------
+# Formulas said imperfectly, disjoined letters, stopping early (review fixes)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("formula", ["basmala", "istiadha"])
+def test_formula_missing_its_last_word_is_tolerated_before_every_ayah(q: Quran, formula: str) -> None:
+    # Regression: the formula took the ayah's first word, and the child was told they
+    # skipped a word they had said (6236 of 6236 ayat failed).
+    words = (q.basmala_match if formula == "basmala" else ISTIADHA).split()[:-1]
+    failures = []
+    for a in all_ayat(q):
+        if (a.surah, a.ayah) == (1, 1) and formula == "basmala":
+            continue  # the basmala is the ayah itself: an extra one is extra
+        result = q.check(a.surah, a.ayah, a.ayah, " ".join(words + a.match_words))
+        if result["n_errors"] or result["tolerated"] != [formula]:
+            failures.append((a.surah, a.ayah))
+    assert failures == []
+
+
+def test_short_formulas_are_tolerated(q: Quran) -> None:
+    basmala, istiadha = q.basmala_match.split(), ISTIADHA.split()
+    result = q.check(112, 1, 4, " ".join(basmala[:2]) + " " + match_text(q, 112, 1, 4))
+    assert result["verdict"] == "correct" and result["tolerated"] == ["basmala"]
+    result = q.check(78, 1, 2, " ".join(istiadha[:2]) + " " + match_text(q, 78, 1, 2))
+    assert result["verdict"] == "correct" and result["tolerated"] == ["istiadha"]
+    heard = " ".join(istiadha[:2] + basmala[:2]) + " " + match_text(q, 112, 1, 4)
+    result = q.check(112, 1, 4, heard)
+    assert result["verdict"] == "correct" and result["tolerated"] == ["istiadha", "basmala"]
+    # A wrong first word after a full basmala is still reported.
+    rest = match_text(q, 112, 1, 4).split()
+    result = q.check(112, 1, 4, " ".join(basmala + ["كلمة"] + rest[1:]))
+    assert result["tolerated"] == ["basmala"] and result["first_error"]["kind"] == "sub"
+
+
+def muqattaat_names(q: Quran, surah: int, ayah: int) -> list[str]:
+    """The letter names of the disjoined letters of an ayah, from its Tanzil word."""
+    return [LETTER_NAMES[c] for c in q.ayat(surah, ayah, ayah)[0].match_words[0]]
+
+
+@pytest.mark.parametrize(("surah", "ayah"), MUQATTAAT_AYAT)
+def test_disjoined_letters_recited_by_name_are_correct(q: Quran, surah: int, ayah: int) -> None:
+    # Regression: "ألف لام ميم" for 2:1 gave 3 errors and an endless "say it again".
+    a = q.ayat(surah, ayah, ayah)[0]
+    names = muqattaat_names(q, surah, ayah)
+    rest = a.match_words[1:]
+    for spoken in (names, ["".join(names)], [a.match_words[0]]):
+        result = q.check(surah, ayah, ayah, " ".join(spoken + rest))
+        assert result["verdict"] == "correct", (surah, ayah, spoken, result["ops"])
+        assert [w["status"] for w in result["words"]] == ["match"] * len(a.display_words)
+    if len(names) > 1:  # a missing letter is a mistake
+        result = q.check(surah, ayah, ayah, " ".join(names[:-1] + rest))
+        assert result["n_errors"] >= 1
+
+
+def test_disjoined_letters_only_where_they_open_the_surah(q: Quran) -> None:
+    assert len(MUQATTAAT_AYAT) == 30 and len({s for s, _ in MUQATTAAT_AYAT}) == 29
+    # Letter names elsewhere are ordinary (wrong) words.
+    words = match_text(q, 112, 1, 1).split()
+    result = q.check(112, 1, 1, " ".join(["قاف"] + words[1:]))
+    assert result["first_error"]["kind"] == "sub"
+
+
+def test_a_correct_start_then_stopping_is_reported_as_stopped(q: Quran) -> None:
+    # Regression: 78:1-3 recited correctly in a 78:1-10 range gave "unclear" (19 of 28
+    # errors) and the child was not told where they stopped.
+    result = q.check(78, 1, 10, match_text(q, 78, 1, 3))
+    assert result["verdict"] == "mistakes" and not result["say_again"]
+    fourth = q.ayat(78, 4, 4)[0]
+    stop = {"surah": 78, "ayah": 4, "word_index_display": 0, "expected_display_word": fourth.display_words[0]}
+    assert result["stopped_at"] == stop
+    assert result["first_error"] == {**stop, "kind": "del"}
+    assert q.check(78, 1, 3, match_text(q, 78, 1, 3))["stopped_at"] is None
+
+
+def test_quran_runs_and_whole_ayat(q: Quran) -> None:
+    ayah = match_text(q, 112, 1, 4).split()
+    text = ["ذهب", "الولد", *ayah, "إلى", "المدرسة"]
+    assert q.quran_runs(text, 5) == [(2, 2 + len(ayah))]
+    assert q.quran_runs(["ذهب", "الولد", "إلى", "المدرسة", "صباحا"], 5) == []
+    assert q.whole_ayah(match_text(q, 112, 2, 2).split()) == (112, 2)
+    assert q.whole_ayah(ayah[:3]) is None
+    tokens, framed = q.strip_framing("قال تعالى: " + match_text(q, 112, 1, 1) + " صدق الله العظيم")
+    assert framed and tokens == match_text(q, 112, 1, 1).split()
+    with pytest.raises(ValueError):
+        q.quran_runs(text, 2)

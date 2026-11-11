@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Fetch the local speech models (sherpa-onnx release archives) into models/.
 #
-#   scripts/download_models.sh           Whisper small + the Piper voices for ar, en and fr
-#   scripts/download_models.sh --turbo   also Whisper turbo (use it with MOMMY_ASR_MODEL=turbo)
+#   scripts/download_models.sh           Whisper turbo + the Piper voices for ar, en and fr
+#   scripts/download_models.sh --small   also Whisper small (use it with MOMMY_ASR_MODEL=small)
 #   scripts/download_models.sh --check   only check that the download URLs answer (nothing is saved)
+#
+# Turbo is the default recogniser: on a 4-core CPU it is as fast as small once loaded,
+# and markedly better on Arabic and on French homophones; it needs about 1 GB more RAM
+# per loaded language. --turbo is accepted for compatibility (turbo is always fetched).
 #
 # Idempotent: a model whose directory already exists in models/ (a symlink is fine) is
 # skipped, and only its expected files are checked. Each archive is downloaded and
@@ -13,26 +17,27 @@ set -euo pipefail
 
 BASE="https://github.com/k2-fsa/sherpa-onnx/releases/download"
 
-turbo=0
+small=0
 check=0
 for arg in "$@"; do
   case "$arg" in
-    --turbo) turbo=1 ;;
+    --small) small=1 ;;
+    --turbo) ;;
     --check) check=1 ;;
-    -h | --help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "download_models.sh: unknown option '$arg' (try --help)" >&2; exit 2 ;;
   esac
 done
 
 # name|release tag|files the app needs inside the model directory
 models=(
-  "sherpa-onnx-whisper-small|asr-models|small-encoder.int8.onnx small-decoder.int8.onnx small-tokens.txt"
+  "sherpa-onnx-whisper-turbo|asr-models|turbo-encoder.int8.onnx turbo-decoder.int8.onnx turbo-tokens.txt"
   "vits-piper-ar_JO-kareem-medium|tts-models|ar_JO-kareem-medium.onnx tokens.txt espeak-ng-data"
   "vits-piper-en_US-lessac-medium|tts-models|en_US-lessac-medium.onnx tokens.txt espeak-ng-data"
   "vits-piper-fr_FR-siwis-medium|tts-models|fr_FR-siwis-medium.onnx tokens.txt espeak-ng-data"
 )
-if ((turbo)); then
-  models+=("sherpa-onnx-whisper-turbo|asr-models|turbo-encoder.int8.onnx turbo-decoder.int8.onnx turbo-tokens.txt")
+if ((small)); then
+  models+=("sherpa-onnx-whisper-small|asr-models|small-encoder.int8.onnx small-decoder.int8.onnx small-tokens.txt")
 fi
 
 cd "$(dirname "$0")/.."

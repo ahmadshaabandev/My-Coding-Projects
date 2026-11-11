@@ -17,7 +17,18 @@
  *     dictation with the parent confirmation step, the Quran screen (verbatim text,
  *     attribution, hidden text with hints, "where am I?", and no speech synthesis),
  *     disabled features with explanations, the server-down banner, the 120 s limit
- *     mechanism and the ScriptProcessor fallback, and no horizontal scroll at 360 px.
+ *     mechanism and the ScriptProcessor fallback, and no horizontal scroll at 360 px;
+ *   - review fixes: localized 422 quran_text / text_too_long messages with a button to
+ *     the Quran section (and the text checked at "Confirm text"), the contains_quran
+ *     hint, the X-Speech-Check note and fresh take on Repeat, Next/Repeat waiting for
+ *     the voice (no skipped phrase), next-phrase prefetch, late feedback speech dropped
+ *     during a recording or on another screen, Arabic-Indic digits in the Arabic UI
+ *     (range fields accept both digit systems), ayah numbers and pause marks that never
+ *     wrap away from their word, "Nearly the same meaning", consent before a typed check
+ *     whose feedback Claude words, a complete notice of what Claude receives, the text
+ *     language following the UI and the script of the text, re-checking an edited
+ *     dictation reading before the child sees it, the too_short hint, the length-limit
+ *     note and the mode-change reset.
  *
  * Run:   node tests/web/smoke.cjs
  * Screenshots (optional): MOMMY_SHOTS_DIR=/some/dir node tests/web/smoke.cjs
@@ -344,11 +355,26 @@ function fakeQuranCheck(surah, from, to) {
   };
 }
 
+/** A Quran text (112:1-4, Simple-Clean words) that the general endpoints refuse. */
+const QURAN_SAMPLE = 'قل هو الله أحد الله الصمد لم يلد ولم يولد ولم يكن له كفوا أحد';
+/** The server's English refusal message: it must never reach a child-facing status. */
+const QURAN_MESSAGE = 'This text is from the Quran. Please use the Quran section: it checks recitation against the verbatim Tanzil text, without AI and without a synthetic voice.';
+const isQuranSample = (s) => typeof s === 'string' && s.includes('قل هو الله أحد');
+/** A school text whose basmala is a phrase of its own: it may be recited, but the real
+ * /api/dictation/phrases refuses it with scope "phrase" (the voice never reads an ayah). */
+const BASMALA_TEXT = 'بسم الله الرحمن الرحيم. ذهب الولد إلى المدرسة مع أخيه.';
+const QURAN_PHRASE_MESSAGE = 'A phrase of this text is a whole ayah of the Quran, which is never read out by the synthetic voice, so the text cannot be used for dictation. It can still be recited.';
+
 function makeFakeApi(opts) {
-  const o = Object.assign({ health: { asr: true, tts: true, brain: 'claude', quran: true, languages: ['ar', 'en', 'fr'] } }, opts || {});
+  const o = Object.assign({ health: { asr: true, tts: true, brain: 'claude', quran: true, languages: ['ar', 'en', 'fr'] }, phrases: ['The cat sat', 'on the mat.'] }, opts || {});
   const calls = [];
   const reciteQueue = [];
+  const dictationQueue = [];
+  const refused = new Set(); // endpoints that answer 422 quran_text whatever the text
+  let tts = { delay: () => 0, check: (j) => (j.slow ? 'passed' : 'skipped') };
+  let pageRead = null;
   let healthDown = !!o.healthDown;
+  const refuseQuran = (p, text) => refused.has(p) || isQuranSample(text);
 
   async function handler(route, request) {
     const url = new URL(request.url());
@@ -371,23 +397,33 @@ function makeFakeApi(opts) {
       if (healthDown) return route.abort('connectionrefused');
       return json(o.health);
     }
+    const quranRefusal = () => json({ error: 'quran_text', message: QURAN_MESSAGE }, 422);
     if (p === '/api/page/read' && method === 'POST') {
-      return json({ text: PAGE_TEXT, lang: 'en', notes: '', source: 'claude', needs_manual: false });
+      return json(pageRead || { text: PAGE_TEXT, lang: 'en', notes: '', source: 'claude', needs_manual: false, contains_quran: false });
     }
     if (p === '/api/recite/check' && method === 'POST') {
+      if (refuseQuran(p, call.form.expected_text.text)) return quranRefusal();
       const mode = call.form && call.form.mode ? call.form.mode.text : 'strict';
       const next = reciteQueue.length ? reciteQueue.shift() : mode === 'contextual' ? CONTEXTUAL_RESULT : STRICT_RESULT;
       return json(next);
     }
     if (p === '/api/tts' && method === 'POST') {
       if (!o.health.tts) return json({ error: 'tts_unavailable', message: 'TTS models are missing' }, 503);
-      return route.fulfill({ status: 200, contentType: 'audio/wav', body: silentWav(0.2) });
+      if (refuseQuran(p, call.json.text)) return quranRefusal();
+      const delay = tts.delay(call.json);
+      if (delay) await sleep(delay);
+      return route.fulfill({ status: 200, contentType: 'audio/wav', headers: { 'X-Speech-Check': tts.check(call.json) }, body: silentWav(0.2) });
     }
     if (p === '/api/dictation/phrases' && method === 'POST') {
-      return json({ phrases: ['The cat sat', 'on the mat.'] });
+      if (refuseQuran(p, call.json.text)) return quranRefusal();
+      if (call.json.text === BASMALA_TEXT) return json({ error: 'quran_text', message: QURAN_PHRASE_MESSAGE, scope: 'phrase' }, 422);
+      if (call.json.text.includes('[?]')) return json({ error: 'unreadable_text', message: 'The text has [?] where a word could not be read. Please type the missing words first.' }, 400);
+      if (call.json.text.length > 20000) return json({ error: 'text_too_long', message: 'The text is longer than 20000 characters.' }, 400);
+      return json({ phrases: o.phrases });
     }
     if (p === '/api/dictation/check' && method === 'POST') {
-      return json(DICTATION_RESULT);
+      if (refuseQuran(p, call.form.expected_text.text)) return quranRefusal();
+      return json(dictationQueue.length ? dictationQueue.shift() : DICTATION_RESULT);
     }
     if (p === '/api/quran/surahs') {
       return json({ surahs: TANZIL.surahs.map((s) => ({ number: s.number, name_ar: s.name_ar, ayah_count: s.ayah_count, name_translit: s.name_translit, name_en: s.name_en })), riwaya: 'hafs', attribution: ATTRIBUTION, source_url: 'https://tanzil.net' });
@@ -420,10 +456,21 @@ function makeFakeApi(opts) {
     calls,
     handler,
     queueRecite: (r) => reciteQueue.push(r),
+    queueDictation: (r) => dictationQueue.push(r),
     setHealthDown: (v) => {
       healthDown = v;
     },
+    /** Make an endpoint answer 422 quran_text (or stop doing so). */
+    refuse: (p, on) => (on ? refused.add(p) : refused.delete(p)),
+    /** {delay(json) -> ms, check(json) -> X-Speech-Check value}; missing parts keep the default. */
+    setTts: (t) => {
+      tts = { delay: (t && t.delay) || (() => 0), check: (t && t.check) || ((j) => (j.slow ? 'passed' : 'skipped')) };
+    },
+    setPageRead: (r) => {
+      pageRead = r;
+    },
     callsTo: (p) => calls.filter((c) => c.path === p),
+    ttsFor: (text) => calls.filter((c) => c.path === '/api/tts' && c.json && c.json.text === text),
   };
 }
 
@@ -431,10 +478,22 @@ function makeFakeApi(opts) {
 // Page helpers
 // ---------------------------------------------------------------------------
 
-async function newPage(browser, base, viewport, fakeOpts) {
+/** Logs every media play() with what the page was doing at that moment. */
+function mediaHook() {
+  window.__plays = [];
+  const play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    window.__plays.push({ t: Date.now(), screen: location.hash, recording: !!document.querySelector('[data-state="recording"]') });
+    return play.call(this);
+  };
+}
+
+async function newPage(browser, base, viewport, fakeOpts, pageOpts) {
   const context = await browser.newContext({ viewport, deviceScaleFactor: 1, locale: 'en-US', colorScheme: 'light' });
   await context.grantPermissions(['microphone'], { origin: base });
   const page = await context.newPage();
+  await page.addInitScript(mediaHook);
+  if (pageOpts && pageOpts.initScript) await page.addInitScript(pageOpts.initScript);
   page.setDefaultTimeout(10000);
   const fake = makeFakeApi(fakeOpts);
   const problems = [];
@@ -500,6 +559,36 @@ async function waitForCall(fake, p, count) {
   }
   throw new Error(`no call #${count} to ${p}`);
 }
+
+/** Wait until `count` /api/tts requests asked for `text`. */
+async function waitForTts(fake, text, count) {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (fake.ttsFor(text).length >= (count || 1)) return;
+    await sleep(25);
+  }
+  throw new Error(`no /api/tts call #${count || 1} for "${text}"`);
+}
+
+/** Press "Confirm text" and wait until the server check of the text is over. */
+async function pressConfirm(page) {
+  await page.click('#btn-confirm');
+  await page.waitForSelector('#btn-confirm:not([disabled])');
+}
+
+/** Change a Quran range field the way a person does (type, then leave the field). */
+async function setRangeField(page, fake, sel, value) {
+  const before = fake.callsTo('/api/quran/ayat').length;
+  const same = (await page.inputValue(sel)) === value;
+  await page.fill(sel, value);
+  // Leaving the field fires "change", as for a person; an unchanged value does not.
+  if (same) await page.dispatchEvent(sel, 'change');
+  else await page.press(sel, 'Tab');
+  return waitForCall(fake, '/api/quran/ayat', before + 1);
+}
+
+/** Chromium logs every 4xx answer as a console error; these flows provoke 400 and 422. */
+const expected4xx = (problems) => problems.filter((p) => !/Failed to load resource: the server responded with a status of (400|422)/.test(p));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -622,7 +711,7 @@ async function mainFlow(browser, base) {
     assert.ok(await page.isDisabled('#prep-choose'));
     assert.match(await page.textContent('#why-prep-photo'), /consent/);
     await page.fill('#page-text', PAGE_TEXT);
-    await page.click('#btn-confirm');
+    await pressConfirm(page);
     assert.match(await page.textContent('#prep-confirm-status'), /Text confirmed/);
     await page.click('#prep-next [data-go="recite"]');
     await page.waitForSelector('#screen-recite:not([hidden])');
@@ -676,7 +765,7 @@ async function mainFlow(browser, base) {
     assert.equal(call.form.lang.text, 'en');
     await page.waitForFunction((t) => document.querySelector('#page-text').value === t, PAGE_TEXT);
     assert.equal(await page.inputValue('#prep-choose'), '', 'the file input is cleared');
-    await page.click('#btn-confirm');
+    await pressConfirm(page);
     assert.match(await page.textContent('#prep-confirm-status'), /Text confirmed/);
   });
 
@@ -761,7 +850,7 @@ async function mainFlow(browser, base) {
     assert.equal(styles.subLine, 'wavy');
     assert.match(styles.del, /line-through/);
     assert.ok(styles.insSize < styles.matchSize * 0.8, 'inserted words are small');
-    assert.match(await page.textContent('#recite-score'), /4 of 6 words right/);
+    assert.equal((await page.textContent('#recite-score')).trim(), 'Words right: 4 of 6');
     assert.equal((await page.textContent('#recite-feedback')).trim(), STRICT_RESULT.feedback);
     assert.ok(await page.isHidden('#recite-say-again'));
     assert.ok(await page.isVisible('#recite-legend'));
@@ -777,7 +866,9 @@ async function mainFlow(browser, base) {
     await waitForCall(fake, '/api/recite/check', 2);
     await page.waitForSelector('#recite-say-again:not([hidden])');
     assert.equal(await page.locator('#recite-text .w').count(), 0);
-    assert.match(await page.textContent('#recite-quality'), /hardly hear/);
+    // A clip that is too short is also "too quiet" (nobody had started speaking): the
+    // hint names the real problem, a stop pressed too early.
+    assert.equal((await page.textContent('#recite-quality')).trim(), 'That was very short. Press the button, read the whole text, then press it again.');
     // "Say that again" starts a new recording straight away.
     await page.click('#recite-say-again');
     await page.waitForSelector('#recite-rec[data-state="recording"]');
@@ -799,7 +890,7 @@ async function mainFlow(browser, base) {
   await check('recite: contextual mode shows the meaning verdict and missing ideas', async () => {
     await page.click('#nav [data-go="prepare"]');
     await page.check('input[name="mode"][value="contextual"]');
-    await page.click('#btn-confirm');
+    await pressConfirm(page);
     await page.click('#prep-next [data-go="recite"]');
     assert.match(await page.textContent('#recite-mode-label'), /The meaning/);
     await record(page, '#recite-rec', 700);
@@ -812,7 +903,7 @@ async function mainFlow(browser, base) {
     assert.equal((await page.textContent('#recite-feedback')).trim(), CONTEXTUAL_RESULT.feedback);
     await page.click('#nav [data-go="prepare"]');
     await page.check('input[name="mode"][value="strict"]');
-    await page.click('#btn-confirm');
+    await pressConfirm(page);
   });
 
   await check('dictation: phrases are spoken slowly with Repeat and Next', async () => {
@@ -822,23 +913,24 @@ async function mainFlow(browser, base) {
     assert.deepEqual(ph.json, { text: PAGE_TEXT, lang: 'en' });
     await page.waitForSelector('#dict-counter');
     assert.match(await page.textContent('#dict-counter'), /Part 1 of 2/);
-    const deadline = Date.now() + 5000;
-    while (!fake.callsTo('/api/tts').some((c) => c.json && c.json.text === 'The cat sat') && Date.now() < deadline) await sleep(25);
-    const first = fake.callsTo('/api/tts').find((c) => c.json && c.json.text === 'The cat sat');
-    assert.ok(first, 'first phrase spoken');
-    assert.deepEqual(first.json, { text: 'The cat sat', lang: 'en', slow: true });
+    await waitForTts(fake, 'The cat sat');
+    assert.deepEqual(fake.ttsFor('The cat sat')[0].json, { text: 'The cat sat', lang: 'en', slow: true });
+    // While the first phrase plays, the next one is fetched ahead.
+    await waitForTts(fake, 'on the mat.');
+    assert.deepEqual(fake.ttsFor('on the mat.')[0].json, { text: 'on the mat.', lang: 'en', slow: true });
     const n = fake.callsTo('/api/tts').length;
     await page.click('#dict-repeat');
     await sleep(200);
     assert.equal(fake.callsTo('/api/tts').length, n, 'Repeat reuses the audio already fetched');
+    assert.ok(await page.isHidden('#dict-unclear'), 'the speech check passed: no note');
     assert.ok(await page.isHidden('#dict-phrase'));
     await page.click('#dict-show');
     assert.equal((await page.textContent('#dict-phrase')).trim(), 'The cat sat');
     await page.click('#dict-next');
     assert.match(await page.textContent('#dict-counter'), /Part 2 of 2/);
     assert.match(await page.textContent('#dict-next'), /I've finished/);
-    const second = await waitForCall(fake, '/api/tts', n + 1);
-    assert.deepEqual(second.json, { text: 'on the mat.', lang: 'en', slow: true });
+    await sleep(200);
+    assert.equal(fake.callsTo('/api/tts').length, n, 'the second phrase was already fetched');
     await shot(page, 'dictation-360');
     await page.click('#dict-next');
     await page.waitForSelector('[data-stage="check"]:not([hidden])');
@@ -1240,6 +1332,520 @@ async function serverDown(browser, base) {
   await context.close();
 }
 
+// ---------------------------------------------------------------------------
+// Regression checks for the review findings (each one failed before its fix)
+// ---------------------------------------------------------------------------
+
+const AR_TEXT = 'ذَهَبَ الْوَلَدُ إِلَى الْمَدْرَسَةِ مَعَ أَخِيهِ.';
+const AR_QURAN_MSG = 'هذا النص من القرآن الكريم. يُرجى التدرّب عليه في قسم القرآن.';
+const EN_QURAN_MSG = 'This text is from the Quran. Please practise it in the Quran section.';
+const WESTERN_DIGIT = /[0-9]/;
+
+/**
+ * Runs in the page: is every ayah number on the line of the last word of its ayah, and
+ * every standalone pause or sajdah mark on the line of the word before it?
+ */
+function quranWrapReport() {
+  const mid = (r) => r.top + r.height / 2;
+  const lastRect = (node) => {
+    const rects = node.getClientRects();
+    return rects[rects.length - 1];
+  };
+  const bad = [];
+  let markers = 0;
+  let marks = 0;
+  for (const num of document.querySelectorAll('#quran-text .ayah-num')) {
+    markers++;
+    const ayahEl = num.previousElementSibling;
+    const words = ayahEl.querySelectorAll('.qw');
+    const last = lastRect(words[words.length - 1]);
+    if (Math.abs(mid(last) - mid(num.getBoundingClientRect())) > last.height / 2) bad.push('number of ayah ' + ayahEl.dataset.ayah);
+  }
+  for (const ayahEl of document.querySelectorAll('#quran-text .ayah')) {
+    const words = [...ayahEl.querySelectorAll('.qw')];
+    const walker = document.createTreeWalker(ayahEl, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.parentElement.closest('.qw')) continue; // marks inside a word belong to it
+      for (let i = 0; i < node.data.length; i++) {
+        const c = node.data.charCodeAt(i);
+        if (c < 0x06d6 || c > 0x06ed) continue;
+        marks++;
+        const before = words.filter((w) => w.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
+        if (!before.length) continue;
+        const range = document.createRange();
+        range.setStart(node, i);
+        range.setEnd(node, i + 1);
+        const p = lastRect(before[before.length - 1]);
+        if (Math.abs(mid(range.getBoundingClientRect()) - mid(p)) > p.height / 2) bad.push(`mark U+${c.toString(16)} in ayah ${ayahEl.dataset.ayah}`);
+      }
+    }
+  }
+  return { markers, marks, bad };
+}
+
+async function arabicFlow(browser, base) {
+  const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 });
+
+  await check('ar: the consent sentence suits a mother as well as a father (UX-13); the text language follows the UI language (UX-1)', async () => {
+    await page.goto(base + '/');
+    await waitForCall(fake, '/api/health', 1);
+    await page.selectOption('#ui-lang', 'ar');
+    assert.equal((await page.textContent('label[for="consent"]')).trim(), 'أنا أحد والدَي هذا الطفل أو وليّ أمره، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.');
+    assert.match(await page.textContent('#consent-extra'), /نسخة مكتوبة مما يقوله طفلك/);
+    await startSession(page, { consent: true, nickname: 'سامي' });
+    await page.waitForSelector('#screen-prepare:not([hidden])');
+    assert.equal(await page.inputValue('#page-lang'), 'ar', 'the browser is en-US, but the parent picked Arabic');
+    assert.equal(await page.getAttribute('#page-text', 'dir'), 'rtl');
+  });
+
+  await check('ar: Quran text is refused at "Confirm text", in Arabic, with a button to the Quran section (W1, UX-2)', async () => {
+    await page.fill('#page-text', QURAN_SAMPLE);
+    await page.click('#btn-confirm');
+    await page.waitForSelector('#prep-confirm-status.is-error');
+    assert.equal((await page.textContent('#prep-confirm-status')).trim(), AR_QURAN_MSG);
+    assert.ok(await page.isHidden('#prep-next'), 'the text is not confirmed');
+    const call = fake.callsTo('/api/dictation/phrases').at(-1);
+    assert.deepEqual(call.json, { text: QURAN_SAMPLE, lang: 'ar' });
+    const go = page.locator('#prep-confirm-status + .status-action');
+    assert.equal((await go.textContent()).trim(), 'اذهب إلى قسم القرآن');
+    await go.click();
+    await page.waitForSelector('#screen-quran:not([hidden])');
+    await page.waitForSelector('#quran-text .ayah[data-ayah="10"]');
+  });
+
+  await check('ar: score, timer and dictation counter use Arabic-Indic digits; the score line is grammatical (W4, QUR-7, UX-12)', async () => {
+    await page.click('#nav [data-go="prepare"]');
+    await page.fill('#page-text', AR_TEXT);
+    await pressConfirm(page);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    assert.ok(await page.isHidden('#prep-confirm-status + .status-action'), 'the Quran button went away');
+    await page.click('#prep-next [data-go="recite"]');
+    await page.click('#recite-rec');
+    await page.waitForSelector('#recite-rec[data-state="recording"]');
+    await page.waitForFunction(() => document.querySelector('#recite-timer').textContent.trim() !== '');
+    const timer = (await page.textContent('#recite-timer')).trim();
+    await sleep(400);
+    await page.click('#recite-rec');
+    assert.match(timer, /^[٠-٩]+ ث$/);
+    await page.waitForSelector('#recite-result:not([hidden])');
+    assert.equal((await page.textContent('#recite-score')).trim(), 'الكلمات الصحيحة: ٤ من ٦');
+    await page.click('#nav [data-go="dictation"]');
+    await page.click('#btn-dict-start');
+    await page.waitForSelector('[data-stage="speak"]:not([hidden])');
+    assert.equal((await page.textContent('#dict-counter')).trim(), 'الجزء ١ من ٢');
+    // Numbers stored with a status are formatted again when the UI language changes.
+    await page.click('#btn-profile');
+    await page.selectOption('#ui-lang', 'en');
+    assert.equal((await page.textContent('#dict-counter')).trim(), 'Part 1 of 2');
+    assert.equal((await page.textContent('#recite-score')).trim(), 'Words right: 4 of 6');
+    await page.selectOption('#ui-lang', 'ar');
+    assert.equal((await page.textContent('#recite-score')).trim(), 'الكلمات الصحيحة: ٤ من ٦');
+    await page.click('#btn-start');
+  });
+
+  await check('ar: Quran refusals after reciting and from the dictation voice are localized, without the English server text (W1, UX-2)', async () => {
+    fake.refuse('/api/recite/check', true);
+    await page.click('#nav [data-go="recite"]');
+    await record(page, '#recite-rec', 600);
+    await page.waitForSelector('#recite-status.is-error');
+    assert.equal((await page.textContent('#recite-status')).trim(), AR_QURAN_MSG);
+    assert.ok(await page.isVisible('#recite-status + .status-action'));
+    fake.refuse('/api/recite/check', false);
+    fake.refuse('/api/tts', true);
+    await page.click('#nav [data-go="prepare"]');
+    await pressConfirm(page); // a new confirmation starts a new dictation
+    await page.click('#nav [data-go="dictation"]');
+    await page.click('#btn-dict-start');
+    await page.waitForSelector('#dict-speak-status.is-error');
+    assert.equal((await page.textContent('#dict-speak-status')).trim(), AR_QURAN_MSG);
+    await page.click('#dict-speak-status + .status-action');
+    await page.waitForSelector('#screen-quran:not([hidden])');
+    fake.refuse('/api/tts', false);
+  });
+
+  await check('ar: ayah range fields show Arabic-Indic digits and accept both digit systems; "look again at ayah" too (W4)', async () => {
+    await page.waitForSelector('#quran-text .ayah[data-ayah="10"]');
+    assert.equal(await page.inputValue('#quran-from'), '١');
+    assert.equal(await page.inputValue('#quran-to'), '١٠');
+    let call = await setRangeField(page, fake, '#quran-from', '٢'); // Arabic-Indic, as typed on an Arabic keyboard
+    assert.equal(call.query.get('from'), '2');
+    call = await setRangeField(page, fake, '#quran-to', '5'); // Western digits
+    assert.equal(call.query.get('to'), '5');
+    await page.waitForSelector('#quran-text .ayah[data-ayah="5"]');
+    assert.equal(await page.inputValue('#quran-from'), '٢');
+    assert.equal(await page.inputValue('#quran-to'), '٥');
+    await record(page, '#quran-rec', 600);
+    await page.waitForSelector('#quran-result:not([hidden])');
+    assert.equal((await page.textContent('#quran-first-error')).trim(), 'راجع الآية ٢.');
+    assert.equal(await page.getAttribute('#quran-text .ayah-num', 'aria-label'), 'الآية ٢');
+  });
+
+  await check('ar: at 360 px no ayah number is cut off from its ayah, and pause marks stay with their word (QUR-4)', async () => {
+    await page.uncheck('#quran-juz');
+    for (const [s, to] of [[78, 40], [96, 19], [2, 50], [36, 50]]) {
+      if ((await page.inputValue('#quran-surah')) !== String(s)) {
+        const before = fake.callsTo('/api/quran/ayat').length;
+        await page.selectOption('#quran-surah', String(s));
+        await waitForCall(fake, '/api/quran/ayat', before + 1);
+      }
+      await setRangeField(page, fake, '#quran-from', '1');
+      await setRangeField(page, fake, '#quran-to', String(to));
+      await page.waitForFunction((n) => document.querySelectorAll('#quran-text .ayah').length === n && document.querySelector('#quran-text .ayah').dataset.ayah === '1', to);
+      const shown = await page.$$eval('#quran-text .ayah', (els) => els.map((e) => e.textContent));
+      for (let a = 1; a <= to; a++) assert.equal(shown[a - 1], ayah(s, a).display, `${s}:${a} is still shown verbatim`);
+      const r = await page.evaluate(quranWrapReport);
+      assert.equal(r.markers, to);
+      assert.deepEqual(r.bad, [], `${s}:1-${to}: ${r.bad.length} of ${r.markers} numbers / ${r.marks} marks wrapped away`);
+      await noHorizontalScroll(page);
+    }
+    await shot(page, 'quran-wrap-ar-360');
+    // Back to Juz' Amma while surah 36 is shown: the first surah of the Juz is loaded.
+    const before = fake.callsTo('/api/quran/ayat').length;
+    await page.check('#quran-juz');
+    const call = await waitForCall(fake, '/api/quran/ayat', before + 1);
+    assert.deepEqual([call.query.get('surah'), call.query.get('from'), call.query.get('to')], ['78', '1', '10']);
+    await page.waitForFunction(() => document.querySelectorAll('#quran-text .ayah').length === 10);
+  });
+
+  await check('ar flow: no console errors (besides the refusals asked for), page errors or external requests', async () => {
+    assert.deepEqual(expected4xx(problems), []);
+  });
+  await context.close();
+}
+
+async function fixesFlow(browser, base) {
+  const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, { phrases: ['Phrase one', 'Phrase two', 'Phrase three'] });
+  await page.goto(base + '/');
+  await startSession(page, { consent: true, nickname: 'Sami' });
+  await page.waitForSelector('#screen-prepare:not([hidden])');
+
+  const tinyPng = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 40;
+    c.height = 30;
+    return c.toDataURL('image/png').split(',')[1];
+  });
+
+  await check('prepare: a page read with Quran text suggests the Quran section (W3)', async () => {
+    fake.setPageRead({ text: 'A page.', lang: 'en', notes: '', source: 'claude', needs_manual: false, contains_quran: true });
+    await page.setInputFiles('#prep-choose', { name: 'p.png', mimeType: 'image/png', buffer: Buffer.from(tinyPng, 'base64') });
+    await page.waitForSelector('#prep-quran-note:not(:empty)');
+    assert.equal((await page.textContent('#prep-quran-note')).trim(), 'This page seems to contain Quran text. Please practise the Quran in the Quran section.');
+    assert.equal((await page.textContent('#prep-quran-note + .status-action')).trim(), 'Go to the Quran section');
+    fake.setPageRead(null);
+    const before = fake.callsTo('/api/page/read').length;
+    await page.setInputFiles('#prep-choose', { name: 'p.png', mimeType: 'image/png', buffer: Buffer.from(tinyPng, 'base64') });
+    await waitForCall(fake, '/api/page/read', before + 1);
+    await page.waitForFunction((t) => document.querySelector('#page-text').value === t, PAGE_TEXT);
+    assert.ok(await page.isHidden('#prep-quran-note'));
+    assert.equal(await page.locator('#prep-quran-note + .status-action').count(), 0);
+  });
+
+  await check('prepare: Arabic text with "English" selected is set to Arabic; Latin text with "Arabic" is refused (UX-1)', async () => {
+    await page.selectOption('#page-lang', 'en');
+    await page.fill('#page-text', AR_TEXT);
+    await pressConfirm(page);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    assert.equal(await page.inputValue('#page-lang'), 'ar');
+    assert.equal(await page.getAttribute('#page-text', 'dir'), 'rtl');
+    assert.equal(fake.callsTo('/api/dictation/phrases').at(-1).json.lang, 'ar');
+    assert.match(await page.textContent('#prep-confirm-status'), /set to Arabic/);
+    await page.fill('#page-text', PAGE_TEXT);
+    await page.click('#btn-confirm');
+    assert.equal((await page.textContent('#prep-confirm-status')).trim(), 'This text is not written in Arabic. Please choose the language of the text.');
+    assert.ok(await page.isHidden('#prep-next'));
+  });
+
+  await check('prepare: a text that is too long is refused at "Confirm text" (UX-2)', async () => {
+    await page.selectOption('#page-lang', 'en');
+    await page.fill('#page-text', 'word '.repeat(4001));
+    await page.click('#btn-confirm');
+    await page.waitForSelector('#prep-confirm-status.is-error');
+    assert.equal((await page.textContent('#prep-confirm-status')).trim(), 'This text is too long. Please use a shorter text.');
+    assert.ok(await page.isHidden('#prep-next'));
+    await page.fill('#page-text', PAGE_TEXT);
+    await pressConfirm(page);
+    await page.waitForSelector('#prep-next:not([hidden])');
+  });
+
+  await check('recite: changing the reciting mode clears the old result (UX-11)', async () => {
+    await page.click('#prep-next [data-go="recite"]');
+    await record(page, '#recite-rec', 600);
+    await page.waitForSelector('#recite-text .w-sub');
+    await page.click('#nav [data-go="prepare"]');
+    await page.check('input[name="mode"][value="contextual"]');
+    await page.click('#nav [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
+    assert.match(await page.textContent('#recite-mode-label'), /The meaning/);
+    assert.ok(await page.isHidden('#recite-result'));
+    assert.equal(await page.locator('#recite-text .w').count(), 0);
+    assert.equal((await page.textContent('#recite-text')).trim(), PAGE_TEXT);
+  });
+
+  await check('recite: "same meaning" with missing ideas reads "Nearly the same meaning" (W5)', async () => {
+    const base = { mode: 'contextual', heard_text: 'the cat sat', feedback: 'Good!', quality: STRICT_RESULT.quality };
+    fake.queueRecite(Object.assign({}, base, { judgement: { verdict: 'same_meaning', missing_ideas: ['on the mat'], wrong_ideas: [] } }));
+    await record(page, '#recite-rec', 600);
+    await page.waitForSelector('#recite-verdict:not([hidden])');
+    assert.equal((await page.textContent('#recite-verdict')).trim(), 'Nearly the same meaning');
+    assert.match(await page.getAttribute('#recite-verdict', 'class'), /verdict-nearly/);
+    assert.match(await page.textContent('#recite-missing'), /on the mat/);
+    fake.queueRecite(Object.assign({}, base, { judgement: { verdict: 'same_meaning', missing_ideas: [], wrong_ideas: [] } }));
+    await record(page, '#recite-rec', 600);
+    await page.waitForFunction(() => document.querySelector('#recite-verdict').textContent.trim() === 'Same meaning');
+    assert.match(await page.getAttribute('#recite-verdict', 'class'), /verdict-same_meaning/);
+  });
+
+  await check('recite: spoken feedback that arrives late never plays during a recording or on another screen (UX-7)', async () => {
+    fake.setTts({ delay: (j) => (j.slow ? 0 : 900) });
+    const before = fake.callsTo('/api/recite/check').length;
+    await record(page, '#recite-rec', 600);
+    await waitForCall(fake, '/api/recite/check', before + 1);
+    await page.waitForSelector('#recite-result:not([hidden])');
+    // The child taps the record button again before the voice has arrived.
+    await page.click('#recite-rec');
+    await page.waitForSelector('#recite-rec[data-state="recording"]');
+    await sleep(1400);
+    await page.click('#recite-rec');
+    await waitForCall(fake, '/api/recite/check', before + 2);
+    await page.waitForSelector('#recite-result:not([hidden])');
+    // ... and opens the Quran section right after the next result.
+    await page.click('#nav [data-go="quran"]');
+    await sleep(1400);
+    const plays = await page.evaluate(() => window.__plays);
+    assert.deepEqual(plays.filter((p) => p.recording), [], 'nothing is played while the child is recording');
+    assert.deepEqual(plays.filter((p) => p.screen === '#quran'), [], 'no synthetic voice on the Quran screen');
+    fake.setTts(null);
+  });
+
+  await check('dictation: Next and Repeat wait while a phrase is prepared, and a double tap cannot skip a phrase (UX-4)', async () => {
+    fake.setTts({ delay: (j) => (j.slow ? 600 : 0), check: (j) => (j.text === 'Phrase two' ? 'failed' : j.slow ? 'passed' : 'skipped') });
+    await page.click('#nav [data-go="dictation"]');
+    await page.click('#btn-dict-start');
+    await page.waitForSelector('[data-stage="speak"]:not([hidden])');
+    assert.ok(await page.isDisabled('#dict-next'), 'Next waits for the voice');
+    assert.ok(await page.isDisabled('#dict-repeat'), 'Repeat waits for the voice');
+    assert.equal((await page.textContent('#dict-speak-status')).trim(), 'Getting ready…');
+    await page.$eval('#dict-next', (b) => {
+      b.click();
+      b.click();
+    });
+    assert.equal((await page.textContent('#dict-counter')).trim(), 'Part 1 of 3');
+    await page.waitForSelector('#dict-next:not([disabled])');
+    assert.equal((await page.textContent('#dict-speak-status')).trim(), '');
+    await waitForTts(fake, 'Phrase two'); // fetched ahead while phrase one plays
+    await page.$eval('#dict-next', (b) => {
+      b.click();
+      b.click(); // a double tap
+    });
+    assert.equal((await page.textContent('#dict-counter')).trim(), 'Part 2 of 3');
+    await page.waitForSelector('#dict-next:not([disabled])');
+    assert.equal((await page.textContent('#dict-counter')).trim(), 'Part 2 of 3', 'phrase two was heard before Next opened again');
+  });
+
+  await check('dictation: a failed speech check shows a note, and Repeat fetches a fresh take (W2)', async () => {
+    await page.waitForSelector('#dict-unclear:not([hidden])');
+    assert.equal((await page.textContent('#dict-unclear')).trim(), 'The voice may be unclear in this part. Press “Repeat” to hear a new take, or show the words.');
+    assert.equal(fake.ttsFor('Phrase two').length, 1);
+    await page.click('#dict-repeat');
+    await waitForTts(fake, 'Phrase two', 2);
+    await page.waitForSelector('#dict-next:not([disabled])');
+    await page.click('#dict-next');
+    assert.equal((await page.textContent('#dict-counter')).trim(), 'Part 3 of 3');
+    await page.waitForSelector('#dict-next:not([disabled])');
+    assert.ok(await page.isHidden('#dict-unclear'), 'phrase three passed its check');
+    const n = fake.callsTo('/api/tts').length;
+    await page.click('#dict-repeat');
+    await page.waitForSelector('#dict-next:not([disabled])');
+    assert.equal(fake.callsTo('/api/tts').length, n, 'a phrase that passed is repeated from memory');
+    await page.click('#dict-next');
+    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+    fake.setTts(null);
+  });
+
+  await check('dictation: a Quran refusal of the check is localized, with a button to the Quran section (W1)', async () => {
+    fake.refuse('/api/dictation/check', true);
+    await page.fill('#dict-written', 'The cat sat on the matt');
+    await page.click('#btn-dict-check');
+    await page.waitForSelector('#dict-check-status.is-error');
+    assert.equal((await page.textContent('#dict-check-status')).trim(), EN_QURAN_MSG);
+    assert.ok(await page.isVisible('#dict-check-status + .status-action'));
+    fake.refuse('/api/dictation/check', false);
+  });
+
+  await check('dictation: after the parent edits "What was read", the result must be checked again before the child sees it (UX-3)', async () => {
+    await page.click('#btn-dict-check');
+    await page.waitForSelector('[data-stage="review"]:not([hidden])');
+    assert.ok(await page.isHidden('#dict-check-status + .status-action'), 'the Quran button went away');
+    assert.ok(await page.isEnabled('#btn-dict-confirm'));
+    assert.ok(await page.isHidden('#dict-stale'));
+    await page.fill('#dict-read-text', 'The cat sat on the mat');
+    assert.ok(await page.isDisabled('#btn-dict-confirm'), 'the shown marks no longer match the text');
+    assert.equal((await page.textContent('#dict-stale')).trim(), 'You changed the text. Press “Check again with this text” before you confirm.');
+    const corrected = JSON.parse(JSON.stringify(DICTATION_RESULT));
+    corrected.read_text = 'The cat sat on the mat';
+    corrected.result.ops[5] = { kind: 'match', exp_index: 5, heard_index: 5, expected: 'mat', heard: 'mat' };
+    corrected.result.n_errors = 0;
+    corrected.result.verdict = 'correct';
+    corrected.feedback = 'Perfect!';
+    fake.queueDictation(corrected);
+    await page.click('#btn-dict-recheck');
+    await page.waitForSelector('#btn-dict-confirm:not([disabled])');
+    assert.ok(await page.isHidden('#dict-stale'));
+    fake.refuse('/api/tts', true); // for the "Listen" check below
+    await page.click('#btn-dict-confirm');
+    await page.waitForSelector('[data-stage="child"]:not([hidden])');
+    assert.equal(await page.locator('#dict-child-words .w-match').count(), 6);
+    assert.equal(await page.locator('#dict-child-words .w-sub').count(), 0);
+    // An error from "Listen" is shown on the child's card, not on the hidden review card.
+    await page.click('#dict-listen');
+    await page.waitForSelector('#dict-child-status.is-error');
+    assert.equal((await page.textContent('#dict-child-status')).trim(), EN_QURAN_MSG);
+    fake.refuse('/api/tts', false);
+  });
+
+  await check('prepare: a basmala on its own line is confirmed for reciting, and dictation says why it cannot read it; [?] marks are explained (final verification)', async () => {
+    await page.click('#nav [data-go="prepare"]');
+    await page.waitForSelector('#screen-prepare:not([hidden])');
+    // A page read with [?] marks: Confirm explains them instead of "Something went wrong".
+    await page.selectOption('#page-lang', 'en');
+    await page.fill('#page-text', 'The [?] sat on the mat.');
+    await page.click('#btn-confirm');
+    await page.waitForSelector('#prep-confirm-status.is-error');
+    assert.equal((await page.textContent('#prep-confirm-status')).trim(), 'Some words could not be read and are marked [?]. Please type them in place of [?] first.');
+    assert.ok(await page.isHidden('#prep-next'));
+    // The basmala as a phrase of its own: confirmed (it can be recited), with a note.
+    await page.selectOption('#page-lang', 'ar');
+    await page.fill('#page-text', BASMALA_TEXT);
+    await pressConfirm(page);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    const note = (await page.textContent('#prep-confirm-status')).trim();
+    assert.equal(note, 'Text confirmed for reciting. It cannot be used for dictation: part of it is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud.');
+    assert.ok(!note.includes(QURAN_PHRASE_MESSAGE));
+    assert.equal(await page.locator('#prep-confirm-status + .status-action').count(), 0);
+    await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
+    assert.equal((await page.textContent('#recite-text')).trim(), BASMALA_TEXT);
+    assert.ok(await page.isEnabled('#recite-rec'));
+    // Dictation: the start refusal is the specific, localized message (no English server text).
+    await page.click('#nav [data-go="dictation"]');
+    await page.waitForSelector('#screen-dictation:not([hidden])');
+    const before = fake.callsTo('/api/dictation/phrases').length;
+    await page.click('#btn-dict-start');
+    await waitForCall(fake, '/api/dictation/phrases', before + 1);
+    await page.waitForSelector('#dict-intro-status.is-error');
+    assert.equal((await page.textContent('#dict-intro-status')).trim(), 'Part of this text is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud, so this text cannot be used for dictation. It can still be recited.');
+    assert.equal(fake.callsTo('/api/tts').filter((c) => c.json.text.includes('بسم')).length, 0);
+    await page.click('#nav [data-go="prepare"]');
+    await page.selectOption('#page-lang', 'en');
+    await page.fill('#page-text', PAGE_TEXT);
+    await pressConfirm(page);
+    await page.waitForSelector('#prep-next:not([hidden])');
+  });
+
+  await check('fixes flow: no console errors (besides the refusals asked for), page errors or external requests', async () => {
+    assert.deepEqual(expected4xx(problems), []);
+  });
+  await context.close();
+}
+
+async function consentFlow(browser, base) {
+  const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 });
+  await check('consent: the Claude notice names every kind of data sent to it (PRV-2)', async () => {
+    await page.goto(base + '/');
+    await page.waitForSelector('#consent-extra:not([hidden])');
+    const en = await page.textContent('#consent-extra');
+    assert.match(en, /photos of pages and of handwriting/);
+    assert.match(en, /the page text and a transcript of what your child says/);
+    assert.match(en, /the words your child got wrong/);
+    await page.selectOption('#ui-lang', 'fr');
+    assert.match(await page.textContent('#consent-extra'), /une transcription de ce que dit votre enfant/);
+    await page.selectOption('#ui-lang', 'en');
+  });
+
+  await check('consent: with Claude configured, a typed dictation check waits for consent (PRV-1)', async () => {
+    await startSession(page, { consent: false, nickname: '' });
+    await page.fill('#page-text', PAGE_TEXT);
+    await pressConfirm(page);
+    await page.click('#prep-next [data-go="dictation"]');
+    await page.click('#btn-dict-start');
+    await page.click('#dict-next');
+    await page.click('#dict-next');
+    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+    await page.fill('#dict-written', 'The cat sat on the matt');
+    assert.ok(await page.isDisabled('#btn-dict-check'));
+    assert.match(await page.textContent('[data-stage="check"] [data-why="dict-check"]'), /consent box/);
+    assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-check"]'));
+    assert.equal(fake.callsTo('/api/dictation/check').length, 0, 'nothing went to the server');
+    await page.click('#btn-profile');
+    await page.check('#consent');
+    await page.click('#btn-start');
+    await page.click('#nav [data-go="dictation"]');
+    assert.ok(await page.isEnabled('#btn-dict-check'));
+    await page.click('#btn-dict-check');
+    await waitForCall(fake, '/api/dictation/check', 1);
+    assert.deepEqual(problems, []);
+  });
+  await context.close();
+
+  const offline = await newPage(browser, base, { width: 360, height: 780 }, { health: { asr: true, tts: true, brain: 'offline', quran: true, languages: ['ar', 'en', 'fr'] } });
+  await check('consent: offline, a typed dictation check needs no consent (nothing leaves the computer)', async () => {
+    const p = offline.page;
+    await p.goto(base + '/');
+    await p.waitForSelector('#consent-extra:not([hidden])');
+    await startSession(p, { consent: false, nickname: '' });
+    await p.fill('#page-text', PAGE_TEXT);
+    await pressConfirm(p);
+    await p.click('#prep-next [data-go="dictation"]');
+    await p.click('#btn-dict-start');
+    await p.click('#dict-next');
+    await p.click('#dict-next');
+    await p.waitForSelector('[data-stage="check"]:not([hidden])');
+    assert.ok(await p.isEnabled('#btn-dict-check'));
+    assert.deepEqual(offline.problems, []);
+  });
+  await offline.context.close();
+}
+
+/** recorder.js with a 1 s limit instead of 120 s, so the limit can be reached in a test. */
+function shortLimit() {
+  let api;
+  Object.defineProperty(window, 'MommyRecorder', {
+    configurable: true,
+    get: () => api,
+    set: (v) => {
+      api = Object.assign({}, v, { MAX_SECONDS: 1 });
+    },
+  });
+}
+
+async function limitFlow(browser, base) {
+  const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, null, { initScript: shortLimit });
+  await check('recite and Quran: when the length limit stops a recording, the result says so (UX-10)', async () => {
+    await page.goto(base + '/');
+    await startSession(page, { consent: true, nickname: '' });
+    await confirmPageText(page, PAGE_TEXT);
+    await page.click('#prep-next [data-go="recite"]');
+    await page.click('#recite-rec'); // and never pressed again: the limit stops it
+    await waitForCall(fake, '/api/recite/check', 1);
+    await page.waitForSelector('#recite-result:not([hidden])');
+    assert.ok(await page.isVisible('#recite-limit'));
+    assert.equal((await page.textContent('#recite-limit')).trim(), "That's the longest I can listen to (2 minutes).");
+    await record(page, '#recite-rec', 300); // stopped by the child: no note
+    await waitForCall(fake, '/api/recite/check', 2);
+    await page.waitForSelector('#recite-limit', { state: 'hidden' });
+    await page.click('#nav [data-go="quran"]');
+    await page.waitForSelector('#quran-text .ayah[data-ayah="10"]');
+    await page.click('#quran-rec');
+    await waitForCall(fake, '/api/quran/check', 1);
+    await page.waitForSelector('#quran-result:not([hidden])');
+    assert.ok(await page.isVisible('#quran-limit'));
+    assert.deepEqual(problems, []);
+  });
+  await context.close();
+}
+
 async function main() {
   console.log('# syntax');
   await check('node --check web/*.js', checkSyntax);
@@ -1271,6 +1877,14 @@ async function main() {
     await unavailableFeatures(browser, base);
     console.log('# browser: server down');
     await serverDown(browser, base);
+    console.log('# browser: Arabic UI (review fixes)');
+    await arabicFlow(browser, base);
+    console.log('# browser: review fixes');
+    await fixesFlow(browser, base);
+    console.log('# browser: consent and Claude');
+    await consentFlow(browser, base);
+    console.log('# browser: length limit');
+    await limitFlow(browser, base);
   } finally {
     await browser.close();
     server.close();

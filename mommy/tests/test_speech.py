@@ -21,6 +21,7 @@ The real espeak-ng back end is tested only when a library is installed.
 from __future__ import annotations
 
 import inspect
+import logging
 import io
 import math
 import struct
@@ -29,6 +30,7 @@ import time
 import wave
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -297,11 +299,24 @@ class TestWavDuration:
         assert asr_mod.wav_duration(data + b"\x01") == pytest.approx(0.5)  # partial frame
 
     def test_long_low_rate_file_is_measured_without_decoding(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 3 hours at 1 kHz, 8-bit: what decode_wav would turn into 173 million samples.
-        data = wav_bytes(np.zeros(1000), 1000, bits=8) + b"\x80" * (3 * 3600 * 1000 - 1000)
-        data = data[:4] + struct.pack("<I", len(data) - 8) + data[8:40] + struct.pack("<I", 3 * 3600 * 1000) + data[44:]
+        # 20 minutes at 8 kHz, 8-bit: what decode_wav would turn into 19 million samples.
+        n = 20 * 60 * 8000
+        data = wav_bytes(np.zeros(1000), 8000, bits=8) + b"\x80" * (n - 1000)
+        data = data[:4] + struct.pack("<I", len(data) - 8) + data[8:40] + struct.pack("<I", n) + data[44:]
         monkeypatch.setattr(asr_mod, "resample_to_16k", lambda *a: pytest.fail("decoded"))
-        assert asr_mod.wav_duration(data) == pytest.approx(3 * 3600)
+        assert asr_mod.wav_duration(data) == pytest.approx(20 * 60)
+
+    @pytest.mark.parametrize("rate", [1000, 7999, 96001, 192000, 767999])
+    def test_sample_rates_outside_8_to_96_khz_are_refused(self, rate: int) -> None:
+        # Regression: a 10 MB 8-bit file at 767999 Hz (13 s) cost about 450 MB to resample.
+        data = wav_bytes(tone(440, 0.6, rate), rate, bits=8)
+        for read in (decode_wav, asr_mod.wav_duration):
+            with pytest.raises(ValueError, match="sample rate"):
+                read(data)
+
+    @pytest.mark.parametrize("rate", [8000, 96000])
+    def test_sample_rate_limits_are_inclusive(self, rate: int) -> None:
+        assert decode_wav(wav_bytes(tone(440, 0.6, rate), rate)).size == pytest.approx(0.6 * 16000, abs=1)
 
     @pytest.mark.parametrize("data", [b"", b"hello", b"RIFF\x00\x00\x00\x00WAVE", wav_bytes(np.zeros(0), 16000)])
     def test_garbage_raises(self, data: bytes) -> None:
@@ -1109,3 +1124,50 @@ def test_requirements_install_a_phonemizer() -> None:
         if line.strip() and not line.lstrip().startswith("#")
     }
     assert installed & {"espeakng-loader", "piper-phonemize"}
+
+
+# ---------------------------------------------------------------------------
+# Choice of the Whisper model (turbo by default, the other one as a fallback)
+# ---------------------------------------------------------------------------
+
+
+def _model_files(models_dir: Path, model: str) -> None:
+    d = models_dir / f"sherpa-onnx-whisper-{model}"
+    d.mkdir(parents=True)
+    for part in ("encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt"):
+        (d / f"{model}-{part}").write_bytes(b"")
+
+
+def _settings_for(models_dir: Path, model: str) -> Any:
+    from mommy.config import Settings
+
+    return Settings(
+        root=models_dir.parent, models_dir=models_dir, quran_dir=models_dir, web_dir=models_dir,
+        asr_model=model, asr_threads=1, anthropic_api_key_set=False, vision_model=None,
+        text_model=None, effort="low",
+    )
+
+
+@pytest.mark.parametrize(("configured", "present", "used"), [
+    ("turbo", ["turbo", "small"], "turbo"),
+    ("turbo", ["small"], "small"),
+    ("small", ["turbo"], "turbo"),
+    ("small", ["small"], "small"),
+])
+def test_missing_model_falls_back_to_the_other(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, configured: str, present: list[str], used: str
+) -> None:
+    models = tmp_path / "models"
+    for model in present:
+        _model_files(models, model)
+    with caplog.at_level(logging.WARNING, logger="mommy.asr"):
+        w = SherpaWhisper.from_settings(_settings_for(models, configured))
+    assert w.model == used and w.requested_model == configured
+    assert w.available is (asr_mod.sherpa_onnx is not None)
+    assert (f"using Whisper {used} instead" in caplog.text) is (used != configured)
+
+
+def test_no_model_at_all_keeps_the_configured_one(tmp_path: Path) -> None:
+    w = SherpaWhisper.from_settings(_settings_for(tmp_path / "models", "turbo"))
+    assert w.model == "turbo" and w.available is False
+    assert "turbo" in (w.unavailable_reason or "")

@@ -35,10 +35,15 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
   threshold is raised above that limit (checked by `tests/test_api.py`). They are never
   logged; logs carry only sizes, durations and timings.
 - **Photos are cleaned.** The browser resizes them (long edge at most 2000 px) and
-  re-encodes them as JPEG, which drops EXIF data such as a GPS position; the server
-  re-encodes any image that still carries EXIF, XMP or PNG text chunks.
-- **Local by default.** The server listens on `127.0.0.1` only. The web client makes no
-  external requests: no analytics, no third-party scripts, no web fonts from CDNs.
+  re-encodes them as JPEG, which drops EXIF data such as a GPS position. The server
+  decodes and re-encodes every image again, in memory, as a new JPEG of at most 2000 px
+  with no metadata at all (EXIF, XMP, IPTC, ICC profile, comments, PNG text, data after
+  the image), so a client that bypasses the web page cannot pass any on either.
+- **Local by default.** The server listens on `127.0.0.1` only, answers only to its own
+  host names (`MOMMY_ALLOWED_HOSTS`, default `127.0.0.1,localhost,::1`, which blocks
+  DNS-rebinding pages) and refuses cross-origin writes to the API and framing by other
+  sites. The web client makes no external requests: no analytics, no third-party
+  scripts, no web fonts from CDNs.
 - **Claude is optional.** Only when it is configured are page photos, handwriting photos
   and texts sent to the Claude API, and only after the parent ticks the consent box. The
   Batch and Files APIs are never used.
@@ -53,13 +58,13 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
 ## Quick start
 
 Requirements: Python 3.13, `curl`, `tar` with bzip2, about 1 GB of disk for the models,
-and a recent browser.
+about 6 GB of RAM with the three recognisers loaded, and a recent browser.
 
 ```sh
 cd mommy
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-scripts/download_models.sh     # Whisper small (609 MB) + Piper voices ar/en/fr (64 MB each)
+.venv/bin/pip install --require-hashes -r requirements.lock   # every package pinned and hashed
+scripts/download_models.sh     # Whisper turbo (537 MB) + Piper voices ar/en/fr (64 MB each)
 ./run.sh                       # serves the API and the web client
 ```
 
@@ -67,9 +72,19 @@ Then open <http://127.0.0.1:8080>. Browsers allow the microphone on `127.0.0.1` 
 `localhost` without HTTPS.
 
 - `PORT=9000 ./run.sh` uses another port.
-- `scripts/download_models.sh --turbo` also fetches Whisper turbo (537 MB); select it
-  with `MOMMY_ASR_MODEL=turbo`. `--check` only checks that the download URLs answer.
+- `scripts/download_models.sh --small` also fetches Whisper small (609 MB); select it
+  with `MOMMY_ASR_MODEL=small`. `--check` only checks that the download URLs answer.
   The script skips models that are already in `models/` (a symlink is fine).
+- Turbo is the default recogniser: on a 4-core CPU it is as fast as small once loaded
+  (about 1.5 s for a 5 s clip), and markedly better on Arabic and on French homophones
+  (small heard "dort" as "d'or"); it needs about 1 GB more RAM per loaded language
+  (server RSS about 5.0 GB with turbo, 3.2 GB with small). If the configured model's
+  files are missing but the other model is present, the other one is used, logged, and
+  reported by `/api/health` as `asr_model`.
+- `requirements.txt` lists the direct dependencies; `requirements.lock` pins and hashes
+  every package. After changing `requirements.txt`, install it and run
+  `.venv/bin/python scripts/lock_requirements.py` (it reads the hashes from PyPI;
+  `--check` only compares).
 - `GET /api/health` shows which parts are available.
 
 ### Speech synthesis needs espeak-ng
@@ -113,22 +128,41 @@ offline. Model ids are never written in this repository: pick current ones from 
 Claude documentation. If a Claude call fails, the app falls back to the offline
 behaviour for that request.
 
-Other settings: `MOMMY_ASR_MODEL` (`small`, default, or `turbo`), `MOMMY_ASR_THREADS`
-(default 4), `MOMMY_LOG_LEVEL` (default `INFO`), `PORT` (default 8080).
+Output ceilings: `max_tokens` is 16000 for reading images and 4000 for text calls. On
+current models adaptive thinking is on by default and its tokens count toward
+`max_tokens` even when they are not returned, so lower caps could cut off a dense page
+and force the offline fallback; the ceiling is not a cost (billing is for tokens used).
+No `thinking` parameter is sent.
+
+Other settings: `MOMMY_ASR_MODEL` (`turbo`, default, or `small`), `MOMMY_ASR_THREADS`
+(default 4), `MOMMY_ALLOWED_HOSTS` (default `127.0.0.1,localhost,::1`),
+`MOMMY_LOG_LEVEL` (default `INFO`), `PORT` (default 8080).
 
 ## API notes
 
 The endpoints are listed in [`docs/CONTRACT.md`](docs/CONTRACT.md). Errors are
 `{"error": <code>, "message": <text>}`; every `/api/*` response has
-`Cache-Control: no-store`. Limits: audio 10 MB and 120 s, images 8 MB (JPEG or PNG),
-text fields 20 000 characters, `/api/tts` 400 characters, 50 ayat per Quran request.
-Beyond the contract:
+`Cache-Control: no-store`. Limits: audio 10 MB and 120 s at 8-96 kHz, images 8 MB (JPEG
+or PNG, at most 4096 x 4096 pixels, 50 MP for a JPEG), text fields 20 000 characters
+and 3 000 words, `/api/tts` 400 characters, 50 ayat per Quran request. At most two image
+or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
 
-- `/api/health` also returns `tts_languages`, `asr_model` and `reasons` (why the
-  recogniser or the voices are unavailable).
-- `/api/recite/check` returns a top-level `say_again`; `/api/page/read` returns
-  `contains_quran` and, when Claude failed, `brain_error`; `/api/dictation/check`
-  returns `legible` and accepts an optional `strict_tashkeel` field.
+- `/api/health` also returns `tts_languages`, `asr_model` (the Whisper model in use)
+  and `reasons` (why the recogniser or the voices are unavailable).
+- `/api/recite/check` returns a top-level `say_again`; results carry
+  `say_again_reason` (`empty` or `error_rate`), `stopped_at_exp_index` (where the child
+  stopped early) and `n_unreadable`. `/api/page/read` returns `contains_quran`,
+  `unreadable_marks` (`[?]` where a word could not be read) and, when Claude failed,
+  `brain_error`; `/api/dictation/check` returns `legible`, accepts an optional
+  `strict_tashkeel` field, and lists `[?]` in `uncertain_words` when a written word
+  could not be read (it is shown as a substitution, never as a skipped word).
+- Text refused on the general endpoints: `400 unreadable_text` (the text still has `[?]`
+  marks), `400 bad_text` (a lone UTF-16 surrogate), `422 lang_mismatch` (an Arabic text
+  with `lang` en/fr, or a text without Arabic letters with `lang` ar: the recogniser
+  would translate the speech).
+- `400 bad_host` for an unknown `Host` header, `403 bad_origin` for a cross-origin
+  write; responses carry `X-Frame-Options: DENY` and `Content-Security-Policy:
+  frame-ancestors 'none'`.
 - `/api/quran/check` returns the extra fields of `Quran.check` (`words` for
   highlighting, `tolerated`, `n_expected`, `n_errors`, `word_accuracy`), plus
   `quality`, `riwaya`, `attribution` and `source_url`; `/api/quran/surahs` includes the
@@ -137,8 +171,30 @@ Beyond the contract:
   says exactly the phrase (up to two takes); the `X-Speech-Check` header says `passed`,
   `failed` or `skipped`.
 - Quran text sent to a general endpoint (recite, dictation, TTS) is refused with
-  `422 quran_text`: Uthmani script, or at least 4 words found almost entirely (90%) in
-  order at one place of the Quran. Only the first 40 words of a text are searched.
+  `422 quran_text`. Framing formulas (قال تعالى, صدق الله العظيم, ...) are left out, then
+  the text is refused when it is in Uthmani script, holds a run of 5 consecutive words
+  found consecutively in the Quran (3 next to a framing formula, so a quoted ayah inside
+  a school text is caught), or has at least 4 words found almost entirely (90%) in order
+  at one place. A TTS phrase or dictation phrase that is a whole ayah of 2 words or more
+  is refused too; `/api/dictation/phrases` then adds `"scope": "phrase"`, and the web
+  client confirms such a text (for example a school text with the basmala on a line of
+  its own) for reciting only.
+
+What counts as the same word:
+
+- Speech (recitation and the slow-dictation audio check): a number in digits matches
+  the same number in words, 0 to 100 (`12` / twelve / douze / اثنا عشر, `21` / vingt et
+  un / واحد وعشرون, `1er` / premier); British spellings match American ones (colour /
+  color, centre / center, realise / realize) and contractions match their full form
+  (they're / they are); same-sound Arabic hamza spellings match (رءوف / رؤوف, مسئول /
+  مسؤول, مائة / مئة). Among alignments of equal cost, the one that keeps the most words
+  matched is reported.
+- Dictation: spelling counts, so all of these are differences (only Arabic-Indic and
+  Western digits are the same).
+- Feedback follows the result: one mistake or several ("a few words were not right, the
+  first one is ..."), where the child stopped early, and "say it louder" only when
+  nothing usable was heard (a clear recording far from the text is asked to read again
+  from the start; a misspelled dictation is never "unclear").
 
 ## Tests
 
@@ -156,7 +212,8 @@ Playwright with Chromium: `node tests/web/smoke.cjs` (see `tests/web/README.md`)
 - **Arabic speech recognition is weak.** Whisper turbo has a word error rate of about
   40% on public Arabic benchmarks, and small is worse. Expect words reported as wrong
   that the child said correctly, and treat Arabic word-level results as hints for the
-  parent. Clips with more than 60% errors are answered with "say it again".
+  parent. Clips with more than 60% errors (not counting the words after the point
+  where the child stopped) are answered with "read it again from the start".
 - **Not tested on children.** The recognisers were trained mostly on adult speech; no
   evaluation with children's voices has been done.
 - **Voice licences.** The Arabic Piper voice (`ar_JO-kareem-medium`) gives its dataset
@@ -175,8 +232,12 @@ Playwright with Chromium: `node tests/web/smoke.cjs` (see `tests/web/README.md`)
 - **Speech synthesis** needs an espeak-ng phonemizer (see above). The voice output is
   random, so a take can be unclear; slow dictation speech is checked by the recogniser
   for that reason.
-- **One user at a time.** The models run on the CPU, one recognition at a time; this is
-  a single-machine prototype, not a hosted service.
+- **One user at a time.** The models run on the CPU, one recognition at a time, and at
+  most two image or audio decodes at once; this is a single-machine prototype, not a
+  hosted service.
+- **Quran.** The disjoined letters that open 29 surahs (الم, يس, ...) are accepted when
+  recited by their letter names (ألف لام ميم), joined or apart; this was checked with
+  typed text only, not with recordings of real recitations.
 
 ## Credits and licences
 
@@ -226,8 +287,9 @@ Playwright with Chromium: `node tests/web/smoke.cjs` (see `tests/web/README.md`)
 
 ```text
 mommy/
-  README.md  requirements.txt  run.sh
+  README.md  requirements.txt  requirements.lock  run.sh
   scripts/download_models.sh   fetches the Whisper model(s) and Piper voices into models/
+  scripts/lock_requirements.py regenerates requirements.lock (development only)
   docs/CONTRACT.md             module boundaries, HTTP API, hard rules
   data/quran/                  verbatim Tanzil text and metadata (read-only)
   models/                      git-ignored: downloaded models

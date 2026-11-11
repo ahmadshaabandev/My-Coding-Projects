@@ -41,6 +41,7 @@ from mommy.llm import (
     meaning_feedback,
     meaning_overlap,
 )
+from mommy.llm import _MEANING_TEMPLATES
 from mommy.textnorm import has_arabic
 
 LANGS = ("ar", "en", "fr")
@@ -266,7 +267,7 @@ def test_read_page_request(settings: Settings) -> None:
     brain.read_page(JPEG, "ar")
     (kwargs,) = client.calls
     assert_clean_request(kwargs, model=VISION_MODEL, max_tokens=MAX_TOKENS_VISION, schema=PAGE_SCHEMA)
-    assert MAX_TOKENS_VISION == 4000
+    assert MAX_TOKENS_VISION == 16000
     image, text = kwargs["messages"][0]["content"]
     assert image == {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": JPEG_B64}}
     assert text["type"] == "text" and "Arabic (ar)" in text["text"]
@@ -331,7 +332,7 @@ def test_judge_meaning_request(settings: Settings) -> None:
     brain.judge_meaning("Le chat joue dans le jardin.", "Le chat joue.", "fr", "10-13")
     (kwargs,) = client.calls
     assert_clean_request(kwargs, model=TEXT_MODEL, max_tokens=MAX_TOKENS_TEXT, schema=MEANING_SCHEMA)
-    assert MAX_TOKENS_TEXT == 800
+    assert MAX_TOKENS_TEXT == 4000
     (block,) = kwargs["messages"][0]["content"]
     assert block["type"] == "text"
     assert "French (fr)" in block["text"] and "Age band: 10-13" in block["text"]
@@ -796,6 +797,68 @@ def test_meaning_templates(lang: str, age: str) -> None:
     assert "jardin" in meaning_feedback("partly", ["jardin"], lang, age)
     with pytest.raises(ValueError):
         meaning_feedback("great", [], lang, age)
+
+
+_MEANING_SAME = {lang: _MEANING_TEMPLATES[lang]["same_meaning"] for lang in LANGS}
+FULL_PRAISE = {
+    lang: {age: {_MEANING_SAME[lang][age]} | {feedback.praise(lang, age, k) for k in range(3)} for age in AGE_BANDS}
+    for lang in LANGS
+}
+
+
+@pytest.mark.parametrize("lang", LANGS)
+@pytest.mark.parametrize("age", AGE_BANDS)
+def test_same_meaning_with_missing_ideas_is_not_full_praise(lang: str, age: str) -> None:
+    # Regression: "Super job! You told it just right!" was shown next to "Ideas to add".
+    text = meaning_feedback("same_meaning", ["  soleil  "], lang, age)
+    assert "soleil" in text and text not in FULL_PRAISE[lang][age]
+    assert not FIRST_PERSON[lang].search(text)
+    assert meaning_feedback("same_meaning", [], lang, age) == _MEANING_SAME[lang][age]
+
+
+@pytest.mark.parametrize(
+    ("lang", "expected", "heard", "missing"),
+    [
+        ("en", "Plants need sunlight to grow. The sun gives us light and heat.",
+         "The sun gives light and warmth, and plants need it to grow.", "sunlight"),
+        ("fr", "Les plantes ont besoin de lumière pour grandir. Le soleil donne de la lumière et de la chaleur.",
+         "Le soleil donne de la lumière et de la chaleur, les plantes en ont besoin pour pousser.", "grandir"),
+        ("ar", "تحتاج النباتات إلى الضوء لكي تنمو. الشمس تعطينا الضوء والحرارة.",
+         "تحتاج النباتات إلى الضوء لكي تكبر. الشمس تعطينا الضوء والحرارة.", "تنمو"),
+    ],
+)
+@pytest.mark.parametrize("age", AGE_BANDS)
+def test_offline_same_meaning_with_missing_ideas_says_nearly_all_there(
+    lang: str, expected: str, heard: str, missing: str, age: str
+) -> None:
+    result = OfflineBrain().judge_meaning(expected, heard, lang, age)
+    assert result["verdict"] == "same_meaning" and result["missing_ideas"]
+    assert result["missing_ideas"][0] == missing
+    assert missing in result["feedback"]
+    assert result["feedback"] not in FULL_PRAISE[lang][age]
+
+
+def test_token_ceilings_leave_room_for_thinking() -> None:
+    # Thinking tokens count toward max_tokens on current models; the ceilings stay below
+    # the size at which the SDK refuses a non-streaming request (about 21,000).
+    assert MAX_TOKENS_VISION == 16000 and MAX_TOKENS_TEXT == 4000
+    assert max(MAX_TOKENS_VISION, MAX_TOKENS_TEXT) < 21000
+
+
+def test_word_feedback_with_only_unreadable_words_skips_the_api(settings: Settings) -> None:
+    summary = result_summary(check_writing("Le chat dort.", "Le chat [?].", "fr"))
+    brain, client = brain_with(settings)
+    assert brain.word_feedback(summary, "fr", "10-13") == feedback.unreadable("fr", "10-13")
+    assert client.calls == []
+
+
+def test_word_feedback_tells_the_model_where_the_child_stopped(settings: Settings) -> None:
+    summary = result_summary(check_recitation("the cat sat on the mat", "the cat", "en"))
+    assert compact_summary(summary)["stopped_at"] == "sat"
+    brain, client = brain_with(settings, reply({"feedback": 'Good start! You stopped at "sat".'}))
+    assert brain.word_feedback(summary, "en", "6-9") == 'Good start! You stopped at "sat".'
+    assert '"stopped_at": "sat"' in client.calls[0]["messages"][0]["content"][0]["text"]
+    assert "stopped_at" in client.calls[0]["system"]
 
 
 # ---------------------------------------------------------------------------

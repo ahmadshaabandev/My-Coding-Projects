@@ -6,6 +6,7 @@ picked by position or by a character pattern.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -216,7 +217,7 @@ def test_agreement_juz_amma_surahs_78_to_114() -> None:
 def test_agreement_whole_quran() -> None:
     pairs = aligned_pairs(1, 114)
     rate = agreement(pairs)
-    # Measured: 99.49% of 70,798 aligned word pairs.
+    # Measured: 99.52% (70,455) of 70,798 aligned word pairs.
     assert rate >= 0.99, rate
 
 
@@ -426,3 +427,73 @@ def test_elision_and_contraction_normalise_with_either_apostrophe() -> None:
     for a, b, lang in [("l'école", "l’école", "fr"), ("don't", "don’t", "en"), ("qu'il", "qu’il", "fr")]:
         assert tokenize(a, lang) == [a] and tokenize(b, lang) == [b]
         assert normalize_word(a, lang) == normalize_word(b, lang)
+
+
+# ---------------------------------------------------------------------------
+# Same-sound hamza spellings (speech key only)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("older", "modern"),
+    [
+        ("رءوف", "رؤوف"),
+        ("مسئول", "مسؤول"),
+        ("مسئولا", "مسؤولا"),
+        ("جاءوا", "جاؤوا"),
+        ("يستهزئون", "يستهزؤون"),
+        ("رءوسهم", "رؤوسهم"),
+        ("شئون", "شؤون"),
+        ("مائة", "مئة"),
+        ("مائتين", "مئتين"),
+        ("ثلاثمائة", "ثلاثمئة"),
+        ("داوود", "داود"),
+    ],
+)
+def test_same_sound_hamza_spellings_share_the_speech_key(older: str, modern: str) -> None:
+    assert normalize_word(older, "ar") == normalize_word(modern, "ar")
+    # Dictation: the spelling is what is checked, so they stay different.
+    assert normalize_dictation_word(older, "ar") != normalize_dictation_word(modern, "ar")
+
+
+def test_hamza_folding_leaves_other_words_alone() -> None:
+    assert normalize_word("مائدة", "ar") != normalize_word("مئدة", "ar")
+    assert normalize_word("سؤال", "ar") != normalize_word("سأل", "ar")
+    assert normalize_word("مؤمن", "ar") == normalize_word("مومن", "ar")  # as before
+
+
+def test_simple_clean_words_match_their_modern_spelling() -> None:
+    # Regression: 147 Simple-Clean tokens (66 distinct words in 140 ayat) used to have a
+    # speech key different from that of their modern spelling, which the recogniser
+    # writes, so a correctly recited word was reported as a substitution.
+    import re
+
+    def modern(w: str) -> str:
+        w = re.sub("[ءئ]و", "ؤو", w)
+        w = re.sub("مائ(?=[ةت])", "مئ", w)
+        return w.replace("داوود", "داود")
+
+    changed = 0
+    for text in simple().values():
+        for w in tokenize(text, "ar"):
+            m = modern(w)
+            if m != w:
+                changed += 1
+                assert normalize_word(m, "ar") == normalize_word(w, "ar"), w
+    assert changed == 147
+
+
+def test_uthmani_hamza_on_tatweel_before_waw_matches_simple_clean() -> None:
+    # Uthmani writes the hamza of these words on a tatweel; its seat must fold the same
+    # way as the Simple-Clean spelling. Picked by pattern from the verbatim files.
+    u, s = uthmani(), simple()
+    checked = 0
+    for key in u:
+        uw, sw = tokenize(u[key], "ar"), tokenize(s[key], "ar")
+        if len(uw) != len(sw):
+            continue
+        for a, b in zip(uw, sw):
+            if re.search("[ءئ]و", b) and "ـ" in a:
+                checked += 1
+                assert normalize_word(a, "ar") == normalize_word(b, "ar"), (key, b)
+    assert checked > 10

@@ -36,10 +36,14 @@ def all_messages() -> list[tuple[str, str]]:
         for age in AGE_BANDS:
             for seed in range(5):
                 out.append((lang, praise(lang, age, seed)))
-            out.append((lang, say_again(lang, age)))
+            for reason in (None, "empty", "error_rate", "nothing_written"):
+                out.append((lang, say_again(lang, age, reason)))
             for kind in KINDS:
-                out.append((lang, point_out(lang, age, WORDS[lang], kind)))
-                out.append((lang, point_out(lang, age, "", kind)))
+                for n_errors in (1, 3):
+                    out.append((lang, point_out(lang, age, WORDS[lang], kind, n_errors)))
+                    out.append((lang, point_out(lang, age, "", kind, n_errors)))
+            out.append((lang, feedback.stopped(lang, age, WORDS[lang])))
+            out.append((lang, feedback.unreadable(lang, age)))
     return out
 
 
@@ -51,12 +55,14 @@ def all_messages() -> list[tuple[str, str]]:
 @pytest.mark.parametrize("lang", LANGS)
 @pytest.mark.parametrize("age", AGE_BANDS)
 def test_every_template_exists_and_is_short(lang: str, age: str) -> None:
-    messages = [praise(lang, age), say_again(lang, age)] + [
-        point_out(lang, age, WORDS[lang], k) for k in KINDS
-    ]
+    messages = (
+        [praise(lang, age), feedback.stopped(lang, age, WORDS[lang]), feedback.unreadable(lang, age)]
+        + [say_again(lang, age, r) for r in (None, "error_rate", "nothing_written")]
+        + [point_out(lang, age, WORDS[lang], k, n) for k in KINDS for n in (1, 2)]
+    )
     for m in messages:
         assert m.strip() == m and m
-        assert len(m) <= 120
+        assert len(m) <= 125
         assert m.count(".") + m.count("!") + m.count("?") + m.count("؟") <= 4
 
 
@@ -144,12 +150,21 @@ def test_arabic_avoids_gendered_imperatives_in_children_templates() -> None:
 
 def test_quran_contract_examples() -> None:
     assert quran_feedback("correct", None).startswith("أحسنت")
-    assert quran_feedback("sub", "كلمة") == "انتبه: «كلمة»"
-    assert quran_feedback("mistakes", "كلمة") == "انتبه: «كلمة»"
-    assert quran_feedback("unclear", None).startswith("أعد التلاوة من فضلك")
+    assert quran_feedback("sub", "كلمة") == "تنبيه: «كلمة»"
+    assert quran_feedback("mistakes", "كلمة") == "تنبيه: «كلمة»"
+    assert quran_feedback("unclear", None) == "التلاوة مرة أخرى من فضلك."
+    assert quran_feedback("stopped", "كلمة") == "أحسنت فيما تلوت، وتوقفت التلاوة قبل «كلمة»."
 
 
-@pytest.mark.parametrize("kind", ["correct", "mistakes", "mistake", "sub", "del", "ins", "unclear"])
+def test_quran_feedback_has_no_gendered_imperatives() -> None:
+    # Regression: انتبه and أعد التلاوة address a boy only; the child profile has no gender.
+    gendered = re.compile(r"(^|\s)(أعد|أعيدي|انتبه|انتبهي|اقرأ|اقرئي|اتل|اتلي)(\s|[،.!؟:]|$)")
+    for kind in ("correct", "mistakes", "sub", "del", "ins", "stopped", "unclear"):
+        for word in ("كلمة", None):
+            assert not gendered.search(quran_feedback(kind, word)), (kind, word)
+
+
+@pytest.mark.parametrize("kind", ["correct", "mistakes", "mistake", "sub", "del", "ins", "stopped", "unclear"])
 def test_quran_feedback_is_arabic_only(kind: str) -> None:
     msg = quran_feedback(kind, "كلمة")
     assert has_arabic(msg) and not re.search(r"[A-Za-z]", msg)
@@ -163,7 +178,7 @@ def test_quran_feedback_quotes_only_the_given_word_verbatim(quran_dir: Path) -> 
         if l.startswith("112|1|")
     )
     w = line.split("|")[2].split()[-1]
-    for kind in ("sub", "del", "ins", "mistakes"):
+    for kind in ("sub", "del", "ins", "mistakes", "stopped"):
         msg = quran_feedback(kind, w)
         assert f"«{w}»" in msg
         quoted = re.findall(r"«([^»]*)»", msg)
@@ -216,6 +231,7 @@ _ENV_VARS = (
     "MOMMY_VISION_MODEL",
     "MOMMY_TEXT_MODEL",
     "MOMMY_EFFORT",
+    "MOMMY_ALLOWED_HOSTS",
 )
 
 
@@ -232,7 +248,8 @@ def test_settings_defaults(clean_env: pytest.MonkeyPatch, mommy_root: Path) -> N
     assert s.models_dir == mommy_root / "models"
     assert s.quran_dir == mommy_root / "data" / "quran"
     assert s.web_dir == mommy_root / "web"
-    assert (s.asr_model, s.asr_threads, s.effort) == ("small", 4, "low")
+    assert (s.asr_model, s.asr_threads, s.effort) == ("turbo", 4, "low")
+    assert s.allowed_hosts == ("127.0.0.1", "localhost", "::1")
     assert s.anthropic_api_key_set is False
     assert s.vision_model is None and s.text_model is None
     assert s.claude_configured is False
@@ -240,7 +257,8 @@ def test_settings_defaults(clean_env: pytest.MonkeyPatch, mommy_root: Path) -> N
 
 
 def test_settings_from_environment(clean_env: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    clean_env.setenv("MOMMY_ASR_MODEL", "Turbo")
+    clean_env.setenv("MOMMY_ASR_MODEL", "Small")
+    clean_env.setenv("MOMMY_ALLOWED_HOSTS", " Tutor.Local , [::1],, tutor.local")
     clean_env.setenv("MOMMY_ASR_THREADS", "2")
     clean_env.setenv("ANTHROPIC_API_KEY", "not-a-real-key")
     clean_env.setenv("MOMMY_VISION_MODEL", "test-vision-model")
@@ -249,7 +267,8 @@ def test_settings_from_environment(clean_env: pytest.MonkeyPatch, tmp_path: Path
     s = load_settings(tmp_path)
     assert s.root == tmp_path.resolve()
     assert s.models_dir == tmp_path.resolve() / "models"
-    assert (s.asr_model, s.asr_threads, s.effort) == ("turbo", 2, "medium")
+    assert (s.asr_model, s.asr_threads, s.effort) == ("small", 2, "medium")
+    assert s.allowed_hosts == ("tutor.local", "::1")
     assert s.anthropic_api_key_set is True
     assert (s.vision_model, s.text_model) == ("test-vision-model", "test-text-model")
     assert s.claude_configured is True
@@ -281,6 +300,7 @@ def test_settings_partially_configured_claude_is_offline(clean_env: pytest.Monke
         ("MOMMY_ASR_THREADS", "four"),
         ("MOMMY_ASR_THREADS", "0"),
         ("MOMMY_EFFORT", "extreme"),
+        ("MOMMY_ALLOWED_HOSTS", " , ,"),
     ],
 )
 def test_settings_invalid_values(clean_env: pytest.MonkeyPatch, name: str, value: str) -> None:
@@ -294,3 +314,86 @@ def test_settings_is_frozen(clean_env: pytest.MonkeyPatch) -> None:
     assert isinstance(s, Settings)
     with pytest.raises(Exception):
         s.effort = "high"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Feedback that matches the result (several mistakes, stopping early, unclear input)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("lang", LANGS)
+@pytest.mark.parametrize("age", AGE_BANDS)
+@pytest.mark.parametrize("kind", KINDS)
+def test_several_mistakes_are_not_worded_as_one(lang: str, age: str, kind: str) -> None:
+    one = point_out(lang, age, WORDS[lang], kind)
+    several = point_out(lang, age, WORDS[lang], kind, n_errors=3)
+    assert one != several
+    if kind != "ins":
+        assert WORDS[lang] in several
+    assert point_out(lang, age, "", kind, n_errors=2) != point_out(lang, age, "", kind)
+    singular = {
+        "en": r"\b(one word|a word was|you skipped a word)\b",
+        "fr": r"\bun mot (était|n'était)|il manquait un mot|tu as sauté un mot",
+        "ar": "كلمة واحدة|هناك كلمة مختلفة|سقطت كلمة",
+    }[lang]
+    assert not re.search(singular, several, re.I), several
+
+
+@pytest.mark.parametrize(
+    ("lang", "expected", "heard", "first"),
+    [
+        ("en", "The little cat sat on the warm mat near the door.", "The little dog sat on the mat near the door.", "cat"),
+        ("fr", "Le petit chat dort sur le tapis rouge.", "Le petit chien dort sur le tapis.", "chat"),
+        ("ar", "ذهب الولد الصغير إلى المدرسة في الصباح الباكر", "ذهب البنت الصغير إلى المدرسة في الصباح", "الولد"),
+    ],
+)
+@pytest.mark.parametrize("age", AGE_BANDS)
+def test_for_result_with_two_mistakes_uses_the_plural(lang: str, expected: str, heard: str, first: str, age: str) -> None:
+    # Regression: "One word was different" was shown with a score of 9 of 11.
+    r = check_recitation(expected, heard, lang)
+    assert r.n_errors == 2 and r.verdict == "mistakes"
+    for form in (lambda x: x, asdict, result_summary):
+        text = for_result(form(r), lang, age)
+        assert text == point_out(lang, age, first, "sub", n_errors=2)
+
+
+@pytest.mark.parametrize("lang", LANGS)
+@pytest.mark.parametrize("age", AGE_BANDS)
+def test_partial_reading_is_told_where_it_stopped_not_to_speak_louder(lang: str, age: str) -> None:
+    # Regression: a clear but partial reading got "that was hard to hear, say it louder".
+    expected = {
+        "en": "The little cat sat on the warm mat near the door.",
+        "fr": "Le petit chat dort sur le tapis près de la porte.",
+        "ar": "جلس القط الصغير على البساط الدافئ قرب الباب",
+    }[lang]
+    heard = " ".join(expected.split()[:3])
+    r = check_recitation(expected, heard, lang)
+    nxt = expected.split()[3]
+    for form in (lambda x: x, asdict, result_summary):
+        text = for_result(form(r), lang, age)
+        assert text == feedback.stopped(lang, age, nxt)
+        assert text != say_again(lang, age)
+
+
+@pytest.mark.parametrize("lang", LANGS)
+@pytest.mark.parametrize("age", AGE_BANDS)
+def test_unreliable_but_audible_speech_is_not_told_to_speak_louder(lang: str, age: str) -> None:
+    r = check_recitation("one two three four five", "alpha beta gamma delta epsilon", "en")
+    assert r.say_again_reason == "error_rate"
+    text = for_result(r, lang, age)
+    assert text == say_again(lang, age, "error_rate") != say_again(lang, age)
+    assert for_result(check_recitation("one two", "", "en"), lang, age) == say_again(lang, age)
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_dictation_feedback(lang: str) -> None:
+    from mommy.align import check_writing
+
+    nothing = check_writing("le chat dort", "  ", "fr")
+    assert for_result(nothing, lang, "6-9", activity="dictation") == say_again(lang, "6-9", "nothing_written")
+    only_unreadable = check_writing("le chat dort", "le [?] dort", "fr")
+    assert for_result(only_unreadable, lang, "6-9") == feedback.unreadable(lang, "6-9")
+    assert for_result(result_summary(only_unreadable), lang, "6-9") == feedback.unreadable(lang, "6-9")
+    # An unreadable word is never pointed out; the real mistake after it is.
+    mixed = check_writing("le chat dort sur le tapis", "le [?] dor sur le tapis", "fr")
+    assert for_result(mixed, lang, "6-9") == point_out(lang, "6-9", "dort", "sub")

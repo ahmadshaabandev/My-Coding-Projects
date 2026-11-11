@@ -6,48 +6,95 @@ what was heard (speech) or written (dictation).
 
 Alignment
 ---------
-:func:`align` is a plain word-level Levenshtein alignment (substitution, deletion and
-insertion all cost 1). Among the alignments with the minimum cost, ties are broken
-deterministically from the start of the text: at each step the first optimal move in
-the order match, sub, del, ins is taken. A child reads from the beginning, so a
-skipped stretch is reported where it starts: for expected ``the cat sat on the mat``
-and heard ``the mat`` the result is ``the`` matched, ``cat sat on the`` deleted and
-``mat`` matched.
+:func:`align` is a word-level Levenshtein alignment (substitution, deletion and
+insertion all cost 1). Among the alignments with the minimum cost, the one that matches
+the most expected words is taken: for expected ``I see the cat`` and heard ``I see cat
+now``, "``the`` skipped, ``cat`` matched, ``now`` added" (3 words right) beats "``the``
+heard as ``cat``, ``cat`` heard as ``now``" (2 words right), although both cost 2. The
+remaining ties are broken deterministically from the start of the text: at each step
+the first optimal move in the order match, sub, del, ins is taken. A child reads from
+the beginning, so a skipped stretch is reported where it starts: for expected ``the cat
+sat on the mat`` and heard ``the mat`` the result is ``the`` matched, ``cat sat on the``
+deleted and ``mat`` matched.
 
-:func:`align_with_joins` adds one move used for speech only: a recogniser splits and
-joins words freely (``peut-être`` / ``peut être``, ``عبد الله`` / ``عبدالله``), so an
-expected word whose key equals the concatenated keys of two or three consecutive heard
-tokens (or the reverse) is a match at no cost. The op of a joined match keeps one
+:func:`align_with_joins` adds moves used for speech only: a recogniser splits and joins
+words freely (``peut-être`` / ``peut être``, ``عبد الله`` / ``عبدالله``), so an expected
+word whose key equals the concatenated keys of two or three consecutive heard tokens (or
+the reverse) is a match at no cost. :func:`check_recitation` also lets it match a number
+written in digits with the same number in words (``12`` / ``twelve``, ``21`` / ``vingt et
+un`` / ``واحد وعشرون``) and an English contraction with its full form (``they're`` /
+``they are``); see :func:`speech_joins`. The op of a joined match keeps one
 ``heard_index`` (the first heard piece) and its ``heard`` field holds the pieces joined
 by a space; when one heard token covers several expected words, each of them gets a
 match op that points to that same heard token.
 
 Verdicts
 --------
-``say_again`` is True when nothing usable was heard (no heard tokens) or the error rate
-``n_errors / n_expected`` is above :data:`SAY_AGAIN_ERROR_RATE` (0.6): the input then
-looks unreliable rather than wrong, and the verdict is ``"unclear"``. Otherwise the
-verdict is ``"correct"`` with no errors and ``"mistakes"`` with at least one.
+``say_again`` is True when the input looks unreliable, and the verdict is then
+``"unclear"``; ``say_again_reason`` says why:
+
+* ``"empty"``: nothing usable was heard or written (no tokens);
+* ``"error_rate"`` (speech only): the error rate is above :data:`SAY_AGAIN_ERROR_RATE`
+  (0.6). The rate leaves out a final run of skipped words when the child stopped early
+  (see ``stopped_at_exp_index``): ``n_errors`` minus that run, divided by the expected
+  words before it. A child who reads the first sentence of a page well is told where
+  they stopped, not that the recording was unclear.
+
+In dictation (:func:`check_writing`) only an empty writing gives ``say_again``: a page
+full of misspellings is a result for the parent to confirm, not a bad recording.
+Otherwise the verdict is ``"correct"`` with no errors and ``"mistakes"`` with at least
+one.
+
+``stopped_at_exp_index`` is the expected index of the first word of a final run of at
+least :data:`STOPPED_MIN_WORDS` skipped words, when something was heard before it.
+
+In a dictation read from a photo, a word the reader could not read is written
+:data:`UNREADABLE` (``[?]``). It is aligned like any written word, so it shows as a
+``sub`` whose ``heard`` is ``[?]``, never as a skipped word; ``n_unreadable`` counts
+them, and the feedback does not point them out as mistakes.
 """
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 import numpy as np
 
-from .textnorm import Lang, normalize_dictation_word, normalize_word, tokenize
+from .textnorm import (
+    Lang,
+    digit_number,
+    english_expansions,
+    fold_english_spelling,
+    is_number_word,
+    normalize_dictation_word,
+    normalize_word,
+    spoken_number,
+    tokenize,
+)
 
 OpKind = Literal["match", "sub", "del", "ins"]
 Verdict = Literal["correct", "mistakes", "unclear"]
+SayAgainReason = Literal["empty", "error_rate"]
 
-#: Error rate (errors / expected words) above which the input is treated as unreliable.
+#: Error rate (errors / expected words) above which speech is treated as unreliable.
 SAY_AGAIN_ERROR_RATE = 0.6
+
+#: A final run of at least this many skipped words means the child stopped early.
+STOPPED_MIN_WORDS = 2
 
 #: Largest number of tokens that :func:`align_with_joins` joins into one word.
 MAX_JOINED_PIECES = 3
+
+#: The mark a page or handwriting reader writes for a word it cannot read.
+UNREADABLE = "[?]"
+_UNREADABLE_RE = re.compile(r"\[\s*[?\u061f]\s*\]")
+
+#: Joined matches: ``(i, j)`` -> the piece counts ``k`` that match there (see
+#: :func:`align_with_joins`).
+Joins = Mapping[tuple[int, int], Sequence[int]]
 
 
 @dataclass
@@ -70,8 +117,11 @@ class CheckResult:
     n_errors: int  # sub + del + ins
     first_error_exp_index: int | None
     verdict: Literal["correct", "mistakes", "unclear"]
-    say_again: bool  # True when the input looks unreliable: empty, or error rate above 0.6
+    say_again: bool  # True when the input looks unreliable: empty, or (speech) error rate above 0.6
     word_accuracy: float  # matched / n_expected (0..1)
+    say_again_reason: SayAgainReason | None = None  # "empty" or "error_rate" when say_again
+    stopped_at_exp_index: int | None = None  # first word of a final run of skipped words
+    n_unreadable: int = 0  # written words read as [?] (counted in n_errors)
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +134,9 @@ def align(expected: list[str], heard: list[str], key: Callable[[str], str]) -> l
 
     ``key`` normalises a token for comparison; two tokens match when their keys are
     equal. Substitution, deletion and insertion each cost 1. Among the minimum-cost
-    alignments, ties are broken from the start of the lists, preferring match, then
-    sub, then del, then ins (see the module docstring).
+    alignments the one with the most matched words is taken, and remaining ties are
+    broken from the start of the lists, preferring match, then sub, then del, then ins
+    (see the module docstring).
 
     Returns the ops in order. Every expected index appears in exactly one match, sub or
     del op, and every heard index in exactly one match, sub or ins op, both in
@@ -100,6 +151,7 @@ def align_with_joins(
     key: Callable[[str], str],
     *,
     max_pieces: int = MAX_JOINED_PIECES,
+    extra_joins: tuple[Joins, Joins] | None = None,
 ) -> list[Op]:
     """Like :func:`align`, but a word split or joined differently counts as a match.
 
@@ -109,12 +161,17 @@ def align_with_joins(
     consecutive expected tokens whose keys concatenate to one heard key are each matched
     to that heard token. Joined matches cost 0 and rank with matches in the tie-break.
 
+    ``extra_joins`` adds equivalences found by the caller, as ``(join_heard,
+    join_exp)``: ``join_heard[(i, j)]`` lists the counts ``k`` for which expected[i]
+    matches heard[j:j+k], and ``join_exp[(i, j)]`` those for which expected[i:i+k]
+    matches heard[j] (``k`` may be 1). See :func:`speech_joins`.
+
     Use this for speech only: in dictation, writing ``peut être`` for ``peut-être`` is a
     spelling mistake. The key should already ignore hyphens and apostrophes.
     """
     if max_pieces < 1:
         raise ValueError("max_pieces must be at least 1")
-    return _align(expected, heard, key, max_pieces=max_pieces)
+    return _align(expected, heard, key, max_pieces=max_pieces, extra_joins=extra_joins)
 
 
 def _align(
@@ -123,6 +180,7 @@ def _align(
     key: Callable[[str], str],
     *,
     max_pieces: int,
+    extra_joins: tuple[Joins, Joins] | None = None,
 ) -> list[Op]:
     exp_keys = [key(t) for t in expected]
     heard_keys = [key(t) for t in heard]
@@ -134,49 +192,63 @@ def _align(
     heard_ids = np.array([ids.setdefault(k, len(ids)) for k in heard_keys], dtype=np.int64)
 
     join_heard, join_exp = _find_joins(exp_keys, heard_keys, max_pieces)
+    if extra_joins is not None:
+        for target, extra in zip((join_heard, join_exp), extra_joins):
+            for (i, j), ks in extra.items():
+                if 0 <= i < n and 0 <= j < m:
+                    target[(i, j)] = sorted(set(target.get((i, j), ())) | {k for k in ks if k >= 1})
+        for (i, j), ks in list(join_heard.items()):
+            join_heard[(i, j)] = [k for k in ks if j + k <= m]
+        for (i, j), ks in list(join_exp.items()):
+            join_exp[(i, j)] = [k for k in ks if i + k <= n]
     join_heard_rows: dict[int, list[tuple[int, int]]] = defaultdict(list)
-    for (i, j), k in join_heard.items():
-        join_heard_rows[i].append((j, k))
+    for (i, j), ks in join_heard.items():
+        join_heard_rows[i].extend((j, k) for k in ks)
     join_exp_rows: dict[int, list[tuple[int, int]]] = defaultdict(list)
-    for (i, j), k in join_exp.items():
-        join_exp_rows[i].append((j, k))
+    for (i, j), ks in join_exp.items():
+        join_exp_rows[i].extend((j, k) for k in ks)
 
-    # cost[i, j] = minimum cost of aligning expected[i:] with heard[j:].
-    cost = np.zeros((n + 1, m + 1), dtype=np.int64)
-    cols = np.arange(m + 1, dtype=np.int64)
-    cost[n] = m - cols  # only insertions remain
+    # score[i, j] = cost * big - matches for the best alignment of expected[i:] with
+    # heard[j:]: the minimum cost first, then the most matched expected words (there
+    # are at most n, so ``big`` keeps the two apart). int32 whenever it is wide enough.
+    big = n + 1
+    dtype = np.int32 if (n + m + 1) * big < 2**31 - 1 else np.int64
+    score = np.empty((n + 1, m + 1), dtype=dtype)
+    cols = np.arange(m + 1, dtype=dtype)
+    col_cost = cols * big
+    score[n] = (m - cols) * big  # only insertions remain
     for i in range(n - 1, -1, -1):
-        best = cost[i + 1] + 1  # delete expected[i]
+        best = score[i + 1] + big  # delete expected[i]
         if m:
-            diag = cost[i + 1, 1:] + (heard_ids != exp_ids[i])
+            diag = score[i + 1, 1:] + np.where(heard_ids == exp_ids[i], -1, big).astype(dtype)
             np.minimum(best[:m], diag, out=best[:m])
         for j, k in join_heard_rows.get(i, ()):
-            best[j] = min(best[j], cost[i + 1, j + k])
+            best[j] = min(best[j], score[i + 1, j + k] - 1)
         for j, k in join_exp_rows.get(i, ()):
-            best[j] = min(best[j], cost[i + k, j + 1])
-        # Insertions run along the row: cost[i, j] = min over j' >= j of
-        # best[j'] + (j' - j), i.e. a running minimum from the right.
-        shifted = best + cols
-        cost[i] = np.minimum.accumulate(shifted[::-1])[::-1] - cols
+            best[j] = min(best[j], score[i + k, j + 1] - k)
+        # Insertions run along the row: score[i, j] = min over j' >= j of
+        # best[j'] + (j' - j) * big, i.e. a running minimum from the right.
+        shifted = best + col_cost
+        score[i] = np.minimum.accumulate(shifted[::-1])[::-1] - col_cost
 
     # Forward trace: take the first optimal move in the order match, sub, del, ins.
     ops: list[Op] = []
     i = j = 0
     while i < n or j < m:
-        here = cost[i, j]
-        if i < n and j < m and exp_ids[i] == heard_ids[j] and cost[i + 1, j + 1] == here:
+        here = score[i, j]
+        if i < n and j < m and exp_ids[i] == heard_ids[j] and score[i + 1, j + 1] - 1 == here:
             ops.append(Op("match", i, j, expected[i], heard[j]))
             i, j = i + 1, j + 1
-        elif (k := join_heard.get((i, j))) and cost[i + 1, j + k] == here:
+        elif (k := next((k for k in join_heard.get((i, j), ()) if score[i + 1, j + k] - 1 == here), 0)):
             ops.append(Op("match", i, j, expected[i], " ".join(heard[j : j + k])))
             i, j = i + 1, j + k
-        elif (k := join_exp.get((i, j))) and cost[i + k, j + 1] == here:
+        elif (k := next((k for k in join_exp.get((i, j), ()) if score[i + k, j + 1] - k == here), 0)):
             ops.extend(Op("match", i + t, j, expected[i + t], heard[j]) for t in range(k))
             i, j = i + k, j + 1
-        elif i < n and j < m and cost[i + 1, j + 1] + 1 == here:
+        elif i < n and j < m and score[i + 1, j + 1] + big == here:
             ops.append(Op("sub", i, j, expected[i], heard[j]))
             i, j = i + 1, j + 1
-        elif i < n and cost[i + 1, j] + 1 == here:
+        elif i < n and score[i + 1, j] + big == here:
             ops.append(Op("del", i, None, expected[i], None))
             i += 1
         else:
@@ -187,15 +259,15 @@ def _align(
 
 def _find_joins(
     exp_keys: list[str], heard_keys: list[str], max_pieces: int
-) -> tuple[dict[tuple[int, int], int], dict[tuple[int, int], int]]:
+) -> tuple[dict[tuple[int, int], list[int]], dict[tuple[int, int], list[int]]]:
     """Find the joined matches allowed by :func:`align_with_joins`.
 
-    Returns two maps from ``(i, j)`` to a piece count ``k``: in the first, expected[i]
+    Returns two maps from ``(i, j)`` to piece counts ``k``: in the first, expected[i]
     equals heard[j:j+k] joined; in the second, expected[i:i+k] joined equals heard[j].
-    Since keys are non-empty, at most one ``k`` fits each ``(i, j)``.
+    Since keys are non-empty, at most one ``k`` fits each ``(i, j)`` here.
     """
-    join_heard: dict[tuple[int, int], int] = {}
-    join_exp: dict[tuple[int, int], int] = {}
+    join_heard: dict[tuple[int, int], list[int]] = {}
+    join_exp: dict[tuple[int, int], list[int]] = {}
     if max_pieces < 2:
         return join_heard, join_exp
 
@@ -217,8 +289,80 @@ def _find_joins(
                     break
                 joined = "".join(pieces[start : start + k])
                 for other in at.get(joined, ()):
-                    target[(start, other) if swap else (other, start)] = k
+                    target[(start, other) if swap else (other, start)] = [k]
     return join_heard, join_exp
+
+
+def speech_joins(
+    expected: Sequence[str], heard: Sequence[str], lang: Lang, *, max_pieces: int = MAX_JOINED_PIECES
+) -> tuple[dict[tuple[int, int], list[int]], dict[tuple[int, int], list[int]]]:
+    """Speech equivalences between expected and heard tokens, as ``extra_joins``.
+
+    * Numbers: a token written in digits matches the same number written in words in
+      1..``max_pieces`` consecutive tokens on the other side (``12`` / ``twelve``, ``25``
+      / ``twenty five``, ``21`` / ``vingt et un``, ``٢١`` / ``واحد وعشرون``, ``1er`` /
+      ``premier``), for 0 to 100 (:func:`mommy.textnorm.spoken_number`). Digits match
+      digits through the key already.
+    * English contractions: ``they're`` matches ``they are``, ``she's`` matches ``she
+      is`` or ``she has``, ``don't`` matches ``do not``, on either side
+      (:func:`mommy.textnorm.english_expansions`).
+
+    Speech only: in a dictation these are spelling differences.
+    """
+    join_heard: dict[tuple[int, int], list[int]] = defaultdict(list)
+    join_exp: dict[tuple[int, int], list[int]] = defaultdict(list)
+
+    def digits_at(tokens: Sequence[str]) -> dict[str, list[int]]:
+        where: dict[str, list[int]] = defaultdict(list)
+        for idx, tok in enumerate(tokens):
+            if (value := digit_number(tok, lang)) is not None:
+                where[value].append(idx)
+        return where
+
+    def word_numbers(tokens: Sequence[str]) -> list[tuple[int, int, str]]:
+        found = []
+        for start, tok in enumerate(tokens):
+            if not is_number_word(tok, lang):
+                continue
+            for k in range(1, max_pieces + 1):
+                if start + k > len(tokens):
+                    break
+                if (value := spoken_number(tokens[start : start + k], lang)) is not None:
+                    found.append((start, k, value))
+        return found
+
+    exp_digits, heard_digits = digits_at(expected), digits_at(heard)
+    if exp_digits:
+        for j, k, value in word_numbers(heard):
+            for i in exp_digits.get(value, ()):
+                join_heard[(i, j)].append(k)
+    if heard_digits:
+        for i, k, value in word_numbers(expected):
+            for j in heard_digits.get(value, ()):
+                join_exp[(i, j)].append(k)
+
+    if lang == "en":
+        def keyed(tokens: Sequence[str]) -> list[str]:
+            return [recitation_key(t, "en") for t in tokens]
+
+        def runs(keys: list[str], k: int) -> dict[tuple[str, ...], list[int]]:
+            where: dict[tuple[str, ...], list[int]] = defaultdict(list)
+            for idx in range(len(keys) - k + 1):
+                where[tuple(keys[idx : idx + k])].append(idx)
+            return where
+
+        exp_keys, heard_keys = keyed(expected), keyed(heard)
+        exp_runs = {k: runs(exp_keys, k) for k in (1, 2)}
+        heard_runs = {k: runs(heard_keys, k) for k in (1, 2)}
+        for j, tok in enumerate(heard):
+            for full in english_expansions(tok):
+                for i in exp_runs[len(full)].get(tuple(recitation_key(w, "en") for w in full), ()):
+                    join_exp[(i, j)].append(len(full))
+        for i, tok in enumerate(expected):
+            for full in english_expansions(tok):
+                for j in heard_runs[len(full)].get(tuple(recitation_key(w, "en") for w in full), ()):
+                    join_heard[(i, j)].append(len(full))
+    return dict(join_heard), dict(join_exp)
 
 
 # ---------------------------------------------------------------------------
@@ -226,17 +370,29 @@ def _find_joins(
 # ---------------------------------------------------------------------------
 
 
-def build_result(ops: list[Op], n_expected: int, n_heard: int) -> CheckResult:
+def build_result(
+    ops: list[Op],
+    n_expected: int,
+    n_heard: int,
+    *,
+    unreliable_error_rate: float | None = SAY_AGAIN_ERROR_RATE,
+) -> CheckResult:
     """Summarise an alignment as a :class:`CheckResult`.
 
     ``first_error_exp_index`` is the expected index of the first non-match op; for an
     insertion it is the index of the expected word that follows it (the last expected
     word when the insertion is at the end), and None when nothing was expected.
     ``n_heard`` is the number of heard (or written) tokens; zero means nothing usable
-    was heard, so the child is asked to say it again.
+    was heard, so the child is asked to say it again (``say_again_reason`` ``"empty"``).
+
+    ``unreliable_error_rate`` is the error rate above which the input is treated as
+    unreliable (``"error_rate"``); a final run of skipped words after the child stopped
+    is left out of that rate (see the module docstring). None turns the rule off, as
+    for dictation.
     """
     n_match = sum(1 for op in ops if op.kind == "match")
     n_errors = len(ops) - n_match
+    n_unreadable = sum(1 for op in ops if op.kind != "match" and op.heard == UNREADABLE)
 
     first_error: int | None = None
     for pos, op in enumerate(ops):
@@ -249,8 +405,24 @@ def build_result(ops: list[Op], n_expected: int, n_heard: int) -> CheckResult:
             first_error = following if following is not None else (n_expected - 1 if n_expected else None)
         break
 
-    error_rate = n_errors / max(n_expected, 1)
-    say_again = n_heard == 0 or error_rate > SAY_AGAIN_ERROR_RATE
+    trailing = 0
+    for op in reversed(ops):
+        if op.kind != "del":
+            break
+        trailing += 1
+    stopped: int | None = None
+    if n_heard and trailing >= STOPPED_MIN_WORDS and trailing < len(ops):
+        stopped = ops[len(ops) - trailing].exp_index
+
+    reason: SayAgainReason | None = None
+    if n_heard == 0:
+        reason = "empty"
+    elif unreliable_error_rate is not None:
+        skipped_at_end = trailing if stopped is not None else 0
+        error_rate = (n_errors - skipped_at_end) / max(n_expected - skipped_at_end, 1)
+        if error_rate > unreliable_error_rate:
+            reason = "error_rate"
+    say_again = reason is not None
     verdict: Verdict
     if say_again:
         verdict = "unclear"
@@ -267,6 +439,9 @@ def build_result(ops: list[Op], n_expected: int, n_heard: int) -> CheckResult:
         verdict=verdict,
         say_again=say_again,
         word_accuracy=accuracy,
+        say_again_reason=reason,
+        stopped_at_exp_index=stopped,
+        n_unreadable=n_unreadable,
     )
 
 
@@ -275,18 +450,26 @@ def recitation_key(token: str, lang: Lang) -> str:
 
     :func:`~mommy.textnorm.normalize_word` without tashkeel and without accents, and
     without hyphens and apostrophes, which cannot be heard (``peut-être`` and
-    ``peutêtre``, ``l'a`` and ``la`` sound the same).
+    ``peutêtre``, ``l'a`` and ``la`` sound the same). In English, British spellings are
+    folded onto American ones (:func:`~mommy.textnorm.fold_english_spelling`), because
+    the recogniser writes ``color`` for a child who read ``colour``.
     """
-    return (
+    key = (
         normalize_word(token, lang, keep_tashkeel=False, keep_accents=False)
         .replace("-", "")
         .replace("'", "")
     )
+    if lang == "en" and key.isascii():
+        key = fold_english_spelling(key)
+    return key
 
 
 def writing_key(token: str, lang: Lang, *, strict_tashkeel: bool = False) -> str:
     """Comparison key of a token for dictation (spelling): see
-    :func:`~mommy.textnorm.normalize_dictation_word`."""
+    :func:`~mommy.textnorm.normalize_dictation_word`. :data:`UNREADABLE` gets a key
+    that matches no word."""
+    if token == UNREADABLE:
+        return "\x00" + UNREADABLE
     return normalize_dictation_word(token, lang, keep_tashkeel=strict_tashkeel)
 
 
@@ -297,12 +480,31 @@ def check_recitation(expected_text: str, heard_text: str, lang: Lang) -> CheckRe
     ``heard_index`` refer to those tokens) and compared with :func:`recitation_key`, so
     tashkeel, accents, case, punctuation and the Arabic letter variants a recogniser
     spells inconsistently do not count. Words split or joined differently by the
-    recogniser are accepted (:func:`align_with_joins`).
+    recogniser, numbers written in digits for words (or the reverse) and English
+    contractions are accepted (:func:`align_with_joins`, :func:`speech_joins`).
     """
     expected = tokenize(expected_text, lang)
     heard = tokenize(heard_text, lang)
-    ops = align_with_joins(expected, heard, lambda t: recitation_key(t, lang))
+    ops = align_with_joins(
+        expected, heard, lambda t: recitation_key(t, lang), extra_joins=speech_joins(expected, heard, lang)
+    )
     return build_result(ops, len(expected), len(heard))
+
+
+def tokenize_written(text: str, lang: Lang) -> list[str]:
+    """:func:`~mommy.textnorm.tokenize`, keeping each :data:`UNREADABLE` mark (``[?]``,
+    also ``[ ? ]`` or with ``؟``) as a token of its own."""
+    tokens: list[str] = []
+    for idx, part in enumerate(_UNREADABLE_RE.split(text)):
+        if idx:
+            tokens.append(UNREADABLE)
+        tokens.extend(tokenize(part, lang))
+    return tokens
+
+
+def has_unreadable(text: str) -> bool:
+    """True when ``text`` holds an :data:`UNREADABLE` mark."""
+    return bool(_UNREADABLE_RE.search(text))
 
 
 def check_writing(
@@ -314,35 +516,48 @@ def check_writing(
     seats, ta marbuta and alef maksura are significant (``مدرسه`` for ``مدرسة`` is a
     mistake). Case and punctuation are ignored. Tashkeel is ignored unless
     ``strict_tashkeel``. Plain :func:`align` is used: a word written in two parts is a
-    mistake.
+    mistake, and so is a number written in digits for words. A word the reader marked
+    unreadable (``[?]``) is a ``sub`` with ``heard`` ``[?]``, counted in
+    ``n_unreadable``. Only an empty writing gives ``say_again``.
     """
     expected = tokenize(expected_text, lang)
-    written = tokenize(written_text, lang)
+    written = tokenize_written(written_text, lang)
     ops = align(
         expected, written, lambda t: writing_key(t, lang, strict_tashkeel=strict_tashkeel)
     )
-    return build_result(ops, len(expected), len(written))
+    return build_result(ops, len(expected), len(written), unreliable_error_rate=None)
 
 
 def result_summary(result: CheckResult, *, max_errors: int = 5) -> dict[str, Any]:
     """A compact, JSON-ready summary of a result, for wording feedback.
 
-    ``{"verdict", "say_again", "n_expected", "n_errors", "word_accuracy",
+    ``{"verdict", "say_again", "say_again_reason", "n_expected", "n_errors",
+    "n_unreadable", "word_accuracy", "stopped_at", "stopped_at_exp_index",
     "errors": [{"kind", "expected", "heard", "exp_index"}, ...]}`` with at most
-    ``max_errors`` errors, in text order. It holds only the words of the errors, so it
-    can be handed to a feedback writer without changing the verdict.
+    ``max_errors`` errors, in text order. Words marked unreadable are not listed as
+    errors (they are counted in ``n_unreadable``). ``stopped_at`` is the expected word
+    where the child stopped, or None. It holds only the words of the errors, so it can
+    be handed to a feedback writer without changing the verdict.
     """
     errors = [
         {"kind": op.kind, "expected": op.expected, "heard": op.heard, "exp_index": op.exp_index}
         for op in result.ops
-        if op.kind != "match"
+        if op.kind != "match" and op.heard != UNREADABLE
     ]
+    stopped = result.stopped_at_exp_index
+    stopped_word = next(
+        (op.expected for op in result.ops if stopped is not None and op.exp_index == stopped), None
+    )
     return {
         "verdict": result.verdict,
         "say_again": result.say_again,
+        "say_again_reason": result.say_again_reason,
         "n_expected": result.n_expected,
         "n_errors": result.n_errors,
+        "n_unreadable": result.n_unreadable,
         "word_accuracy": round(result.word_accuracy, 4),
+        "stopped_at": stopped_word,
+        "stopped_at_exp_index": stopped,
         "errors": errors[:max_errors],
     }
 
@@ -350,14 +565,20 @@ def result_summary(result: CheckResult, *, max_errors: int = 5) -> dict[str, Any
 __all__ = [
     "MAX_JOINED_PIECES",
     "SAY_AGAIN_ERROR_RATE",
+    "STOPPED_MIN_WORDS",
+    "UNREADABLE",
     "CheckResult",
+    "Joins",
     "Op",
     "align",
     "align_with_joins",
     "build_result",
     "check_recitation",
     "check_writing",
+    "has_unreadable",
     "recitation_key",
     "result_summary",
+    "speech_joins",
+    "tokenize_written",
     "writing_key",
 ]

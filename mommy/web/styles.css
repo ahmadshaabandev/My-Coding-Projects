@@ -716,6 +716,21 @@ fieldset {
   content: "⚠ ";
 }
 
+/* A button that belongs to the status line just above it ("Go to the Quran section"). */
+.status-action {
+  margin: 0 0 8px;
+}
+
+/* A note for the grown-up (the voice may be unclear, the text was edited). */
+.hint-parent {
+  margin: 6px 0;
+  padding: 6px 10px;
+  border-inline-start: 4px solid var(--notice-border);
+  background: var(--notice-bg);
+  border-radius: 6px;
+  color: var(--text);
+}
+
 /* ---------------------------------------------------------------- record bar */
 .rec-bar {
   position: sticky;
@@ -1015,6 +1030,17 @@ fieldset {
   content: "✓ ";
 }
 
+/* "Same meaning", with ideas still missing. */
+.verdict-nearly {
+  color: var(--match-fg);
+  background: var(--match-bg);
+  border-style: dashed;
+}
+
+.verdict-nearly::before {
+  content: "≈ ";
+}
+
 .verdict-partly {
   color: var(--sub-fg);
   background: var(--sub-bg);
@@ -1094,6 +1120,18 @@ fieldset {
 
 .quran-text .w {
   padding: 0 0.1em;
+}
+
+/* Line breaks (see renderQuranText in app.js): a word never parts from the pause mark
+   after it, and the last word of an ayah never parts from the ayah number. Lines still
+   break between the other words of an ayah. */
+.quran-text .ayah-end,
+.quran-text .qg {
+  white-space: nowrap;
+}
+
+.quran-text .ayah {
+  white-space: normal;
 }
 
 /* Matched Quran words: green text only, so the page stays calm to read. Errors keep

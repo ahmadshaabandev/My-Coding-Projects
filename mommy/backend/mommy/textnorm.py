@@ -52,7 +52,7 @@ normalisation of ordinary text.
 
 Measured on ayat whose Uthmani and Simple-Clean token counts match, the share of word
 pairs that normalise to the same key is 99.5% for Juz' Amma (surahs 78-114, 2402 of
-2413 pairs) and 99.5% for the whole Quran (70,436 of 70,798).  The contract rules alone
+2413 pairs) and 99.5% for the whole Quran (70,455 of 70,798).  The contract rules alone
 give 92.2% and 91.5%.  What remains is mostly a bare hamza on the line where standard
 spelling gives it a seat (``أَرَءَيْتَ`` / ``أرأيت``) and a silent alef after a final waw
 that standard spelling omits (``يَتْلُوا۟`` / ``يتلو``); neither can be decided from the
@@ -64,7 +64,7 @@ from __future__ import annotations
 import functools
 import re
 import unicodedata
-from typing import Literal
+from typing import Literal, Sequence
 
 Lang = Literal["ar", "en", "fr"]
 
@@ -86,6 +86,9 @@ SMALL_HIGH_NOON = "\u06e8"
 END_OF_AYAH = "\u06dd"
 
 ALEF = "\u0627"
+ALEF_HAMZA = "\u0623"
+WAW_HAMZA = "\u0624"
+YEH_HAMZA = "\u0626"
 WAW = "\u0648"
 YEH = "\u064a"
 ALEF_MAKSURA = "\u0649"
@@ -306,9 +309,10 @@ def _hamza_on_tatweel(s: str, i: int) -> str:
     spelling rules that the Tanzil Simple text uses: a kasra on the hamza, a kasra
     before it, or a preceding ya give ``ئ``; a damma gives ``ؤ`` (but ``ئ`` before a
     waw); a sukun takes its seat from the vowel before it; a fatha gives ``أ``, except
-    before an alef, where the two make ``آ``.  The returned letter is already in its
-    speech-normalised form (``ئ`` -> ``ي``, ``ؤ`` -> ``و``, ``أ`` -> ``ا``); an empty
-    string means "no extra letter".
+    before an alef, where the two make ``آ``.  The seat is returned as the hamza letter
+    (``ئ``, ``ؤ`` or ``أ``), so that the rest of the speech normaliser treats it exactly
+    like the same letter typed in standard spelling; an empty string means "no extra
+    letter".
     """
     end = _marks_after(s, i + 1)
     marks = s[i + 1 : end]
@@ -322,17 +326,17 @@ def _hamza_on_tatweel(s: str, i: int) -> str:
         or (nxt == TATWEEL and SUPERSCRIPT_ALEF in s[end + 1 : _marks_after(s, end + 1)])
     )
     if KASRA in marks or KASRATAN in marks or prev in (YEH, ALEF_MAKSURA):
-        return YEH  # مُتَّكِـِٔينَ -> متكئين, شَيْـًٔا -> شيئا, خَطِيٓـَٔـٰتِكُمْ -> خطيئاتكم
+        return YEH_HAMZA  # مُتَّكِـِٔينَ -> متكئين, شَيْـًٔا -> شيئا, خَطِيٓـَٔـٰتِكُمْ -> خطيئاتكم
     if FATHA in marks and alef_follows:
         return ""  # ٱلْـَٔاخِرَةِ -> الآخرة, بِـَٔايَـٰتِنَا -> بآياتنا
     if KASRA in prev_marks:
-        return YEH  # فِـَٔةٍ -> فئة, أَنۢبِـُٔونِى -> أنبئوني
+        return YEH_HAMZA  # فِـَٔةٍ -> فئة, أَنۢبِـُٔونِى -> أنبئوني
     if DAMMA in marks or DAMMATAN in marks:
-        return YEH if nxt == WAW else WAW
+        return YEH_HAMZA if nxt == WAW else WAW_HAMZA
     if SUKUN in marks:
-        return WAW if DAMMA in prev_marks else ALEF  # تُـْٔوِيهِ, يَسْتَـْٔذِنُكَ
+        return WAW_HAMZA if DAMMA in prev_marks else ALEF_HAMZA  # تُـْٔوِيهِ, يَسْتَـْٔذِنُكَ
     if FATHA in marks or FATHATAN in marks:
-        return "" if alef_follows else ALEF  # تَسْـَٔلُونَ -> تسألون
+        return "" if alef_follows else ALEF_HAMZA  # تَسْـَٔلُونَ -> تسألون
     return ""
 
 
@@ -416,7 +420,10 @@ def normalize_word(
       tatweel and Quranic annotation marks are always dropped;
     * alef forms ``أ إ آ ٱ`` become ``ا``; ``ى`` becomes ``ي``; ``ة`` becomes ``ه``;
       ``ؤ`` becomes ``و``; ``ئ`` becomes ``ي``; ``ء`` is dropped when the word has
-      other letters.
+      other letters;
+    * same-sound spellings are unified: a hamza (``ء ؤ ئ``) before a waw is dropped
+      (``رءوف`` / ``رؤوف``, ``مسئول`` / ``مسؤول``), ``مائة`` / ``مائتين`` become
+      ``مئة`` / ``مئتين`` and ``داوود`` becomes ``داود``.
 
     English and French: casefold; the ligatures ``œ`` and ``æ`` become ``oe``/``ae``;
     with ``keep_accents=False`` diacritics are removed (``é`` -> ``e``).  Use
@@ -448,6 +455,24 @@ _WASLA_DOUBLED_LAM_RE = re.compile("\u0671\u0644[\u064b-\u065f]*\u0651")
 _SINGLE_LAM_WORDS_RE = re.compile("^([\u0648\u0641\u0628\u0643]?)\u0627\u0644(?=\u064a\u0644|\u0627\u062a\u064a|\u0627\u064a\u064a)")
 
 
+# Same-sound spellings that differ between older (Tanzil Simple-Clean, some textbooks) and
+# modern typed Arabic, which the speech recogniser writes. Speech normaliser only: in a
+# dictation the spelling is what is checked.
+#
+# * A hamza before a waw is written on the line, on a ya seat or on a waw seat (رءوف /
+#   رؤوف, مسئول / مسؤول, جاءوا / جاؤوا, يستهزئون / يستهزؤون): the hamza and its seat
+#   are dropped, leaving one waw.
+# * مائة / مائتين are also written مئة / مئتين (not مائدة: only before ة or ت).
+# * داوود is also written داود.
+#
+# Measured on the Simple-Clean text (rewriting ءو/ئو as ؤو, مائة as مئة and داوود as
+# داود): without these rules 147 tokens (66 distinct words, in 140 ayat) had a key
+# different from that of their modern spelling; with them, none (tests/test_textnorm.py).
+_HAMZA_BEFORE_WAW_RE = re.compile("[\u0621\u0624\u0626](?=\u0648)")
+_MIAH_RE = re.compile("\u0645\u0627(?=\u0626[\u0629\u062a])")
+_DAWUD_RE = re.compile("\u062f\u0627\u0648\u0648\u062f")
+
+
 def _normalize_arabic_speech(s: str, *, keep_tashkeel: bool) -> str:
     """Speech-normalise the Arabic letters of one prepared word (see normalize_word)."""
     s = unicodedata.normalize("NFC", s)
@@ -458,6 +483,9 @@ def _normalize_arabic_speech(s: str, *, keep_tashkeel: bool) -> str:
     else:
         s = _uthmani_to_standard(s, letters_only=True)
         s = _NON_VOWEL_MARKS_RE.sub("", s)
+    s = _HAMZA_BEFORE_WAW_RE.sub("", s)
+    s = _MIAH_RE.sub("\u0645", s)
+    s = _DAWUD_RE.sub("\u062f\u0627\u0648\u062f", s)
     s = s.translate(_SPEECH_LETTERS)
     letters = [c for c in s if unicodedata.category(c).startswith("L")]
     if any(c != HAMZA for c in letters):
@@ -567,13 +595,344 @@ def tokenize(text: str, lang: Lang) -> list[str]:
     return [text[a:b] for a, b in token_spans(text, lang)]
 
 
+# ---------------------------------------------------------------------------
+# Speech only: numbers, English spelling variants and contractions
+# ---------------------------------------------------------------------------
+#
+# A speech recogniser writes "12" where the page prints "twelve" (and the reverse),
+# "color" for "colour" and "they're" for "they are". The child said the text right, so
+# speech matching (mommy.align.check_recitation) treats these as the same words.
+# Dictation never uses these rules: writing "3" for "three" is a difference there.
+
+#: Numbers whose words are known, in each language: 0..NUMBER_WORDS_MAX.
+NUMBER_WORDS_MAX = 100
+
+_EN_UNITS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+_EN_TEENS = (
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
+    "eighteen", "nineteen",
+)
+_EN_TENS = {20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty", 70: "seventy",
+            80: "eighty", 90: "ninety"}
+_EN_ORDINAL_WORDS = {"one": "first", "two": "second", "three": "third", "five": "fifth",
+                     "eight": "eighth", "nine": "ninth", "twelve": "twelfth"}
+
+_FR_UNITS = ("zéro", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf")
+_FR_TEENS = ("dix", "onze", "douze", "treize", "quatorze", "quinze", "seize",
+             "dix-sept", "dix-huit", "dix-neuf")
+# Tens that combine regularly ("vingt et un", "vingt-deux"); septante, huitante,
+# octante and nonante are the Belgian and Swiss forms.
+_FR_REGULAR_TENS = {20: ("vingt",), 30: ("trente",), 40: ("quarante",), 50: ("cinquante",),
+                    60: ("soixante",), 70: ("septante",), 80: ("huitante", "octante"),
+                    90: ("nonante",)}
+
+# Arabic: masculine and feminine forms, nominative and accusative/genitive.
+_AR_UNITS: dict[int, tuple[str, ...]] = {
+    1: ("واحد", "واحدة"),
+    2: ("اثنان", "اثنين", "اثنتان", "اثنتين", "ثنتان", "ثنتين"),
+    3: ("ثلاثة", "ثلاث"),
+    4: ("أربعة", "أربع"),
+    5: ("خمسة", "خمس"),
+    6: ("ستة", "ست"),
+    7: ("سبعة", "سبع"),
+    8: ("ثمانية", "ثماني", "ثمان", "ثمانى"),
+    9: ("تسعة", "تسع"),
+}
+_AR_TEEN_ONE = ("أحد", "إحدى")
+_AR_TEEN_TWO = ("اثنا", "اثني", "اثنتا", "اثنتي", "اثنى")
+_AR_TEN = ("عشر", "عشرة")
+_AR_TENS = {20: ("عشرون", "عشرين"), 30: ("ثلاثون", "ثلاثين"), 40: ("أربعون", "أربعين"),
+            50: ("خمسون", "خمسين"), 60: ("ستون", "ستين"), 70: ("سبعون", "سبعين"),
+            80: ("ثمانون", "ثمانين"), 90: ("تسعون", "تسعين")}
+_AR_HUNDRED = ("مائة", "مئة", "مية")
+_AR_AND = "و"
+
+
+def _words(spelling: str) -> tuple[str, ...]:
+    """A spelling such as ``"dix-sept"`` or ``"vingt et un"`` as its words."""
+    return tuple(w for w in re.split("[ -]", spelling) if w)
+
+
+def _en_number_forms() -> dict[int, list[tuple[str, ...]]]:
+    forms: dict[int, list[tuple[str, ...]]] = {}
+    for n, w in enumerate(_EN_UNITS):
+        forms[n] = [(w,)]
+    for n, w in enumerate(_EN_TEENS, start=10):
+        forms[n] = [(w,)]
+    for tens, w in _EN_TENS.items():
+        forms[tens] = [(w,)]
+        for unit in range(1, 10):
+            forms[tens + unit] = [(w, _EN_UNITS[unit])]
+    forms[100] = [("hundred",), ("one", "hundred"), ("a", "hundred")]
+    return forms
+
+
+def _en_ordinal(word: str) -> str:
+    if word in _EN_ORDINAL_WORDS:
+        return _EN_ORDINAL_WORDS[word]
+    if word.endswith("y"):
+        return word[:-1] + "ieth"  # twenty -> twentieth
+    return word + "th"
+
+
+def _fr_number_forms() -> dict[int, list[tuple[str, ...]]]:
+    forms: dict[int, list[tuple[str, ...]]] = {}
+    for n, w in enumerate(_FR_UNITS):
+        forms[n] = [_words(w)]
+    forms[1].append(("une",))
+    for n, w in enumerate(_FR_TEENS, start=10):
+        forms[n] = [_words(w)]
+
+    def add(n: int, *spellings: tuple[str, ...]) -> None:
+        forms.setdefault(n, []).extend(spellings)
+
+    for tens, names in _FR_REGULAR_TENS.items():
+        for w in names:
+            add(tens, (w,))
+            add(tens + 1, (w, "et", "un"), (w, "et", "une"), (w, "un"))
+            for unit in range(2, 10):
+                add(tens + unit, (w, _FR_UNITS[unit]))
+    # 70-79: soixante-dix, soixante et onze, soixante-douze ... soixante-dix-neuf.
+    add(70, ("soixante", "dix"))
+    add(71, ("soixante", "et", "onze"), ("soixante", "onze"))
+    for n in range(72, 80):
+        add(n, ("soixante", *_words(_FR_TEENS[n - 70])))
+    # 80-99: quatre-vingts, quatre-vingt-un ... quatre-vingt-dix-neuf.
+    add(80, ("quatre", "vingts"), ("quatre", "vingt"))
+    for n in range(81, 100):
+        rest = _FR_UNITS[n - 80] if n < 90 else _FR_TEENS[n - 90]
+        add(n, ("quatre", "vingt", *_words(rest)))
+    add(81, ("quatre", "vingt", "une"))
+    add(100, ("cent",))
+    return forms
+
+
+def _fr_ordinal_forms(n: int, spelling: tuple[str, ...]) -> list[tuple[str, ...]]:
+    """The ordinal forms of one French cardinal spelling (accents already removed)."""
+    if n == 1 and len(spelling) == 1:
+        return [("premier",), ("premiere",)]
+    *head, last = spelling
+    if last in ("un", "une"):
+        tail = "unieme"
+    elif last == "cinq":
+        tail = "cinquieme"
+    elif last == "neuf":
+        tail = "neuvieme"
+    elif last == "vingts":
+        tail = "vingtieme"
+    elif last.endswith("e"):
+        tail = last[:-1] + "ieme"
+    else:
+        tail = last + "ieme"
+    out = [(*head, tail)]
+    if n == 2 and len(spelling) == 1:
+        out += [("second",), ("seconde",)]
+    return out
+
+
+def _ar_number_forms() -> dict[int, list[tuple[str, ...]]]:
+    forms: dict[int, list[tuple[str, ...]]] = {0: [("صفر",)]}
+    for n, ws in _AR_UNITS.items():
+        forms[n] = [(w,) for w in ws]
+    forms[10] = [(w,) for w in _AR_TEN]
+    forms[11] = [(a, b) for a in _AR_TEEN_ONE for b in _AR_TEN]
+    forms[12] = [(a, b) for a in _AR_TEEN_TWO for b in _AR_TEN]
+    for n in range(13, 20):
+        forms[n] = [(a, b) for a in _AR_UNITS[n - 10] for b in _AR_TEN]
+    for tens, ws in _AR_TENS.items():
+        forms[tens] = [(w,) for w in ws]
+        for unit in range(1, 10):
+            forms[tens + unit] = [(u, _AR_AND, w) for u in _AR_UNITS[unit] for w in ws]
+    forms[100] = [(w,) for w in _AR_HUNDRED]
+    return forms
+
+
+def _number_key(word: str, lang: Lang) -> str:
+    """The speech key of one number word, keeping nothing but letters."""
+    return _normalize_word_cached(word, False, False).replace("'", "")
+
+
+@functools.lru_cache(maxsize=None)
+def _number_table(lang: Lang) -> dict[tuple[str, ...], str]:
+    """Spelled numbers of ``lang`` (as tuples of word keys) -> value (``"c21"``, ``"o21"``)."""
+    table: dict[tuple[str, ...], str] = {}
+
+    def put(spelling: tuple[str, ...], value: str) -> None:
+        table.setdefault(tuple(_number_key(w, lang) for w in spelling), value)
+
+    if lang == "en":
+        for n, spellings in _en_number_forms().items():
+            for sp in spellings:
+                put(sp, f"c{n}")
+                put((*sp[:-1], _en_ordinal(sp[-1])), f"o{n}")
+    elif lang == "fr":
+        for n, spellings in _fr_number_forms().items():
+            for sp in spellings:
+                put(sp, f"c{n}")
+                keyed = tuple(_number_key(w, lang) for w in sp)
+                for ordinal in _fr_ordinal_forms(n, keyed):
+                    put(ordinal, f"o{n}")
+    else:
+        for n, spellings in _ar_number_forms().items():
+            for sp in spellings:
+                put(sp, f"c{n}")
+    return table
+
+
+@functools.lru_cache(maxsize=None)
+def _number_vocabulary(lang: Lang) -> frozenset[str]:
+    return frozenset(w for spelling in _number_table(lang) for w in spelling)
+
+
+_DIGIT_ORDINAL_RE: dict[str, re.Pattern[str]] = {
+    "en": re.compile(r"(\d+)(?:st|nd|rd|th)"),
+    "fr": re.compile(r"(\d+)(?:er|re|ere|e|eme|ieme|nd|nde)"),
+}
+
+
+def digit_number(token: str, lang: Lang) -> str | None:
+    """The value of a number written in digits, for speech matching.
+
+    ``"12"``, ``"٢١"`` -> ``"c12"``, ``"c21"`` (Arabic-Indic and Western digits are the
+    same); an ordinal ``"21st"`` (English) or ``"1er"``, ``"2e"``, ``"3ème"`` (French)
+    -> ``"o21"``, ``"o1"``, ``"o2"``, ``"o3"``. None for anything else (``"3,5"``,
+    ``"12:30"``, words).
+    """
+    raw = _prepare(token)
+    if not raw or not raw.isalnum() or not raw[0].isdigit():
+        return None  # words, and numbers with separators ("3,5", "12:30")
+    if raw.isascii() and raw.isdigit():
+        return f"c{int(raw)}"
+    key = _normalize_word_cached(token, False, False)
+    pattern = _DIGIT_ORDINAL_RE.get(lang)
+    if pattern is not None and key.isascii() and (m := pattern.fullmatch(key)):
+        return f"o{int(m.group(1))}"
+    return None
+
+
+def spoken_number(tokens: Sequence[str], lang: Lang) -> str | None:
+    """The value of a number written in words (0 to :data:`NUMBER_WORDS_MAX`), or None.
+
+    ``tokens`` are consecutive tokens that together spell exactly one number:
+    ``["twelve"]``, ``["twenty", "five"]``, ``["twenty-five"]``, ``["vingt", "et",
+    "un"]``, ``["quatre-vingt-dix"]``, ``["واحد", "وعشرون"]``; values as in
+    :func:`digit_number`. English and French ordinals (``"twenty-first"``,
+    ``"deuxième"``, ``"premier"``) give ``"o<n>"``. Arabic forms of both genders and
+    cases are accepted (``ثلاثة``/``ثلاث``, ``عشرون``/``عشرين``, ``اثنا عشر``/``اثنتي
+    عشرة``), with the ``و`` of a compound number written on its own or joined.
+    """
+    table = _number_table(lang)
+    vocabulary = _number_vocabulary(lang)
+    words: list[str] = []
+    for token in tokens:
+        for part in _normalize_word_cached(token, False, False).replace("'", "").split("-"):
+            if not part:
+                continue
+            if part in vocabulary:
+                words.append(part)
+            elif lang == "ar" and part.startswith(_AR_AND) and part[1:] in vocabulary:
+                words.extend((_AR_AND, part[1:]))  # وعشرون -> و عشرون
+            else:
+                return None
+    return table.get(tuple(words)) if words else None
+
+
+def is_number_word(token: str, lang: Lang) -> bool:
+    """True when ``token`` can start a number written in words (see :func:`spoken_number`)."""
+    key = _normalize_word_cached(token, False, False).replace("'", "")
+    first = key.split("-", 1)[0]
+    vocabulary = _number_vocabulary(lang)
+    return first in vocabulary or (lang == "ar" and first.startswith(_AR_AND) and first[1:] in vocabulary)
+
+
+# British and American spellings of the same English words (speech only). Applied to a
+# speech key (lower case, no accents, no hyphens or apostrophes) on both sides, so a word
+# folded by mistake (detour -> detor) still equals itself.
+_EN_SPELLING_WORDS = {
+    "grey": "gray", "greys": "grays", "defence": "defense", "offence": "offense",
+    "licence": "license", "pretence": "pretense", "programme": "program",
+    "programmes": "programs", "tyre": "tire", "tyres": "tires", "aeroplane": "airplane",
+    "aeroplanes": "airplanes", "plough": "plow", "mould": "mold", "cheque": "check",
+    "jewellery": "jewelry", "pyjamas": "pajamas", "judgement": "judgment", "ageing": "aging",
+    "practise": "practice", "practised": "practiced", "practising": "practicing",
+    "enrol": "enroll", "fulfil": "fulfill", "skilful": "skillful", "wilful": "willful",
+    "instalment": "installment", "storey": "story", "storeys": "stories", "mum": "mom",
+    "mummy": "mommy", "maths": "math", "doughnut": "donut", "moustache": "mustache",
+}
+_EN_SPELLING_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?<=[a-z]{3})our"), "or"),  # colour, favourite, neighbourhood
+    (re.compile(r"(?<=[a-z])([tb])re(s?)$"), r"\1er\2"),  # centre, theatres, fibre
+    (re.compile(r"(?<=[a-z]{3})is(e|es|ed|ing|ation|ations|er|ers)$"), r"iz\1"),  # realise
+    (re.compile(r"(?<=[a-z]{2})ys(e|es|ed|ing)$"), r"yz\1"),  # analyse
+    (re.compile(r"ogue(s?)$"), r"og\1"),  # catalogue, dialogues
+    (re.compile(r"(?<=[a-z]{2}[ae])ll(ed|ing|er|ers)$"), r"l\1"),  # travelled, cancelling
+)
+
+
+def fold_english_spelling(key: str) -> str:
+    """Fold the British spelling of an English speech key onto the American one.
+
+    ``colour`` -> ``color``, ``favourite`` -> ``favorite``, ``centre`` -> ``center``,
+    ``realise`` -> ``realize``, ``analyse`` -> ``analyze``, ``catalogue`` ->
+    ``catalog``, ``travelled`` -> ``traveled``, plus a short table (``grey``,
+    ``defence``, ``programme``, ``maths``, ...). For speech matching only, where the
+    recogniser writes American spelling for a British text.
+    """
+    if key in _EN_SPELLING_WORDS:
+        return _EN_SPELLING_WORDS[key]
+    for pattern, replacement in _EN_SPELLING_RULES:
+        key = pattern.sub(replacement, key)
+    return key
+
+
+_EN_PRONOUN_IS = ("he", "she", "it", "that", "there", "what", "who", "where", "here", "how")
+_EN_SUBJECTS = ("i", "you", "he", "she", "it", "we", "they", "that", "there", "who", "what")
+_EN_CONTRACTION_TABLE: dict[str, tuple[tuple[str, ...], ...]] = {
+    "i'm": (("i", "am"),),
+    "let's": (("let", "us"),),
+    "can't": (("cannot",), ("can", "not")),
+    "won't": (("will", "not"),),
+    "shan't": (("shall", "not"),),
+    **{f"{p}'re": ((p, "are"),) for p in ("you", "we", "they", "who", "what")},
+    **{f"{p}'s": ((p, "is"), (p, "has")) for p in _EN_PRONOUN_IS},
+    **{f"{p}'ve": ((p, "have"),) for p in (*_EN_SUBJECTS, "could", "should", "would", "might", "must")},
+    **{f"{p}'ll": ((p, "will"),) for p in _EN_SUBJECTS},
+    **{f"{p}'d": ((p, "would"), (p, "had")) for p in _EN_SUBJECTS},
+}
+
+
+def english_expansions(token: str) -> tuple[tuple[str, ...], ...]:
+    """The full forms of an English contraction, for speech matching.
+
+    ``"they're"`` -> ``(("they", "are"),)``; ``"she's"`` -> ``(("she", "is"), ("she",
+    "has"))``; ``"don't"`` -> ``(("do", "not"),)``; ``"can't"`` -> ``(("cannot",), ("can",
+    "not"))``. Only written contractions count (with an apostrophe, straight or
+    typographic): ``were`` is not ``we're``. A possessive (``Sam's``) is not expanded.
+    Returns an empty tuple for any other token.
+    """
+    key = _normalize_word_cached(token, False, False)
+    if "'" not in key:
+        return ()
+    if key in _EN_CONTRACTION_TABLE:
+        return _EN_CONTRACTION_TABLE[key]
+    if key.endswith("n't") and len(key) > 3:
+        return ((key[:-3], "not"),)  # isn't, doesn't, couldn't, ...
+    return ()
+
+
 __all__ = [
     "Lang",
     "LANGUAGES",
     "APOSTROPHES",
     "HYPHENS",
+    "NUMBER_WORDS_MAX",
+    "digit_number",
+    "english_expansions",
+    "fold_english_spelling",
     "has_arabic",
     "is_arabic_char",
+    "is_number_word",
+    "spoken_number",
     "normalize_dictation_word",
     "normalize_word",
     "strip_tashkeel",

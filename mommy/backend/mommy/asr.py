@@ -104,8 +104,10 @@ _WAVE_FORMAT_PCM = 0x0001
 _WAVE_FORMAT_IEEE_FLOAT = 0x0003
 _WAVE_FORMAT_EXTENSIBLE = 0xFFFE
 
-# Plausible limits for a WAV header; anything else is treated as garbage.
-_MIN_RATE, _MAX_RATE = 1_000, 768_000
+# Sample rates accepted: telephone quality to studio quality. A higher rate only lets
+# more samples into the 120 s limit (a 10 MB 8-bit file at 768 kHz is 13 s and costs
+# about 450 MB to resample), with nothing to gain for speech.
+_MIN_RATE, _MAX_RATE = 8_000, 96_000
 _MAX_CHANNELS = 16
 
 
@@ -272,7 +274,7 @@ def decode_wav(data: bytes) -> np.ndarray:
 
     Accepts integer PCM (8-bit unsigned, 16, 24 and 32-bit signed) and IEEE float (32 and
     64-bit), also inside WAVE_FORMAT_EXTENSIBLE headers, with any number of channels
-    (averaged to mono) and any sample rate from 1 kHz to 768 kHz (resampled with
+    (averaged to mono) and any sample rate from 8 kHz to 96 kHz (resampled with
     :func:`resample_to_16k`). Values outside -1..1 are clipped and NaN or infinite
     floats become 0.
 
@@ -296,8 +298,8 @@ def wav_duration(data: bytes) -> float:
     """Length in seconds of a RIFF/WAV file, read from its header without decoding it.
 
     Lets a caller refuse an over-long upload before :func:`decode_wav` spends memory and
-    time on it: 10 MB of 8-bit audio at 1 kHz is almost three hours, which would be about
-    160 million samples once resampled to 16 kHz. The length counts the complete frames
+    time on it: 10 MB of 8-bit audio at 8 kHz is about 21 minutes, which would be 20
+    million samples once resampled to 16 kHz. The length counts the complete frames
     present in the ``data`` chunk (a truncated upload counts what it holds), exactly as
     :func:`decode_wav` would decode them.
 
@@ -463,12 +465,13 @@ class SherpaWhisper:
     The recogniser is never given a prompt, hotwords or the expected text (hard rule 1).
     """
 
-    def __init__(self, models_dir: Path, model: str = "small", num_threads: int = 4) -> None:
+    def __init__(self, models_dir: Path, model: str = "turbo", num_threads: int = 4) -> None:
         if model not in ASR_MODELS:
             raise ValueError(f"unknown Whisper model {model!r}; expected one of {ASR_MODELS}")
         if num_threads < 1:
             raise ValueError("num_threads must be at least 1")
         self.model = model
+        self.requested_model = model
         self.num_threads = int(num_threads)
         self.files = WhisperFiles.for_model(Path(models_dir), model)
         self._recognizers: dict[str, Any] = {}
@@ -488,8 +491,25 @@ class SherpaWhisper:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> SherpaWhisper:
-        """Build from :class:`~mommy.config.Settings` (models dir, model name, threads)."""
-        return cls(settings.models_dir, settings.asr_model, settings.asr_threads)
+        """Build from :class:`~mommy.config.Settings` (models dir, model name, threads).
+
+        When the configured model's files are missing but another model's are present,
+        that one is used instead (and logged): ``model`` is the model actually used,
+        ``requested_model`` the configured one. With no model at all, the configured
+        one is kept and ``available`` is False.
+        """
+        model = settings.asr_model
+        if WhisperFiles.for_model(settings.models_dir, model).missing():
+            for other in ASR_MODELS:
+                if other != model and not WhisperFiles.for_model(settings.models_dir, other).missing():
+                    log.warning(
+                        "Whisper %s model files are missing; using Whisper %s instead", model, other
+                    )
+                    model = other
+                    break
+        whisper = cls(settings.models_dir, model, settings.asr_threads)
+        whisper.requested_model = settings.asr_model
+        return whisper
 
     def _recognizer(self, lang: Lang) -> Any:
         """The cached recogniser for ``lang`` (call with the lock held)."""

@@ -47,10 +47,11 @@
       consent_title: 'For the parent',
       consent_label: "I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.",
       consent_privacy: 'Recordings and photos are checked in memory and never saved.',
-      consent_claude: 'Photos of pages and handwriting are sent to Claude, an AI service made by Anthropic, so that it can read them.',
+      consent_claude: 'Some things are sent to Claude, an AI service made by Anthropic: photos of pages and of handwriting, so that it can read them; the page text and a transcript of what your child says (in “The meaning” mode), so that it can judge the meaning; and the words your child got wrong, so that it can word the feedback. The recordings themselves are not sent.',
       consent_offline: 'Offline mode: nothing leaves this computer, and you type the texts yourself.',
       start_button: "Let's start",
       consent_needed: 'A parent must tick the consent box on the start screen before the microphone or camera can be used.',
+      consent_needed_ai: 'Checking uses the online AI: a parent must first tick the consent box on the start screen.',
       server_down: "I can't reach the Mommy server. Is it running?",
       checking_server: 'Checking the server…',
       retry: 'Try again',
@@ -72,6 +73,7 @@
       page_read_ok: 'Done. Please check the text carefully and correct it if needed.',
       page_needs_manual: 'The page could not be read automatically. Please type or paste the text.',
       page_notes: 'Note: {notes}',
+      page_has_quran: 'This page seems to contain Quran text. Please practise the Quran in the Quran section.',
       photo_bad: "I couldn't open this picture. Please try a JPEG or PNG photo.",
       page_text_label: 'Page text',
       page_text_ph: 'Type or paste the text here…',
@@ -82,7 +84,11 @@
       mode_contextual_hint: 'Own words are fine if the meaning is right.',
       mode_contextual_offline: 'Without the online AI, the meaning check is only approximate.',
       confirm_text: 'Confirm text',
+      checking_text: 'Checking the text…',
       text_confirmed: 'Text confirmed. Your child can now recite it or do a dictation.',
+      text_confirmed_ar: 'Text confirmed. It is written in Arabic, so its language was set to Arabic.',
+      text_not_arabic: 'This text is not written in Arabic. Please choose the language of the text.',
+      text_confirmed_no_dictation: 'Text confirmed for reciting. It cannot be used for dictation: part of it is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud.',
       text_empty: 'Please type or paste some text first.',
       text_changed: 'The text has changed. Press “Confirm text” again.',
       go_recite: 'Go to Recite',
@@ -106,8 +112,8 @@
       listen: 'Listen',
       press_listen: 'Press “Listen” to hear it.',
       too_quiet: 'I could hardly hear you. Come a little closer and speak up.',
-      too_short: 'That was very short. Try reading the whole text.',
-      score: '{ok} of {n} words right',
+      too_short: 'That was very short. Press the button, read the whole text, then press it again.',
+      score: 'Words right: {ok} of {n}',
       legend_match: 'right',
       legend_sub: 'heard differently',
       legend_sub_written: 'written differently',
@@ -118,6 +124,7 @@
       sr_skipped: 'skipped',
       sr_extra: 'extra word:',
       verdict_same_meaning: 'Same meaning',
+      verdict_nearly: 'Nearly the same meaning',
       verdict_partly: 'Partly right',
       verdict_different: 'Different meaning',
       verdict_unclear: 'I could not hear well',
@@ -129,6 +136,8 @@
       dict_start: 'Start the dictation',
       preparing: 'Getting ready…',
       phrase_n: 'Part {i} of {n}',
+      voice_unclear: 'The voice may be unclear in this part. Press “Repeat” to hear a new take, or show the words.',
+      press_repeat: 'Press “Repeat” to hear it.',
       repeat: 'Repeat',
       next: 'Next',
       finish: "I've finished",
@@ -148,6 +157,7 @@
       read_text_label: 'What was read',
       uncertain: 'Not sure about: {words}',
       recheck: 'Check again with this text',
+      review_stale: 'You changed the text. Press “Check again with this text” before you confirm.',
       confirm_result: 'Confirm result',
       dict_result_title: 'Your dictation',
       new_dictation: 'New dictation',
@@ -178,6 +188,13 @@
       error_generic: 'Something went wrong. Please try again.',
       error_too_big: 'That is too big for me. Please try something shorter or smaller.',
       error_unavailable: 'This is not available right now.',
+      error_quran_text: 'This text is from the Quran. Please practise it in the Quran section.',
+      error_quran_phrase: 'Part of this text is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud, so this text cannot be used for dictation. It can still be recited.',
+      error_unreadable_text: 'Some words could not be read and are marked [?]. Please type them in place of [?] first.',
+      error_lang_mismatch: 'This text is not in the language chosen. Please choose the language of the text.',
+      error_text_too_long: 'This text is too long. Please use a shorter text.',
+      error_no_words: 'There are no words to check in this text.',
+      go_quran: 'Go to the Quran section',
     },
 
     fr: {
@@ -206,10 +223,11 @@
       consent_title: 'Pour le parent',
       consent_label: "Je suis le parent ou le tuteur de cet enfant. J'autorise Mommy à utiliser le micro et l'appareil photo.",
       consent_privacy: 'Les enregistrements et les photos sont traités en mémoire et ne sont jamais enregistrés.',
-      consent_claude: "Les photos de pages et d'écriture sont envoyées à Claude, un service d'IA d'Anthropic, pour qu'il puisse les lire.",
+      consent_claude: "Certaines données sont envoyées à Claude, un service d'IA d'Anthropic : les photos de pages et d'écriture, pour qu'il puisse les lire ; le texte de la page et une transcription de ce que dit votre enfant (en mode « Le sens »), pour qu'il juge le sens ; et les mots sur lesquels votre enfant s'est trompé, pour qu'il rédige le message. Les enregistrements eux-mêmes ne sont pas envoyés.",
       consent_offline: 'Mode hors ligne : rien ne quitte cet ordinateur, et vous tapez les textes vous-même.',
       start_button: 'On commence',
       consent_needed: "Un parent doit cocher la case d'accord sur l'écran d'accueil avant d'utiliser le micro ou l'appareil photo.",
+      consent_needed_ai: "La vérification utilise l'IA en ligne : un parent doit d'abord cocher la case d'accord sur l'écran d'accueil.",
       server_down: "Je n'arrive pas à joindre le serveur Mommy. Est-il lancé ?",
       checking_server: 'Vérification du serveur…',
       retry: 'Réessayer',
@@ -231,6 +249,7 @@
       page_read_ok: "C'est fait. Vérifiez bien le texte et corrigez-le si besoin.",
       page_needs_manual: "La page n'a pas pu être lue automatiquement. Tapez ou collez le texte.",
       page_notes: 'Remarque : {notes}',
+      page_has_quran: 'Cette page semble contenir un texte du Coran. Pour le Coran, utilisez la section Coran.',
       photo_bad: "Je n'arrive pas à ouvrir cette image. Essayez une photo JPEG ou PNG.",
       page_text_label: 'Texte de la page',
       page_text_ph: 'Tapez ou collez le texte ici…',
@@ -241,7 +260,11 @@
       mode_contextual_hint: 'Ses propres mots, si le sens est juste.',
       mode_contextual_offline: "Sans l'IA en ligne, la vérification du sens est seulement approximative.",
       confirm_text: 'Valider le texte',
+      checking_text: 'Vérification du texte…',
       text_confirmed: 'Texte validé. Votre enfant peut maintenant le réciter ou faire une dictée.',
+      text_confirmed_ar: "Texte validé. Il est écrit en arabe : sa langue a été réglée sur l'arabe.",
+      text_not_arabic: "Ce texte n'est pas écrit en arabe. Choisissez la langue du texte.",
+      text_confirmed_no_dictation: "Texte validé pour la récitation. Il ne peut pas servir à une dictée : une partie est un verset du Coran (par exemple la basmala), et l'application ne lit jamais le Coran à voix haute.",
       text_empty: "Tapez ou collez d'abord un texte.",
       text_changed: 'Le texte a changé. Appuyez de nouveau sur « Valider le texte ».',
       go_recite: 'Aller à Réciter',
@@ -265,8 +288,8 @@
       listen: 'Écouter',
       press_listen: 'Appuie sur « Écouter » pour l’entendre.',
       too_quiet: "Je t'entends à peine. Approche-toi un peu et parle plus fort.",
-      too_short: "C'était très court. Essaie de lire tout le texte.",
-      score: '{ok} mots justes sur {n}',
+      too_short: "C'était très court. Appuie sur le bouton, lis tout le texte, puis appuie encore.",
+      score: 'Mots justes : {ok} sur {n}',
       legend_match: 'juste',
       legend_sub: 'entendu autrement',
       legend_sub_written: 'écrit autrement',
@@ -277,6 +300,7 @@
       sr_skipped: 'oublié',
       sr_extra: 'mot en plus :',
       verdict_same_meaning: 'Même sens',
+      verdict_nearly: 'Presque le même sens',
       verdict_partly: 'En partie',
       verdict_different: 'Sens différent',
       verdict_unclear: "Je n'ai pas bien entendu",
@@ -288,6 +312,8 @@
       dict_start: 'Commencer la dictée',
       preparing: 'Je me prépare…',
       phrase_n: 'Morceau {i} sur {n}',
+      voice_unclear: "La voix n'est peut-être pas claire pour ce morceau. Appuyez sur « Répéter » pour l'entendre à nouveau, ou montrez les mots.",
+      press_repeat: 'Appuie sur « Répéter » pour l’entendre.',
       repeat: 'Répéter',
       next: 'Suivant',
       finish: "J'ai fini",
@@ -307,6 +333,7 @@
       read_text_label: 'Ce qui a été lu',
       uncertain: 'Pas sûr pour : {words}',
       recheck: 'Revérifier avec ce texte',
+      review_stale: 'Vous avez modifié le texte. Appuyez sur « Revérifier avec ce texte » avant de valider.',
       confirm_result: 'Valider le résultat',
       dict_result_title: 'Ta dictée',
       new_dictation: 'Nouvelle dictée',
@@ -337,6 +364,13 @@
       error_generic: 'Un problème est survenu. Réessaie.',
       error_too_big: "C'est trop gros pour moi. Essaie avec quelque chose de plus court ou de plus petit.",
       error_unavailable: "Ce n'est pas disponible pour le moment.",
+      error_quran_text: 'Ce texte vient du Coran. Entraînez-vous dans la section Coran.',
+      error_quran_phrase: "Une partie de ce texte est un verset du Coran (par exemple la basmala), et l'application ne lit jamais le Coran à voix haute : ce texte ne peut donc pas servir à une dictée. Il peut toujours être récité.",
+      error_unreadable_text: "Certains mots n'ont pas pu être lus et sont marqués [?]. Tapez-les d'abord à la place de [?].",
+      error_lang_mismatch: "Ce texte n'est pas dans la langue choisie. Choisissez la langue du texte.",
+      error_text_too_long: 'Ce texte est trop long. Utilisez un texte plus court.',
+      error_no_words: "Il n'y a pas de mots à vérifier dans ce texte.",
+      go_quran: 'Aller à la section Coran',
     },
 
     ar: {
@@ -363,12 +397,13 @@
       age_14_18: '١٤–١٨ سنة',
       ui_lang: 'اللغة',
       consent_title: 'لوليّ الأمر',
-      consent_label: 'أنا والد هذا الطفل أو وليّ أمره، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.',
+      consent_label: 'أنا أحد والدَي هذا الطفل أو وليّ أمره، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.',
       consent_privacy: 'تُعالَج التسجيلات والصور في الذاكرة ولا تُحفظ أبدًا.',
-      consent_claude: 'تُرسَل صور الصفحات والكتابة إلى Claude، وهي خدمة ذكاء اصطناعي من شركة Anthropic، لكي تقرأها.',
+      consent_claude: 'تُرسَل بعض البيانات إلى Claude، وهي خدمة ذكاء اصطناعي من شركة Anthropic: صور الصفحات والكتابة لكي تقرأها، ونص الصفحة ونسخة مكتوبة مما يقوله طفلك (في طريقة «المعنى») لكي تحكم على المعنى، والكلمات التي أخطأ فيها طفلك لكي تصوغ الملاحظات. أمّا التسجيلات الصوتية نفسها فلا تُرسَل.',
       consent_offline: 'وضع بلا اتصال: لا يخرج شيء من هذا الحاسوب، وتكتب النصوص بنفسك.',
       start_button: 'لنبدأ',
       consent_needed: 'يجب أن يضع وليّ الأمر علامة في خانة الموافقة في شاشة البداية قبل استخدام الميكروفون أو الكاميرا.',
+      consent_needed_ai: 'التحقّق يستخدم الذكاء الاصطناعي عبر الإنترنت: يجب أولًا أن يضع وليّ الأمر علامة في خانة الموافقة في شاشة البداية.',
       server_down: 'لا أستطيع الوصول إلى خادم Mommy. هل هو يعمل؟',
       checking_server: 'جارٍ التحقّق من الخادم…',
       retry: 'حاول مجددًا',
@@ -390,6 +425,7 @@
       page_read_ok: 'تمّ. يُرجى مراجعة النص بعناية وتصحيحه إن لزم.',
       page_needs_manual: 'تعذّرت قراءة الصفحة تلقائيًا. يُرجى كتابة النص أو لصقه.',
       page_notes: 'ملاحظة: {notes}',
+      page_has_quran: 'يبدو أن هذه الصفحة تحتوي على نص من القرآن الكريم. يُرجى التدرّب على القرآن في قسم القرآن.',
       photo_bad: 'لم أستطع فتح هذه الصورة. جرّب صورة JPEG أو PNG.',
       page_text_label: 'نص الصفحة',
       page_text_ph: 'اكتب النص أو الصقه هنا…',
@@ -400,7 +436,11 @@
       mode_contextual_hint: 'يمكنه استخدام كلماته إذا كان المعنى صحيحًا.',
       mode_contextual_offline: 'من دون الذكاء الاصطناعي عبر الإنترنت، يكون التحقّق من المعنى تقريبيًا فقط.',
       confirm_text: 'تأكيد النص',
+      checking_text: 'جارٍ التحقّق من النص…',
       text_confirmed: 'تمّ تأكيد النص. يستطيع طفلك الآن تسميعه أو كتابته إملاءً.',
+      text_confirmed_ar: 'تمّ تأكيد النص. إنه مكتوب بالعربية، لذلك ضُبطت لغته على العربية.',
+      text_not_arabic: 'هذا النص غير مكتوب بالعربية. يُرجى اختيار لغة النص.',
+      text_confirmed_no_dictation: 'تمّ تأكيد النص للتسميع. لا يمكن استخدامه في الإملاء: جزء منه آية من القرآن الكريم (مثل البسملة)، والتطبيق لا يقرأ القرآن بصوت مسموع أبدًا.',
       text_empty: 'اكتب نصًا أو الصقه أولًا.',
       text_changed: 'تغيّر النص. اضغط «تأكيد النص» مرة أخرى.',
       go_recite: 'اذهب إلى التسميع',
@@ -424,8 +464,8 @@
       listen: 'استمع',
       press_listen: 'اضغط «استمع» لتسمعه.',
       too_quiet: 'بالكاد أسمعك. اقترب قليلًا وارفع صوتك.',
-      too_short: 'كان ذلك قصيرًا جدًا. حاول قراءة النص كله.',
-      score: '{ok} من {n} كلمات صحيحة',
+      too_short: 'كان ذلك قصيرًا جدًا. اضغط الزر، واقرأ النص كله، ثم اضغطه مرة أخرى.',
+      score: 'الكلمات الصحيحة: {ok} من {n}',
       legend_match: 'صحيحة',
       legend_sub: 'سُمعت بشكل مختلف',
       legend_sub_written: 'كُتبت بشكل مختلف',
@@ -436,6 +476,7 @@
       sr_skipped: 'متروكة',
       sr_extra: 'كلمة زائدة:',
       verdict_same_meaning: 'المعنى نفسه',
+      verdict_nearly: 'المعنى نفسه تقريبًا',
       verdict_partly: 'صحيح جزئيًا',
       verdict_different: 'معنى مختلف',
       verdict_unclear: 'لم أسمع جيدًا',
@@ -447,6 +488,8 @@
       dict_start: 'ابدأ الإملاء',
       preparing: 'أستعدّ…',
       phrase_n: 'الجزء {i} من {n}',
+      voice_unclear: 'قد لا يكون الصوت واضحًا في هذا الجزء. اضغط «أعِد» لسماعه من جديد، أو أظهر الكلمات.',
+      press_repeat: 'اضغط «أعِد» لتسمعه.',
       repeat: 'أعِد',
       next: 'التالي',
       finish: 'انتهيت',
@@ -466,6 +509,7 @@
       read_text_label: 'ما تمّت قراءته',
       uncertain: 'غير متأكد من: {words}',
       recheck: 'أعد التحقّق بهذا النص',
+      review_stale: 'لقد غيّرت النص. اضغط «أعد التحقّق بهذا النص» قبل التأكيد.',
       confirm_result: 'تأكيد النتيجة',
       dict_result_title: 'إملاؤك',
       new_dictation: 'إملاء جديد',
@@ -496,6 +540,13 @@
       error_generic: 'حدث خطأ. حاول مرة أخرى.',
       error_too_big: 'هذا كبير جدًا عليّ. جرّب شيئًا أقصر أو أصغر.',
       error_unavailable: 'هذا غير متاح الآن.',
+      error_quran_text: 'هذا النص من القرآن الكريم. يُرجى التدرّب عليه في قسم القرآن.',
+      error_quran_phrase: 'جزء من هذا النص آية من القرآن الكريم (مثل البسملة)، والتطبيق لا يقرأ القرآن بصوت مسموع أبدًا، لذلك لا يمكن استخدام هذا النص في الإملاء. ويمكن تسميعه.',
+      error_unreadable_text: 'تعذّرت قراءة بعض الكلمات، وهي معلَّمة بـ [?]. يُرجى كتابتها مكان [?] أولًا.',
+      error_lang_mismatch: 'هذا النص ليس باللغة المختارة. يُرجى اختيار لغة النص.',
+      error_text_too_long: 'هذا النص طويل جدًا. يُرجى استخدام نص أقصر.',
+      error_no_words: 'لا توجد في هذا النص كلمات للتحقّق منها.',
+      go_quran: 'اذهب إلى قسم القرآن',
     },
   };
 
@@ -523,6 +574,8 @@
     'recite-rec': ['server', 'asr', 'consent', 'mic'],
     'recite-tts': ['server', 'tts'],
     'dict-start': ['server'],
+    // A typed check is worded by Claude when it is configured: that needs the consent.
+    'dict-check': ['server', 'ai-consent'],
     'dict-play': ['server', 'tts'],
     'dict-photo': ['server', 'brain', 'consent'],
     'dict-tts': ['server', 'tts'],
@@ -541,17 +594,26 @@
     health: null,
     healthState: 'loading', // loading | ok | down
     profile: defaultProfile(),
-    page: { text: '', lang: 'en', mode: 'strict', confirmed: false },
+    // langChosen: the parent picked the text language (or a photo set it); until then it
+    // follows the interface language. confirmToken drops a confirmation overtaken by an edit.
+    page: { text: '', lang: 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0 },
     recording: null, // { control, recorder }
+    // Bumped whenever spoken feedback that is still on its way must not play any more (a
+    // recording starts, the screen changes, a new result arrives).
+    speechToken: 0,
     recite: { lastFeedback: null, feedbackBlob: null },
     dictation: {
       stage: 'intro',
       phrases: [],
       index: 0,
-      audio: new Map(), // phrase index -> WAV Blob of the synthetic voice (not child data)
+      audio: new Map(), // phrase index -> Promise of {blob, check}: the synthetic voice (not child data)
       result: null,
       feedbackBlob: null,
       token: 0,
+      loading: false, // the voice of the current phrase is being fetched
+      waiting: false, // the current phrase has not been heard to the end yet
+      playId: 0, // the latest phrase playback
+      checking: false, // a /api/dictation/check request is running
     },
     quran: {
       surahs: [],
@@ -595,19 +657,28 @@
     return state.profile.lang;
   }
 
-  /** Translate a key into the UI language, filling {placeholders}. */
+  /**
+   * Translate a key into the UI language, filling {placeholders}. Number values are
+   * formatted here, in the current UI language, so they follow a language switch.
+   */
   function t(key, vars) {
     const table = STRINGS[uiLang()] || STRINGS.en;
     let s = table[key];
     if (s === undefined) s = STRINGS.en[key];
     if (s === undefined) return key;
     if (vars) {
-      s = s.replace(/\{(\w+)\}/g, (m, name) => (vars[name] === undefined ? m : String(vars[name])));
+      s = s.replace(/\{(\w+)\}/g, (m, name) => {
+        const v = vars[name];
+        if (v === undefined) return m;
+        return typeof v === 'number' ? fmtNum(v) : String(v);
+      });
     }
     return s;
   }
 
+  /** A number in the UI language: Arabic-Indic digits in the Arabic UI, like the ayah markers. */
   function fmtNum(n) {
+    if (uiLang() === 'ar') return arabicDigits(n);
     try {
       return new Intl.NumberFormat(uiLang()).format(n);
     } catch (e) {
@@ -617,6 +688,13 @@
 
   function arabicDigits(n) {
     return String(n).replace(/[0-9]/g, (d) => ARABIC_DIGITS[Number(d)]);
+  }
+
+  /** Arabic-Indic and Persian digits typed by the user, as ASCII digits. */
+  function asciiDigits(s) {
+    return String(s)
+      .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+      .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
   }
 
   function dirOf(lang) {
@@ -631,7 +709,8 @@
 
   /**
    * Set a translated text that is re-translated automatically when the UI language
-   * changes. `detail` is extra untranslated text (a server message) shown after it.
+   * changes. `detail` is extra untranslated text (notes read from a page) shown after it,
+   * isolated so that its direction cannot scramble the sentence around it.
    */
   function setT(node, key, vars, detail) {
     if (!node) return;
@@ -647,23 +726,48 @@
     else delete node.dataset.i18nVars;
     if (detail) node.dataset.i18nDetail = detail;
     else delete node.dataset.i18nDetail;
-    node.textContent = t(key, vars) + (detail ? ' (' + detail + ')' : '');
+    paintT(node, vars);
+  }
+
+  /** Write a node's translated text from its data-i18n attributes. */
+  function paintT(node, vars) {
+    node.textContent = t(node.dataset.i18n, vars);
+    const detail = node.dataset.i18nDetail;
+    if (detail) node.append(' ', el('bdi', null, '(' + detail + ')'));
   }
 
   function clearStatus(node) {
     setT(node, null);
     node.classList.remove('is-error');
+    setStatusAction(node, null);
   }
 
+  /** opts: {error, detail, action}; action 'quran' adds a button to the Quran section. */
   function setStatus(node, key, vars, opts) {
     const o = opts || {};
     setT(node, key, vars, o.detail);
     node.classList.toggle('is-error', !!o.error);
+    setStatusAction(node, o.action || null);
+  }
+
+  /** The button shown right after a status line (only 'quran' exists), or none. */
+  function setStatusAction(node, action) {
+    const next = node.nextElementSibling;
+    const current = next && next.classList.contains('status-action') ? next : null;
+    if (!action) {
+      if (current) current.remove();
+      return;
+    }
+    if (current) return;
+    const btn = el('button', { type: 'button', class: 'btn btn-small status-action' });
+    setT(btn, 'go_quran');
+    btn.addEventListener('click', () => go('quran'));
+    node.after(btn);
   }
 
   function showError(node, err) {
     const info = errorInfo(err);
-    setStatus(node, info.key, null, { error: true, detail: info.detail });
+    setStatus(node, info.key, null, { error: true, action: info.action });
   }
 
   function onlyText(s) {
@@ -742,8 +846,7 @@
           vars = null;
         }
       }
-      const detail = node.dataset.i18nDetail;
-      node.textContent = t(node.dataset.i18n, vars) + (detail ? ' (' + detail + ')' : '');
+      paintT(node, vars);
     }
     for (const node of $$('[data-i18n-attr]')) {
       for (const pair of node.dataset.i18nAttr.split(',')) {
@@ -765,12 +868,15 @@
   // ===========================================================================
 
   class ApiError extends Error {
-    constructor(status, code, message) {
+    constructor(status, code, message, scope) {
       super(message || code);
       this.name = 'ApiError';
       this.status = status;
       this.code = code;
       this.serverMessage = message || '';
+      // quran_text from api/dictation/phrases: 'phrase' when only a phrase is an ayah
+      // (the text may be recited, but not read out for dictation).
+      this.scope = scope || null;
     }
   }
 
@@ -798,24 +904,44 @@
     if (!res.ok) {
       let code = 'http_' + res.status;
       let message = '';
+      let scope = null;
       try {
         const body = await res.json();
         if (body && typeof body.error === 'string') code = body.error;
         if (body && typeof body.message === 'string') message = body.message;
+        if (body && typeof body.scope === 'string') scope = body.scope;
       } catch (e) {
         /* not JSON */
       }
-      throw new ApiError(res.status, code, message);
+      throw new ApiError(res.status, code, message, scope);
     }
+    if (o.as === 'response') return res;
     return o.as === 'blob' ? res.blob() : res.json();
   }
 
+  /** Server error codes with a message of their own. */
+  const ERROR_KEYS = {
+    quran_text: 'error_quran_text',
+    text_too_long: 'error_text_too_long',
+    empty_text: 'error_no_words',
+    bad_text: 'error_no_words',
+    unreadable_text: 'error_unreadable_text',
+    lang_mismatch: 'error_lang_mismatch',
+  };
+
+  /**
+   * {key, action?} for an error: a translated message, plus a button where one helps.
+   * The server's own message is English and never shown: it would reach the child.
+   */
   function errorInfo(err) {
     if (err && err.name === 'ApiError') {
       if (err.status === 0) return { key: 'server_down' };
-      if (err.status === 413) return { key: 'error_too_big', detail: err.serverMessage };
-      if (err.status === 503 || err.status === 501) return { key: 'error_unavailable', detail: err.serverMessage };
-      return { key: 'error_generic', detail: err.serverMessage };
+      if (err.code === 'quran_text' && err.scope === 'phrase') return { key: 'error_quran_phrase' };
+      if (err.code === 'quran_text') return { key: ERROR_KEYS.quran_text, action: 'quran' };
+      if (ERROR_KEYS[err.code]) return { key: ERROR_KEYS[err.code] };
+      if (err.status === 413) return { key: 'error_too_big' };
+      if (err.status === 503 || err.status === 501) return { key: 'error_unavailable' };
+      return { key: 'error_generic' };
     }
     if (err && err.name === 'NotAllowedError') return { key: 'mic_denied' };
     if (err && (err.name === 'NotFoundError' || err.name === 'OverconstrainedError')) return { key: 'mic_missing' };
@@ -863,6 +989,7 @@
       else if (need === 'brain' && h.brain !== 'claude') return 'no_brain';
       else if (need === 'quran' && !h.quran) return 'no_quran';
       else if (need === 'consent' && !state.consent) return 'consent_needed';
+      else if (need === 'ai-consent' && h.brain === 'claude' && !state.consent) return 'consent_needed_ai';
       else if (need === 'mic' && !(window.MommyRecorder && window.MommyRecorder.isSupported())) return 'no_mic_support';
     }
     return null;
@@ -892,11 +1019,12 @@
         else ctl.removeAttribute('aria-describedby');
       }
     }
-    // Each reason is explained once per screen; a server outage once, in the banner.
-    const shown = new Map(); // screen element -> Set of reasons already explained
+    // Each reason is explained once per screen (or dictation stage); a server outage
+    // once, in the banner.
+    const shown = new Map(); // screen or stage element -> Set of reasons already explained
     for (const why of $$('[data-why]')) {
       const reason = gateReason(why.dataset.why);
-      const screen = why.closest('.screen');
+      const screen = why.closest('.stage, .screen');
       if (!shown.has(screen)) shown.set(screen, new Set());
       const seen = shown.get(screen);
       const show = reason !== null && reason !== 'server_down' && reason !== 'checking_server' && !seen.has(reason);
@@ -974,6 +1102,7 @@
   }
 
   function leaveScreen() {
+    state.speechToken++; // feedback still being fetched is not played on another screen
     cancelRecording();
     player.stop();
   }
@@ -993,6 +1122,9 @@
       const lang = e.target.value;
       if (!LANGS.includes(lang)) return;
       state.profile.lang = lang;
+      // Until the parent picks the language of the text (or types one), it is the one
+      // picked here. "Confirm text" also checks the script of the text.
+      if (!state.page.langChosen && !state.page.confirmed && !$('#page-text').value.trim()) setPageLang(lang);
       saveProfile();
       applyStrings();
     });
@@ -1115,23 +1247,32 @@
   const player = {
     audio: null,
     url: null,
-    /** Play a WAV Blob; resolves when playback starts (rejects if blocked). */
-    async play(blob) {
+    done: null,
+    /**
+     * Play a WAV Blob; resolves when playback starts (rejects if blocked). `onDone` is
+     * called once when this playback ends, fails or is stopped.
+     */
+    async play(blob, onDone) {
       this.stop();
       this.url = URL.createObjectURL(blob);
       const audio = new Audio(this.url);
       this.audio = audio;
-      audio.addEventListener('ended', () => {
+      this.done = onDone || null;
+      const finish = () => {
         if (this.audio === audio) this.stop();
-      });
+      };
+      audio.addEventListener('ended', finish);
+      audio.addEventListener('error', finish);
       try {
         await audio.play();
       } catch (e) {
-        if (this.audio === audio) this.stop();
+        finish();
         throw e;
       }
     },
     stop() {
+      const done = this.done;
+      this.done = null;
       if (this.audio) {
         this.audio.pause();
         this.audio = null;
@@ -1140,12 +1281,19 @@
         URL.revokeObjectURL(this.url);
         this.url = null;
       }
+      if (done) done();
     },
   };
 
-  /** Fetch synthetic speech for `text` (WAV Blob). */
-  function fetchSpeech(text, lang, slow) {
-    return api('api/tts', { json: { text, lang, slow: !!slow }, as: 'blob' });
+  /**
+   * Fetch synthetic speech for `text`: {blob, check}. `check` is the server's
+   * X-Speech-Check: 'passed', 'failed' (the voice may not say the phrase clearly) or
+   * 'skipped'.
+   */
+  async function fetchSpeech(text, lang, slow) {
+    const res = await api('api/tts', { json: { text, lang, slow: !!slow }, as: 'response' });
+    const check = (res.headers.get('X-Speech-Check') || 'skipped').toLowerCase();
+    return { blob: await res.blob(), check };
   }
 
   // ===========================================================================
@@ -1153,8 +1301,9 @@
   // ===========================================================================
 
   /**
-   * A record button: press to start, press again to stop. `onBlob(wavBlob)` receives
-   * the recording. Only one recording runs at a time in the whole app.
+   * A record button: press to start, press again to stop. `onBlob(wavBlob, {limit})`
+   * receives the recording; `limit` is true when the length limit stopped it. Only one
+   * recording runs at a time in the whole app.
    */
   function makeRecordControl(config) {
     const control = {
@@ -1179,6 +1328,7 @@
     if (state.recording) return;
     if (!isOpen(control.button.dataset.gate)) return;
     if (control.beforeStart && control.beforeStart() === false) return;
+    state.speechToken++; // spoken feedback still on its way must not talk over the child
     player.stop();
     const recorder = new window.MommyRecorder.Recorder({
       maxSeconds: control.maxSeconds,
@@ -1186,7 +1336,7 @@
       onLimit: () => {
         if (state.recording && state.recording.recorder === recorder) {
           if (control.status) setStatus(control.status, 'max_reached');
-          finishRecording(true);
+          finishRecording({ limit: true });
         }
       },
     });
@@ -1213,7 +1363,9 @@
     refreshGates();
   }
 
-  async function finishRecording(keepStatus) {
+  async function finishRecording(meta) {
+    const info = { limit: !!(meta && meta.limit) };
+    const keepStatus = info.limit;
     const rec = state.recording;
     if (!rec || rec.starting) return;
     state.recording = null;
@@ -1230,7 +1382,7 @@
         return;
       }
       if (control.status && !keepStatus) clearStatus(control.status);
-      await control.onBlob(blob);
+      await control.onBlob(blob, info);
     } finally {
       setBusy(control.button, false);
     }
@@ -1251,7 +1403,7 @@
     // The last buffered frame can arrive after the button went back to idle.
     if (!state.recording || state.recording.control !== control) return;
     if (control.meter) control.meter.style.setProperty('--level', level.toFixed(3));
-    if (control.timer) setT(control.timer, 'rec_time', { sec: fmtNum(Math.floor(seconds)) });
+    if (control.timer) setT(control.timer, 'rec_time', { sec: Math.floor(seconds) });
   }
 
   function setRecordState(control, mode) {
@@ -1366,8 +1518,8 @@
 
     langSelect.addEventListener('change', () => {
       if (!LANGS.includes(langSelect.value)) return;
-      state.page.lang = langSelect.value;
-      setTextLang(textarea, state.page.lang);
+      state.page.langChosen = true;
+      setPageLang(langSelect.value);
       markUnconfirmed();
     });
     textarea.addEventListener('input', markUnconfirmed);
@@ -1376,6 +1528,7 @@
         if (radio.checked) {
           state.page.mode = radio.value === 'contextual' ? 'contextual' : 'strict';
           updateReciteModeLabel();
+          resetRecite(); // a result of the other mode must not stay under the new label
         }
       });
     }
@@ -1389,11 +1542,34 @@
     $('#page-lang').value = state.page.lang;
   }
 
+  /** Set the language of the page text (the select, and the textarea's lang and dir). */
+  function setPageLang(lang) {
+    state.page.lang = lang;
+    $('#page-lang').value = lang;
+    setTextLang($('#page-text'), lang);
+  }
+
   function markUnconfirmed() {
-    if (!state.page.confirmed) return;
+    const status = $('#prep-confirm-status');
+    // A confirmation still waiting for the server is for the old text: drop it.
+    state.page.confirmToken++;
+    setBusy($('#btn-confirm'), false);
+    if (!state.page.confirmed) {
+      if (status.dataset.i18n === 'checking_text') clearStatus(status);
+      return;
+    }
     state.page.confirmed = false;
-    setStatus($('#prep-confirm-status'), 'text_changed');
+    setStatus(status, 'text_changed');
     $('#prep-next').hidden = true;
+  }
+
+  /** 'arabic' or 'latin': the script most letters of `text` are written in, or null. */
+  function mainScript(text) {
+    const arabic = (text.match(/\p{Script=Arabic}/gu) || []).length;
+    const latin = (text.match(/\p{Script=Latin}/gu) || []).length;
+    if (arabic > latin) return 'arabic';
+    if (latin > arabic) return 'latin';
+    return null;
   }
 
   async function readPagePhoto(input) {
@@ -1413,20 +1589,23 @@
     form.append('lang', state.page.lang);
     jpeg = null;
     setStatus(status, 'reading_page');
+    const quranNote = $('#prep-quran-note');
+    clearStatus(quranNote);
     for (const n of $$('[data-gate="prep-photo"]')) setBusy(n, true);
     try {
       const res = await api('api/page/read', { form });
       const text = onlyText(res.text);
       if (LANGS.includes(res.lang)) {
-        state.page.lang = res.lang;
-        $('#page-lang').value = res.lang;
-        setTextLang($('#page-text'), res.lang);
+        state.page.langChosen = true;
+        setPageLang(res.lang);
       }
       $('#page-text').value = text;
       markUnconfirmed();
       if (res.needs_manual || !text.trim()) setStatus(status, 'page_needs_manual');
       else if (res.notes) setStatus(status, 'page_read_ok', null, { detail: onlyText(res.notes) });
       else setStatus(status, 'page_read_ok');
+      // The Quran is practised in its own section, against the verbatim text.
+      if (res.contains_quran === true) setStatus(quranNote, 'page_has_quran', null, { action: 'quran' });
       $('#page-text').focus();
     } catch (err) {
       if (err && err.code === 'needs_manual') setStatus(status, 'page_needs_manual');
@@ -1436,24 +1615,81 @@
     }
   }
 
-  function confirmText() {
+  /**
+   * Confirm the page text. The script of the text must fit its language, and the server
+   * must accept the text (it refuses Quran text and texts that are too long), so that
+   * the parent hears about a problem here and not the child after reciting.
+   */
+  async function confirmText() {
     const text = $('#page-text').value.trim();
     const status = $('#prep-confirm-status');
+    const btn = $('#btn-confirm');
     if (!text) {
       setStatus(status, 'text_empty', null, { error: true });
       $('#page-text').focus();
       return;
     }
+    // Only Arabic, of the three languages, is written in Arabic script.
+    const script = mainScript(text);
+    let switched = false;
+    if (script === 'arabic' && $('#page-lang').value !== 'ar') {
+      setPageLang('ar');
+      state.page.langChosen = true;
+      switched = true;
+    } else if (script === 'latin' && $('#page-lang').value === 'ar') {
+      refuseText(status, { key: 'text_not_arabic' });
+      $('#page-lang').focus();
+      return;
+    }
+    const lang = $('#page-lang').value;
+    const token = ++state.page.confirmToken;
+    let noDictation = false;
+    setStatus(status, 'checking_text');
+    setBusy(btn, true);
+    try {
+      const res = await api('api/dictation/phrases', { json: { text, lang } });
+      if (token !== state.page.confirmToken) return;
+      const phrases = Array.isArray(res.phrases) ? res.phrases.filter((p) => typeof p === 'string' && p.trim()) : null;
+      if (phrases && !phrases.length) {
+        refuseText(status, { key: 'error_no_words' });
+        return;
+      }
+    } catch (err) {
+      if (token !== state.page.confirmToken) return;
+      // A refused text is not confirmed. If the server cannot be reached, the text is
+      // confirmed anyway: each activity reports the problem when it needs the server.
+      // A phrase that is a whole ayah (often the basmala on its own line) only rules out
+      // dictation, which would read it aloud: the text can still be recited.
+      if (err && err.name === 'ApiError' && err.code === 'quran_text' && err.scope === 'phrase') {
+        noDictation = true;
+      } else if (err && err.name === 'ApiError' && err.status >= 400 && err.status < 500) {
+        refuseText(status, errorInfo(err));
+        return;
+      }
+    } finally {
+      if (token === state.page.confirmToken) setBusy(btn, false);
+    }
     state.page.text = text;
-    state.page.lang = $('#page-lang').value;
+    state.page.lang = lang;
     const mode = $('input[name="mode"]:checked');
     state.page.mode = mode && mode.value === 'contextual' ? 'contextual' : 'strict';
     state.page.confirmed = true;
     resetRecite();
     resetDictation();
     renderLegends();
-    setStatus(status, 'text_confirmed');
+    clearStatus($('#prep-quran-note')); // it was about the page as read, before any edits
+    setStatus(status, noDictation ? 'text_confirmed_no_dictation' : switched ? 'text_confirmed_ar' : 'text_confirmed');
     $('#prep-next').hidden = false;
+    // A child screen opened meanwhile shows the new text.
+    if (state.screen === 'recite') enterRecite();
+    else if (state.screen === 'dictation') enterDictation();
+  }
+
+  /** The text in the textarea cannot be used: say why ({key, action}) and unconfirm it. */
+  function refuseText(status, info) {
+    state.page.confirmed = false;
+    $('#prep-next').hidden = true;
+    setStatus(status, info.key, null, { error: true, action: info.action });
   }
 
   // ===========================================================================
@@ -1504,6 +1740,7 @@
   }
 
   function resetRecite() {
+    state.speechToken++;
     $('#recite-text').textContent = '';
     $('#recite-result').hidden = true;
     clearStatus($('#recite-status'));
@@ -1511,7 +1748,7 @@
     state.recite.feedbackBlob = null;
   }
 
-  async function checkRecitation(blob) {
+  async function checkRecitation(blob, info) {
     const status = $('#recite-status');
     const form = new FormData();
     form.append('audio', blob, 'recitation.wav');
@@ -1528,10 +1765,16 @@
       return;
     }
     clearStatus(status);
-    showReciteResult(res);
+    showReciteResult(res, info);
   }
 
-  function showReciteResult(res) {
+  /** Non-empty strings of a list of ideas from the judgement. */
+  function ideaList(ideas) {
+    return Array.isArray(ideas) ? ideas.filter((x) => typeof x === 'string' && x.trim()) : [];
+  }
+
+  function showReciteResult(res, info) {
+    state.speechToken++; // the voice of an older result is not wanted any more
     const lang = state.page.lang;
     const box = $('#recite-result');
     const quality = res.quality || {};
@@ -1552,20 +1795,23 @@
       renderOps(words, result.ops, lang, 'heard');
       $('#recite-legend').hidden = false;
       const ok = result.ops.filter((op) => op.kind === 'match').length;
-      setT(scoreNode, 'score', { ok: fmtNum(ok), n: fmtNum(result.n_expected || 0) });
+      setT(scoreNode, 'score', { ok, n: Number(result.n_expected) || 0 });
       scoreNode.hidden = false;
     } else {
       showPlainPage();
     }
 
     if (contextual && !sayAgain) {
-      const v = ['same_meaning', 'partly', 'different'].includes(judgement.verdict) ? judgement.verdict : null;
+      let v = ['same_meaning', 'partly', 'different'].includes(judgement.verdict) ? judgement.verdict : null;
+      const missing = ideaList(judgement.missing_ideas);
+      // "Same meaning" with ideas still missing is not the whole meaning.
+      if (v === 'same_meaning' && missing.length) v = 'nearly';
       if (v) {
         setT(verdictNode, 'verdict_' + v);
         verdictNode.className = 'verdict verdict-' + v;
         verdictNode.hidden = false;
       }
-      fillIdeas('#recite-missing', '#recite-missing-wrap', judgement.missing_ideas, lang);
+      fillIdeas('#recite-missing', '#recite-missing-wrap', missing, lang);
       fillIdeas('#recite-wrong', '#recite-wrong-wrap', judgement.wrong_ideas, lang);
       $('#recite-approx').hidden = !judgement.approximate;
       $('#recite-ideas').hidden = !(v || judgement.approximate);
@@ -1577,10 +1823,13 @@
     fbNode.textContent = feedback;
     setTextLang(fbNode, lang);
     const qNode = $('#recite-quality');
-    if (quality.too_quiet) setT(qNode, 'too_quiet');
-    else if (quality.too_short) setT(qNode, 'too_short');
+    // A clip that is too short is always "too quiet" too (nobody had started speaking),
+    // so the real problem, a stop pressed too early, is named first.
+    if (quality.too_short) setT(qNode, 'too_short');
+    else if (quality.too_quiet) setT(qNode, 'too_quiet');
     else setT(qNode, null);
     qNode.hidden = !(quality.too_quiet || quality.too_short);
+    $('#recite-limit').hidden = !(info && info.limit);
 
     $('#recite-say-again').hidden = !sayAgain;
     const heard = onlyText(res.heard_text);
@@ -1601,7 +1850,7 @@
   function fillIdeas(listSel, wrapSel, ideas, lang) {
     const list = $(listSel);
     list.textContent = '';
-    const items = Array.isArray(ideas) ? ideas.filter((x) => typeof x === 'string' && x.trim()) : [];
+    const items = ideaList(ideas);
     for (const idea of items) {
       const li = el('li', null, idea);
       setTextLang(li, lang);
@@ -1619,12 +1868,23 @@
     const holder = which === 'recite' ? state.recite : state.dictation;
     const fb = which === 'recite' ? state.recite.lastFeedback : state.dictation.result && state.dictation.result.feedback;
     const gate = which === 'recite' ? 'recite-tts' : 'dict-tts';
-    const status = which === 'recite' ? $('#recite-status') : $('#dict-review-status');
+    const status = which === 'recite' ? $('#recite-status') : $('#dict-child-status');
     if (!fb || !fb.text || !isOpen(gate) || fb.text.length > MAX_TTS_CHARS) return;
+    // The voice can take a second to arrive. By then the child may be recording again or
+    // be on another screen, or a newer result may be shown: then it is not played.
+    const token = state.speechToken;
+    const screen = state.screen;
+    const stale = () => token !== state.speechToken || screen !== state.screen || state.recording !== null;
     try {
-      if (!holder.feedbackBlob) holder.feedbackBlob = await fetchSpeech(fb.text, fb.lang, false);
+      if (!holder.feedbackBlob) {
+        const speech = await fetchSpeech(fb.text, fb.lang, false);
+        if (stale()) return;
+        holder.feedbackBlob = speech.blob;
+      }
+      if (stale()) return;
       await player.play(holder.feedbackBlob);
     } catch (err) {
+      if (stale()) return;
       if (err && err.name === 'NotAllowedError') {
         if (auto) setStatus(status, 'press_listen');
       } else if (!auto) {
@@ -1639,13 +1899,14 @@
 
   function initDictation() {
     $('#btn-dict-start').addEventListener('click', startDictation);
-    $('#dict-repeat').addEventListener('click', () => playPhrase(state.dictation.index));
+    $('#dict-repeat').addEventListener('click', () => playPhrase(state.dictation.index, { repeat: true }));
     $('#dict-next').addEventListener('click', nextPhrase);
     $('#dict-show').addEventListener('click', togglePhrase);
     for (const id of ['#dict-take', '#dict-choose']) {
       $(id).addEventListener('change', (e) => checkDictationPhoto(e.target));
     }
     $('#btn-dict-check').addEventListener('click', () => {
+      if (!isOpen('dict-check')) return;
       const text = $('#dict-written').value.trim();
       if (!text) {
         setStatus($('#dict-check-status'), 'written_empty', null, { error: true });
@@ -1655,6 +1916,7 @@
       checkDictation({ written: text }, $('#dict-check-status'));
     });
     $('#btn-dict-recheck').addEventListener('click', () => {
+      if (!isOpen('dict-check')) return;
       const text = $('#dict-read-text').value.trim();
       if (!text) {
         setStatus($('#dict-review-status'), 'written_empty', null, { error: true });
@@ -1662,6 +1924,9 @@
       }
       checkDictation({ written: text }, $('#dict-review-status'));
     });
+    // The marks shown to the parent belong to the text that was checked: once it is
+    // edited, it must be checked again before the child sees anything.
+    $('#dict-read-text').addEventListener('input', updateReviewConfirm);
     $('#btn-dict-confirm').addEventListener('click', showDictationToChild);
     $('#dict-listen').addEventListener('click', () => playFeedback('dictation'));
     $('#btn-dict-new').addEventListener('click', () => {
@@ -1685,6 +1950,7 @@
   function resetDictation() {
     const d = state.dictation;
     d.token++;
+    state.speechToken++;
     d.phrases = [];
     d.index = 0;
     d.audio.clear();
@@ -1692,9 +1958,13 @@
     d.feedbackBlob = null;
     d.stage = 'intro';
     player.stop();
+    setPhraseLoading(false);
+    setNextWaiting(false);
+    $('#dict-unclear').hidden = true;
     $('#dict-written').value = '';
     $('#dict-read-text').value = '';
-    for (const id of ['#dict-intro-status', '#dict-speak-status', '#dict-check-status', '#dict-review-status']) clearStatus($(id));
+    for (const id of ['#dict-intro-status', '#dict-speak-status', '#dict-check-status', '#dict-review-status', '#dict-child-status']) clearStatus($(id));
+    updateReviewConfirm();
     setDictStage('intro');
   }
 
@@ -1731,13 +2001,14 @@
 
   function showPhrase() {
     const d = state.dictation;
-    setT($('#dict-counter'), 'phrase_n', { i: fmtNum(d.index + 1), n: fmtNum(d.phrases.length) });
+    setT($('#dict-counter'), 'phrase_n', { i: d.index + 1, n: d.phrases.length });
     const last = d.index >= d.phrases.length - 1;
     setT($('#dict-next-label'), last ? 'finish' : 'next');
     const phrase = $('#dict-phrase');
     phrase.textContent = d.phrases[d.index] || '';
     setTextLang(phrase, state.page.lang);
     clearStatus($('#dict-speak-status'));
+    $('#dict-unclear').hidden = true;
   }
 
   function togglePhrase() {
@@ -1748,29 +2019,89 @@
     setT($('span', btn), phrase.hidden ? 'show_phrase' : 'hide_phrase');
   }
 
-  async function playPhrase(index) {
+  /** Repeat and Next wait while the voice of the current phrase is fetched. */
+  function setPhraseLoading(on) {
     const d = state.dictation;
-    const text = d.phrases[index];
-    if (!text || !isOpen('dict-play')) return;
+    d.loading = on;
+    setBusy($('#dict-repeat'), on);
+    setBusy($('#dict-next'), on || d.waiting);
+  }
+
+  /** Next also waits until the phrase has been heard once. */
+  function setNextWaiting(on) {
+    const d = state.dictation;
+    d.waiting = on;
+    setBusy($('#dict-next'), on || d.loading);
+  }
+
+  /**
+   * The voice of phrase `index`, {blob, check}: fetched once and kept for Repeat;
+   * `fresh` asks for a new take. A failed fetch is not kept, so the next try asks again.
+   */
+  function speechFor(index, fresh) {
+    const d = state.dictation;
+    if (!fresh && d.audio.has(index)) return d.audio.get(index);
     const token = d.token;
+    const p = fetchSpeech(d.phrases[index], state.page.lang, true);
+    d.audio.set(index, p);
+    p.catch(() => {
+      if (token === d.token && d.audio.get(index) === p) d.audio.delete(index);
+    });
+    return p;
+  }
+
+  /**
+   * Speak phrase `index`. Next stays busy until the phrase has been heard once, so a
+   * second press cannot skip a phrase the child never heard. With `repeat`, a take that
+   * failed the server's speech check is replaced by a new take, which may be clearer.
+   */
+  async function playPhrase(index, opts) {
+    const d = state.dictation;
+    if (!d.phrases[index] || !isOpen('dict-play')) return;
+    const token = d.token;
+    const playId = ++d.playId;
+    const current = () => token === d.token && playId === d.playId;
     const status = $('#dict-speak-status');
+    setPhraseLoading(true);
+    setNextWaiting(true);
+    setStatus(status, 'preparing');
+    let speech;
     try {
-      let blob = d.audio.get(index);
-      if (!blob) {
-        blob = await fetchSpeech(text, state.page.lang, true);
-        if (token !== d.token) return;
-        d.audio.set(index, blob);
-      }
-      if (token !== d.token || d.index !== index || state.screen !== 'dictation') return;
-      await player.play(blob);
+      speech = await speechFor(index);
+      if (current() && opts && opts.repeat && speech.check === 'failed') speech = await speechFor(index, true);
     } catch (err) {
-      if (err && err.name === 'NotAllowedError') setStatus(status, 'press_listen');
-      else showError(status, err);
+      if (!current()) return;
+      setPhraseLoading(false);
+      setNextWaiting(false);
+      showError(status, err);
+      return;
     }
+    if (!current()) return;
+    setPhraseLoading(false);
+    clearStatus(status);
+    if (state.screen !== 'dictation') {
+      setNextWaiting(false);
+      return;
+    }
+    // For the grown-up: the voice check failed, so the phrase may be hard to understand.
+    $('#dict-unclear').hidden = speech.check !== 'failed';
+    try {
+      await player.play(speech.blob, () => {
+        if (current()) setNextWaiting(false);
+      });
+    } catch (err) {
+      if (!current()) return;
+      if (err && err.name === 'NotAllowedError') setStatus(status, 'press_repeat');
+      else showError(status, err);
+      return;
+    }
+    // While the child listens and writes, the next phrase is fetched.
+    if (token === d.token && index + 1 < d.phrases.length) speechFor(index + 1).catch(() => {});
   }
 
   function nextPhrase() {
     const d = state.dictation;
+    if (d.loading || d.waiting) return;
     player.stop();
     if (d.index >= d.phrases.length - 1) {
       d.audio.clear();
@@ -1807,8 +2138,11 @@
     if (input.image) form.append('image', input.image, 'writing.jpg');
     else form.append('written_text', input.written);
     setStatus(status, input.image ? 'reading_writing' : 'checking');
+    const d = state.dictation;
     const buttons = [$('#btn-dict-check'), $('#btn-dict-recheck'), ...$$('[data-gate="dict-photo"]')];
     for (const b of buttons) setBusy(b, true);
+    d.checking = true;
+    updateReviewConfirm();
     let res;
     try {
       res = await api('api/dictation/check', { form });
@@ -1822,13 +2156,29 @@
       return;
     } finally {
       for (const b of buttons) setBusy(b, false);
+      d.checking = false;
+      updateReviewConfirm();
     }
     clearStatus(status);
     showDictationReview(res);
   }
 
+  /** True when "What was read" was edited after the result shown was computed. */
+  function reviewIsStale() {
+    const r = state.dictation.result;
+    return !!r && $('#dict-read-text').value.trim() !== onlyText(r.res.read_text).trim();
+  }
+
+  /** "Confirm result" only shows the child marks that match the text in the box. */
+  function updateReviewConfirm() {
+    const stale = reviewIsStale();
+    $('#dict-stale').hidden = !stale;
+    $('#btn-dict-confirm').disabled = stale || state.dictation.checking;
+  }
+
   /** The parent sees the result first and can correct what was read. */
   function showDictationReview(res) {
+    state.speechToken++;
     const lang = state.page.lang;
     const result = res.result || {};
     const feedback = onlyText(res.feedback);
@@ -1838,6 +2188,7 @@
     const readText = $('#dict-read-text');
     readText.value = onlyText(res.read_text);
     setTextLang(readText, lang);
+    updateReviewConfirm();
     const uncertain = Array.isArray(res.uncertain_words) ? res.uncertain_words.filter((w) => typeof w === 'string' && w) : [];
     const unc = $('#dict-uncertain');
     if (uncertain.length) setT(unc, 'uncertain', { words: uncertain.join(uiLang() === 'ar' ? '، ' : ', ') });
@@ -1855,7 +2206,7 @@
 
   function showDictationToChild() {
     const d = state.dictation;
-    if (!d.result) return;
+    if (!d.result || d.checking || reviewIsStale()) return;
     const lang = state.page.lang;
     renderOps($('#dict-child-words'), (d.result.res.result || {}).ops || [], lang, 'written');
     const fb = $('#dict-child-feedback');
@@ -1915,9 +2266,9 @@
     $('#quran-juz').addEventListener('change', (e) => {
       state.profile.quran.juzAmma = e.target.checked;
       saveProfile();
-      renderSurahOptions();
-      const select = $('#quran-surah');
-      if (String(state.profile.quran.surah) !== select.value) onSurahChange();
+      renderSurahOptions(); // may move the chosen surah into Juz' Amma
+      const loaded = state.quran.loaded;
+      if (loaded && loaded.surah !== state.profile.quran.surah) onSurahChange();
     });
     $('#quran-surah').addEventListener('change', onSurahChange);
     for (const id of ['#quran-from', '#quran-to']) {
@@ -1981,13 +2332,20 @@
       prefs.surah = list.length ? list[0].number : DEFAULT_SURAH;
     }
     select.value = String(prefs.surah);
-    const info = surahInfo(prefs.surah);
-    if (info) {
-      $('#quran-from').max = info.ayah_count;
-      $('#quran-to').max = info.ayah_count;
-    }
-    $('#quran-from').value = prefs.from;
-    $('#quran-to').value = prefs.to;
+    showRange(prefs.from, prefs.to);
+  }
+
+  /**
+   * The ayah range fields are text fields, so that they can show Arabic-Indic digits in
+   * the Arabic UI; both digit systems are accepted when typed.
+   */
+  function showRange(from, to) {
+    $('#quran-from').value = fmtNum(from);
+    $('#quran-to').value = fmtNum(to);
+  }
+
+  function rangeField(sel) {
+    return asciiDigits($(sel).value).replace(/[^0-9]/g, '');
   }
 
   function onSurahChange() {
@@ -1998,10 +2356,7 @@
     prefs.surah = n;
     prefs.from = 1;
     prefs.to = Math.min(info.ayah_count, DEFAULT_RANGE);
-    $('#quran-from').max = info.ayah_count;
-    $('#quran-to').max = info.ayah_count;
-    $('#quran-from').value = prefs.from;
-    $('#quran-to').value = prefs.to;
+    showRange(prefs.from, prefs.to);
     saveProfile();
     loadAyat();
   }
@@ -2011,16 +2366,17 @@
     const info = surahInfo(prefs.surah);
     if (!info) return;
     const count = info.ayah_count;
-    let from = clampInt($('#quran-from').value, 1, count, 1);
-    let to = clampInt($('#quran-to').value, 1, count, from);
+    const fromText = rangeField('#quran-from');
+    const toText = rangeField('#quran-to');
+    let from = fromText ? clampInt(fromText, 1, count, 1) : prefs.from;
+    let to = toText ? clampInt(toText, 1, count, from) : prefs.to;
     if (to < from) to = from;
     const capped = to - from + 1 > MAX_AYAT;
     if (capped) to = from + MAX_AYAT - 1;
     $('#quran-range-note').hidden = !capped;
     prefs.from = from;
     prefs.to = to;
-    $('#quran-from').value = from;
-    $('#quran-to').value = to;
+    showRange(from, to);
     saveProfile();
     loadAyat();
   }
@@ -2072,6 +2428,12 @@
    * sent; its words are wrapped in spans (so they can be highlighted) and the spaces and
    * pause marks between them are kept as they are. The ayah number after each ayah is
    * an interface marker, not part of the text.
+   *
+   * Line breaks: a pause or sajdah mark stays on the line of the word before it (the
+   * word, the space and the mark share one unbreakable .qg span), and the ayah number
+   * stays on the line of the last word of its ayah (.ayah-end, with a no-break space).
+   * Otherwise a number can start the next line and look like the label of the next ayah.
+   * Only elements are added around the characters; the text itself is unchanged.
    */
   function renderQuranText() {
     const q = state.quran;
@@ -2082,22 +2444,33 @@
       const display = onlyText(ayah.display);
       const expectedWords = Array.isArray(ayah.display_words) ? ayah.display_words : null;
       const ayahNode = el('span', { class: 'ayah', 'data-ayah': ayah.ayah });
+      const parts = display.split(/(\s+)/).filter(Boolean);
       let index = 0;
-      for (const part of display.split(/(\s+)/)) {
-        if (!part) continue;
-        if (/^\s+$/.test(part) || isPauseMark(part)) {
-          ayahNode.append(part);
-          continue;
+      let group = null; // the .qg of the last word, while pause marks may follow it
+      parts.forEach((part, i) => {
+        if (/^\s+$/.test(part)) {
+          if (group && parts[i + 1] !== undefined && isPauseMark(parts[i + 1])) group.append(part);
+          else {
+            ayahNode.append(part);
+            group = null;
+          }
+          return;
+        }
+        if (isPauseMark(part)) {
+          (group || ayahNode).append(part);
+          return;
         }
         const span = el('span', { class: 'qw', 'data-w': index }, part);
         // Highlighting relies on the server's word indices; only trust them if they agree.
         if (!expectedWords || expectedWords[index] === part) {
           q.words.push({ ayah: ayah.ayah, index, text: part, el: span });
         }
-        ayahNode.append(span);
+        group = el('span', { class: 'qg' }, span);
+        ayahNode.append(group);
         index++;
-      }
-      box.append(ayahNode, ' ', el('span', { class: 'ayah-num', 'aria-label': t('ayah_label', { a: ayah.ayah }) }, arabicDigits(ayah.ayah)), ' ');
+      });
+      const marker = el('span', { class: 'ayah-num', 'aria-label': t('ayah_label', { a: ayah.ayah }) }, arabicDigits(ayah.ayah));
+      box.append(el('span', { class: 'ayah-end' }, [ayahNode, '\u00a0', marker]), ' ');
     }
   }
 
@@ -2142,7 +2515,7 @@
     for (const n of $$('#quran-text ins.w-ins')) n.remove();
   }
 
-  async function checkQuran(blob) {
+  async function checkQuran(blob, info) {
     const q = state.quran;
     const loaded = q.loaded;
     if (!loaded) return;
@@ -2163,6 +2536,7 @@
     clearStatus(status);
     if (q.loaded !== loaded) return;
     showQuranResult(res);
+    $('#quran-limit').hidden = !(info && info.limit);
   }
 
   /**
@@ -2248,7 +2622,7 @@
     const fe = res.first_error;
     const feNode = $('#quran-first-error');
     if (fe && fe.ayah && !sayAgain) {
-      setT(feNode, 'first_error_at', { a: fmtNum(fe.ayah) });
+      setT(feNode, 'first_error_at', { a: Number(fe.ayah) });
       feNode.hidden = false;
       const target = q.words.find((w) => w.ayah === fe.ayah && w.index === fe.word_index_display);
       if (target) target.el.classList.add('w-first');
@@ -2312,7 +2686,7 @@
       const info = surahInfo(c.surah);
       const name = info ? info.name_ar : String(c.surah);
       const title = el('p', { class: 'cand-title' });
-      setT(title, 'found_at', { name, s: fmtNum(c.surah), a: fmtNum(c.ayah) });
+      setT(title, 'found_at', { name, s: Number(c.surah), a: Number(c.ayah) });
       const preview = el('p', { class: 'cand-preview quran-font', lang: 'ar', dir: 'rtl' }, onlyText(c.display_preview));
       const btn = el('button', { type: 'button', class: 'btn btn-small' });
       setT(btn, 'go_there');

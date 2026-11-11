@@ -24,6 +24,9 @@ Flows
 The general endpoints also refuse Quran text (``422 quran_text``, see
 :func:`looks_like_quran`): a passage of the Quran is checked only by the Quran section,
 against the verbatim Tanzil text, and is never given to the LLM or spoken by the voice.
+They refuse a text whose script does not match the chosen language (``422
+lang_mismatch``) and a text with ``[?]`` marks where a page reader could not read a
+word (``400 unreadable_text``).
 
 Privacy (hard rule 5)
 ---------------------
@@ -37,16 +40,24 @@ Privacy (hard rule 5)
   lets through, so no upload can reach the disk; ``tests/test_api.py`` checks this by
   making ``SpooledTemporaryFile.rollover`` fail during a 9.7 MB upload (and that the
   same upload does roll over with the default threshold).
+* Every uploaded image is decoded and re-encoded as a new JPEG of at most 2000 px
+  (:func:`clean_image`): no metadata of the upload (EXIF with a GPS position, XMP,
+  IPTC, comments, PNG text) reaches the brain. Image and audio decodes run at most two
+  at a time.
+* The server answers only to its own host names and refuses cross-origin writes to
+  the API (:class:`HostOriginMiddleware`); pages may not be framed by other sites.
 * Nothing a child said, wrote or photographed is logged: logs carry sizes, durations,
   timings and error class names only. Unexpected errors on ``/api/*`` are answered with a
   JSON 500 and logged as a class name and code location, because exception messages and
   tracebacks can quote content.
 * Every ``/api/*`` response has ``Cache-Control: no-store``.
 
-Errors are ``{"error": <code>, "message": <text>}`` with status 400 (bad input), 413 (too
-large or too long), 422 (missing or invalid fields, Quran text), 501 (the handwriting
-needs to be typed) or 503 (a component is unavailable); unknown paths and methods get
-404 and 405 in the same shape, and an internal error 500.
+Errors are ``{"error": <code>, "message": <text>}`` with status 400 (bad input, or an
+unknown host name), 403 (a cross-origin write), 413 (too large or too long), 422
+(missing or invalid fields, Quran text, a language that does not match the text), 501
+(the handwriting needs to be typed) or 503 (a component is unavailable, or the server
+is busy); unknown paths and methods get 404 and 405 in the same shape, and an internal
+error 500.
 
 CPU-heavy and blocking work (speech recognition, synthesis, Claude calls) runs in plain
 ``def`` endpoints, which FastAPI runs in its thread pool, so the event loop stays free.
@@ -56,10 +67,13 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import json
 import logging
 import os
+import threading
 import time
 import traceback
+import unicodedata
 from http import HTTPStatus
 from typing import Annotated, Any, Literal
 
@@ -78,14 +92,22 @@ from starlette.routing import Match, Mount
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__, feedback
-from .align import CheckResult, check_recitation, check_writing, result_summary
+from .align import (
+    UNREADABLE,
+    CheckResult,
+    check_recitation,
+    check_writing,
+    has_unreadable,
+    result_summary,
+    tokenize_written,
+)
 from .asr import ASRUnavailable, SherpaWhisper, Transcriber, audio_quality, decode_wav, wav_duration
-from .config import Settings, load_settings
+from .config import DEFAULT_ALLOWED_HOSTS, Settings, load_settings
 from .feedback import AgeBand
 from .llm import VERDICTS, Brain, OfflineBrain, make_brain, meaning_feedback
 from .phrases import split_phrases
 from .quran import N_SURAHS, RIWAYA, SOURCE_URL, Quran
-from .textnorm import LANGUAGES, Lang, has_arabic, tokenize
+from .textnorm import LANGUAGES, Lang, has_arabic, is_arabic_char, tokenize
 from .tts import PiperTTS, QuranTextRefused, Synthesizer, TTSUnavailable, is_quranic_script, synthesize_verified
 
 log = logging.getLogger(__name__)
@@ -104,11 +126,25 @@ AUDIO_SECONDS_TOLERANCE = 0.1
 
 #: Largest image upload (bytes), from the contract.
 MAX_IMAGE_BYTES = 8 * MB
-#: Images that carry metadata are decoded and re-encoded; refuse decoding more pixels.
-MAX_IMAGE_PIXELS = 50_000_000
+#: Every image is decoded and re-encoded; refuse decoding more pixels than this (the web
+#: client sends at most 2000 px on the long edge, about 4 MP). A JPEG is decoded at a
+#: reduced scale (1/2, 1/4 or 1/8), so a phone photo of up to 50 MP costs no more.
+MAX_IMAGE_PIXELS = 4096 * 4096
+MAX_JPEG_PIXELS = 50_000_000
+#: Long edge (pixels) of the image passed on to the brain, as the web client resizes.
+MAX_IMAGE_EDGE = 2000
+#: JPEG quality of the re-encoded image.
+IMAGE_QUALITY = 90
+
+#: Image and audio decodes that may run at once (each can take a few hundred MB); a
+#: request that waits longer than BUSY_TIMEOUT_S for a slot gets 503 busy.
+MAX_CONCURRENT_DECODES = 2
+BUSY_TIMEOUT_S = 30.0
 
 #: Largest text field (expected text, typed writing, heard text), in characters.
 MAX_TEXT_CHARS = 20_000
+#: Largest text field in words: the word alignment needs memory for words x words.
+MAX_TEXT_WORDS = 3_000
 #: Largest text for ``/api/tts``, from the contract.
 MAX_TTS_CHARS = 400
 #: Most ayat in one Quran request, from the contract.
@@ -137,8 +173,23 @@ SPEECH_CHECK_ATTEMPTS = 2
 
 #: :func:`looks_like_quran`: a text of at least this many words...
 QURAN_GUARD_MIN_WORDS = 4
-#: ...whose words are found, in order, at one place of the Quran at least this share.
+#: ...whose words are found, in order, at one place of the Quran at least this share;
 QURAN_GUARD_MIN_SCORE = 0.9
+#: or that holds this many consecutive words found consecutively in the Quran;
+QURAN_GUARD_RUN_WORDS = 5
+#: or, next to a framing formula (قال تعالى, صدق الله العظيم), this many.
+QURAN_GUARD_FRAMED_RUN_WORDS = 3
+
+QURAN_TEXT_MESSAGE = (
+    "This text is from the Quran. Please use the Quran section: it checks recitation "
+    "against the verbatim Tanzil text, without AI and without a synthetic voice."
+)
+#: /api/dictation/phrases, ``scope: "phrase"``: the text may be recited, but a phrase
+#: of it is a whole ayah (often the basmala on a line of its own) that is never spoken.
+QURAN_PHRASE_MESSAGE = (
+    "A phrase of this text is a whole ayah of the Quran, which is never read out by the "
+    "synthetic voice, so the text cannot be used for dictation. It can still be recited."
+)
 
 LangField = Literal["ar", "en", "fr"]
 AgeField = Literal["6-9", "10-13", "14-18"]
@@ -149,9 +200,19 @@ AgeField = Literal["6-9", "10-13", "14-18"]
 
 
 class UTF8JSONResponse(JSONResponse):
-    """JSON (UTF-8, non-ASCII kept as is) with the charset stated in the header."""
+    """JSON (UTF-8, non-ASCII kept as is) with the charset stated in the header.
+
+    A character that UTF-8 cannot encode (a lone surrogate that slipped through) becomes
+    ``?`` instead of failing the whole response; text fields refuse such characters on
+    the way in (400 ``bad_text``).
+    """
 
     media_type = "application/json; charset=utf-8"
+
+    def render(self, content: Any) -> bytes:
+        return json.dumps(content, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":")).encode(
+            "utf-8", "replace"
+        )
 
 
 class ApiError(StarletteHTTPException):
@@ -161,9 +222,11 @@ class ApiError(StarletteHTTPException):
     raised while the request body is being read (see :class:`RequestGuardMiddleware`).
     """
 
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(self, status_code: int, code: str, message: str, *, extra: dict[str, str] | None = None) -> None:
         super().__init__(status_code=status_code, detail=message)
         self.code = code
+        #: Extra fields of the error body (``scope`` of a ``quran_text`` refusal).
+        self.extra = dict(extra or {})
 
 
 _DEFAULT_CODES: dict[int, str] = {
@@ -179,16 +242,18 @@ _DEFAULT_CODES: dict[int, str] = {
 }
 
 
-def error_response(status_code: int, code: str, message: str, headers: dict[str, str] | None = None) -> JSONResponse:
-    """The JSON error body of the contract."""
-    return UTF8JSONResponse({"error": code, "message": message}, status_code=status_code, headers=headers)
+def error_response(
+    status_code: int, code: str, message: str, headers: dict[str, str] | None = None, extra: dict[str, str] | None = None
+) -> JSONResponse:
+    """The JSON error body of the contract (plus any ``extra`` fields)."""
+    return UTF8JSONResponse({**(extra or {}), "error": code, "message": message}, status_code=status_code, headers=headers)
 
 
 async def _http_error(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, StarletteHTTPException)
     code = getattr(exc, "code", None) or _DEFAULT_CODES.get(exc.status_code, "error")
     message = exc.detail if isinstance(exc.detail, str) and exc.detail else HTTPStatus(exc.status_code).phrase
-    return error_response(exc.status_code, code, message, headers=getattr(exc, "headers", None))
+    return error_response(exc.status_code, code, message, headers=getattr(exc, "headers", None), extra=getattr(exc, "extra", None))
 
 
 async def _validation_error(request: Request, exc: Exception) -> Response:
@@ -225,8 +290,11 @@ def body_limit(path: str) -> int:
 
 
 class ResponseHeadersMiddleware:
-    """``Cache-Control: no-store`` on every ``/api/*`` response; ``nosniff`` and
-    ``Referrer-Policy: no-referrer`` on every response."""
+    """``Cache-Control: no-store`` on every ``/api/*`` response; ``nosniff``,
+    ``Referrer-Policy: no-referrer``, ``X-Frame-Options: DENY`` and
+    ``Content-Security-Policy: frame-ancestors 'none'`` on every response (a page in
+    another site's frame could otherwise drive the app; a CSP meta tag cannot set
+    ``frame-ancestors``)."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -244,9 +312,60 @@ class ResponseHeadersMiddleware:
                     headers["Cache-Control"] = "no-store"
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("Referrer-Policy", "no-referrer")
+                headers.setdefault("X-Frame-Options", "DENY")
+                headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+
+def _host_name(host: str) -> str:
+    """The host name of a ``Host`` header value, lower case, without the port
+    (``127.0.0.1:8080`` -> ``127.0.0.1``, ``[::1]:8080`` -> ``::1``)."""
+    host = host.strip().lower()
+    if host.startswith("["):
+        return host[1 : host.find("]")] if "]" in host else host[1:]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+class HostOriginMiddleware:
+    """Answers only to the allowed host names, and only same-origin writes to the API.
+
+    * A request whose ``Host`` header names another host gets 400 ``bad_host``: a page
+      on another site that re-points its own domain name at 127.0.0.1 (DNS rebinding)
+      cannot reach the server, which holds the Claude key and the children's data.
+    * A ``/api/*`` request other than GET, HEAD or OPTIONS that carries an ``Origin``
+      header gets 403 ``bad_origin`` unless the origin is this server itself
+      (``http://<Host>``). A form or ``fetch`` from another site's page is a simple
+      request that browsers send without asking first; this refuses it. Clients that
+      send no ``Origin`` (curl, tests) are not browsers acting for a third party.
+    """
+
+    def __init__(self, app: ASGIApp, allowed_hosts: tuple[str, ...]) -> None:
+        self.app = app
+        self.allowed = frozenset(h.lower() for h in allowed_hosts)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        host = headers.get("host", "")
+        if _host_name(host) not in self.allowed:
+            log.info("refused a request for an unknown host")
+            await error_response(400, "bad_host", "This server does not answer to that host name.")(scope, receive, send)
+            return
+        origin = headers.get("origin")
+        if (
+            origin is not None
+            and _is_api(scope["path"])
+            and scope.get("method") not in ("GET", "HEAD", "OPTIONS")
+            and origin.strip().lower() not in (f"http://{host.strip().lower()}", f"https://{host.strip().lower()}")
+        ):
+            log.info("refused a cross-origin %s on %s", scope.get("method"), scope["path"])
+            await error_response(403, "bad_origin", "Requests from another site are not accepted.")(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
 
 
 class RequestGuardMiddleware:
@@ -361,14 +480,76 @@ class PhrasesRequest(BaseModel):
     lang: LangField
 
 
-def _clean_text(value: str, field: str, lang: Lang | None = None) -> str:
-    """A required text field, stripped: 400 when empty (or without a word), or too long."""
-    text = value.strip()
-    if not text or (lang is not None and not tokenize(text, lang)):
-        raise ApiError(400, "empty_text", f"The {field} has no words.")
+def _check_chars(text: str, field: str) -> None:
+    """400 ``bad_text`` for text that cannot be encoded (a lone UTF-16 surrogate, which
+    JSON can carry but UTF-8 cannot), and 400 ``text_too_long`` past the size limits."""
+    if any("\ud800" <= c <= "\udfff" for c in text):
+        raise ApiError(400, "bad_text", f"The {field} contains characters that are not valid text.")
     if len(text) > MAX_TEXT_CHARS:
         raise ApiError(400, "text_too_long", f"The {field} is longer than {MAX_TEXT_CHARS} characters.")
+
+
+def _check_words(text: str, field: str, lang: Lang) -> None:
+    if len(tokenize_written(text, lang)) > MAX_TEXT_WORDS:
+        raise ApiError(400, "text_too_long", f"The {field} is longer than {MAX_TEXT_WORDS} words.")
+
+
+def _clean_text(value: str, field: str, lang: Lang | None = None) -> str:
+    """A required text field, stripped: 400 when empty (or without a word), not valid
+    text, or too long (characters, or words when ``lang`` is given)."""
+    text = value.strip()
+    _check_chars(text, field)
+    if not text or (lang is not None and not tokenize(text, lang)):
+        raise ApiError(400, "empty_text", f"The {field} has no words.")
+    if lang is not None:
+        _check_words(text, field, lang)
     return text
+
+
+def _scrub(text: str) -> str:
+    """Model output with any lone surrogate replaced by U+FFFD (it cannot be encoded)."""
+    if any("\ud800" <= c <= "\udfff" for c in text):
+        return "".join("\ufffd" if "\ud800" <= c <= "\udfff" else c for c in text)
+    return text
+
+
+def _refuse_unreadable(text: str, field: str) -> None:
+    """400 ``unreadable_text`` for a text with ``[?]`` marks, which a page reader writes
+    where it could not read a word: the parent types the missing words first."""
+    if has_unreadable(text):
+        raise ApiError(
+            400, "unreadable_text",
+            f"The {field} has [?] where a word could not be read. Please type the missing words first.",
+        )
+
+
+def text_script(text: str) -> Literal["arabic", "latin"] | None:
+    """``"arabic"`` when most letters of ``text`` are Arabic, ``"latin"`` when it has
+    letters and none of them is Arabic, None otherwise (no letters, or mixed with an
+    Arabic minority, such as an English text quoting one Arabic word)."""
+    letters = [c for c in text if unicodedata.category(c).startswith("L")]
+    if not letters:
+        return None
+    arabic = sum(1 for c in letters if is_arabic_char(c))
+    if arabic * 2 > len(letters):
+        return "arabic"
+    return "latin" if arabic == 0 else None
+
+
+def _refuse_lang_mismatch(text: str, lang: Lang, field: str) -> None:
+    """422 ``lang_mismatch`` when the text is Arabic and ``lang`` is not, or the reverse.
+
+    The recogniser is built for the chosen language: given Arabic speech with ``lang``
+    en it translates it into English, and the child would be told the recording was
+    unclear. The voice of one language cannot read the other's script either.
+    """
+    script = text_script(text)
+    if (script == "arabic" and lang != "ar") or (script == "latin" and lang == "ar"):
+        written = "Arabic" if script == "arabic" else "not Arabic"
+        raise ApiError(
+            422, "lang_mismatch",
+            f"The {field} is {written}, but the language chosen is {lang}. Please choose the language of the text.",
+        )
 
 
 def _read_upload(upload: UploadFile, limit: int, what: str) -> bytes:
@@ -392,7 +573,6 @@ def _decode_audio(data: bytes) -> np.ndarray:
 
 _JPEG_MAGIC = b"\xff\xd8\xff"
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-_PNG_METADATA_CHUNKS = (b"eXIf", b"tEXt", b"iTXt", b"zTXt")
 
 
 def _image_format(data: bytes) -> str | None:
@@ -403,50 +583,44 @@ def _image_format(data: bytes) -> str | None:
     return None
 
 
-def _has_metadata(data: bytes, fmt: str) -> bool:
-    """True when the image carries EXIF/XMP (JPEG) or EXIF/text chunks (PNG)."""
-    if fmt == "JPEG":
-        # APP1 segments (EXIF, XMP) sit before the image data; scan the start of the file.
-        head = data[: 2 * 65536]
-        return b"Exif\x00\x00" in head or b"http://ns.adobe.com/xap/1.0/" in head
-    pos = len(_PNG_MAGIC)
-    while pos + 8 <= len(data):
-        length = int.from_bytes(data[pos : pos + 4], "big")
-        kind = data[pos + 4 : pos + 8]
-        if kind in _PNG_METADATA_CHUNKS:
-            return True
-        if kind == b"IEND":
-            break
-        pos += 12 + length
-    return False
-
-
 def clean_image(data: bytes) -> bytes:
-    """Check an uploaded image and drop its metadata before it goes anywhere.
+    """Check an uploaded image and re-encode it, in memory, before it goes anywhere.
 
-    Accepts JPEG and PNG (400 ``bad_image`` otherwise). The web client already re-encodes
-    photos (which drops EXIF, including a GPS position); an image that still carries EXIF,
-    XMP or PNG text chunks is decoded, turned upright from its EXIF orientation, and
-    re-encoded without them, in memory. Other images are passed on byte for byte.
+    Accepts JPEG and PNG (400 ``bad_image`` otherwise, or for more than
+    :data:`MAX_IMAGE_PIXELS` pixels, :data:`MAX_JPEG_PIXELS` for a JPEG, read from the
+    header before anything is decoded). Every image is decoded, turned upright from its
+    EXIF orientation, reduced to :data:`MAX_IMAGE_EDGE` pixels on the long edge (as the
+    web client does) and saved as a new JPEG without any metadata. Nothing of the
+    upload's own bytes is passed on: no EXIF (GPS position), XMP, IPTC, ICC, comment or
+    PNG text chunk, wherever it sits in the file, and no data after the image. JPEGs are
+    decoded at a reduced scale when they are larger than needed, which bounds memory.
     """
-    fmt = _image_format(data)
-    if fmt is None:
+    if _image_format(data) is None:
         raise ApiError(400, "bad_image", "The image must be a JPEG or PNG file.")
-    if not _has_metadata(data, fmt):
-        return data
     try:
         with Image.open(io.BytesIO(data)) as img:
-            if img.width * img.height > MAX_IMAGE_PIXELS:
-                raise ApiError(400, "bad_image", "The image has too many pixels.")
-            upright = ImageOps.exif_transpose(img)
+            limit = MAX_JPEG_PIXELS if img.format == "JPEG" else MAX_IMAGE_PIXELS
+            if img.width * img.height > limit:
+                raise ApiError(400, "bad_image", f"The image has too many pixels (at most {limit // 1_000_000} million).")
+            if img.format == "JPEG":
+                img.draft("RGB", (MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))  # decode at 1/2, 1/4 or 1/8 scale
+            img.load()
+            ImageOps.exif_transpose(img, in_place=True)  # no second full-size copy
+            upright = img
+            if max(upright.size) > MAX_IMAGE_EDGE:
+                upright.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE), Image.Resampling.LANCZOS)
+            if upright.mode in ("RGBA", "LA", "PA") or (upright.mode == "P" and "transparency" in upright.info):
+                rgba = upright.convert("RGBA")
+                flat = Image.new("RGB", rgba.size, (255, 255, 255))  # paper is white
+                flat.paste(rgba, mask=rgba.getchannel("A"))
+                upright = flat
+            elif upright.mode not in ("RGB", "L"):
+                upright = upright.convert("RGB")
             out = io.BytesIO()
-            # Pillow writes metadata only when asked; exif=b"" makes that explicit.
-            if fmt == "JPEG":
-                if upright.mode not in ("RGB", "L"):
-                    upright = upright.convert("RGB")
-                upright.save(out, format="JPEG", quality=92, exif=b"")
-            else:
-                upright.save(out, format="PNG", exif=b"")
+            # A new file without metadata: Pillow copies the source's JPEG comment unless
+            # told otherwise, so the image info is emptied and EXIF set to nothing.
+            upright.info = {}
+            upright.save(out, format="JPEG", quality=IMAGE_QUALITY, exif=b"", comment=b"")
     except ApiError:
         raise
     except Exception as exc:  # a broken or hostile file: Pillow raises many kinds
@@ -460,21 +634,52 @@ def _quality_unclear(quality: dict) -> bool:
 
 
 def looks_like_quran(text: str, quran: Quran | None) -> bool:
-    """True when ``text`` is a passage of the Quran.
+    """True when ``text`` is, or contains, a passage of the Quran.
 
-    Either it is written in the Uthmani Quranic script (:func:`mommy.tts.is_quranic_script`),
-    or it has at least :data:`QURAN_GUARD_MIN_WORDS` words and at least
-    :data:`QURAN_GUARD_MIN_SCORE` of them are found, in order, at one place of the Quran
-    (:meth:`mommy.quran.Quran.locate`, which reads the first 40 words). An ordinary
-    sentence that only quotes a few words of an ayah is not refused. Without the Quran
-    data only the script test is possible.
+    Framing formulas (``قال تعالى``, ``صدق الله العظيم``, the isti'adha, ...; see
+    :data:`mommy.quran.FRAMING_FORMULAS`) are left out first. Then the text is Quran when:
+
+    * it is written in the Uthmani Quranic script (:func:`mommy.tts.is_quranic_script`);
+    * it holds a run of :data:`QURAN_GUARD_RUN_WORDS` (5) consecutive words found
+      consecutively in the Quran (:meth:`mommy.quran.Quran.quran_runs`), wherever it
+      sits: a school text that quotes an ayah is refused;
+    * next to a framing formula, such a run of :data:`QURAN_GUARD_FRAMED_RUN_WORDS` (3);
+    * it has at least :data:`QURAN_GUARD_MIN_WORDS` words and at least
+      :data:`QURAN_GUARD_MIN_SCORE` of them are found, in order, at one place
+      (:meth:`mommy.quran.Quran.locate`, first 40 words): an ayah with a word changed.
+
+    An ordinary sentence that shares a few words with an ayah is not refused, and nor
+    is a text that starts with the basmala. Without the Quran data only the script test
+    is possible.
     """
     if is_quranic_script(text):
         return True
-    if quran is None or not has_arabic(text) or len(tokenize(text, "ar")) < QURAN_GUARD_MIN_WORDS:
+    if quran is None or not has_arabic(text):
         return False
-    best = quran.locate(text, top_k=1)
+    tokens, framed = quran.strip_framing(text)
+    if quran.quran_runs(tokens, QURAN_GUARD_RUN_WORDS):
+        return True
+    if framed and quran.quran_runs(tokens, QURAN_GUARD_FRAMED_RUN_WORDS):
+        return True
+    if len(tokens) < QURAN_GUARD_MIN_WORDS:
+        return False
+    best = quran.locate(" ".join(tokens), top_k=1)
     return bool(best) and best[0]["score"] >= QURAN_GUARD_MIN_SCORE
+
+
+def is_whole_ayah(text: str, quran: Quran | None) -> bool:
+    """True when ``text`` (framing formulas left out) is exactly one ayah of two words or
+    more (``الله الصمد``)."""
+    if quran is None or not has_arabic(text):
+        return False
+    tokens, _ = quran.strip_framing(text)
+    return quran.whole_ayah(tokens) is not None
+
+
+def is_quran_phrase(text: str, quran: Quran | None) -> bool:
+    """:func:`looks_like_quran`, or a short phrase that is a whole ayah
+    (:func:`is_whole_ayah`): used for the text the voice would speak."""
+    return looks_like_quran(text, quran) or is_whole_ayah(text, quran)
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +715,9 @@ def create_app(
     app.add_exception_handler(StarletteHTTPException, _http_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_middleware(RequestGuardMiddleware)
+    app.add_middleware(HostOriginMiddleware, allowed_hosts=tuple(getattr(settings, "allowed_hosts", DEFAULT_ALLOWED_HOSTS)))
     app.add_middleware(ResponseHeadersMiddleware)
+    decode_slots = threading.BoundedSemaphore(MAX_CONCURRENT_DECODES)
 
     # -- component helpers -------------------------------------------------------
 
@@ -524,14 +731,28 @@ def create_app(
             raise ApiError(503, "quran_unavailable", "The Quran text could not be loaded on this server.")
         return quran
 
-    def refuse_quran(text: str) -> None:
-        if looks_like_quran(text, quran):
-            raise ApiError(
-                422,
-                "quran_text",
-                "This text is from the Quran. Please use the Quran section: it checks recitation "
-                "against the verbatim Tanzil text, without AI and without a synthetic voice.",
-            )
+    def refuse_quran(text: str, *, phrase: bool = False) -> None:
+        """422 ``quran_text`` for Quran text (:func:`looks_like_quran`; with ``phrase``,
+        also a short phrase that is a whole ayah, :func:`is_quran_phrase`)."""
+        if (is_quran_phrase if phrase else looks_like_quran)(text, quran):
+            raise ApiError(422, "quran_text", QURAN_TEXT_MESSAGE)
+
+    def check_expected(text: str, lang: Lang, field: str) -> None:
+        """The checks of a text a child is to say, write or hear (after :func:`_clean_text`)."""
+        _refuse_unreadable(text, field)
+        refuse_quran(text)
+        _refuse_lang_mismatch(text, lang, field)
+
+    class decoding:
+        """One of the :data:`MAX_CONCURRENT_DECODES` slots for a big decode (503 when
+        none frees up within :data:`BUSY_TIMEOUT_S`)."""
+
+        def __enter__(self) -> None:
+            if not decode_slots.acquire(timeout=BUSY_TIMEOUT_S):
+                raise ApiError(503, "busy", "The server is busy. Please try again in a moment.")
+
+        def __exit__(self, *exc: object) -> None:
+            decode_slots.release()
 
     def listen(upload: UploadFile, lang: Lang) -> tuple[str, dict, dict[str, float]]:
         """Audio upload -> (heard text, quality, timings). The recogniser gets the audio
@@ -539,7 +760,8 @@ def create_app(
         started = time.perf_counter()
         data = _read_upload(upload, MAX_AUDIO_BYTES, "audio")
         n_bytes = len(data)
-        pcm = _decode_audio(data)
+        with decoding():
+            pcm = _decode_audio(data)
         del data
         quality = audio_quality(pcm)
         decoded = time.perf_counter()
@@ -554,7 +776,9 @@ def create_app(
 
     def word_feedback(result: CheckResult, lang: Lang, age: AgeBand, activity: str) -> str:
         """Feedback worded by the brain, or the template when it fails or says nothing."""
-        template = feedback.for_result(result, lang, age)
+        template = feedback.for_result(result, lang, age, activity=activity)
+        if result.n_unreadable and result.n_errors == result.n_unreadable:
+            return template  # only words the reader could not read: not the child's mistakes
         summary = result_summary(result)
         summary["activity"] = activity
         try:
@@ -582,6 +806,9 @@ def create_app(
         if checked["verdict"] == "correct":
             return feedback.quran_feedback("correct", None)
         first = checked.get("first_error") or {}
+        stopped = checked.get("stopped_at")
+        if stopped and first.get("kind") == "del" and {k: first.get(k) for k in stopped} == stopped:
+            return feedback.quran_feedback("stopped", stopped.get("expected_display_word"))
         return feedback.quran_feedback(first.get("kind") or "mistakes", first.get("expected_display_word"))
 
     def quran_range(q: Quran, surah: int, start: int, end: int) -> None:
@@ -609,7 +836,7 @@ def create_app(
             "quran": quran is not None,
             "languages": list(LANGUAGES),
             "tts_languages": list(tts_langs) if tts_langs is not None else (list(LANGUAGES) if tts_ok else []),
-            "asr_model": settings.asr_model,
+            "asr_model": model if isinstance(model := getattr(transcriber, "model", None), str) else settings.asr_model,
             "reasons": {
                 "asr": getattr(transcriber, "unavailable_reason", None),
                 "tts": getattr(tts, "unavailable_reason", None),
@@ -626,22 +853,25 @@ def create_app(
         data = _read_upload(image, MAX_IMAGE_BYTES, "image")
         if not data:
             raise ApiError(400, "bad_image", "The image file is empty.")
-        data = clean_image(data)
+        with decoding():
+            data = clean_image(data)
         try:
             page = brain.read_page(data, lang)
         except Exception as exc:
             log.warning("read_page failed (%s); asking the parent to type the text", type(exc).__name__)
             page = {**offline.read_page(data, lang), "error": type(exc).__name__}
-        text = page.get("text") if isinstance(page.get("text"), str) else ""
+        text = _scrub(page.get("text")) if isinstance(page.get("text"), str) else ""
         read_lang = page.get("lang") if page.get("lang") in LANGUAGES else lang
         failed = "error" in page or getattr(brain, "name", None) != "claude"
         out: dict[str, Any] = {
             "text": text,
             "lang": read_lang,
-            "notes": page.get("notes") if isinstance(page.get("notes"), str) else "",
+            "notes": _scrub(page.get("notes")) if isinstance(page.get("notes"), str) else "",
             "source": "offline" if failed else "claude",
             "needs_manual": bool(page.get("needs_manual")) or not text.strip(),
             "contains_quran": bool(page.get("contains_quran", False)),
+            # [?] marks where the reader could not read a word; the parent types them.
+            "unreadable_marks": sum(1 for t in tokenize_written(text, read_lang or "en") if t == UNREADABLE),
         }
         if "error" in page:
             out["brain_error"] = str(page["error"])
@@ -661,7 +891,7 @@ def create_app(
         """Check a recitation: word by word (strict) or by meaning (contextual)."""
         started = time.perf_counter()
         expected = _clean_text(expected_text, "expected_text", lang)
-        refuse_quran(expected)
+        check_expected(expected, lang, "expected_text")
         require_asr()
         heard, quality, timings = listen(audio, lang)
 
@@ -715,9 +945,17 @@ def create_app(
     @app.post("/api/dictation/phrases")
     def dictation_phrases(body: PhrasesRequest) -> dict[str, Any]:
         """Cut the text into the phrases read out one at a time."""
-        text = _clean_text(body.text, "text")
-        refuse_quran(text)
-        return {"phrases": split_phrases(text, body.lang)}
+        text = _clean_text(body.text, "text")  # punctuation only still gives {"phrases": []}
+        _check_words(text, "text", body.lang)
+        check_expected(text, body.lang, "text")
+        phrases = split_phrases(text, body.lang)
+        # The whole text passed looks_like_quran (it can be recited and checked); a short
+        # ayah can still be a phrase of its own, such as the basmala on its own line, and
+        # the voice would speak it. scope "phrase" tells the client that only dictation
+        # is refused.
+        if any(is_whole_ayah(phrase, quran) for phrase in phrases):
+            raise ApiError(422, "quran_text", QURAN_PHRASE_MESSAGE, extra={"scope": "phrase"})
+        return {"phrases": phrases}
 
     @app.post("/api/tts")
     def speak(body: TTSRequest) -> Response:
@@ -734,7 +972,10 @@ def create_app(
             raise ApiError(400, "empty_text", "The text is empty.")
         if len(text) > MAX_TTS_CHARS:
             raise ApiError(400, "text_too_long", f"The text is longer than {MAX_TTS_CHARS} characters.")
-        refuse_quran(text)
+        _check_chars(text, "text")
+        _refuse_unreadable(text, "text")
+        refuse_quran(text, phrase=True)
+        _refuse_lang_mismatch(text, body.lang, "text")
         check = "skipped"
         try:
             if body.slow and getattr(transcriber, "available", False):
@@ -774,7 +1015,7 @@ def create_app(
         """Check what the child wrote, from a photo (read blind) or typed by the parent."""
         started = time.perf_counter()
         expected = _clean_text(expected_text, "expected_text", lang)
-        refuse_quran(expected)
+        check_expected(expected, lang, "expected_text")
         data = _read_upload(image, MAX_IMAGE_BYTES, "image") if image is not None else b""
         if data and written_text is not None:
             raise ApiError(422, "invalid_request", "Send either image or written_text, not both.")
@@ -784,7 +1025,8 @@ def create_app(
         uncertain: list[str] = []
         legible = True
         if data:
-            data = clean_image(data)
+            with decoding():
+                data = clean_image(data)
             if getattr(brain, "name", None) != "claude":
                 raise ApiError(
                     501, "needs_manual", "Reading handwriting needs Claude. Please type what the child wrote."
@@ -800,17 +1042,21 @@ def create_app(
                 raise ApiError(
                     501, "needs_manual", "The handwriting could not be read. Please type what the child wrote."
                 )
+            read_text = _scrub(read_text)
             if len(read_text) > MAX_TEXT_CHARS:
                 raise ApiError(400, "text_too_long", f"The writing is longer than {MAX_TEXT_CHARS} characters.")
-            uncertain = [str(w) for w in written.get("uncertain_words") or [] if isinstance(w, str) and w]
+            _check_words(read_text, "writing", lang)
+            uncertain = [_scrub(str(w)) for w in written.get("uncertain_words") or [] if isinstance(w, str) and w]
             legible = bool(written.get("legible", True))
             source = "claude"
         else:
             assert written_text is not None
             read_text = written_text
-            if len(read_text) > MAX_TEXT_CHARS:
-                raise ApiError(400, "text_too_long", f"The written_text is longer than {MAX_TEXT_CHARS} characters.")
+            _check_chars(read_text, "written_text")
+            _check_words(read_text, "written_text", lang)
             source = "typed"
+        if has_unreadable(read_text) and UNREADABLE not in uncertain:
+            uncertain.append(UNREADABLE)  # a word the reader could not read: the parent checks it
 
         result = check_writing(expected, read_text, lang, strict_tashkeel=strict_tashkeel)
         out = {
@@ -903,8 +1149,7 @@ def create_app(
             heard, quality, _ = listen(audio, "ar")
         elif heard_text is not None:
             heard = heard_text.strip()
-            if len(heard) > MAX_TEXT_CHARS:
-                raise ApiError(400, "text_too_long", f"The heard_text is longer than {MAX_TEXT_CHARS} characters.")
+            _check_chars(heard, "heard_text")
         else:
             raise ApiError(422, "missing_field", "Missing field: audio or heard_text.")
         found = bool(tokenize(heard, "ar"))
@@ -960,7 +1205,7 @@ def build_default_app() -> FastAPI:
         log.info("Quran text loaded in %.1f s", time.perf_counter() - started)
     log.info(
         "starting: asr=%s (%s) tts=%s brain=%s quran=%s",
-        transcriber.available, settings.asr_model, tts.available, brain.name, quran is not None,
+        transcriber.available, transcriber.model, tts.available, brain.name, quran is not None,
     )
     return create_app(settings, transcriber, tts, brain, quran)
 
@@ -974,7 +1219,9 @@ __all__ = [
     "MAX_IMAGE_BYTES",
     "MAX_TEXT_CHARS",
     "MAX_TTS_CHARS",
+    "MAX_TEXT_WORDS",
     "ApiError",
+    "HostOriginMiddleware",
     "RequestGuardMiddleware",
     "ResponseHeadersMiddleware",
     "WebMount",
@@ -983,6 +1230,8 @@ __all__ = [
     "clean_image",
     "create_app",
     "error_response",
+    "is_quran_phrase",
     "keep_uploads_in_memory",
     "looks_like_quran",
+    "text_script",
 ]

@@ -1,13 +1,17 @@
 # Mommy prototype: direct dependencies, pinned to the versions installed and tested
-# (Python 3.13). Install with:
-#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# (Python 3.13). Install from the lock file, which pins and hashes every package
+# (these and everything they need):
+#   python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock
+# After changing this file, install it and run scripts/lock_requirements.py.
 
 # Web server and API
 fastapi==0.162.4
 # app.py keeps uploads in memory through MultiPartParser.spool_max_size; re-check it
 # (tests/test_api.py does) before changing this version.
 starlette==1.10.0
-uvicorn[standard]==0.54.0
+# Plain uvicorn (asyncio + h11): the "standard" extras (uvloop, httptools, websockets,
+# watchfiles, python-dotenv, PyYAML) are not used by this app.
+uvicorn==0.54.0
 python-multipart==0.0.33
 pydantic==2.14.3
 

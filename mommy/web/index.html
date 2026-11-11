@@ -140,6 +140,7 @@
         <p class="why" id="why-prep-photo" data-why="prep-photo" hidden></p>
         <p class="hint" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
         <p class="status" id="prep-status" role="status" aria-live="polite"></p>
+        <p class="status" id="prep-quran-note" role="status" aria-live="polite"></p>
 
         <div class="field">
           <label for="page-text" data-i18n="page_text_label">Page text</label>
@@ -209,6 +210,7 @@
           <p class="score" id="recite-score" hidden></p>
           <p class="feedback" id="recite-feedback"></p>
           <p class="hint" id="recite-quality" hidden></p>
+          <p class="hint" id="recite-limit" data-i18n="max_reached" hidden>That's the longest I can listen to (2 minutes).</p>
           <div class="ideas" id="recite-ideas" hidden>
             <div id="recite-missing-wrap" hidden><h3 data-i18n="missing_ideas">Ideas to add</h3><ul id="recite-missing"></ul></div>
             <div id="recite-wrong-wrap" hidden><h3 data-i18n="wrong_ideas">Ideas to fix</h3><ul id="recite-wrong"></ul></div>
@@ -269,6 +271,7 @@
           </div>
           <p class="why" data-why="dict-play" hidden></p>
           <p class="status" id="dict-speak-status" role="status" aria-live="polite"></p>
+          <p class="hint hint-parent" id="dict-unclear" data-i18n="voice_unclear" role="status" hidden>The voice may be unclear in this part. Press “Repeat” to hear a new take, or show the words.</p>
           <button type="button" class="btn btn-small btn-ghost" id="dict-show" aria-expanded="false" aria-controls="dict-phrase">
             <span data-i18n="show_phrase">Show the words (grown-up)</span>
           </button>
@@ -297,7 +300,8 @@
             <label for="dict-written" data-i18n="written_label">What your child wrote</label>
             <textarea id="dict-written" rows="5" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
           </div>
-          <button type="button" class="btn btn-primary btn-wide" id="btn-dict-check" data-gate="dict-start" data-i18n="check_writing">Check</button>
+          <button type="button" class="btn btn-primary btn-wide" id="btn-dict-check" data-gate="dict-check" data-i18n="check_writing">Check</button>
+          <p class="why" data-why="dict-check" hidden></p>
           <p class="status" id="dict-check-status" role="status" aria-live="polite"></p>
         </div>
 
@@ -315,13 +319,15 @@
           <div class="words" id="dict-review-words"></div>
           <ul class="legend" data-legend="written"></ul>
           <p class="feedback feedback-small" id="dict-review-feedback"></p>
+          <p class="hint hint-parent" id="dict-stale" data-i18n="review_stale" role="status" hidden>You changed the text. Press “Check again with this text” before you confirm.</p>
           <div class="btn-row">
-            <button type="button" class="btn" id="btn-dict-recheck" data-gate="dict-start" data-i18n="recheck">Check again with this text</button>
-            <button type="button" class="btn btn-primary" id="btn-dict-confirm">
+            <button type="button" class="btn" id="btn-dict-recheck" data-gate="dict-check" data-i18n="recheck">Check again with this text</button>
+            <button type="button" class="btn btn-primary" id="btn-dict-confirm" aria-describedby="dict-stale">
               <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
               <span data-i18n="confirm_result">Confirm result</span>
             </button>
           </div>
+          <p class="why" data-why="dict-check" hidden></p>
           <p class="status" id="dict-review-status" role="status" aria-live="polite"></p>
         </div>
 
@@ -339,6 +345,7 @@
             <button type="button" class="btn btn-primary" id="btn-dict-new" data-i18n="new_dictation">New dictation</button>
           </div>
           <p class="why" data-why="dict-tts" hidden></p>
+          <p class="status" id="dict-child-status" role="status" aria-live="polite"></p>
         </div>
       </div>
     </section>
@@ -360,11 +367,12 @@
         <div class="field-row field-row-tight">
           <div class="field">
             <label for="quran-from" data-i18n="from_ayah">From ayah</label>
-            <input type="number" id="quran-from" min="1" value="1" inputmode="numeric" data-gate="quran">
+            <!-- Text fields: they show Arabic-Indic digits in the Arabic UI and accept both digit systems. -->
+            <input type="text" id="quran-from" value="1" inputmode="numeric" autocomplete="off" spellcheck="false" data-gate="quran">
           </div>
           <div class="field">
             <label for="quran-to" data-i18n="to_ayah">To ayah</label>
-            <input type="number" id="quran-to" min="1" value="1" inputmode="numeric" data-gate="quran">
+            <input type="text" id="quran-to" value="1" inputmode="numeric" autocomplete="off" spellcheck="false" data-gate="quran">
           </div>
         </div>
         <p class="hint" id="quran-range-note" data-i18n="range_capped" hidden>At most 50 ayat at a time.</p>
@@ -418,6 +426,7 @@
       <div class="card result" id="quran-result" hidden tabindex="-1">
         <p class="feedback quran-feedback" id="quran-feedback" lang="ar" dir="rtl"></p>
         <p class="hint" id="quran-first-error" hidden></p>
+        <p class="hint" id="quran-limit" data-i18n="max_reached" hidden>That's the longest I can listen to (2 minutes).</p>
         <ul class="legend" data-legend="heard" data-sample-lang="ar"></ul>
         <div class="btn-row">
           <button type="button" class="btn btn-primary" id="quran-say-again" hidden data-gate="quran-rec">

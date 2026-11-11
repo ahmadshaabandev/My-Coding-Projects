@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 
 if [[ ! -x .venv/bin/uvicorn ]]; then
   echo "run.sh: .venv/bin/uvicorn not found. Install first:" >&2
-  echo "  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2
+  echo "  python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock" >&2
   exit 1
 fi
 

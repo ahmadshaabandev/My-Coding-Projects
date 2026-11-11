@@ -2,13 +2,20 @@
 
 Environment variables:
 
-* ``MOMMY_ASR_MODEL``: ``"small"`` (default) or ``"turbo"``, the local Whisper model;
+* ``MOMMY_ASR_MODEL``: ``"turbo"`` (default) or ``"small"``, the local Whisper model.
+  Turbo has the same warm latency as small on a 4-core CPU (about 1.5 s for a 5 s clip),
+  is markedly better on Arabic and on French homophones, and needs about 1 GB more RAM
+  per loaded language. When its files are missing but the other model's are present,
+  the other model is used (see ``mommy.asr.SherpaWhisper.from_settings``);
 * ``MOMMY_ASR_THREADS``: CPU threads for speech recognition (default 4);
 * ``ANTHROPIC_API_KEY``: only its presence is recorded, the value never leaves the
   environment (the SDK reads it itself);
 * ``MOMMY_VISION_MODEL`` / ``MOMMY_TEXT_MODEL``: the Claude models for reading images and
   for text. Model names are configured here only, never written in the repository;
-* ``MOMMY_EFFORT``: the effort level sent with Claude requests (default ``"low"``).
+* ``MOMMY_EFFORT``: the effort level sent with Claude requests (default ``"low"``);
+* ``MOMMY_ALLOWED_HOSTS``: comma-separated host names the server answers to (default
+  ``127.0.0.1,localhost,::1``). Requests with any other ``Host`` header are refused,
+  which blocks DNS-rebinding pages from reaching the API.
 
 When the key or either model is missing, the app runs offline (see ``Settings.claude_configured``).
 """
@@ -23,9 +30,10 @@ from typing import Mapping
 ASR_MODELS: tuple[str, ...] = ("small", "turbo")
 EFFORT_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 
-DEFAULT_ASR_MODEL = "small"
+DEFAULT_ASR_MODEL = "turbo"
 DEFAULT_ASR_THREADS = 4
 DEFAULT_EFFORT = "low"
+DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
 
 #: The ``mommy/`` directory: ``mommy/backend/mommy/config.py`` -> ``mommy/``.
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -39,12 +47,13 @@ class Settings:
     models_dir: Path  # root/"models"
     quran_dir: Path  # root/"data"/"quran"
     web_dir: Path  # root/"web"
-    asr_model: str  # "small" or "turbo"; env MOMMY_ASR_MODEL, default "small"
+    asr_model: str  # "small" or "turbo"; env MOMMY_ASR_MODEL, default "turbo"
     asr_threads: int  # env MOMMY_ASR_THREADS, default 4
     anthropic_api_key_set: bool
     vision_model: str | None  # env MOMMY_VISION_MODEL
     text_model: str | None  # env MOMMY_TEXT_MODEL
     effort: str  # env MOMMY_EFFORT, default "low"
+    allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS  # env MOMMY_ALLOWED_HOSTS
 
     @property
     def claude_configured(self) -> bool:
@@ -69,7 +78,8 @@ def load_settings(root: Path | None = None) -> Settings:
     ``os.environ`` at call time.
 
     Blank variables count as unset. Raises ValueError for an unknown ASR model, a thread
-    count that is not a positive integer, or an unknown effort level.
+    count that is not a positive integer, an unknown effort level, or an allowed-hosts
+    list with no host in it.
     """
     env = os.environ
     base = Path(root).resolve() if root is not None else DEFAULT_ROOT
@@ -93,6 +103,14 @@ def load_settings(root: Path | None = None) -> Settings:
     if effort not in EFFORT_LEVELS:
         raise ValueError(f"MOMMY_EFFORT must be one of {', '.join(EFFORT_LEVELS)}, got {effort!r}")
 
+    hosts_raw = _get(env, "MOMMY_ALLOWED_HOSTS")
+    if hosts_raw is None:
+        allowed_hosts = DEFAULT_ALLOWED_HOSTS
+    else:
+        allowed_hosts = tuple(dict.fromkeys(h.strip().lower().strip("[]") for h in hosts_raw.split(",") if h.strip()))
+        if not allowed_hosts:
+            raise ValueError("MOMMY_ALLOWED_HOSTS must name at least one host")
+
     return Settings(
         root=base,
         models_dir=base / "models",
@@ -104,7 +122,8 @@ def load_settings(root: Path | None = None) -> Settings:
         vision_model=_get(env, "MOMMY_VISION_MODEL"),
         text_model=_get(env, "MOMMY_TEXT_MODEL"),
         effort=effort,
+        allowed_hosts=allowed_hosts,
     )
 
 
-__all__ = ["ASR_MODELS", "EFFORT_LEVELS", "Settings", "load_settings"]
+__all__ = ["ASR_MODELS", "DEFAULT_ALLOWED_HOSTS", "EFFORT_LEVELS", "Settings", "load_settings"]

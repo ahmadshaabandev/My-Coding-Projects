@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import asdict
+from typing import Any
 
 import pytest
 
@@ -44,32 +45,34 @@ def counts(ops: list[Op]) -> dict[str, int]:
 
 
 def reference_align(expected: list[str], heard: list[str]) -> list[tuple[str, int | None, int | None]]:
-    """Suffix-cost Levenshtein with a forward trace: match > sub > del > ins."""
+    """Suffix-cost Levenshtein, the most matches among minimum-cost alignments, and a
+    forward trace: match > sub > del > ins."""
     n, m = len(expected), len(heard)
-    cost = [[0] * (m + 1) for _ in range(n + 1)]
+    # best[i][j] = (cost, -matches) of the best alignment of expected[i:] with heard[j:].
+    best = [[(0, 0)] * (m + 1) for _ in range(n + 1)]
     for i in range(n, -1, -1):
         for j in range(m, -1, -1):
             if i == n:
-                cost[i][j] = m - j
+                best[i][j] = (m - j, 0)
             elif j == m:
-                cost[i][j] = n - i
+                best[i][j] = (n - i, 0)
             else:
-                cost[i][j] = min(
-                    cost[i + 1][j + 1] + (expected[i] != heard[j]),
-                    cost[i + 1][j] + 1,
-                    cost[i][j + 1] + 1,
-                )
+                c, neg = best[i + 1][j + 1]
+                diag = (c, neg - 1) if expected[i] == heard[j] else (c + 1, neg)
+                d = best[i + 1][j]
+                ins = best[i][j + 1]
+                best[i][j] = min(diag, (d[0] + 1, d[1]), (ins[0] + 1, ins[1]))
     ops: list[tuple[str, int | None, int | None]] = []
     i = j = 0
     while i < n or j < m:
-        c = cost[i][j]
-        if i < n and j < m and expected[i] == heard[j] and cost[i + 1][j + 1] == c:
+        here = best[i][j]
+        if i < n and j < m and expected[i] == heard[j] and (best[i + 1][j + 1][0], best[i + 1][j + 1][1] - 1) == here:
             ops.append(("match", i, j))
             i, j = i + 1, j + 1
-        elif i < n and j < m and cost[i + 1][j + 1] + 1 == c:
+        elif i < n and j < m and (best[i + 1][j + 1][0] + 1, best[i + 1][j + 1][1]) == here:
             ops.append(("sub", i, j))
             i, j = i + 1, j + 1
-        elif i < n and cost[i + 1][j] + 1 == c:
+        elif i < n and (best[i + 1][j][0] + 1, best[i + 1][j][1]) == here:
             ops.append(("del", i, None))
             i += 1
         else:
@@ -129,15 +132,36 @@ def test_skipped_stretch_is_reported_where_it_starts() -> None:
 def test_tie_break_prefers_sub_over_del_and_ins() -> None:
     ops = align(["a"], ["b", "c"], ident)
     assert [(op.kind, op.expected, op.heard) for op in ops] == [("sub", "a", "b"), ("ins", None, "c")]
-    ops = align(["a", "b"], ["b", "a"], ident)
-    assert kinds(ops) == ["sub", "sub"]
 
 
 def test_tie_break_prefers_sub_first_when_it_is_optimal() -> None:
-    # Expected "a b", heard "c": sub+del or del+sub both cost 2; sub comes first.
+    # Expected "a b", heard "c": sub+del or del+sub both cost 2, with no match; sub
+    # comes first.
     assert kinds(align(["a", "b"], ["c"], ident)) == ["sub", "del"]
-    # (del x, match a, ins y) and (sub, sub) both cost 2: sub is preferred.
-    assert kinds(align(["x", "a"], ["a", "y"], ident)) == ["sub", "sub"]
+
+
+def test_tie_break_prefers_the_alignment_with_more_matches() -> None:
+    # (del x, match a, ins y) and (sub, sub) both cost 2: the one that keeps the word
+    # the child said right as a match wins.
+    assert kinds(align(["x", "a"], ["a", "y"], ident)) == ["del", "match", "ins"]
+    assert kinds(align(["a", "b"], ["b", "a"], ident)) == ["del", "match", "ins"]
+
+
+@pytest.mark.parametrize(
+    ("expected", "heard", "lang", "want"),
+    [
+        ("I see the cat", "I see cat now", "en", [("del", "the", None), ("ins", None, "now")]),
+        ("Je vois le chat", "Je vois chat noir", "fr", [("del", "le", None), ("ins", None, "noir")]),
+    ],
+)
+def test_a_word_said_right_is_not_reported_as_substituted(
+    expected: str, heard: str, lang: str, want: list[tuple[str, str | None, str | None]]
+) -> None:
+    # Regression: the forward tie-break used to give "the -> cat, cat -> now" (2 subs,
+    # 2 of 4 words right) although "skip the, match cat, add now" costs the same.
+    r = check_recitation(expected, heard, lang)
+    assert [(op.kind, op.expected, op.heard) for op in r.ops if op.kind != "match"] == want
+    assert r.word_accuracy == pytest.approx(0.75)
 
 
 def test_tie_break_prefers_del_over_ins() -> None:
@@ -359,7 +383,7 @@ def test_first_error_index_for_insertions() -> None:
 def test_build_result_directly() -> None:
     ops = [Op("match", 0, 0, "a", "a"), Op("sub", 1, 1, "b", "c")]
     r = build_result(ops, 2, 2)
-    assert r == CheckResult(ops, 2, 1, 1, "mistakes", False, 0.5)
+    assert r == CheckResult(ops, 2, 1, 1, "mistakes", False, 0.5, None, None, 0)
 
 
 def test_result_serialises_with_asdict() -> None:
@@ -373,6 +397,9 @@ def test_result_serialises_with_asdict() -> None:
         "verdict",
         "say_again",
         "word_accuracy",
+        "say_again_reason",
+        "stopped_at_exp_index",
+        "n_unreadable",
     }
     assert data["ops"][1] == {
         "kind": "sub",
@@ -515,3 +542,188 @@ def test_writing_key() -> None:
     assert writing_key("Été", "fr") == "été"
     assert writing_key("مَدْرَسَةٌ", "ar") == "مدرسة"
     assert writing_key("مَدْرَسَةٌ", "ar", strict_tashkeel=True) != "مدرسة"
+
+
+# ---------------------------------------------------------------------------
+# Speech: numbers in digits or words, English spelling variants and contractions
+# ---------------------------------------------------------------------------
+
+
+def errors_of(r: CheckResult) -> list[tuple[str, str | None, str | None]]:
+    return [(op.kind, op.expected, op.heard) for op in r.ops if op.kind != "match"]
+
+
+@pytest.mark.parametrize(
+    ("lang", "expected", "heard"),
+    [
+        # English: words in the text, digits from the recogniser, and the reverse.
+        ("en", "The year has twelve months.", "The year has 12 months."),
+        ("en", "I have twenty five marbles.", "I have 25 marbles."),
+        ("en", "I have twenty-five marbles.", "I have 25 marbles."),
+        ("en", "There are 7 days in a week.", "There are seven days in a week."),
+        ("en", "My grandmother is 100.", "My grandmother is one hundred."),
+        ("en", "It is the third day.", "It is the 3rd day."),
+        ("en", "We have 0 apples.", "We have zero apples."),
+        # French, including compound and ordinal numbers.
+        ("fr", "Il y a sept jours dans une semaine.", "Il y a 7 jours dans une semaine."),
+        ("fr", "Il a vingt et un ans.", "Il a 21 ans."),
+        ("fr", "Il a vingt-et-un ans.", "Il a 21 ans."),
+        ("fr", "Mon grand-père a cent ans.", "Mon grand-père a 100 ans."),
+        ("fr", "Il a quatre-vingt-dix-sept ans.", "Il a 97 ans."),
+        ("fr", "Elle a soixante et onze ans.", "Elle a 71 ans."),
+        ("fr", "Il est né le premier mai.", "Il est né le 1er mai."),
+        ("fr", "Elle habite au deuxième étage.", "Elle habite au 2e étage."),
+        ("fr", "Il y a 12 mois.", "Il y a douze mois."),
+        # Arabic: both genders and cases, Western and Arabic-Indic digits.
+        ("ar", "عندي ثلاثة أقلام", "عندي 3 أقلام"),
+        ("ar", "عندي ثلاث كرات", "عندي ٣ كرات"),
+        ("ar", "عمري واحد وعشرون سنة", "عمري 21 سنة"),
+        ("ar", "عمري ٢١ سنة", "عمري واحد و عشرين سنة"),
+        ("ar", "في السنة اثنا عشر شهرًا", "في السنة 12 شهرا"),
+        ("ar", "في الصف 100 تلميذ", "في الصف مئة تلميذ"),
+        ("ar", "في الصف مائة تلميذ", "في الصف ١٠٠ تلميذ"),
+    ],
+)
+def test_numbers_in_digits_or_words_match_in_speech(lang: str, expected: str, heard: str) -> None:
+    r = check_recitation(expected, heard, lang)
+    assert r.verdict == "correct", errors_of(r)
+    assert r.n_expected == len(r.ops) - sum(op.kind == "ins" for op in r.ops)
+
+
+def test_a_wrong_number_is_still_a_mistake() -> None:
+    assert errors_of(check_recitation("The year has twelve months.", "The year has 11 months.", "en")) == [
+        ("sub", "twelve", "11")
+    ]
+    assert errors_of(check_recitation("Il a vingt et un ans.", "Il a 22 ans.", "fr"))[0][0] in ("sub", "del")
+    r = check_recitation("عندي ثلاثة أقلام", "عندي 4 أقلام", "ar")
+    assert errors_of(r) == [("sub", "ثلاثة", "4")]
+    # A cardinal is not an ordinal.
+    assert check_recitation("It is the third day.", "It is the 3 day.", "en").verdict == "mistakes"
+
+
+def test_numbers_are_a_difference_in_dictation() -> None:
+    r = check_writing("The year has twelve months.", "The year has 12 months.", "en")
+    assert errors_of(r) == [("sub", "twelve", "12")]
+    r = check_writing("Il y a sept jours.", "Il y a 7 jours.", "fr")
+    assert errors_of(r) == [("sub", "sept", "7")]
+    r = check_writing("عندي ثلاثة أقلام", "عندي ٣ أقلام", "ar")
+    assert errors_of(r) == [("sub", "ثلاثة", "٣")]
+
+
+@pytest.mark.parametrize("check", [check_recitation, check_writing])
+def test_arabic_indic_and_western_digits_are_equal_in_both_modes(check: Any) -> None:
+    assert check("عندي 3 أقلام و12 كتابا", "عندي ٣ أقلام و١٢ كتابا", "ar").verdict == "correct"
+    assert check("Il a 21 ans.", "Il a ٢١ ans.", "fr").verdict == "correct"
+
+
+@pytest.mark.parametrize(
+    ("expected", "heard"),
+    [
+        ("My favourite colour is blue.", "My favorite color is blue."),
+        ("We met at the centre of town.", "We met at the center of town."),
+        ("I realise that the theatre is closed.", "I realize that the theater is closed."),
+        ("They analysed the catalogue.", "They analyzed the catalog."),
+        ("She travelled to her neighbour's house.", "She traveled to her neighbor's house."),
+        ("The grey cat likes maths.", "The gray cat likes math."),
+        ("They are going to school.", "they're going to school."),
+        ("She is ten years old.", "She's 10 years old."),
+        ("It is raining and we are wet.", "It's raining and we're wet."),
+        ("I do not know.", "I don't know."),
+        ("I don't know.", "I do not know."),
+        ("They can't swim.", "They cannot swim."),
+        ("They cannot swim.", "They can't swim."),
+        ("We will not stop.", "We won't stop."),
+        ("I am happy.", "I'm happy."),
+        ("She has gone home.", "She's gone home."),
+    ],
+)
+def test_english_spelling_variants_and_contractions_match_in_speech(expected: str, heard: str) -> None:
+    r = check_recitation(expected, heard, "en")
+    assert r.verdict == "correct", errors_of(r)
+
+
+def test_english_variants_do_not_hide_real_mistakes() -> None:
+    # "were" is not a written contraction of "we are".
+    assert check_recitation("we are here with the cat", "were here with the cat", "en").verdict == "mistakes"
+    # A possessive is not expanded.
+    assert check_recitation("Sam is here with the cat", "Sam's here with the cat", "en").verdict == "mistakes"
+    # "four" and "for" stay apart.
+    assert check_recitation("I see four cats", "I see for cats", "en").verdict == "mistakes"
+    # In dictation the British/American spelling and contractions are differences.
+    assert errors_of(check_writing("My favourite colour", "My favorite color", "en")) == [
+        ("sub", "favourite", "favorite"),
+        ("sub", "colour", "color"),
+    ]
+    assert check_writing("They are here", "They're here", "en").verdict == "mistakes"
+
+
+# ---------------------------------------------------------------------------
+# say_again, stopping early and unreadable words
+# ---------------------------------------------------------------------------
+
+
+def test_a_child_who_stopped_early_is_told_where() -> None:
+    r = check_recitation("The little cat sat on the warm mat near the door.", "The little cat", "en")
+    assert r.verdict == "mistakes" and not r.say_again and r.say_again_reason is None
+    assert r.stopped_at_exp_index == 3
+    assert result_summary(r)["stopped_at"] == "sat"
+
+
+def test_partial_reading_with_mistakes_before_the_stop() -> None:
+    text = (
+        "The little cat sat on the warm mat near the door. Then the cat saw a bird in the big "
+        "green tree. The bird sang a happy song and flew away over the hills."
+    )
+    r = check_recitation(text, "The little dog sat on the mat near the door.", "en")
+    assert r.verdict == "mistakes" and not r.say_again
+    assert r.first_error_exp_index == 2  # cat -> dog
+    assert r.stopped_at_exp_index == 11  # "Then"
+
+
+def test_unreliable_speech_is_still_unclear_with_its_reason() -> None:
+    r = check_recitation("one two three four five", "", "en")
+    assert r.say_again and r.say_again_reason == "empty" and r.verdict == "unclear"
+    r = check_recitation("one two three four five", "alpha beta gamma delta epsilon", "en")
+    assert r.say_again and r.say_again_reason == "error_rate" and r.verdict == "unclear"
+    assert r.stopped_at_exp_index is None
+    # Garbage before stopping is still unreliable: the stop does not hide it.
+    r = check_recitation("a b c d e f g h i j", "x y z", "en")
+    assert r.say_again_reason == "error_rate" and r.stopped_at_exp_index == 3
+
+
+def test_one_missing_last_word_is_not_a_stop() -> None:
+    r = check_recitation("one two three four", "one two three", "en")
+    assert r.stopped_at_exp_index is None and errors_of(r) == [("del", "four", None)]
+
+
+@pytest.mark.parametrize(
+    ("lang", "expected", "written"),
+    [
+        ("fr", "Le chat dort.", "Le cha dor."),
+        ("fr", "élève", "eleve"),
+        ("fr", "peut-être", "peut être"),
+        ("ar", "مدرسة", "مدرسه"),
+        ("en", "one two three four five", "won too tree for fife"),
+    ],
+)
+def test_misspelled_dictation_is_mistakes_not_say_again(lang: str, expected: str, written: str) -> None:
+    r = check_writing(expected, written, lang)
+    assert r.verdict == "mistakes" and not r.say_again and r.say_again_reason is None
+
+
+def test_empty_dictation_is_say_again() -> None:
+    r = check_writing("Le chat dort.", "  ", "fr")
+    assert r.say_again and r.say_again_reason == "empty" and r.verdict == "unclear"
+
+
+def test_unreadable_word_in_dictation_is_not_a_skipped_word() -> None:
+    r = check_writing("Le chat dort sur le tapis.", "Le chat [?] sur le tapis.", "fr")
+    assert errors_of(r) == [("sub", "dort", "[?]")]
+    assert r.n_unreadable == 1 and r.n_errors == 1
+    s = result_summary(r)
+    assert s["errors"] == [] and s["n_unreadable"] == 1
+    # Spacing and the Arabic question mark are accepted, and a real mistake stays one.
+    r = check_writing("ذهب الولد إلى المدرسة", "ذهب الولد [ ؟ ] المدرسه", "ar")
+    assert errors_of(r) == [("sub", "إلى", "[?]"), ("sub", "المدرسة", "المدرسه")]
+    assert r.n_unreadable == 1
+    assert [e["expected"] for e in result_summary(r)["errors"]] == ["المدرسة"]

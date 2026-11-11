@@ -50,11 +50,14 @@ from mommy.app import (
     MAX_IMAGE_BYTES,
     MAX_JSON_BYTES,
     MAX_TEXT_CHARS,
+    MAX_TEXT_WORDS,
     MAX_TTS_CHARS,
+    ApiError,
     body_limit,
     build_default_app,
     clean_image,
     create_app,
+    is_quran_phrase,
     keep_uploads_in_memory,
     looks_like_quran,
 )
@@ -70,6 +73,8 @@ ROOT = Path(__file__).resolve().parent.parent
 EN_TEXT = "The cat sat on the mat."
 FR_TEXT = "Le chat dort sur le tapis."
 AR_TEXT = "ذهب الولد إلى المدرسة صباحا مع أخيه الصغير"  # an ordinary sentence, not Quran
+#: The server answers only to its own host names (HostOriginMiddleware).
+BASE_URL = "http://127.0.0.1:8080"
 
 OP_KEYS = {f.name for f in dataclasses.fields(Op)}
 RESULT_KEYS = {f.name for f in dataclasses.fields(CheckResult)}
@@ -316,7 +321,7 @@ def make_client(quran: Quran) -> Callable[..., TestClient]:
             brain if brain is not None else FakeBrain(),
             quran if quran_obj is _REAL else quran_obj,
         )
-        return TestClient(app)
+        return TestClient(app, base_url=BASE_URL)
 
     return make
 
@@ -468,7 +473,7 @@ class TestHeadersAndStatic:
         watchdog = threading.Timer(8, release.set)  # unblocks the test if the loop is stuck
         watchdog.start()
         try:
-            with TestClient(app) as client:
+            with TestClient(app, base_url=BASE_URL) as client:
                 results: dict[str, Any] = {}
                 worker = threading.Thread(target=lambda: results.setdefault("r", recite(client)))
                 worker.start()
@@ -569,7 +574,9 @@ class TestLimitsAndMemory:
         r = client.post("/api/page/read", files={"image": ("p.jpg", image, "image/jpeg")})
         assert r.status_code == 200, r.text
         (sent, _), _ = brain.called("read_page")[0]
-        assert len(sent) == len(image)
+        # The whole upload was read (in memory) and re-encoded: the bytes after the
+        # image are not passed on.
+        assert sent.startswith(b"\xff\xd8") and len(sent) < 10_000
         assert no_disk == []
 
     def test_default_spool_size_would_have_used_the_disk(
@@ -617,9 +624,9 @@ class TestPageRead:
         assert r.status_code == 200
         assert r.json() == {
             "text": FR_TEXT, "lang": "fr", "notes": "", "source": "claude", "needs_manual": False,
-            "contains_quran": False,
+            "contains_quran": False, "unreadable_marks": 0,
         }
-        assert brain.called("read_page") == [((image, "fr"), {})]
+        assert brain.called("read_page") == [((clean_image(image), "fr"), {})]
 
     def test_no_language_hint(self, make_client: Callable[..., TestClient]) -> None:
         brain = FakeBrain()
@@ -671,11 +678,54 @@ class TestPageRead:
         client = make_client(brain=brain)
         self.post(client, png(text="home address"))
         (sent, _), _ = brain.called("read_page")[0]
-        assert sent.startswith(b"\x89PNG") and b"home address" not in sent and b"tEXt" not in sent
+        assert sent.startswith(b"\xff\xd8") and b"home address" not in sent and b"tEXt" not in sent
 
-    def test_clean_images_pass_byte_for_byte(self) -> None:
-        for image in (jpeg(), png()):
-            assert clean_image(image) == image
+    def test_every_image_is_re_encoded_without_metadata(self) -> None:
+        # Regression: EXIF after 128 KB of APP2 segments, a COM comment, an IPTC APP13
+        # block and bytes after the end of the image were all passed on unchanged.
+        secret = b"Sami Haddad, 12 rue des Lilas"
+        base = jpeg((64, 48))
+        def segment(marker: int, payload: bytes) -> bytes:
+            return bytes([0xFF, marker]) + struct.pack(">H", len(payload) + 2) + payload
+
+        app2 = segment(0xE2, b"ICC_PROFILE\x00" + b"\x01" * 65000)
+        variants = {
+            "exif after 128 KB": base[:2] + app2 + app2 + segment(0xE1, b"Exif\x00\x00" + secret) + base[2:],
+            "comment": base[:2] + segment(0xFE, secret) + base[2:],
+            "iptc": base[:2] + segment(0xED, b"Photoshop 3.0\x00" + secret) + base[2:],
+            "trailing data": base + secret * 1000,
+            "png text": png(text=secret.decode()),
+        }
+        for name, image in variants.items():
+            out = clean_image(image)
+            assert secret not in out, name
+            assert b"Exif" not in out and b"ICC_PROFILE" not in out and b"Photoshop" not in out, name
+            with Image.open(io.BytesIO(out)) as img:
+                assert img.format == "JPEG" and not img.getexif() and "icc_profile" not in img.info, name
+                assert "comment" not in img.info, name
+        assert clean_image(base) == clean_image(base)  # deterministic
+
+    def test_large_images_are_downscaled_and_huge_ones_refused(self, make_client: Callable[..., TestClient]) -> None:
+        for size, want in (((4000, 3000), (2000, 1500)), ((6000, 4500), (2000, 1500)), ((1200, 900), (1200, 900))):
+            # Regression: a 6000x4500 JPEG went to the vision model as it was.
+            with Image.open(io.BytesIO(clean_image(jpeg(size)))) as img:
+                assert img.size == want
+        rgba = Image.new("RGBA", (2500, 1000), (0, 0, 0, 0))
+        out = io.BytesIO()
+        rgba.save(out, "PNG")
+        with Image.open(io.BytesIO(clean_image(out.getvalue()))) as img:
+            assert img.size == (2000, 800) and img.mode == "RGB"
+            assert img.getpixel((10, 10)) == (255, 255, 255)  # transparent becomes white paper
+        # Regression: a 190 KB 7000x7000 PNG cost +375 MB to decode. Over 4096 x 4096
+        # pixels an image is refused from its header, before decoding.
+        bomb = Image.new("L", (5000, 4000))
+        out = io.BytesIO()
+        bomb.save(out, "PNG")
+        assert len(out.getvalue()) < 200_000
+        with pytest.raises(ApiError) as caught:
+            clean_image(out.getvalue())
+        assert caught.value.status_code == 400 and caught.value.code == "bad_image"
+        assert_error(self.post(make_client(), out.getvalue()), 400, "bad_image")
 
     def test_broken_image_with_metadata_is_refused(self, make_client: Callable[..., TestClient]) -> None:
         broken = b"\xff\xd8\xff\xe1\x00\x10Exif\x00\x00" + b"\x00" * 64
@@ -748,10 +798,10 @@ class TestReciteStrict:
     def test_long_low_rate_file_is_refused_before_decoding(
         self, make_client: Callable[..., TestClient], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 2.5 hours of 8-bit audio at 1 kHz fits in 9 MB; decoding it would make 144 M samples.
+        # 19 minutes of 8-bit audio at 8 kHz fits in 9 MB; decoding it would make 18 M samples.
         frames = 9_000_000
         header = (
-            b"RIFF" + struct.pack("<I", 36 + frames) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, 1000, 1000, 1, 8)
+            b"RIFF" + struct.pack("<I", 36 + frames) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, 8000, 8000, 1, 8)
             + b"data" + struct.pack("<I", frames)
         )
         assert len(header) == 44
@@ -894,6 +944,13 @@ class TestTTS:
         (args, kwargs), = transcriber.calls
         assert kwargs == {} and len(args) == 2 and isinstance(args[0], np.ndarray) and args[1] == "fr"
 
+    def test_slow_speech_heard_with_digits_passes(self, make_client: Callable[..., TestClient]) -> None:
+        # Regression: "twelve" heard as "12" failed the check after two syntheses.
+        tts = FakeTTS()
+        client = make_client(tts=tts, transcriber=RecordingTranscriber("The year has 12 months."))
+        r = client.post("/api/tts", json={"text": "The year has twelve months.", "lang": "en", "slow": True})
+        assert r.status_code == 200 and r.headers["x-speech-check"] == "passed" and len(tts.calls) == 1
+
     def test_slow_speech_that_says_something_else(self, make_client: Callable[..., TestClient]) -> None:
         tts = FakeTTS()
         client = make_client(tts=tts, transcriber=RecordingTranscriber("le chien court"))
@@ -979,7 +1036,7 @@ class TestDictationCheck:
         assert body["read_text"] == "Le chat dor sur le tapis." and body["source"] == "claude"
         assert body["uncertain_words"] == ["dor"] and body["legible"] is True
         assert body["needs_parent_confirmation"] is True and body["result"]["verdict"] == "mistakes"
-        assert brain.called("read_handwriting") == [((image, "fr"), {})]
+        assert brain.called("read_handwriting") == [((clean_image(image), "fr"), {})]
 
     def test_photo_offline_needs_manual(self, make_client: Callable[..., TestClient]) -> None:
         assert_error(self.post(make_client(brain=OfflineBrain()), image=jpeg()), 501, "needs_manual")
@@ -1251,7 +1308,7 @@ class TestHandwritingIsReadBlind:
         image = jpeg()
         r = check_dictation(make_client(brain=brain), image=image, expected_text=expected)
         assert r.status_code == 200
-        assert brain.called("read_handwriting") == [((image, "fr"), {})]
+        assert brain.called("read_handwriting") == [((clean_image(image), "fr"), {})]
         assert seen == []
 
 
@@ -1357,7 +1414,7 @@ class TestBuildDefaultApp:
             root=tmp_path, models_dir=tmp_path / "models", quran_dir=tmp_path / "data" / "quran", web_dir=tmp_path / "web"
         )
         monkeypatch.setattr(app_mod, "load_settings", lambda: settings)
-        client = TestClient(build_default_app())
+        client = TestClient(build_default_app(), base_url=BASE_URL)
         body = client.get("/api/health").json()
         assert {k: body[k] for k in ("asr", "tts", "brain", "quran")} == {
             "asr": False, "tts": False, "brain": "offline", "quran": False,
@@ -1369,7 +1426,7 @@ class TestBuildDefaultApp:
     def test_real_components(self, monkeypatch: pytest.MonkeyPatch, restore_mommy_logger: None) -> None:
         for name in ("ANTHROPIC_API_KEY", "MOMMY_VISION_MODEL", "MOMMY_TEXT_MODEL", "MOMMY_ASR_MODEL"):
             monkeypatch.delenv(name, raising=False)
-        client = TestClient(build_default_app())
+        client = TestClient(build_default_app(), base_url=BASE_URL)
         body = client.get("/api/health").json()
         assert body["quran"] is True and body["brain"] == "offline"
         assert body["asr"] is (ROOT / "models" / "sherpa-onnx-whisper-small" / "small-encoder.int8.onnx").is_file()
@@ -1377,3 +1434,303 @@ class TestBuildDefaultApp:
         # Logging is configured once, however many apps are built.
         build_default_app()
         assert len(logging.getLogger("mommy").handlers) == 1
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: host and origin, wrong language, [?], limits, Quran guard, feedback
+# ---------------------------------------------------------------------------
+
+
+class TestHostAndOrigin:
+    def test_unknown_host_is_refused(self, make_client: Callable[..., TestClient]) -> None:
+        # Regression: a DNS-rebinding page (any Host header) reached the API that holds the Claude key.
+        client = make_client(brain=FakeBrain())
+        for path in ("/api/health", "/"):
+            r = client.get(path, headers={"Host": "rebind.attacker.example:8080"})
+            assert r.status_code == 400 and r.json()["error"] == "bad_host"
+        r = client.post("/api/page/read", files={"image": ("p.jpg", jpeg())}, headers={"Host": "evil.example"})
+        assert r.status_code == 400
+        for host in ("127.0.0.1:8080", "localhost:8095", "[::1]:8080", "LOCALHOST"):
+            assert client.get("/api/health", headers={"Host": host}).status_code == 200, host
+
+    def test_cross_origin_writes_are_refused(self, make_client: Callable[..., TestClient]) -> None:
+        brain = FakeBrain()
+        client = make_client(brain=brain)
+        r = client.post("/api/page/read", files={"image": ("p.jpg", jpeg())}, headers={"Origin": "http://evil.example"})
+        assert_error(r, 403, "bad_origin")
+        r = client.post("/api/tts", json={"text": "hello", "lang": "en"}, headers={"Origin": "null"})
+        assert_error(r, 403, "bad_origin")
+        assert brain.calls == []
+        # The page itself (same origin), and clients that send no Origin, are accepted.
+        same = client.post("/api/page/read", files={"image": ("p.jpg", jpeg())}, headers={"Origin": BASE_URL})
+        assert same.status_code == 200
+        assert client.post("/api/tts", json={"text": "hello", "lang": "en"}).status_code == 200
+        # Reads are not writes.
+        assert client.get("/api/health", headers={"Origin": "http://evil.example"}).status_code == 200
+
+    def test_allowed_hosts_come_from_the_settings(self, make_client: Callable[..., TestClient]) -> None:
+        client = make_client(settings=make_settings(allowed_hosts=("tutor.local",)))
+        assert client.get("/api/health", headers={"Host": "tutor.local:8080"}).status_code == 200
+        assert client.get("/api/health").status_code == 400  # 127.0.0.1 is not listed here
+
+    def test_pages_cannot_be_framed(self, make_client: Callable[..., TestClient]) -> None:
+        client = make_client()
+        for path in ("/", "/api/health"):
+            r = client.get(path)
+            assert r.headers["x-frame-options"] == "DENY"
+            assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+
+
+class TestLanguageMismatch:
+    AR = "ذهب الولد إلى المدرسة"
+
+    def test_arabic_text_with_another_language_is_refused(self, make_client: Callable[..., TestClient]) -> None:
+        # Regression: with lang=en the recogniser translated Arabic speech into English,
+        # and the child was told the recording was unclear.
+        transcriber, tts, brain = RecordingTranscriber("The boy went to school."), FakeTTS(), FakeBrain()
+        client = make_client(transcriber=transcriber, tts=tts, brain=brain)
+        for lang in ("en", "fr"):
+            assert_error(recite(client, expected_text=self.AR, lang=lang), 422, "lang_mismatch")
+            assert_error(client.post("/api/dictation/phrases", json={"text": self.AR, "lang": lang}), 422, "lang_mismatch")
+            assert_error(client.post("/api/tts", json={"text": "مرحبا", "lang": lang}), 422, "lang_mismatch")
+            r = check_dictation(client, expected_text=self.AR, lang=lang, written_text=self.AR)
+            assert_error(r, 422, "lang_mismatch")
+        assert transcriber.calls == [] and tts.calls == [] and brain.calls == []
+
+    def test_latin_text_with_arabic_is_refused(self, make_client: Callable[..., TestClient]) -> None:
+        client = make_client()
+        assert_error(recite(client, expected_text=EN_TEXT, lang="ar"), 422, "lang_mismatch")
+        assert_error(client.post("/api/tts", json={"text": "Hello", "lang": "ar"}), 422, "lang_mismatch")
+
+    def test_matching_and_mixed_texts_are_accepted(self, make_client: Callable[..., TestClient]) -> None:
+        client = make_client(transcriber=RecordingTranscriber("the word salam means peace"))
+        assert recite(client, expected_text="The word سلام means peace", lang="en").status_code == 200
+        assert client.post("/api/tts", json={"text": "١٢", "lang": "en"}).status_code == 200  # digits only
+        assert client.post("/api/tts", json={"text": "مرحبا Ali", "lang": "ar"}).status_code == 200
+
+
+class TestUnreadableWords:
+    def test_unreadable_handwriting_is_not_a_skipped_word(self, make_client: Callable[..., TestClient]) -> None:
+        # Regression: "[?]" was dropped, so the child was told they forgot "dort".
+        brain = FakeBrain(handwriting={"text": "Le chat [?] sur le tapis.", "uncertain_words": [], "legible": True})
+        body = check_dictation(make_client(brain=brain), image=jpeg(), expected_text=FR_TEXT, age="6-9").json()
+        ops = [(op["kind"], op["expected"], op["heard"]) for op in body["result"]["ops"] if op["kind"] != "match"]
+        assert ops == [("sub", "dort", "[?]")]
+        assert body["result"]["n_unreadable"] == 1 and body["uncertain_words"] == ["[?]"]
+        assert body["feedback"] == feedback.unreadable("fr", "6-9")
+        assert "dort" not in body["feedback"] and "oublié" not in body["feedback"]
+        assert brain.called("word_feedback") == []  # nothing for the model to word
+
+    def test_text_with_unreadable_marks_is_refused_until_typed(self, make_client: Callable[..., TestClient]) -> None:
+        client = make_client()
+        text = "Le chat [?] sur le tapis."
+        assert_error(recite(client, expected_text=text, lang="fr"), 400, "unreadable_text")
+        assert_error(client.post("/api/dictation/phrases", json={"text": text, "lang": "fr"}), 400, "unreadable_text")
+        assert_error(client.post("/api/tts", json={"text": text, "lang": "fr"}), 400, "unreadable_text")
+        assert_error(check_dictation(client, expected_text=text, written_text="Le chat"), 400, "unreadable_text")
+
+    def test_page_read_counts_the_marks(self, make_client: Callable[..., TestClient]) -> None:
+        brain = FakeBrain(page={"text": "Le chat [?] sur le [ ? ].", "lang": "fr", "notes": "", "contains_quran": False})
+        r = make_client(brain=brain).post("/api/page/read", files={"image": ("p.jpg", jpeg())})
+        assert r.json()["unreadable_marks"] == 2 and r.json()["text"] == "Le chat [?] sur le [ ? ]."
+
+
+class TestTextLimits:
+    def test_too_many_words_are_refused(self, make_client: Callable[..., TestClient]) -> None:
+        # Regression: 10,000 one-letter words on each side cost about 0.9 GB to align.
+        client = make_client()
+        many = " ".join("a" for _ in range(MAX_TEXT_WORDS + 1))
+        assert len(many) < MAX_TEXT_CHARS
+        assert_error(check_dictation(client, expected_text=many, lang="en", written_text="a"), 400, "text_too_long")
+        assert_error(check_dictation(client, expected_text="a b", lang="en", written_text=many), 400, "text_too_long")
+        assert_error(recite(client, expected_text=many), 400, "text_too_long")
+        ok = " ".join("a" for _ in range(MAX_TEXT_WORDS))
+        assert check_dictation(client, expected_text=ok, lang="en", written_text=ok).status_code == 200
+
+    @pytest.mark.parametrize("bad", ["Le chat \ud83d dort.", "\udc00"])
+    def test_lone_surrogates_are_bad_text(self, make_client: Callable[..., TestClient], bad: str) -> None:
+        # Regression: a lone UTF-16 surrogate in JSON gave a 500 on /api/dictation/phrases.
+        client = make_client()
+        body = json.dumps({"text": bad, "lang": "fr"})  # ensure_ascii keeps "\ud83d" as an escape
+        headers = {"content-type": "application/json"}
+        assert_error(client.post("/api/dictation/phrases", content=body, headers=headers), 400, "bad_text")
+        assert_error(client.post("/api/tts", content=body, headers=headers), 400, "bad_text")
+
+    def test_model_output_with_a_surrogate_does_not_fail(self, make_client: Callable[..., TestClient]) -> None:
+        brain = FakeBrain(page={"text": "Le chat \ud83d dort.", "lang": "fr", "notes": "", "contains_quran": False})
+        r = make_client(brain=brain).post("/api/page/read", files={"image": ("p.jpg", jpeg())})
+        assert r.status_code == 200 and r.json()["text"] == "Le chat � dort."
+
+    def test_concurrent_decodes_are_bounded(
+        self, make_client: Callable[..., TestClient], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Regression: six 190 KB image bombs at once took the server from 0.9 to 3.2 GB.
+        import threading as _threading
+
+        monkeypatch.setattr(app_mod, "MAX_CONCURRENT_DECODES", 1)
+        monkeypatch.setattr(app_mod, "BUSY_TIMEOUT_S", 0.05)
+        entered, release = _threading.Event(), _threading.Event()
+        real = app_mod.clean_image
+
+        def slow_clean(data: bytes) -> bytes:
+            entered.set()
+            release.wait(5)
+            return real(data)
+
+        monkeypatch.setattr(app_mod, "clean_image", slow_clean)
+        client = make_client(brain=FakeBrain())
+        results: list[int] = []
+        first = _threading.Thread(
+            target=lambda: results.append(client.post("/api/page/read", files={"image": ("p.jpg", jpeg())}).status_code)
+        )
+        first.start()
+        assert entered.wait(5)
+        busy = client.post("/api/page/read", files={"image": ("p.jpg", jpeg())})
+        release.set()
+        first.join(5)
+        assert_error(busy, 503, "busy")
+        assert results == [200]
+
+
+class TestQuranGuardCannotBeBypassed:
+    def test_closing_formula_or_framing_does_not_hide_an_ayah(
+        self, make_client: Callable[..., TestClient], quran: Quran
+    ) -> None:
+        # Regression: Surah 112 + "صدق الله العظيم" scored 15/18 = 0.83 < 0.9 and was
+        # accepted, so its phrases were spoken and the whole surah reached judge_meaning.
+        surah = " ".join(quran_words(quran, 112, 1, 4))
+        brain, tts = ExplodingBrain(), ExplodingTTS()
+        client = make_client(brain=brain, tts=tts, transcriber=RecordingTranscriber(surah))
+        texts = [
+            surah + " صدق الله العظيم",
+            "قال الله تعالى في سورة الإخلاص: " + surah + ". تعلمنا هذه السورة في المدرسة.",
+            "تعلمنا في المدرسة اليوم: " + surah + " ثم عدنا إلى البيت.",
+        ]
+        for text in texts:
+            assert looks_like_quran(text, quran)
+            assert_error(client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}), 422, "quran_text")
+            for mode in ("strict", "contextual"):
+                assert_error(recite(client, expected_text=text, lang="ar", mode=mode), 422, "quran_text")
+            assert_error(check_dictation(client, expected_text=text, lang="ar", written_text=text), 422, "quran_text")
+        assert brain.calls == [] and tts.calls == []
+
+    def test_short_quran_phrases_are_not_spoken(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        tts = ExplodingTTS()
+        client = make_client(tts=tts)
+        last = quran_words(quran, 112, 4, 4)
+        phrases = [
+            " ".join(quran_words(quran, 112, 2, 2)),  # a whole two-word ayah
+            " ".join(last[2:]) + " صدق الله العظيم",  # an ayah's end with the closing formula
+            "قال تعالى: " + " ".join(last[2:]),
+        ]
+        for phrase in phrases:
+            assert is_quran_phrase(phrase, quran), phrase
+            assert_error(client.post("/api/tts", json={"text": phrase, "lang": "ar", "slow": True}), 422, "quran_text")
+        assert tts.calls == []
+
+    def test_ordinary_school_arabic_is_still_accepted(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        texts = [
+            AR_TEXT,
+            "بسم الله الرحمن الرحيم ذهبت مع أبي إلى السوق واشترينا الخبز",
+            "الحمد لله رب العالمين والصلاة والسلام على رسول الله",
+            "قال المعلم للتلاميذ إن العلم نور والجهل ظلام",
+            "في يوم من الأيام خرج الأطفال إلى الحديقة ليلعبوا",
+            "السلام عليكم ورحمة الله وبركاته",
+        ]
+        client = make_client(tts=FakeTTS())
+        for text in texts:
+            assert not looks_like_quran(text, quran), text
+            assert client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}).status_code == 200, text
+            for phrase in split_phrases(text, "ar"):
+                assert client.post("/api/tts", json={"text": phrase, "lang": "ar"}).status_code == 200, phrase
+
+    def test_a_basmala_on_its_own_line_refuses_only_dictation(
+        self, make_client: Callable[..., TestClient], quran: Quran
+    ) -> None:
+        # Regression (final verification): a school text whose basmala is a phrase of its
+        # own was refused by /api/dictation/phrases with the same answer as a Quran text,
+        # and the web client, which checks every text there at "Confirm text", could not
+        # tell that the text may still be recited. The refusal now says scope "phrase".
+        story = "ذهب الولد إلى المدرسة مع أخيه صباحا."
+        texts = [
+            "بسم الله الرحمن الرحيم. " + story,
+            "بسم الله الرحمن الرحيم\n\n" + story,
+            "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ، " + story,
+        ]
+        tts = ExplodingTTS()
+        client = make_client(tts=tts, transcriber=RecordingTranscriber(story))
+        for text in texts:
+            assert not looks_like_quran(text, quran), text
+            res = client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"})
+            assert res.status_code == 422, text
+            body = res.json()
+            assert body["error"] == "quran_text" and body["scope"] == "phrase"
+            assert set(body) == {"error", "message", "scope"}
+            assert "بسم" not in body["message"] and "الولد" not in body["message"]
+            assert recite(client, expected_text=text, lang="ar").status_code == 200
+            written = check_dictation(client, expected_text=text, lang="ar", written_text=story)
+            assert written.status_code == 200
+        # A Quran text keeps the plain refusal (no scope): it may not be recited either.
+        surah = " ".join(quran_words(quran, 112, 1, 4))
+        body = assert_error(client.post("/api/dictation/phrases", json={"text": surah, "lang": "ar"}), 422, "quran_text")
+        assert "scope" not in body
+        assert tts.calls == []
+
+
+class TestFeedbackMatchesTheResult:
+    def test_misspelled_dictation_is_not_told_to_speak_louder(self, make_client: Callable[..., TestClient]) -> None:
+        # Regression: "Le cha dor." gave verdict unclear and "say it again, louder".
+        client = make_client(brain=OfflineBrain())
+        body = check_dictation(client, expected_text="Le chat dort.", age="6-9", written_text="Le cha dor.").json()
+        assert body["result"]["verdict"] == "mistakes" and body["result"]["say_again"] is False
+        assert body["feedback"] == feedback.point_out("fr", "6-9", "chat", "sub", n_errors=2)
+        assert "fort" not in body["feedback"]
+
+    def test_partial_recitation_is_told_where_it_stopped(self, make_client: Callable[..., TestClient]) -> None:
+        text = "The little cat sat on the warm mat near the door."
+        client = make_client(transcriber=RecordingTranscriber("The little cat"), brain=OfflineBrain())
+        body = recite(client, expected_text=text).json()
+        assert body["say_again"] is False and body["result"]["verdict"] == "mistakes"
+        assert body["result"]["stopped_at_exp_index"] == 3
+        assert body["feedback"] == feedback.stopped("en", "6-9", "sat")
+
+    def test_clear_but_different_speech_is_not_told_to_speak_louder(self, make_client: Callable[..., TestClient]) -> None:
+        client = make_client(transcriber=RecordingTranscriber("alpha beta gamma delta epsilon"), brain=OfflineBrain())
+        body = recite(client, expected_text="one two three four five").json()
+        assert body["say_again"] is True and body["result"]["say_again_reason"] == "error_rate"
+        assert body["feedback"] == feedback.say_again("en", "6-9", "error_rate")
+
+    def test_quran_partial_recitation_is_told_where_it_stopped(
+        self, make_client: Callable[..., TestClient], quran: Quran
+    ) -> None:
+        heard = " ".join(quran_words(quran, 78, 1, 3))
+        client = make_client(transcriber=RecordingTranscriber(heard))
+        body = client.post("/api/quran/check", data={"surah": 78, "from": 1, "to": 10}, files={"audio": ("q.wav", wav())}).json()
+        word = quran.ayat(78, 4, 4)[0].display_words[0]
+        assert body["verdict"] == "mistakes" and body["stopped_at"]["expected_display_word"] == word
+        assert body["feedback"] == feedback.quran_feedback("stopped", word)
+
+    def test_contextual_mode_never_uses_strict_praise(self, make_client: Callable[..., TestClient]) -> None:
+        praise = {feedback.praise(lang, age, k) for lang in ("ar", "en", "fr") for age in feedback.AGE_BANDS for k in range(3)}
+        cases = [
+            ("en", "Plants need sunlight to grow. The sun gives us light and heat.",
+             "The sun gives light and warmth, and plants need it to grow."),
+            ("fr", "Le petit chat joue dans le jardin.", "Le petit chat joue dans le jardin."),
+            ("ar", "ذهب الولد إلى المدرسة", "ذهب الولد إلى المدرسة"),
+        ]
+        for lang, expected, heard in cases:
+            client = make_client(transcriber=RecordingTranscriber(heard), brain=OfflineBrain())
+            for age in feedback.AGE_BANDS:
+                body = recite(client, expected_text=expected, lang=lang, mode="contextual", age=age).json()
+                assert body["feedback"] not in praise
+                if body["judgement"]["missing_ideas"]:
+                    assert body["judgement"]["missing_ideas"][0] in body["feedback"]
+
+
+class TestHealthReportsTheModelInUse:
+    def test_asr_model_is_the_one_loaded(self, make_client: Callable[..., TestClient]) -> None:
+        transcriber = RecordingTranscriber("x")
+        transcriber.model = "small"  # type: ignore[attr-defined]
+        r = make_client(transcriber=transcriber, settings=make_settings(asr_model="turbo")).get("/api/health")
+        assert r.json()["asr_model"] == "small"
+        assert make_client(settings=make_settings(asr_model="turbo")).get("/api/health").json()["asr_model"] == "turbo"

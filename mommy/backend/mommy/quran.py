@@ -83,7 +83,7 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
-from .align import Op, align, build_result, recitation_key
+from .align import Op, align, align_with_joins, build_result, recitation_key
 from .textnorm import tokenize
 
 # ---------------------------------------------------------------------------
@@ -112,6 +112,38 @@ ISTIADHA = "اعوذ بالله من الشيطان الرجيم"
 #: Wrong, missing or extra heard words tolerated inside a leading isti'adha / basmala.
 ISTIADHA_MAX_ERRORS = 2
 BASMALA_MAX_ERRORS = 1
+#: Words of the short forms said instead of the formulas (``أعوذ بالله``, ``بسم الله``):
+#: removed only when heard exactly and when that lowers the errors.
+SHORT_FORMULA_WORDS = 2
+#: Expected words compared when choosing how many leading heard words are a formula.
+FORMULA_WINDOW = 12
+
+#: The disjoined letters (muqatta'at) that open 29 surahs, as (surah, ayah) of the ayah
+#: whose first word they are. The words themselves are read from the Tanzil text; a
+#: reciter says the letters by name (``الم`` is recited ``ألف لام ميم``).
+MUQATTAAT_AYAT: tuple[tuple[int, int], ...] = tuple(
+    (s, 1) for s in (2, 3, 7, 10, 11, 12, 13, 14, 15, 19, 20, 26, 27, 28, 29, 30, 31, 32, 36,
+                     38, 40, 41, 42, 43, 44, 45, 46, 50, 68)
+) + ((42, 2),)
+#: The spoken name of each letter that occurs in the muqatta'at, as the recogniser writes
+#: it (a final hamza, as in راء, is dropped by the speech key).
+LETTER_NAMES: dict[str, str] = {
+    "\u0627": "ألف", "\u0644": "لام", "\u0645": "ميم", "\u0635": "صاد", "\u0631": "راء",
+    "\u0643": "كاف", "\u0647": "هاء", "\u064a": "ياء", "\u0639": "عين", "\u0637": "طاء",
+    "\u0633": "سين", "\u062d": "حاء", "\u0642": "قاف", "\u0646": "نون",
+}
+
+#: Framing formulas around a quoted ayah ("the Exalted said: ...", "God the Almighty has
+#: spoken the truth"), left out before :meth:`Quran.quran_runs` and the guard score.
+FRAMING_FORMULAS: tuple[str, ...] = (
+    "صدق الله العظيم",
+    "قال الله تعالى",
+    "قال الله عز وجل",
+    "يقول الله تعالى",
+    "قال تعالى",
+    "قوله تعالى",
+    ISTIADHA,
+)
 
 #: Penalty per extra word of a merged step in :func:`build_word_map`.
 MERGE_PENALTY = 0.25
@@ -438,6 +470,12 @@ def search_word_map(match_keys: Sequence[str], display_keys: Sequence[str]) -> l
 
 def _count_errors(expected: Sequence[str], heard: Sequence[str]) -> int:
     """Word edit distance between two key sequences (via :func:`mommy.align.align`)."""
+    return _count_errors_cached(tuple(expected), tuple(heard))
+
+
+@functools.lru_cache(maxsize=1 << 14)
+def _count_errors_cached(expected: tuple[str, ...], heard: tuple[str, ...]) -> int:
+    # The formula checks compare the same short sequences again and again.
     return sum(op.kind != "match" for op in align(list(expected), list(heard), _identity))
 
 
@@ -459,6 +497,53 @@ def _leading_formula(formula: Sequence[str], heard: Sequence[str], max_errors: i
     if best is None or best[0] > max_errors:
         return None
     return best[2], best[0]
+
+
+def _indel_errors(expected: Sequence[str], heard: Sequence[str]) -> int:
+    """Missing plus extra words between two key sequences.
+
+    The insert/delete distance (``len(expected) + len(heard) - 2 * LCS``): a wrong word
+    counts as one missing and one extra word. Used to choose how many leading heard
+    words a formula takes: with substitutions at cost 1, a stray match between leftover
+    formula words and expected words that were never recited could look like progress.
+    """
+    if not expected or not heard:
+        return len(expected) + len(heard)
+    vocab: dict[str, int] = {}
+    exp_ids = [vocab.setdefault(k, len(vocab)) for k in expected]
+    heard_ids = np.array([vocab.setdefault(k, len(vocab)) for k in heard], dtype=np.int64)
+    m = len(heard_ids)
+    row = np.zeros(m + 1, dtype=np.int64)  # LCS(expected[i:], heard[j:])
+    for e in reversed(exp_ids):
+        best = row.copy()
+        np.maximum(best[:m], row[1:] + (heard_ids == e), out=best[:m])
+        row = np.maximum.accumulate(best[::-1])[::-1]
+    return len(expected) + m - 2 * int(row[0])
+
+
+def _formula_prefixes(
+    formula: Sequence[str], heard: Sequence[str], max_errors: int, short: int
+) -> list[tuple[int, int]]:
+    """Candidate formula lengths at the start of ``heard``: ``(prefix length, errors)``.
+
+    Every length within ``max_errors`` of the formula's whose word errors are at most
+    ``max_errors``, plus the first ``short`` words of the formula heard exactly. A prefix
+    longer than the formula (extra words inside it, as in the long isti'adha) must end
+    with the formula's last word: otherwise the "extra word" is the ayah's first word,
+    said wrong, and it is left to the check.
+    """
+    f = len(formula)
+    out = []
+    for k in range(max(1, f - max_errors), min(len(heard), f + max_errors) + 1):
+        if k > f and heard[k - 1] != formula[-1]:
+            continue
+        errors = _count_errors(formula, heard[:k])
+        if errors <= max_errors:
+            out.append((k, errors))
+    if short and len(heard) >= short and list(heard[:short]) == list(formula[:short]):
+        if all(k != short for k, _ in out):
+            out.append((short, 0))
+    return out
 
 
 def _longest_true_run(flags: np.ndarray) -> int:
@@ -599,6 +684,21 @@ class Quran:
             )
             self._ayat[key] = Ayah(key[0], key[1], display, match, display_words, match_words, word_map)
         self._build_index()
+        self._framing_keys = [[_speech_key(w) for w in f.split()] for f in FRAMING_FORMULAS]
+        # Whole ayat of two words or more, by their speech keys (see whole_ayah).
+        self._ayah_by_keys: dict[tuple[str, ...], tuple[int, int]] = {}
+        for key, a in self._ayat.items():
+            if len(a.match_words) >= 2:
+                self._ayah_by_keys.setdefault(tuple(_speech_key(w) for w in a.match_words), key)
+        # Muqatta'at: global word position -> the letter names joined (speech key).
+        self._muqattaat: dict[int, str] = {}
+        for surah, ayah in MUQATTAAT_AYAT:
+            word = self._ayat[(surah, ayah)].match_words[0]
+            if not word or any(c not in LETTER_NAMES for c in word):
+                raise ValueError(f"ayah {surah}:{ayah} does not start with disjoined letters")
+            self._muqattaat[self._ayah_start[(surah, ayah)]] = "".join(
+                _speech_key(LETTER_NAMES[c]) for c in word
+            )
 
     # -- loading -------------------------------------------------------------
 
@@ -797,7 +897,11 @@ class Quran:
         heard_keys = [_speech_key(t) for t in heard_tokens]
         offset, tolerated = self._strip_formulas(heard_keys, expected_keys)
 
-        ops = align(expected, heard_tokens[offset:], _speech_key)
+        rest_keys = heard_keys[offset:]
+        ops = align_with_joins(
+            expected, heard_tokens[offset:], _speech_key, max_pieces=1,
+            extra_joins=(self._muqattaat_joins(g_lo, len(expected), rest_keys), {}),
+        )
         if offset:
             for op in ops:
                 if op.heard_index is not None:
@@ -808,16 +912,10 @@ class Quran:
         first_error = None
         if result.first_error_exp_index is not None:
             kind = next(op.kind for op in ops if op.kind != "match")
-            s, a, mi = self._location(g_lo + result.first_error_exp_index)
-            ayah = self._ayat[(s, a)]
-            dj = ayah.word_map[mi]
-            first_error = {
-                "surah": s,
-                "ayah": a,
-                "word_index_display": dj,
-                "expected_display_word": ayah.display_words[dj],
-                "kind": kind,
-            }
+            first_error = {**self._display_location(g_lo + result.first_error_exp_index), "kind": kind}
+        stopped_at = None
+        if result.stopped_at_exp_index is not None:
+            stopped_at = self._display_location(g_lo + result.stopped_at_exp_index)
         return {
             "ops": op_dicts,
             "verdict": result.verdict,
@@ -827,35 +925,111 @@ class Quran:
             "n_errors": result.n_errors,
             "word_accuracy": result.word_accuracy,
             "tolerated": tolerated,
+            "stopped_at": stopped_at,
             "words": self._display_view(op_dicts, surah, start, end),
         }
+
+    def _display_location(self, g: int) -> dict[str, Any]:
+        """``{surah, ayah, word_index_display, expected_display_word}`` of a word position."""
+        s, a, mi = self._location(g)
+        ayah = self._ayat[(s, a)]
+        dj = ayah.word_map[mi]
+        return {"surah": s, "ayah": a, "word_index_display": dj, "expected_display_word": ayah.display_words[dj]}
+
+    def _muqattaat_joins(self, g_lo: int, n: int, heard_keys: Sequence[str]) -> dict[tuple[int, int], list[int]]:
+        """Joined matches for disjoined letters recited by name in the range ``[g_lo,
+        g_lo + n)``: expected word ``i`` matches heard words ``j..j+k`` whose keys
+        joined are the letter names joined (``الم`` / ``ألف لام ميم``, ``يس`` /
+        ``ياسين``)."""
+        joins: dict[tuple[int, int], list[int]] = {}
+        for g, names in self._muqattaat.items():
+            if not g_lo <= g < g_lo + n:
+                continue
+            for j in range(len(heard_keys)):
+                joined = ""
+                for k in range(1, len(names) + 1):
+                    if j + k > len(heard_keys):
+                        break
+                    joined += heard_keys[j + k - 1]
+                    if joined == names:
+                        joins.setdefault((g - g_lo, j), []).append(k)
+                    if not names.startswith(joined):
+                        break
+        return joins
 
     def _strip_formulas(self, heard_keys: list[str], expected_keys: list[str] | None) -> tuple[int, list[str]]:
         """Count the leading heard tokens that are an isti'adha and/or a basmala.
 
-        Each formula is removed at most once, in either order. A formula heard exactly
-        is always removed; one heard with errors is removed only when that strictly
-        lowers the word errors against ``expected_keys`` (when given). The basmala is
-        kept when ``expected_keys`` itself starts with it.
+        Each formula is removed at most once, in either order. The basmala is kept when
+        ``expected_keys`` itself starts with it.
+
+        With ``expected_keys`` (checking), the number of words a formula takes is chosen
+        by the result: every candidate length (within the formula's error tolerance, and
+        the short forms ``أعوذ بالله`` / ``بسم الله`` heard exactly) is scored by the
+        missing and extra words of the rest against the start of the expected words,
+        then by the formula's own errors, then the shorter length wins, over every order
+        and combination of the two formulas. A formula heard exactly is always removed;
+        any other plan is used only when it strictly lowers the errors. So ``بسم الله
+        الرحمن`` (last word missing) before an ayah takes three words, not the ayah's
+        first word.
+
+        Without ``expected_keys`` (hifz search), a formula heard exactly, or with at most
+        its tolerance of errors, is removed (the caller tries both variants).
         """
         formulas = [("istiadha", self._istiadha_keys, ISTIADHA_MAX_ERRORS)]
         if expected_keys is None or expected_keys[: len(self._basmala_keys)] != self._basmala_keys:
             formulas.append(("basmala", self._basmala_keys, BASMALA_MAX_ERRORS))
+        if expected_keys is None:
+            return self._strip_formulas_loosely(heard_keys, formulas)
+
+        # A formula heard exactly is always removed, as before.
+        exact_offset, exact_names = self._strip_formulas_loosely(heard_keys, formulas, max_errors=0)
+
+        # Score every other plan (which formulas, in which order, how many words each)
+        # by the missing and extra words of the rest against the start of the expected
+        # words: the first FORMULA_WINDOW expected words against as many heard words, or,
+        # when the window holds the whole range, against every remaining heard word.
+        window = expected_keys[:FORMULA_WINDOW]
+        whole = len(expected_keys) <= FORMULA_WINDOW
+
+        @functools.lru_cache(maxsize=None)
+        def rest_errors(start: int) -> int:
+            rest = heard_keys[start:] if whole else heard_keys[start : start + len(window)]
+            return _indel_errors(window, rest)
+
+        best: tuple[int, int, int, list[str]] | None = None
+
+        def explore(start: int, formula_errors: int, names: list[str]) -> None:
+            nonlocal best
+            for name, keys, max_errors in formulas:
+                if name in names:
+                    continue
+                for k, errors in _formula_prefixes(keys, heard_keys[start:], max_errors, SHORT_FORMULA_WORDS):
+                    plan = (rest_errors(start + k), formula_errors + errors, start + k, [*names, name])
+                    if best is None or plan[:3] < best[:3]:
+                        best = plan
+                    explore(start + k, formula_errors + errors, [*names, name])
+
+        explore(0, 0, [])
+        if best is not None and best[0] < rest_errors(exact_offset):
+            return best[2], best[3]
+        return exact_offset, exact_names
+
+    def _strip_formulas_loosely(
+        self, heard_keys: list[str], formulas: list[tuple[str, list[str], int]], max_errors: int | None = None
+    ) -> tuple[int, list[str]]:
+        """Remove leading formulas greedily, each heard with at most its tolerance of
+        errors (or ``max_errors``), in either order."""
         offset = 0
         tolerated: list[str] = []
         while len(tolerated) < len(formulas):
-            for name, keys, max_errors in formulas:
+            for name, keys, tolerance in formulas:
                 if name in tolerated:
                     continue
-                found = _leading_formula(keys, heard_keys[offset:], max_errors)
+                found = _leading_formula(keys, heard_keys[offset:], tolerance if max_errors is None else max_errors)
                 if found is None:
                     continue
-                k, errors = found
-                if errors and expected_keys is not None:
-                    rest = heard_keys[offset:]
-                    if _count_errors(expected_keys, rest[k:]) >= _count_errors(expected_keys, rest):
-                        continue
-                offset += k
+                offset += found[0]
                 tolerated.append(name)
                 break
             else:
@@ -1119,13 +1293,69 @@ class Quran:
         }
 
     def _preview(self, surah: int, ayah: int, word: int) -> str:
-        """Up to :data:`PREVIEW_WORDS` display words from a position, within the surah."""
-        words: list[str] = []
-        count = self._surah_info[surah - 1].ayah_count
-        while ayah <= count and len(words) < PREVIEW_WORDS:
-            words.extend(self._ayat[(surah, ayah)].display_words[word : word + PREVIEW_WORDS - len(words)])
-            ayah, word = ayah + 1, 0
-        return " ".join(words)
+        """Up to :data:`PREVIEW_WORDS` display words from a position, within the ayah.
+
+        The preview is cut from the verbatim Uthmani line at word boundaries, so the
+        pause marks between the words it keeps stay where they are. It ends with the
+        ayah: words of the next ayah are never run into it.
+        """
+        display = self._ayat[(surah, ayah)].display
+        spans = [m.span() for m in re.finditer(r"\S+", display) if not is_pause_mark_token(m.group())]
+        if not 0 <= word < len(spans):
+            return ""
+        last = min(word + PREVIEW_WORDS, len(spans)) - 1
+        return display[spans[word][0] : spans[last][1]]
+
+    # -- Quran text in other texts (the general endpoints' guard) ---------------
+
+    def strip_framing(self, text: str) -> tuple[list[str], bool]:
+        """The tokens of ``text`` without framing formulas (:data:`FRAMING_FORMULAS`,
+        such as ``قال تعالى`` or ``صدق الله العظيم``), and whether one was found."""
+        tokens = tokenize(text or "", "ar")
+        keys = [_speech_key(t) for t in tokens]
+        drop = [False] * len(tokens)
+        for formula in self._framing_keys:
+            f = len(formula)
+            for i in range(len(keys) - f + 1):
+                if keys[i : i + f] == formula and not any(drop[i : i + f]):
+                    drop[i : i + f] = [True] * f
+        return [t for t, d in zip(tokens, drop) if not d], any(drop)
+
+    def quran_runs(self, tokens: Sequence[str], min_words: int) -> list[tuple[int, int]]:
+        """Stretches of ``tokens`` that are Quran text: ``[(start, end)]`` token spans
+        covered by runs of at least ``min_words`` (3..7) consecutive words found, in
+        order and consecutively, somewhere in the Quran (speech keys, Simple-Clean
+        text). Overlapping runs are merged."""
+        if not NGRAM_MIN <= min_words <= NGRAM_MAX:
+            raise ValueError(f"min_words must be from {NGRAM_MIN} to {NGRAM_MAX}")
+        ids = np.array([self._vocab.get(_speech_key(t), _UNKNOWN) for t in tokens], dtype=np.int64)
+        if len(ids) < min_words:
+            return []
+        starts = np.flatnonzero(_clean_windows(ids, min_words))
+        if not len(starts):
+            return []
+        query = _window_hashes(ids, min_words)[starts]
+        sorted_hashes, positions = self._ngrams[min_words]
+        left = np.searchsorted(sorted_hashes, query, side="left")
+        right = np.searchsorted(sorted_hashes, query, side="right")
+        span = np.arange(min_words)
+        spans: list[tuple[int, int]] = []
+        for h, lo, hi in zip(starts, left, right):
+            pos = positions[lo:hi]
+            if len(pos) and np.any(np.all(self._ids[pos[:, None] + span] == ids[h + span], axis=1)):
+                a, b = int(h), int(h) + min_words
+                if spans and a <= spans[-1][1]:
+                    spans[-1] = (spans[-1][0], b)
+                else:
+                    spans.append((a, b))
+        return spans
+
+    def whole_ayah(self, tokens: Sequence[str]) -> tuple[int, int] | None:
+        """``(surah, ayah)`` when ``tokens`` are exactly the words of one ayah of at least
+        two words (speech keys), else None."""
+        if len(tokens) < 2:
+            return None
+        return self._ayah_by_keys.get(tuple(_speech_key(t) for t in tokens))
 
     # -- statistics ----------------------------------------------------------
 
@@ -1145,7 +1375,10 @@ class Quran:
 __all__ = [
     "ATTRIBUTION",
     "Ayah",
+    "FRAMING_FORMULAS",
     "ISTIADHA",
+    "LETTER_NAMES",
+    "MUQATTAAT_AYAT",
     "N_AYAT",
     "N_SURAHS",
     "Quran",
