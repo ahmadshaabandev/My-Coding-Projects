@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Privacy: only this server is ever contacted. Workers/worklets and media come from in-memory blob: URLs. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <title>Mommy — AI reading tutor</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Icon sprite (inline, no external requests). -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 14.5a3.5 3.5 0 0 0 3.5-3.5V5a3.5 3.5 0 0 0-7 0v6a3.5 3.5 0 0 0 3.5 3.5zm6-3.5a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.94V22h2v-3.06A8 8 0 0 0 20 11h-2z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/></symbol>
+    <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.06A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54z"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="M4 11h12.17l-5.58-5.59L12 4l8 8-8 8-1.41-1.41L16.17 13H4z"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M9 3 7.17 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.17L15 3H9zm3 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><path d="M4 3h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 2v10.59l4.29-4.3a1 1 0 0 1 1.42 0L13 14.59l2.29-2.3a1 1 0 0 1 1.42 0L20 15.59V5H4zm11.5 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4.42 0-8 2.24-8 5v2h16v-2c0-2.76-3.58-5-8-5z"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 21h6v-1.5H9V21zm3-19a7 7 0 0 0-4 12.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26A7 7 0 0 0 12 2z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="M10 2a8 8 0 0 1 6.32 12.9l5.39 5.39-1.42 1.42-5.39-5.39A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+    <symbol id="i-robot" viewBox="0 0 24 24"><path d="M11 2h2v2.07A7 7 0 0 1 19 11v6a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-6a7 7 0 0 1 6-6.93V2zM9 11a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM2 12h2v4H2v-4zm18 0h2v4h-2v-4z"/></symbol>
+  </svg>
+
+  <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <span class="brand"><span class="brand-mark" aria-hidden="true">M</span><span class="brand-name">Mommy</span></span>
+      <p class="ai-badge" id="ai-badge" role="note">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-robot"/></svg>
+        <span data-i18n="badge">AI tutor — not a person</span>
+      </p>
+      <button type="button" class="icon-btn" id="btn-profile" hidden data-i18n-attr="aria-label:nav_profile,title:nav_profile">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>
+      </button>
+    </div>
+  </header>
+  <nav class="tabs" id="nav" hidden data-i18n-attr="aria-label:nav_label">
+    <button type="button" class="tab" data-go="prepare" data-i18n="nav_prepare">Prepare</button>
+    <button type="button" class="tab" data-go="recite" data-i18n="nav_recite">Recite</button>
+    <button type="button" class="tab" data-go="dictation" data-i18n="nav_dictation">Dictation</button>
+    <button type="button" class="tab" data-go="quran" data-i18n="nav_quran">Quran</button>
+  </nav>
+
+  <div class="banner" id="server-banner" role="alert" hidden>
+    <p data-i18n="server_down">I can't reach the Mommy server. Is it running?</p>
+    <button type="button" class="btn btn-small" id="btn-retry" data-i18n="retry">Try again</button>
+  </div>
+
+  <main id="main" tabindex="-1">
+
+    <!-- ===================== Start ===================== -->
+    <section class="screen" id="screen-start" data-screen="start" aria-labelledby="start-title">
+      <h1 id="start-title" data-i18n="start_title">Hello! I'm Mommy.</h1>
+      <p class="lead" data-i18n="start_lead">I help you practise reading aloud and dictation.</p>
+
+      <div class="card card-notice" id="ai-disclosure">
+        <h2 class="card-title">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-robot"/></svg>
+          <span data-i18n="disclosure_title">Good to know</span>
+        </h2>
+        <p data-i18n="disclosure_text">Mommy is a computer program (an AI). It is not a person, and it is not your mum or dad. It can make mistakes, so a grown-up should stay close.</p>
+      </div>
+
+      <form class="card" id="profile-form" novalidate>
+        <h2 class="card-title" data-i18n="profile_title">Child profile</h2>
+        <p class="hint" data-i18n="profile_note">Saved only on this device.</p>
+        <div class="field">
+          <label for="nickname" data-i18n="nickname">Nickname</label>
+          <input id="nickname" name="nickname" type="text" maxlength="24" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:nickname_ph">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="age" data-i18n="age">Age</label>
+            <select id="age" name="age">
+              <option value="6-9" data-i18n="age_6_9">6–9 years</option>
+              <option value="10-13" data-i18n="age_10_13">10–13 years</option>
+              <option value="14-18" data-i18n="age_14_18">14–18 years</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ui-lang" data-i18n="ui_lang">Language</label>
+            <select id="ui-lang" name="lang">
+              <option value="en" lang="en">English</option>
+              <option value="fr" lang="fr">Français</option>
+              <option value="ar" lang="ar">العربية</option>
+            </select>
+          </div>
+        </div>
+
+        <fieldset class="consent">
+          <legend data-i18n="consent_title">For the parent</legend>
+          <div class="check">
+            <input type="checkbox" id="consent" name="consent">
+            <label for="consent" data-i18n="consent_label">I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.</label>
+          </div>
+          <p class="hint" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
+          <p class="hint" id="consent-extra"></p>
+        </fieldset>
+
+        <button type="submit" class="btn btn-primary btn-wide" id="btn-start" data-i18n="start_button">Let's start</button>
+      </form>
+    </section>
+
+    <!-- ===================== Prepare (parent) ===================== -->
+    <section class="screen" id="screen-prepare" data-screen="prepare" aria-labelledby="prep-title" hidden>
+      <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
+      <h1 id="prep-title" data-i18n="prep_title">Prepare a page</h1>
+      <p class="lead" data-i18n="prep_intro">Take a photo of the textbook page, or type or paste the text. Then check it and press “Confirm text”.</p>
+
+      <div class="card">
+        <div class="field">
+          <label for="page-lang" data-i18n="text_lang">Language of the text</label>
+          <select id="page-lang">
+            <option value="en" lang="en">English</option>
+            <option value="fr" lang="fr">Français</option>
+            <option value="ar" lang="ar">العربية</option>
+          </select>
+        </div>
+
+        <div class="btn-row">
+          <label class="btn file-btn" data-gate-label="prep-photo">
+            <input type="file" id="prep-take" accept="image/*" capture="environment" data-gate="prep-photo">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-camera"/></svg>
+            <span data-i18n="take_photo">Take a photo</span>
+          </label>
+          <label class="btn file-btn" data-gate-label="prep-photo">
+            <input type="file" id="prep-choose" accept="image/*" data-gate="prep-photo">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-image"/></svg>
+            <span data-i18n="choose_photo">Choose a photo</span>
+          </label>
+        </div>
+        <p class="why" id="why-prep-photo" data-why="prep-photo" hidden></p>
+        <p class="hint" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
+        <p class="status" id="prep-status" role="status" aria-live="polite"></p>
+
+        <div class="field">
+          <label for="page-text" data-i18n="page_text_label">Page text</label>
+          <textarea id="page-text" rows="8" spellcheck="false" data-i18n-attr="placeholder:page_text_ph"></textarea>
+        </div>
+
+        <fieldset class="segmented" id="mode-group">
+          <legend data-i18n="mode_label">Reciting mode</legend>
+          <label class="seg">
+            <input type="radio" name="mode" value="strict" checked>
+            <span class="seg-body"><span class="seg-title" data-i18n="mode_strict">Word by word</span><span class="seg-hint" data-i18n="mode_strict_hint">Every word must be right.</span></span>
+          </label>
+          <label class="seg">
+            <input type="radio" name="mode" value="contextual">
+            <span class="seg-body"><span class="seg-title" data-i18n="mode_contextual">The meaning</span><span class="seg-hint" data-i18n="mode_contextual_hint">Own words are fine if the meaning is right.</span></span>
+          </label>
+        </fieldset>
+        <p class="hint" id="mode-offline-note" data-i18n="mode_contextual_offline" hidden>Without the online AI, the meaning check is only approximate.</p>
+
+        <button type="button" class="btn btn-primary btn-wide" id="btn-confirm">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
+          <span data-i18n="confirm_text">Confirm text</span>
+        </button>
+        <p class="status" id="prep-confirm-status" role="status" aria-live="polite"></p>
+        <div class="btn-row" id="prep-next" hidden>
+          <button type="button" class="btn" data-go="recite" data-i18n="go_recite">Go to Recite</button>
+          <button type="button" class="btn" data-go="dictation" data-i18n="go_dictation">Go to Dictation</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Recite (child) ===================== -->
+    <section class="screen" id="screen-recite" data-screen="recite" aria-labelledby="recite-title" hidden>
+      <h1 id="recite-title" data-i18n="recite_title">Recite</h1>
+      <p class="hello" id="recite-hello"></p>
+
+      <div class="card card-empty" id="recite-empty">
+        <p data-i18n="need_page">Ask a grown-up to prepare a page first.</p>
+        <button type="button" class="btn" data-go="prepare" data-i18n="open_prepare">Prepare a page</button>
+      </div>
+
+      <div id="recite-main" hidden>
+        <p class="lead" data-i18n="recite_intro">Read the text aloud. Press the big button to start, and press it again when you finish.</p>
+        <p class="chip" id="recite-mode-label"></p>
+
+        <div class="card">
+          <div class="words reading" id="recite-text"></div>
+          <ul class="legend" id="recite-legend" hidden></ul>
+        </div>
+
+        <div class="rec-bar">
+          <button type="button" class="rec-btn" id="recite-rec" data-gate="recite-rec" data-state="idle">
+            <svg class="icon icon-idle" aria-hidden="true" focusable="false"><use href="#i-mic"/></svg>
+            <svg class="icon icon-on" aria-hidden="true" focusable="false"><use href="#i-stop"/></svg>
+            <span class="rec-label" data-i18n="rec_start">Start</span>
+          </button>
+          <div class="rec-info">
+            <div class="meter" id="recite-meter" aria-hidden="true"><span class="meter-fill"></span></div>
+            <p class="rec-timer" id="recite-timer" aria-live="off"></p>
+            <p class="status" id="recite-status" role="status" aria-live="polite"></p>
+          </div>
+        </div>
+        <p class="why" id="why-recite-rec" data-why="recite-rec" hidden></p>
+
+        <div class="card result" id="recite-result" hidden tabindex="-1">
+          <p class="verdict" id="recite-verdict" hidden></p>
+          <p class="score" id="recite-score" hidden></p>
+          <p class="feedback" id="recite-feedback"></p>
+          <p class="hint" id="recite-quality" hidden></p>
+          <div class="ideas" id="recite-ideas" hidden>
+            <div id="recite-missing-wrap" hidden><h3 data-i18n="missing_ideas">Ideas to add</h3><ul id="recite-missing"></ul></div>
+            <div id="recite-wrong-wrap" hidden><h3 data-i18n="wrong_ideas">Ideas to fix</h3><ul id="recite-wrong"></ul></div>
+            <p class="hint" id="recite-approx" data-i18n="approximate" hidden>Approximate check (offline)</p>
+          </div>
+          <div class="btn-row">
+            <button type="button" class="btn" id="recite-listen" data-gate="recite-tts">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-speaker"/></svg>
+              <span data-i18n="listen">Listen</span>
+            </button>
+            <button type="button" class="btn btn-primary" id="recite-say-again" hidden data-gate="recite-rec">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-repeat"/></svg>
+              <span data-i18n="say_again">Say that again</span>
+            </button>
+          </div>
+          <p class="why" data-why="recite-tts" hidden></p>
+          <details class="heard" id="recite-heard-box" hidden>
+            <summary data-i18n="heard_label">What I heard</summary>
+            <p id="recite-heard"></p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Dictation ===================== -->
+    <section class="screen" id="screen-dictation" data-screen="dictation" aria-labelledby="dict-title" hidden>
+      <h1 id="dict-title" data-i18n="dict_title">Dictation</h1>
+      <p class="hello" id="dict-hello"></p>
+
+      <div class="card card-empty" id="dict-empty">
+        <p data-i18n="need_page">Ask a grown-up to prepare a page first.</p>
+        <button type="button" class="btn" data-go="prepare" data-i18n="open_prepare">Prepare a page</button>
+      </div>
+
+      <div id="dict-main" hidden>
+        <!-- Stage 1: intro -->
+        <div class="card stage" data-stage="intro">
+          <p class="lead" data-i18n="dict_intro">Get a pencil and paper. I will say the text slowly, one small piece at a time.</p>
+          <button type="button" class="btn btn-primary btn-wide" id="btn-dict-start" data-gate="dict-start">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-speaker"/></svg>
+            <span data-i18n="dict_start">Start the dictation</span>
+          </button>
+          <p class="status" id="dict-intro-status" role="status" aria-live="polite"></p>
+        </div>
+
+        <!-- Stage 2: one phrase at a time -->
+        <div class="card stage" data-stage="speak" hidden>
+          <p class="counter" id="dict-counter" aria-live="polite"></p>
+          <div class="btn-row btn-row-big">
+            <button type="button" class="btn btn-big" id="dict-repeat" data-gate="dict-play">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-repeat"/></svg>
+              <span data-i18n="repeat">Repeat</span>
+            </button>
+            <button type="button" class="btn btn-big btn-primary" id="dict-next">
+              <svg class="icon icon-flip" aria-hidden="true" focusable="false"><use href="#i-next"/></svg>
+              <span id="dict-next-label" data-i18n="next">Next</span>
+            </button>
+          </div>
+          <p class="why" data-why="dict-play" hidden></p>
+          <p class="status" id="dict-speak-status" role="status" aria-live="polite"></p>
+          <button type="button" class="btn btn-small btn-ghost" id="dict-show" aria-expanded="false" aria-controls="dict-phrase">
+            <span data-i18n="show_phrase">Show the words (grown-up)</span>
+          </button>
+          <p class="phrase" id="dict-phrase" hidden></p>
+        </div>
+
+        <!-- Stage 3: the parent gives the child's writing -->
+        <div class="card stage" data-stage="check" hidden>
+          <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
+          <h2 class="card-title" data-i18n="dict_check_title">Check the writing</h2>
+          <p data-i18n="dict_check_intro">Take a photo of your child's paper, or type exactly what they wrote — mistakes included.</p>
+          <div class="btn-row">
+            <label class="btn file-btn" data-gate-label="dict-photo">
+              <input type="file" id="dict-take" accept="image/*" capture="environment" data-gate="dict-photo">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-camera"/></svg>
+              <span data-i18n="take_photo">Take a photo</span>
+            </label>
+            <label class="btn file-btn" data-gate-label="dict-photo">
+              <input type="file" id="dict-choose" accept="image/*" data-gate="dict-photo">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-image"/></svg>
+              <span data-i18n="choose_photo">Choose a photo</span>
+            </label>
+          </div>
+          <p class="why" data-why="dict-photo" hidden></p>
+          <div class="field">
+            <label for="dict-written" data-i18n="written_label">What your child wrote</label>
+            <textarea id="dict-written" rows="5" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+          </div>
+          <button type="button" class="btn btn-primary btn-wide" id="btn-dict-check" data-gate="dict-start" data-i18n="check_writing">Check</button>
+          <p class="status" id="dict-check-status" role="status" aria-live="polite"></p>
+        </div>
+
+        <!-- Stage 4: the parent reviews the result first -->
+        <div class="card stage" data-stage="review" hidden tabindex="-1">
+          <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
+          <h2 class="card-title" data-i18n="parent_review_title">Please check before your child sees it</h2>
+          <p data-i18n="parent_review_intro">The AI may misread handwriting. Fix the text below if needed and check again, then confirm.</p>
+          <p class="hint" id="dict-legible" data-i18n="illegible" hidden>The writing was hard to read. Please check it carefully.</p>
+          <div class="field">
+            <label for="dict-read-text" data-i18n="read_text_label">What was read</label>
+            <textarea id="dict-read-text" rows="4" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+          </div>
+          <p class="hint" id="dict-uncertain" hidden></p>
+          <div class="words" id="dict-review-words"></div>
+          <ul class="legend" data-legend="written"></ul>
+          <p class="feedback feedback-small" id="dict-review-feedback"></p>
+          <div class="btn-row">
+            <button type="button" class="btn" id="btn-dict-recheck" data-gate="dict-start" data-i18n="recheck">Check again with this text</button>
+            <button type="button" class="btn btn-primary" id="btn-dict-confirm">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
+              <span data-i18n="confirm_result">Confirm result</span>
+            </button>
+          </div>
+          <p class="status" id="dict-review-status" role="status" aria-live="polite"></p>
+        </div>
+
+        <!-- Stage 5: the child sees the confirmed result -->
+        <div class="card stage result" data-stage="child" hidden tabindex="-1">
+          <h2 class="card-title" data-i18n="dict_result_title">Your dictation</h2>
+          <p class="feedback" id="dict-child-feedback"></p>
+          <div class="words" id="dict-child-words"></div>
+          <ul class="legend" data-legend="written"></ul>
+          <div class="btn-row">
+            <button type="button" class="btn" id="dict-listen" data-gate="dict-tts">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-speaker"/></svg>
+              <span data-i18n="listen">Listen</span>
+            </button>
+            <button type="button" class="btn btn-primary" id="btn-dict-new" data-i18n="new_dictation">New dictation</button>
+          </div>
+          <p class="why" data-why="dict-tts" hidden></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Quran ===================== -->
+    <section class="screen" id="screen-quran" data-screen="quran" aria-labelledby="quran-title" hidden>
+      <h1 id="quran-title" data-i18n="quran_title">Quran</h1>
+      <p class="why why-block" data-why="quran" hidden></p>
+
+      <div class="card">
+        <div class="check">
+          <input type="checkbox" id="quran-juz" checked data-gate="quran">
+          <label for="quran-juz" data-i18n="juz_amma_only">Juz' Amma only (surahs 78–114)</label>
+        </div>
+        <div class="field">
+          <label for="quran-surah" data-i18n="surah">Surah</label>
+          <select id="quran-surah" data-gate="quran"></select>
+        </div>
+        <div class="field-row field-row-tight">
+          <div class="field">
+            <label for="quran-from" data-i18n="from_ayah">From ayah</label>
+            <input type="number" id="quran-from" min="1" value="1" inputmode="numeric" data-gate="quran">
+          </div>
+          <div class="field">
+            <label for="quran-to" data-i18n="to_ayah">To ayah</label>
+            <input type="number" id="quran-to" min="1" value="1" inputmode="numeric" data-gate="quran">
+          </div>
+        </div>
+        <p class="hint" id="quran-range-note" data-i18n="range_capped" hidden>At most 50 ayat at a time.</p>
+
+        <fieldset class="segmented segmented-inline" id="qmode-group">
+          <legend data-i18n="quran_mode">How do you want to recite?</legend>
+          <label class="seg">
+            <input type="radio" name="qmode" value="looking" checked data-gate="quran">
+            <span class="seg-body"><span class="seg-title" data-i18n="mode_looking">Recite looking</span></span>
+          </label>
+          <label class="seg">
+            <input type="radio" name="qmode" value="memory" data-gate="quran">
+            <span class="seg-body"><span class="seg-title" data-i18n="mode_memory">From memory</span></span>
+          </label>
+        </fieldset>
+      </div>
+
+      <div class="card quran-card">
+        <p class="status" id="quran-load-status" role="status" aria-live="polite"></p>
+        <div class="quran-text" id="quran-text" lang="ar" dir="rtl"></div>
+        <div class="memory-box" id="quran-memory" hidden>
+          <p data-i18n="quran_text_hidden">The text is hidden. Recite from memory!</p>
+          <p class="quran-hint" id="quran-hint" lang="ar" dir="rtl" hidden></p>
+          <button type="button" class="btn btn-small" id="btn-quran-hint" data-gate="quran">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-bulb"/></svg>
+            <span data-i18n="hint">Hint: next word</span>
+          </button>
+        </div>
+        <footer class="attribution" id="quran-attribution-box">
+          <p class="riwaya" id="quran-riwaya">Hafs – Tanzil</p>
+          <!-- One LTR run for the English attribution and its link, so that a wrapped line
+               keeps "… verbatim · tanzil.net" in reading order in the Arabic (RTL) UI. -->
+          <p class="attr-text"><span class="attr-run" dir="ltr" lang="en"><span id="quran-attribution">Quran text: Tanzil Project</span> · <a id="quran-link" href="https://tanzil.net" target="_blank" rel="noopener noreferrer">tanzil.net</a></span></p>
+        </footer>
+      </div>
+
+      <div class="rec-bar">
+        <button type="button" class="rec-btn" id="quran-rec" data-gate="quran-rec" data-state="idle">
+          <svg class="icon icon-idle" aria-hidden="true" focusable="false"><use href="#i-mic"/></svg>
+          <svg class="icon icon-on" aria-hidden="true" focusable="false"><use href="#i-stop"/></svg>
+          <span class="rec-label" data-i18n="quran_rec">Start reciting</span>
+        </button>
+        <div class="rec-info">
+          <div class="meter" id="quran-meter" aria-hidden="true"><span class="meter-fill"></span></div>
+          <p class="rec-timer" id="quran-timer" aria-live="off"></p>
+          <p class="status" id="quran-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <p class="why" data-why="quran-rec" hidden></p>
+
+      <div class="card result" id="quran-result" hidden tabindex="-1">
+        <p class="feedback quran-feedback" id="quran-feedback" lang="ar" dir="rtl"></p>
+        <p class="hint" id="quran-first-error" hidden></p>
+        <ul class="legend" data-legend="heard" data-sample-lang="ar"></ul>
+        <div class="btn-row">
+          <button type="button" class="btn btn-primary" id="quran-say-again" hidden data-gate="quran-rec">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-repeat"/></svg>
+            <span data-i18n="say_again">Say that again</span>
+          </button>
+          <button type="button" class="btn" id="btn-quran-rehide" hidden data-i18n="rehide">Hide the text and try again</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="btn-row">
+          <button type="button" class="btn rec-pill" id="btn-quran-where" data-gate="quran-rec" data-state="idle">
+            <svg class="icon icon-idle" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
+            <svg class="icon icon-on" aria-hidden="true" focusable="false"><use href="#i-stop"/></svg>
+            <span class="rec-label" data-i18n="where_am_i">Where am I?</span>
+          </button>
+        </div>
+        <div class="check">
+          <input type="checkbox" id="quran-where-surah" checked data-gate="quran">
+          <label for="quran-where-surah" data-i18n="only_this_surah">Search only this surah</label>
+        </div>
+        <p class="status" id="quran-where-status" role="status" aria-live="polite"></p>
+        <ol class="candidates" id="quran-where-list" hidden></ol>
+      </div>
+    </section>
+  </main>
+
+  <script src="recorder.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

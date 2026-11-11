@@ -1,0 +1,32 @@
+# Mommy prototype: direct dependencies, pinned to the versions installed and tested
+# (Python 3.13). Install with:
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+# Web server and API
+fastapi==0.162.4
+# app.py keeps uploads in memory through MultiPartParser.spool_max_size; re-check it
+# (tests/test_api.py does) before changing this version.
+starlette==1.10.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.33
+pydantic==2.14.3
+
+# Claude API (optional at runtime: the app runs offline without a key)
+anthropic==2.8.0
+
+# Local speech recognition (Whisper) and synthesis (Piper voices)
+sherpa-onnx==2.0.1
+numpy==2.5.4
+
+# Image checks (metadata removal)
+pillow==13.0.0
+
+# Tests
+pytest==9.2.0
+httpx==0.28.1
+
+# Speech synthesis with sherpa-onnx 2.x also needs an espeak-ng phonemizer (without one,
+# /api/health reports "tts": false and dictation cannot be spoken). This wheel bundles
+# libespeak-ng 1.52 (GPL-3.0-or-later) and was tested end to end with the three Piper
+# voices; a system libespeak-ng1 also works (see README.md).
+espeakng-loader==0.2.4

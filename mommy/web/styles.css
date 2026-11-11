@@ -1,0 +1,1266 @@
+/*
+ * styles.css: Mommy web client.
+ * Local fonts only (system stacks, no downloads). Light and dark via prefers-color-scheme.
+ * Error kinds use colour AND shape: substitution = dashed box + wavy underline + heard
+ * word below; skipped = strike-through; extra = small and in [brackets].
+ */
+
+/* ---------------------------------------------------------------- tokens */
+:root {
+  color-scheme: light dark;
+
+  --bg: #fbf7f1;
+  --surface: #ffffff;
+  --surface-2: #f3eee6;
+  --text: #1d2125;
+  --muted: #565d65;
+  --border: #ddd5c8;
+  --primary: #0d6b63;
+  --primary-hover: #0a5a53;
+  --on-primary: #ffffff;
+  --focus: #b4530a;
+  --danger: #b42318;
+  --rec: #c2261b;
+  --notice-bg: #eef6f5;
+  --notice-border: #9fcfc9;
+  --badge-bg: #fff3d6;
+  --badge-fg: #6b4300;
+  --badge-border: #f0c96b;
+
+  --match-fg: #146c2e;
+  --match-bg: #e3f6e7;
+  --sub-fg: #8f3a00;
+  --sub-bg: #fff0dc;
+  --sub-line: #d56a00;
+  --del-fg: #626a73;
+  --del-bg: #eceef0;
+  --del-line: #7d858e;
+  --ins-fg: #5b3aa8;
+  --ins-bg: #f1ecfb;
+
+  --radius: 16px;
+  --radius-small: 10px;
+  --gutter: 16px;
+  --tap: 48px;
+  --shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 4px 14px rgb(0 0 0 / 5%);
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-ar: "Noto Naskh Arabic", "Noto Sans Arabic", "Geeza Pro", "Segoe UI", Tahoma, "Arial", sans-serif;
+  --font-quran: "Amiri Quran", "KFGQPC Uthmanic Script HAFS", "KFGQPC HAFS Uthmanic Script", "Scheherazade New", "Noto Naskh Arabic", "Amiri", "Traditional Arabic", serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121417;
+    --surface: #1b1f24;
+    --surface-2: #232830;
+    --text: #e9ebee;
+    --muted: #a7aeb6;
+    --border: #353c45;
+    --primary: #3cc2b3;
+    --primary-hover: #5fd3c6;
+    --on-primary: #06201d;
+    --focus: #ffb257;
+    --danger: #ff8a7a;
+    --rec: #ff5a4f;
+    --notice-bg: #16302d;
+    --notice-border: #2c6a63;
+    --badge-bg: #3a2f14;
+    --badge-fg: #ffd98a;
+    --badge-border: #7a5d1d;
+
+    --match-fg: #7ee29b;
+    --match-bg: rgb(126 226 155 / 12%);
+    --sub-fg: #ffc079;
+    --sub-bg: rgb(255 160 60 / 14%);
+    --sub-line: #ff9e3d;
+    --del-fg: #a3abb4;
+    --del-bg: rgb(160 170 180 / 12%);
+    --del-line: #8f98a2;
+    --ins-fg: #c9b6ff;
+    --ins-bg: rgb(180 150 255 / 13%);
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  }
+}
+
+/* ---------------------------------------------------------------- base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+[lang="ar"],
+html[lang="ar"] body {
+  font-family: var(--font-ar);
+}
+
+/* An English or French text inside the Arabic interface keeps a Latin font. */
+html[lang="ar"] [lang="en"],
+html[lang="ar"] [lang="fr"] {
+  font-family: var(--font-ui);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  margin: 0 0 0.5rem;
+}
+
+h1 {
+  font-size: 1.75rem;
+}
+
+h2 {
+  font-size: 1.25rem;
+}
+
+h3 {
+  font-size: 1.05rem;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+a {
+  color: var(--primary);
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+h1:focus,
+.result:focus,
+.stage:focus,
+main:focus {
+  outline: none;
+}
+
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.icon {
+  width: 1.4em;
+  height: 1.4em;
+  fill: currentColor;
+  flex: none;
+}
+
+[dir="rtl"] .icon-flip {
+  transform: scaleX(-1);
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  inset-inline-start: var(--gutter);
+  top: -100px;
+  z-index: 10;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-small);
+}
+
+.skip-link:focus {
+  top: 8px;
+}
+
+/* ---------------------------------------------------------------- header and nav */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 8px var(--gutter);
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 1.2rem;
+  font-family: var(--font-ui);
+}
+
+.brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 1.05rem;
+}
+
+.ai-badge {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--badge-bg);
+  color: var(--badge-fg);
+  border: 1px solid var(--badge-border);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.ai-badge .icon {
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.icon-btn {
+  margin-inline-start: auto;
+  display: inline-grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  border-color: var(--primary);
+}
+
+.tabs {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 10px var(--gutter) 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.tab {
+  min-height: var(--tap);
+  padding: 6px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: auto;
+}
+
+.tab:hover {
+  border-color: var(--primary);
+}
+
+.tab[aria-current="page"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+  /* shape cue as well as colour */
+  box-shadow: inset 0 -4px 0 rgb(0 0 0 / 22%);
+}
+
+.banner {
+  max-width: 760px;
+  margin: 12px auto 0;
+  padding: 12px var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  border: 2px solid var(--danger);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.banner p {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- layout */
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px var(--gutter) 48px;
+}
+
+.screen > * + * {
+  margin-top: 0;
+}
+
+.lead {
+  font-size: 1.1rem;
+  color: var(--text);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.hello {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 0 0 16px;
+  box-shadow: var(--shadow);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-notice {
+  background: var(--notice-bg);
+  border: 2px solid var(--notice-border);
+}
+
+.card-empty {
+  text-align: center;
+}
+
+.tag-parent {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px dashed var(--muted);
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.chip {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- forms */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  min-width: 0;
+}
+
+.field label,
+.consent legend,
+.segmented legend {
+  font-weight: 600;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0 12px;
+}
+
+.field-row-tight {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-small);
+  min-height: var(--tap);
+  padding: 8px 12px;
+  width: 100%;
+  max-width: 100%;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.7;
+  min-height: 140px;
+}
+
+textarea[lang="ar"],
+select[lang="ar"] {
+  font-family: var(--font-ar);
+  font-size: 1.15rem;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--muted);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.6;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 8px 0 12px;
+}
+
+.check input[type="checkbox"] {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.check label {
+  padding-top: 1px;
+  cursor: pointer;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  margin: 0 0 16px;
+  padding: 10px 14px 4px;
+  min-width: 0;
+}
+
+.consent {
+  border: 2px solid var(--badge-border);
+  background: var(--surface-2);
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  padding-bottom: 12px;
+}
+
+.segmented legend {
+  padding: 0 4px;
+}
+
+.seg {
+  position: relative;
+  display: flex;
+  cursor: pointer;
+}
+
+.seg input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.seg-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: var(--tap);
+  justify-content: center;
+  padding: 8px 12px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+.seg-title {
+  font-weight: 700;
+}
+
+.seg-hint {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.seg input:checked + .seg-body {
+  border-color: var(--primary);
+  background: var(--notice-bg);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+.seg input:checked + .seg-body .seg-title::before {
+  content: "✓ ";
+}
+
+.seg input:focus-visible + .seg-body {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.seg input:disabled,
+.seg input:disabled + .seg-body {
+  cursor: not-allowed;
+}
+
+.seg input:disabled + .seg-body {
+  opacity: 0.5;
+  filter: grayscale(0.6);
+}
+
+/* ---------------------------------------------------------------- buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--tap);
+  padding: 10px 18px;
+  border: 2px solid var(--primary);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--primary);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: none;
+  user-select: none;
+  /* button labels wrap between words only */
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--notice-bg);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+.btn-small {
+  min-height: 44px;
+  padding: 6px 14px;
+  font-size: 0.95rem;
+}
+
+.btn-wide {
+  width: 100%;
+}
+
+.btn-big {
+  min-height: 64px;
+  padding-inline: 12px;
+  font-size: 1.15rem;
+  line-height: 1.25;
+  flex: 1 1 140px;
+}
+
+.btn:disabled,
+.btn.is-disabled,
+.file-btn.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+
+.btn-row-big {
+  gap: 12px;
+}
+
+.file-btn {
+  position: relative;
+  flex: 1 1 150px;
+}
+
+.file-btn input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.file-btn input:disabled {
+  cursor: not-allowed;
+}
+
+.file-btn:focus-within {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.why {
+  margin: 4px 0 12px;
+  padding: 8px 12px;
+  border-inline-start: 4px solid var(--badge-border);
+  background: var(--badge-bg);
+  color: var(--badge-fg);
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.why-block {
+  font-weight: 600;
+}
+
+.status {
+  min-height: 0;
+  margin: 6px 0;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.status:empty {
+  display: none;
+}
+
+.status.is-error {
+  color: var(--danger);
+}
+
+.status.is-error::before {
+  content: "⚠ ";
+}
+
+/* ---------------------------------------------------------------- record bar */
+.rec-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 calc(-1 * var(--gutter)) 12px;
+  padding: 12px var(--gutter);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+}
+
+.rec-btn {
+  flex: none;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  border: 4px solid var(--rec);
+  background: var(--surface);
+  color: var(--rec);
+  font: inherit;
+  font-weight: 800;
+  font-size: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  padding: 6px;
+  line-height: 1.15;
+}
+
+.rec-btn .icon {
+  width: 40px;
+  height: 40px;
+}
+
+/* The label sits inside a circle: keep words whole (the body's overflow-wrap: anywhere
+   split "Commencer" as "Commenc/er") and a little smaller than the button text. */
+.rec-btn .rec-label {
+  max-width: 100%;
+  font-size: 0.9em;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.rec-btn .icon-on,
+.rec-pill .icon-on {
+  display: none;
+}
+
+.rec-btn[data-state="recording"],
+.rec-pill[data-state="recording"] {
+  background: var(--rec);
+  color: #ffffff;
+  border-color: var(--rec);
+}
+
+.rec-btn[data-state="recording"] .icon-on,
+.rec-pill[data-state="recording"] .icon-on {
+  display: block;
+}
+
+.rec-btn[data-state="recording"] .icon-idle,
+.rec-pill[data-state="recording"] .icon-idle {
+  display: none;
+}
+
+.rec-btn[data-state="recording"] {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.rec-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(0.8);
+  animation: none;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(194 38 27 / 45%);
+  }
+  50% {
+    box-shadow: 0 0 0 14px rgb(194 38 27 / 0%);
+  }
+}
+
+.rec-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.meter {
+  height: 14px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  opacity: 0.4;
+}
+
+.meter.is-on {
+  opacity: 1;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, var(--match-fg), var(--sub-line), var(--rec));
+  transform: scaleX(var(--level, 0));
+  transform-origin: left center;
+  transition: transform 80ms linear;
+}
+
+[dir="rtl"] .meter-fill {
+  transform-origin: right center;
+}
+
+.rec-timer {
+  margin: 4px 0 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.rec-timer:empty {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- texts and words */
+.words {
+  font-size: 1.4rem;
+  line-height: 2.2;
+  white-space: normal;
+}
+
+.words.plain {
+  white-space: pre-wrap;
+}
+
+.words[lang="ar"] {
+  font-family: var(--font-ar);
+  font-size: 1.6rem;
+  line-height: 2.3;
+}
+
+.w {
+  border-radius: 6px;
+  padding: 0.05em 0.15em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.w-match {
+  color: var(--match-fg);
+  background: var(--match-bg);
+}
+
+/* substitution: dashed box + wavy underline + the heard word underneath */
+.w-sub {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: top;
+  line-height: 1.3;
+  margin: 0.1em 0.05em;
+  padding: 0.05em 0.3em 0.1em;
+  color: var(--sub-fg);
+  background: var(--sub-bg);
+  border: 2px dashed var(--sub-line);
+}
+
+.w-sub .w-exp {
+  text-decoration: underline wavy var(--sub-line);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.15em;
+}
+
+.w-heard {
+  margin-top: 0.3em;
+  font-size: 0.62em;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.w-heard::before {
+  content: "≈ ";
+}
+
+/* skipped: grey with a strike-through */
+.w-del {
+  color: var(--del-fg);
+  background: var(--del-bg);
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  text-decoration-color: var(--del-line);
+  border: 1px dotted var(--del-line);
+}
+
+/* extra word: small, in brackets */
+.w-ins {
+  font-size: 0.68em;
+  color: var(--ins-fg);
+  background: var(--ins-bg);
+  text-decoration: none;
+  margin-inline: 0.25em;
+  vertical-align: 0.15em;
+  white-space: nowrap;
+}
+
+.w-first {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.legend {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.6;
+}
+
+.legend .w {
+  font-size: 0.95rem;
+}
+
+.legend .w-sub {
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.legend .w-ins {
+  font-size: 0.8rem;
+  vertical-align: baseline;
+}
+
+.result {
+  border-width: 2px;
+  border-color: var(--primary);
+}
+
+.feedback {
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.feedback:empty {
+  display: none;
+}
+
+.feedback-small {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.score {
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.verdict {
+  display: inline-block;
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-weight: 800;
+  border: 2px solid currentColor;
+}
+
+.verdict-same_meaning {
+  color: var(--match-fg);
+  background: var(--match-bg);
+}
+
+.verdict-same_meaning::before {
+  content: "✓ ";
+}
+
+.verdict-partly {
+  color: var(--sub-fg);
+  background: var(--sub-bg);
+  border-style: dashed;
+}
+
+.verdict-partly::before {
+  content: "◐ ";
+}
+
+.verdict-different {
+  color: var(--del-fg);
+  background: var(--del-bg);
+  border-style: dotted;
+}
+
+.verdict-different::before {
+  content: "✕ ";
+}
+
+.ideas ul {
+  margin: 0 0 10px;
+  padding-inline-start: 1.4em;
+}
+
+.heard {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.heard summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- dictation */
+.counter {
+  font-size: 1.3rem;
+  font-weight: 800;
+  text-align: center;
+  color: var(--primary);
+}
+
+.phrase {
+  margin-top: 8px;
+  padding: 12px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-small);
+  font-size: 1.35rem;
+}
+
+.phrase[lang="ar"] {
+  font-family: var(--font-ar);
+  font-size: 1.55rem;
+}
+
+/* ---------------------------------------------------------------- Quran */
+.quran-card {
+  padding-top: 12px;
+}
+
+.quran-text,
+.quran-font,
+.quran-hint {
+  font-family: var(--font-quran);
+}
+
+.quran-text {
+  font-size: 1.9rem;
+  line-height: 2.5;
+  text-align: start;
+  word-spacing: 0.08em;
+}
+
+.quran-text .w {
+  padding: 0 0.1em;
+}
+
+/* Matched Quran words: green text only, so the page stays calm to read. Errors keep
+   their boxes, strikes and brackets. */
+.quran-text .w-match {
+  background: transparent;
+}
+
+.quran-text .w-sub {
+  line-height: 1.5;
+}
+
+.ayah-num {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.75em;
+  height: 1.75em;
+  padding: 0 0.2em;
+  border: 2px solid var(--primary);
+  border-radius: 999px;
+  color: var(--primary);
+  font-family: var(--font-ar);
+  font-size: 0.55em;
+  line-height: 1;
+  vertical-align: 0.35em;
+  margin-inline: 0.15em;
+}
+
+.memory-box {
+  text-align: center;
+  padding: 16px 8px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.memory-box p {
+  font-weight: 700;
+}
+
+.quran-hint {
+  font-size: 1.8rem;
+  line-height: 2.2;
+  color: var(--primary);
+}
+
+.quran-feedback {
+  font-family: var(--font-ar);
+  font-size: 1.45rem;
+}
+
+.attribution {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.attribution p {
+  margin: 0 0 4px;
+}
+
+.riwaya {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.attribution a {
+  display: inline-block;
+  padding: 10px 0;
+  font-weight: 600;
+}
+
+.rec-pill {
+  border-color: var(--rec);
+  color: var(--rec);
+}
+
+.candidates {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.candidate {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.cand-title {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.cand-preview {
+  font-size: 1.5rem;
+  line-height: 2;
+}
+
+/* ---------------------------------------------------------------- small screens and motion */
+@media (max-width: 479px) {
+  /* Keep the sticky top row on one line: the M mark stays, the wordmark goes. */
+  .brand-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .topbar-inner {
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .ai-badge {
+    font-size: 0.8rem;
+    min-width: 0;
+  }
+
+  .icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 420px) {
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  .tab {
+    font-size: 0.85rem;
+  }
+
+  .rec-btn {
+    width: 96px;
+    height: 96px;
+    font-size: 0.92rem;
+  }
+
+  .rec-btn .icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .quran-text {
+    font-size: 1.65rem;
+  }
+
+  .card {
+    padding: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
