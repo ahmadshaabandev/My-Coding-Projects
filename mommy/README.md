@@ -170,19 +170,43 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
 - Slow `/api/tts` speech (dictation) is transcribed back, unprompted, to check that it
   says exactly the phrase (up to two takes); the `X-Speech-Check` header says `passed`,
   `failed` or `skipped`.
-- Quran text sent to a general endpoint (recite, dictation, TTS) is refused with
-  `422 quran_text`. Framing formulas (قال تعالى, صدق الله العظيم, ...) are left out, then
-  the text is refused when it is in Uthmani script, holds a run of 5 consecutive words
-  found consecutively in the Quran (3 next to a framing formula, so a quoted ayah inside
-  a school text is caught), or has at least 4 words found almost entirely (90%) in order
-  at one place. A TTS phrase or dictation phrase that is a whole ayah of 2 words or more
-  is refused too; `/api/dictation/phrases` then adds `"scope": "phrase"`, and the web
-  client confirms such a text (for example a school text with the basmala on a line of
-  its own) for reciting only. Because the phrase splitter joins the lines of a
-  paragraph, the client also checks a text with line breaks line by line, so a basmala
-  line without a full stop is caught at "Confirm text" too; and if the voice still
-  refuses a dictation phrase, the dictation goes back to its start with the same
-  reason (never "this text is from the Quran").
+- `POST /api/text/check` (`{"text", "lang", "mode"?}`, mode `strict` by default,
+  `contextual` or `dictation`) runs the text checks of the recite and dictation
+  endpoints, in their order and with their error codes, without audio, voice or AI, and
+  answers `{"ok": true, "words": n, "dictation": bool, "contextual": bool}`: one call
+  tells "Confirm text" and task creation whether the text can be recited word by word,
+  by meaning, and dictated. It answers `503 quran_unavailable` only when the Tanzil
+  text is missing and the text is Arabic.
+- Quran text sent to a general endpoint (recite, dictation, TTS, text check) is refused
+  with `422 quran_text`. Framing formulas (قال تعالى, صدق الله العظيم, ...) are left out,
+  then the text is refused when it is in Uthmani script, holds a run of 5 consecutive
+  words found consecutively in the Quran (3 next to a framing formula, so a quoted ayah
+  inside a school text is caught), or has at least 4 words found almost entirely (90%)
+  in order at one place. A TTS phrase or dictation phrase that is a whole ayah of 2
+  words or more is refused too; `/api/dictation/phrases` then adds `"scope": "phrase"`,
+  and the web client confirms such a text (for example a school text with the basmala
+  on a line of its own) for reciting only. If the voice still refuses a dictation
+  phrase, the dictation goes back to its start with the same reason (never "this text
+  is from the Quran").
+- Contained-ayah rule: the voice also refuses a phrase that holds a whole ayah of 3 or
+  4 words among other words (`قل هو الله أحد` followed by a name, a sentence ending
+  with `مالك يوم الدين`), so a short ayah is never spoken inside a sentence. Two-word
+  ayat such as `ثم نظر` are ordinary Arabic and count only as a phrase of their own, and
+  8 three-word ayat that are everyday Arabic (`فيها كتب قيمة`) are listed by number in
+  `quran.EVERYDAY_AYAT`. K = 3 was chosen on 324 ordinary sentences in
+  `tests/arabic_school_sentences.txt`: K = 2 refuses 32 of them, K = 3 none (11 without
+  the list), and K = 4 lets 1:4 through (numbers in `docs/CONTRACT.md`).
+- Recitation by meaning (contextual mode) also refuses a run of 4 consecutive Quran
+  words (word by word keeps 5) that does not pass through an everyday formula (بسم
+  الله, إن شاء الله, لا إله إلا الله, ...), and a whole ayah of 3 or 4 words anywhere in
+  the text, because the meaning of Quran text is never judged by AI. On the 324
+  sentences, runs of 3, 4 and 5 refuse 35, 8 and 0 (22, 2 and 0 with the formulas left
+  out); a text that holds the basmala is therefore recited word by word only.
+- Dictation checks every phrase and every line of the text, and the text's words as a
+  whole for a short ayah, on the server: `/api/dictation/phrases` and `/api/text/check`
+  in mode `dictation` share one rule, so the basmala on a line of its own without a full
+  stop, which the phrase splitter glues to the next words, gives `scope: "phrase"` at
+  both, and the client no longer needs to send the lines again.
 
 What counts as the same word:
 
@@ -255,7 +279,11 @@ Playwright with Chromium: `node tests/web/smoke.cjs` (see `tests/web/README.md`)
     word: it does not judge tajwid or pronunciation beyond what the recogniser writes.
   - The Quran module needs review by qualified religious scholars before any public
     release.
-  - The Quran-text guard on the general endpoints is a heuristic.
+  - The Quran-text guard on the general endpoints is a heuristic. Its thresholds and
+    the everyday formulas and ayat it leaves out were measured on a fixture of 341
+    sentences (`tests/arabic_school_sentences.txt`); an ordinary sentence that uses
+    another short ayah as everyday Arabic can still be refused for dictation or for
+    recitation by meaning; word-by-word recitation keeps its earlier guard.
 - **Speech synthesis** needs an espeak-ng phonemizer (see above). The voice output is
   random, so a take can be unclear; slow dictation speech is checked by the recogniser
   for that reason.

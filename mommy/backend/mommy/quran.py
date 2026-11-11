@@ -145,6 +145,49 @@ FRAMING_FORMULAS: tuple[str, ...] = (
     ISTIADHA,
 )
 
+#: Everyday formulas whose words are also a few consecutive words of the Quran (said
+#: before a meal, on good news, as a promise). The contextual-mode run rule
+#: (:meth:`Quran.quran_runs` with ``exclude_formulas``) does not let a run pass through
+#: them, so "إن شاء الله سنذهب غدا" or a sentence with the shahada is not refused for its
+#: formula. The other rules still see these words. Measured on
+#: ``tests/arabic_school_sentences.txt`` (see ``docs/CONTRACT.md``).
+EVERYDAY_FORMULAS: tuple[str, ...] = (
+    "بسم الله",
+    "الحمد لله",
+    "سبحان الله",
+    "إن شاء الله",
+    "ما شاء الله",
+    "لا إله إلا الله",
+    "لا حول ولا قوة إلا بالله",
+    "لا قوة إلا بالله",
+    "حسبنا الله ونعم الوكيل",
+    "توكلت على الله",
+    "الله أكبر",
+    "أستغفر الله",
+)
+
+#: Whole ayat of three words that are also everyday Arabic phrases, as ثم نظر is for two
+#: words ("in it are valuable books", "about what they were doing", "nor a close
+#: friend", ...). :meth:`Quran.contained_ayat` does not count them inside a longer
+#: phrase; a phrase that is exactly one of them is still a whole ayah
+#: (:meth:`Quran.whole_ayah`). Given by number, so no Quran word is typed here; each one
+#: must be a whole ayah of three words (checked when the text is loaded). Measured on
+#: ``tests/arabic_school_sentences.txt`` (see ``docs/CONTRACT.md``).
+EVERYDAY_AYAT: tuple[tuple[int, int], ...] = (
+    (15, 93),   # about what they were doing
+    (26, 101),  # nor a close friend
+    (74, 18),   # he thought and weighed it up
+    (74, 30),   # over it are nineteen
+    (82, 12),   # they know what you do
+    (86, 14),   # and it is not a jest
+    (88, 12),   # in it is a flowing spring
+    (98, 3),    # in it are valuable books
+)
+
+#: Longest ayah, in words, that :meth:`Quran.contained_ayat` looks for. A longer ayah
+#: is a run of five Quran words, which the general guard already refuses.
+SHORT_AYAH_MAX_WORDS = 4
+
 #: Penalty per extra word of a merged step in :func:`build_word_map`.
 MERGE_PENALTY = 0.25
 #: Largest number of words merged into one in :func:`build_word_map`.
@@ -488,6 +531,11 @@ def _leading_formula(formula: Sequence[str], heard: Sequence[str], max_errors: i
     ``max_errors`` errors.
     """
     f = len(formula)
+    # Fast exit (exact): within max_errors, at least f - max_errors formula words must be
+    # matched, and only words of the formula found in the longest prefix tried can match.
+    words = set(formula)
+    if sum(1 for key in heard[: f + max_errors] if key in words) < f - max_errors:
+        return None
     best: tuple[int, int, int] | None = None
     for k in range(max(1, f - max_errors), min(len(heard), f + max_errors) + 1):
         errors = _count_errors(formula, heard[:k])
@@ -685,11 +733,26 @@ class Quran:
             self._ayat[key] = Ayah(key[0], key[1], display, match, display_words, match_words, word_map)
         self._build_index()
         self._framing_keys = [[_speech_key(w) for w in f.split()] for f in FRAMING_FORMULAS]
+        self._formula_keys = [[_speech_key(w) for w in tokenize(f, "ar")] for f in EVERYDAY_FORMULAS]
         # Whole ayat of two words or more, by their speech keys (see whole_ayah).
         self._ayah_by_keys: dict[tuple[str, ...], tuple[int, int]] = {}
         for key, a in self._ayat.items():
             if len(a.match_words) >= 2:
                 self._ayah_by_keys.setdefault(tuple(_speech_key(w) for w in a.match_words), key)
+        # Whole ayat of 2..SHORT_AYAH_MAX_WORDS words looked for inside a phrase (see
+        # contained_ayat), without the everyday ones.
+        everyday: set[tuple[str, ...]] = set()
+        for surah, ayah in EVERYDAY_AYAT:
+            listed = self._ayat.get((surah, ayah))
+            words = listed.match_words if listed is not None else []
+            if len(words) != 3:
+                raise ValueError(f"EVERYDAY_AYAT: {surah}:{ayah} is not an ayah of three words")
+            everyday.add(tuple(_speech_key(w) for w in words))
+        self._short_ayat: dict[tuple[str, ...], tuple[int, int]] = {
+            keys: where
+            for keys, where in self._ayah_by_keys.items()
+            if len(keys) <= SHORT_AYAH_MAX_WORDS and keys not in everyday
+        }
         # Muqatta'at: global word position -> the letter names joined (speech key).
         self._muqattaat: dict[int, str] = {}
         for surah, ayah in MUQATTAAT_AYAT:
@@ -1107,7 +1170,9 @@ class Quran:
 
     # -- hifz search ---------------------------------------------------------
 
-    def locate(self, heard_text: str, top_k: int = 5, within_surah: int | None = None) -> list[dict]:
+    def locate(
+        self, heard_text: str, top_k: int = 5, within_surah: int | None = None, *, min_score: float | None = None
+    ) -> list[dict]:
         """Find where in the Quran the heard words are ("where am I?").
 
         Returns up to ``top_k`` candidates, best first::
@@ -1124,6 +1189,10 @@ class Quran:
         surah is searched. A leading isti'adha or basmala is tried both with and without
         the words. Only the first :data:`LOCATE_MAX_WORDS` words are used. An empty
         list means nothing was found.
+
+        With ``min_score`` (the Quran guard), a word sequence whose share of words that
+        occur in the Quran at all is below ``min_score`` is not searched: none of its
+        candidates could reach that score, so the candidates that do are the same.
         """
         if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1:
             raise ValueError(f"top_k must be a positive integer, got {top_k!r}")
@@ -1141,6 +1210,10 @@ class Quran:
 
         candidates: list[_Candidate] = []
         for variant in variants:
+            if min_score is not None and variant:
+                known = sum(1 for k in variant if k in self._vocab)
+                if known < min_score * len(variant):
+                    continue  # matched <= known words, so every score would be below min_score
             candidates.extend(self._candidates(variant, lo, hi))
         candidates.sort(key=_Candidate.sort_key)
 
@@ -1321,14 +1394,31 @@ class Quran:
                     drop[i : i + f] = [True] * f
         return [t for t, d in zip(tokens, drop) if not d], any(drop)
 
-    def quran_runs(self, tokens: Sequence[str], min_words: int) -> list[tuple[int, int]]:
+    def _formula_mask(self, keys: Sequence[str]) -> list[bool]:
+        """For each key, whether it belongs to an everyday formula (:data:`EVERYDAY_FORMULAS`)."""
+        mask = [False] * len(keys)
+        for formula in self._formula_keys:
+            f = len(formula)
+            for i in range(len(keys) - f + 1):
+                if list(keys[i : i + f]) == formula:
+                    mask[i : i + f] = [True] * f
+        return mask
+
+    def quran_runs(
+        self, tokens: Sequence[str], min_words: int, *, exclude_formulas: bool = False
+    ) -> list[tuple[int, int]]:
         """Stretches of ``tokens`` that are Quran text: ``[(start, end)]`` token spans
         covered by runs of at least ``min_words`` (3..7) consecutive words found, in
         order and consecutively, somewhere in the Quran (speech keys, Simple-Clean
-        text). Overlapping runs are merged."""
+        text). Overlapping runs are merged. With ``exclude_formulas``, the words of an
+        everyday formula (:data:`EVERYDAY_FORMULAS`) count as words that are not in the
+        Quran, so no run passes through a formula."""
         if not NGRAM_MIN <= min_words <= NGRAM_MAX:
             raise ValueError(f"min_words must be from {NGRAM_MIN} to {NGRAM_MAX}")
-        ids = np.array([self._vocab.get(_speech_key(t), _UNKNOWN) for t in tokens], dtype=np.int64)
+        keys = [_speech_key(t) for t in tokens]
+        ids = np.array([self._vocab.get(k, _UNKNOWN) for k in keys], dtype=np.int64)
+        if exclude_formulas and len(ids):
+            ids[np.array(self._formula_mask(keys), dtype=bool)] = _UNKNOWN
         if len(ids) < min_words:
             return []
         starts = np.flatnonzero(_clean_windows(ids, min_words))
@@ -1357,6 +1447,22 @@ class Quran:
             return None
         return self._ayah_by_keys.get(tuple(_speech_key(t) for t in tokens))
 
+    def contained_ayat(self, tokens: Sequence[str], min_words: int) -> list[tuple[int, int, int, int]]:
+        """Whole ayat of ``min_words`` (at least 2) to :data:`SHORT_AYAH_MAX_WORDS` words
+        found as consecutive ``tokens`` (speech keys): ``[(start, end, surah, ayah)]``,
+        in token order. The everyday ayat of :data:`EVERYDAY_AYAT` are not counted.
+        Longer ayat are runs of five Quran words or more (:meth:`quran_runs`)."""
+        if min_words < 2:
+            raise ValueError("min_words must be at least 2")
+        keys = [_speech_key(t) for t in tokens]
+        found: list[tuple[int, int, int, int]] = []
+        for start in range(len(keys)):
+            for n in range(min_words, min(SHORT_AYAH_MAX_WORDS, len(keys) - start) + 1):
+                where = self._short_ayat.get(tuple(keys[start : start + n]))
+                if where is not None:
+                    found.append((start, start + n, where[0], where[1]))
+        return found
+
     # -- statistics ----------------------------------------------------------
 
     def ngram_uniqueness(self, n: int = 7) -> float:
@@ -1375,6 +1481,8 @@ class Quran:
 __all__ = [
     "ATTRIBUTION",
     "Ayah",
+    "EVERYDAY_AYAT",
+    "EVERYDAY_FORMULAS",
     "FRAMING_FORMULAS",
     "ISTIADHA",
     "LETTER_NAMES",
@@ -1383,6 +1491,7 @@ __all__ = [
     "N_SURAHS",
     "Quran",
     "RIWAYA",
+    "SHORT_AYAH_MAX_WORDS",
     "SOURCE_URL",
     "SurahInfo",
     "build_word_map",

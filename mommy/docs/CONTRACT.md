@@ -96,6 +96,7 @@ mommy/
   web/
     index.html  app.js  recorder.js  styles.css
   tests/        pytest; run with:  cd mommy && .venv/bin/python -m pytest -q
+  tests/arabic_school_sentences.txt   ordinary Arabic sentences that measure the Quran guards (tests/test_quran_guard.py)
   tests/web/    browser smoke test (Node.js + Playwright Chromium): node tests/web/smoke.cjs
 ```
 
@@ -361,8 +362,19 @@ class Quran:
     # display_preview: up to 8 display words from that word, cut verbatim from the
     # Uthmani line (pause marks between the words kept), ending with the ayah.
     def strip_framing(self, text) -> tuple[list[str], bool]   # extra: tokens without قال تعالى, صدق الله العظيم, ...
-    def quran_runs(self, tokens, min_words) -> list[tuple[int, int]]   # extra: spans that are Quran text
+    def quran_runs(self, tokens, min_words, *, exclude_formulas=False) -> list[tuple[int, int]]   # extra: spans that are Quran text
+    # exclude_formulas: the words of an EVERYDAY_FORMULAS formula count as non-Quran words (no run passes through one)
     def whole_ayah(self, tokens) -> tuple[int, int] | None    # extra: the tokens are one whole ayah (>= 2 words)
+    def contained_ayat(self, tokens, min_words) -> list[tuple[int, int, int, int]]   # extra
+    # [(start, end, surah, ayah)]: whole ayat of min_words (>= 2) to SHORT_AYAH_MAX_WORDS words found as
+    # consecutive tokens (speech keys), EVERYDAY_AYAT left out
+    # locate(..., *, min_score=None) (extra): a word sequence whose share of words found in the Quran at all is
+    # below min_score is not searched (no candidate of it could reach that score); the candidates that do are unchanged
+EVERYDAY_FORMULAS   # extra: بسم الله, الحمد لله, سبحان الله, إن شاء الله, ما شاء الله, لا إله إلا الله, لا حول ولا قوة إلا بالله,
+                    # لا قوة إلا بالله, حسبنا الله ونعم الوكيل, توكلت على الله, الله أكبر, أستغفر الله
+EVERYDAY_AYAT       # extra: (surah, ayah) of 8 three-word ayat that are everyday Arabic: 15:93, 26:101, 74:18, 74:30,
+                    # 82:12, 86:14, 88:12, 98:3 (given by number; ValueError at load if one is not three words)
+SHORT_AYAH_MAX_WORDS = 4   # extra: a longer ayah is a run of 5 Quran words
 ```
 
 The basmala and Tanzil:
@@ -512,29 +524,100 @@ ClaudeBrain:
   `bad_origin`. Every response has `X-Content-Type-Options: nosniff`, `Referrer-Policy:
   no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors
   'none'`; every `/api/*` response has `Cache-Control: no-store`.
-- Text checks on the general endpoints (recite, dictation, phrases, TTS), in this order:
-  400 `empty_text`, 400 `bad_text` (a lone UTF-16 surrogate), 400 `text_too_long`, 400
-  `unreadable_text` (the text has `[?]` marks: the parent types the missing words
-  first), 422 `quran_text`, 422 `lang_mismatch` (most letters Arabic and `lang` is not
-  `ar`, or `lang` is `ar` and there is no Arabic letter: the recogniser would translate
-  the speech, and a voice cannot read the other script).
-- Quran text is refused on the general endpoints (`422 quran_text`, `app.looks_like_quran`):
-  framing formulas (قال تعالى, صدق الله العظيم, ...) are left out, then the text is Quran
-  when it is in Uthmani script, holds a run of 5 consecutive words found consecutively
-  in the Quran (3 next to a framing formula), or has at least 4 words of which 90% are
-  found in order at one place. `/api/tts` and each phrase of `/api/dictation/phrases`
-  are also refused when they are a whole ayah of 2 words or more. Ordinary school
-  sentences and a text that starts with the basmala are accepted. When only a phrase is
-  a whole ayah (often the basmala on a line of its own), `/api/dictation/phrases` adds
-  `"scope": "phrase"` to the `422 quran_text` body: the text may still be recited and
-  checked, but not read out for dictation.
+- Text checks on the general endpoints (recite, dictation, phrases, TTS, text check), in
+  this order: 400 `empty_text`, 400 `bad_text` (a lone UTF-16 surrogate), 400
+  `text_too_long`, 400 `unreadable_text` (the text has `[?]` marks: the parent types the
+  missing words first), 422 `quran_text` (the Quran guard of the use, below), 422
+  `lang_mismatch` (most letters Arabic and `lang` is not `ar`, or `lang` is `ar` and
+  there is no Arabic letter: the recogniser would translate the speech, and a voice
+  cannot read the other script).
+- Quran text is refused on the general endpoints (`422 quran_text`). Framing formulas
+  (قال تعالى, صدق الله العظيم, the isti'adha, ...) are left out first. Each use of a text
+  has its guard (`app.py`):
+  - **Word by word** (`/api/recite/check` strict, `/api/dictation/check`;
+    `looks_like_quran`): the text is in Uthmani script, holds a run of 5 consecutive
+    words found consecutively in the Quran (3 next to a framing formula), or has at
+    least 4 words of which 90% are found in order at one place. Ordinary school
+    sentences and a text that starts with the basmala are accepted.
+  - **By meaning** (`/api/recite/check` contextual; `looks_like_quran_for_meaning`): the
+    word-by-word guard, plus a run of 4 consecutive Quran words that does not pass
+    through an everyday formula (`quran.EVERYDAY_FORMULAS`), plus the contained-ayah
+    rule on the whole text. The brain never judges the meaning of an ayah: a text with
+    the basmala or another whole ayah of 3 or 4 words is recited word by word only.
+  - **The voice** (`/api/tts`; `is_quran_phrase`): the word-by-word guard, a phrase that
+    is exactly a whole ayah of 2 words or more, or the **contained-ayah rule**: a phrase
+    that holds, as consecutive words, a whole ayah of K = 3 or 4 words (`قل هو الله أحد`
+    followed by a name; a longer ayah is a run of 5). The 8 three-word ayat of
+    `quran.EVERYDAY_AYAT`, which are everyday Arabic ("in it are valuable books"), do
+    not count inside a longer phrase; two-word ayat such as ثم نظر are ordinary Arabic
+    and are refused only as a phrase of their own.
+  - **Dictation** (`/api/dictation/phrases`, `/api/text/check` mode `dictation`;
+    `dictation_speaks_quran`): the word-by-word guard on the whole text (a plain
+    `422 quran_text`), then the voice guard on every phrase of `split_phrases` and on
+    every non-empty line of the text (the splitter joins the lines of a paragraph, so
+    the basmala on a line of its own without a full stop reaches the phrases glued to
+    the next word), and the contained-ayah rule on the text's words as a whole (a short
+    ayah cut between two phrases by the six-word cap is still spoken, one phrase after
+    the other). A failure there gives `"scope": "phrase"` in the `422 quran_text` body:
+    the text may still be recited word by word, but not read out. `/api/dictation/phrases`
+    and `/api/text/check` in mode `dictation` run the same function, so confirming a text
+    and starting its dictation always agree.
+- The thresholds were measured on `tests/arabic_school_sentences.txt`: 324 ordinary
+  Arabic sentences that are not quotations (sentences of the other tests, the app's own
+  feedback, meaning and UI strings, everyday religious formulas in sentences, ordinary
+  school sentences, and sentences that use the words of short ayat in ordinary ways) and
+  17 sentences that quote a whole ayah (asserted by `tests/test_quran_guard.py`).
+  Four of those 17 were first written as ordinary uses of a recognisable Quranic phrase
+  (على صراط مستقيم 36:4, سلام على إبراهيم 37:109, بلسان عربي مبين 26:195, the question of
+  37:92) and are counted apart; a sentence that holds a whole ayah verbatim is meant to
+  be refused at phrase scope, so the quotations are intended refusals, not false
+  positives.
+
+  | Contained-ayah rule, phrase scope (sentence, phrases, lines), without `EVERYDAY_AYAT` | K = 2 | K = 3 | K = 4 |
+  |---|---|---|---|
+  | ordinary sentences refused (of 324) | 32 | 11 | 0 |
+  | first written as ordinary, recognisable phrase (of 4) | 4 | 4 | 1 |
+  | quotations refused (of 13) | 13 | 13 | 10 |
+
+  K = 2 refuses ثم نظر إلى السماء and 31 other ordinary sentences with a two-word ayah
+  (وفاكهة كثيرة, هارون أخي, وأمه وأبيه, ...). K = 4 lets 1:4, 1:6 and 108:1 through
+  ("ذهبت سلمى مالك يوم الدين" would be spoken). K = 3 refuses 11 ordinary sentences,
+  all through 8 three-word ayat that are everyday Arabic (عما كانوا يعملون, فيها كتب قيمة,
+  ولا صديق حميم, ...): those 8 are `EVERYDAY_AYAT` (a measured list, like the formulas,
+  rather than a higher threshold). With the list, K = 3 refuses 0 ordinary sentences
+  and all 17 quotations. The list was built from this fixture: an ordinary sentence
+  with another three-word ayah can still be refused for dictation (it can be recited).
+
+  | Contextual mode, run of consecutive Quran words | 3 | 4 | 5 |
+  |---|---|---|---|
+  | ordinary sentences refused (of 324) | 35 | 8 | 0 |
+  | ... with the everyday formulas left out | 22 | 2 | 0 |
+  | quotations refused (of 13), formulas left out | 9 | 6 | 0 |
+
+  At 4, the 6 refusals that leaving the formulas out removes are all formula sentences
+  (the shahada, حسبنا الله ونعم الوكيل, الحمد لله الذي ...); the 2 left use four Quran words
+  that are not a formula (خلق الله السماوات والأرض والجبال والبحار.) and are refused by
+  meaning only, so the threshold stays at 4. The contained-ayah rule adds no false
+  positive in contextual mode (0 of 324) and refuses the 10 quotations of 17 that the
+  runs of 4 miss, so it applies there too.
+
+  The dictation guard refuses 6 ordinary sentences (the `[split]` section): the
+  splitter makes one of their phrases exactly a whole ayah (ونراه قريبا., فيها كتب قيمة.)
+  or four Quran words in order (لا إله إلا الله), which `/api/tts` already refused, so
+  their dictation stopped at that phrase before; it is now refused when the text is
+  confirmed. The word-by-word guard refuses none of the 341 sentences.
+- Speed (4 CPUs): `/api/text/check` on a 1000-word Arabic text takes about 60-75 ms in
+  every mode (the word-by-word guard about 8 ms, the dictation guard about 45 ms, the
+  same as the voice guard over all its phrases); `/api/dictation/phrases` about 60-75 ms
+  on the same text.
 
 | Method & path | Request | Response |
 |---|---|---|
 | GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable) |
 | POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `contains_quran`, `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
 | POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`) | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again`. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
-| POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str]}`; extra: a phrase that is a whole ayah gives `422 {"error": "quran_text", "message", "scope": "phrase"}` |
+| POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str]}`; extra: the dictation guard (above): a phrase or line the voice may not speak, or a whole short ayah in the text, gives `422 {"error": "quran_text", "message", "scope": "phrase"}` (checked before `lang_mismatch`). A text of punctuation only gives `{"phrases": []}`. |
+| POST `/api/text/check` (extra) | JSON `{"text", "lang": "ar"\|"en"\|"fr", "mode"?: "strict"\|"contextual"\|"dictation"}` (`mode` defaults to `strict`) | `{"ok": true, "words": n, "dictation": bool, "contextual": bool}`. The checks of `/api/recite/check` in its order (`empty_text`, `bad_text`, `text_too_long`, `unreadable_text`, `quran_text`, `lang_mismatch`, same bodies), with the Quran guard of `mode`: in mode `dictation` a phrase or line failure is `422 quran_text` with `"scope": "phrase"`, a whole-text failure has no scope. `words`: the words of the cleaned text (`textnorm.tokenize`). `dictation`: false when the dictation guard would refuse the text; `contextual`: false when the by-meaning guard would (each is true in its own mode). One call in mode `strict` tells "Confirm text" whether the text can be recited word by word (the call succeeded), by meaning and dictated. No recogniser, voice or brain is used, so it works when they are unavailable. `503 quran_unavailable` when the Tanzil text is missing and the text has Arabic letters (the answer vouches for every mode; the other endpoints then fall back to the script test). Body limit 256 KB, Host and Origin checks as everywhere. Example: `{"text": "ذهب الولد إلى المدرسة", "lang": "ar"}` -> `{"ok": true, "words": 4, "dictation": true, "contextual": true}`; the basmala on a line of its own followed by a sentence -> `{"ok": true, "words": n, "dictation": false, "contextual": false}`; the same in mode `dictation` -> `422 {"error": "quran_text", "message", "scope": "phrase"}`. |
 | POST `/api/tts` | JSON `{"text","lang","slow":bool}` | `audio/wav`. 503 if TTS unavailable. 400 if text is empty or longer than 400 characters, or has nothing to pronounce. Extra: header `X-Speech-Check: passed\|failed\|skipped`: slow speech is transcribed back, unprompted, up to 2 takes, and must say exactly the phrase (`check_recitation`: numbers in digits match words, Arabic number words match by value). |
 | POST `/api/dictation/check` | multipart: `expected_text`, `lang`, `age`, and either `image` (photo of the child's paper) or `written_text` (parent typed it); extra: optional `strict_tashkeel` (bool) | `{"read_text","source":"claude"\|"typed","uncertain_words","result":CheckResult,"feedback","needs_parent_confirmation":true}`; extra: `legible`; `uncertain_words` includes `"[?]"` when a word could not be read. With an image and an offline brain, or when Claude reads nothing: 501 `needs_manual`. |
 | GET `/api/quran/surahs` | – | `{"surahs":[{number,name_ar,ayah_count, extra: name_translit, name_en}],"riwaya":"hafs","attribution","source_url":"https://tanzil.net"}`; extra: `licence` |
@@ -559,10 +642,10 @@ which configures the `mommy` loggers (level `MOMMY_LOG_LEVEL`, default INFO).
   `unreadable_text` and `lang_mismatch`, never the server's English message.
 - `split_phrases` joins the lines of a paragraph, so a line that is a whole ayah (the
   basmala on a line of its own, without a full stop) would reach the voice glued to the
-  next word. At "Confirm text" and "Start the dictation" the client therefore also sends
-  a text with line breaks to `/api/dictation/phrases` with each line as a paragraph of
-  its own; a `scope: "phrase"` refusal of that rules out dictation like one of the text
-  (other answers to it are ignored). A `quran_text` refusal of a dictation phrase by
+  next word. The server checks every line itself (the dictation guard), so
+  `/api/text/check` (Prepare's "Confirm text" and task creation, `docs/REWARDS.md`) and
+  `/api/dictation/phrases` answer for the lines too: the client no longer needs to send
+  the lines again as paragraphs. A `quran_text` refusal of a dictation phrase by
   `/api/tts` (the text itself was accepted) also rules out dictation for that text: the
   dictation goes back to its start, where the disabled button says why, never "this
   text is from the Quran" with a button to the Quran section.

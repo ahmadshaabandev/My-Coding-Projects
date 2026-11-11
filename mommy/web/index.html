@@ -26,6 +26,10 @@
     <symbol id="i-search" viewBox="0 0 24 24"><path d="M10 2a8 8 0 0 1 6.32 12.9l5.39 5.39-1.42 1.42-5.39-5.39A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
     <symbol id="i-robot" viewBox="0 0 24 24"><path d="M11 2h2v2.07A7 7 0 0 1 19 11v6a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3v-6a7 7 0 0 1 6-6.93V2zM9 11a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM2 12h2v4H2v-4zm18 0h2v4h-2v-4z"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M12 3 2 12h3v8h6v-6h2v6h6v-8h3L12 3z"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v16h12V4h-2v7l-2.5-1.5L11 11V4H6z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></symbol>
   </svg>
 
   <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
@@ -37,8 +41,9 @@
         <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-robot"/></svg>
         <span data-i18n="badge">AI tutor — not a person</span>
       </p>
-      <button type="button" class="icon-btn" id="btn-profile" hidden data-i18n-attr="aria-label:nav_profile,title:nav_profile">
-        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>
+      <!-- Back to the active child's home ("My tasks"); on a task screen it leaves the task. -->
+      <button type="button" class="icon-btn" id="btn-home" hidden data-i18n-attr="aria-label:nav_home,title:nav_home">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-home"/></svg>
       </button>
     </div>
   </header>
@@ -54,12 +59,28 @@
     <button type="button" class="btn btn-small" id="btn-retry" data-i18n="retry">Try again</button>
   </div>
 
+  <!-- A notice for the parent about the family data kept on this device (family.js):
+       a damaged document kept aside, storage that is full or not available. -->
+  <div class="data-notice" id="data-notice" role="alert" hidden>
+    <p id="data-notice-text"></p>
+    <button type="button" class="btn btn-small" id="data-notice-close" data-i18n="fam_ok">OK</button>
+  </div>
+
   <main id="main" tabindex="-1">
 
-    <!-- ===================== Start ===================== -->
+    <!-- The task the child is doing (family.js): title, pass level, and the way back. -->
+    <div class="task-banner" id="task-banner" role="region" data-i18n-attr="aria-label:fam_task_banner_label" hidden>
+      <div class="task-banner-text">
+        <p class="task-banner-title" id="task-banner-title"></p>
+        <p class="task-banner-pass" id="task-banner-pass"></p>
+      </div>
+      <button type="button" class="btn btn-small" id="task-leave" data-i18n="fam_task_leave">Back to my tasks</button>
+    </div>
+
+    <!-- ===================== Start: family setup (first run) ===================== -->
     <section class="screen" id="screen-start" data-screen="start" aria-labelledby="start-title">
       <h1 id="start-title" data-i18n="start_title">Hello! I'm Mommy.</h1>
-      <p class="lead" data-i18n="start_lead">I help you practise reading aloud and dictation.</p>
+      <p class="lead" data-i18n="fam_setup_lead">A grown-up sets up the app once, for the whole family.</p>
 
       <div class="card card-notice" id="ai-disclosure">
         <h2 class="card-title">
@@ -69,30 +90,18 @@
         <p data-i18n="disclosure_text">Mommy is a computer program (an AI). It is not a person, and it is not your mum or dad. It can make mistakes, so a grown-up should stay close.</p>
       </div>
 
-      <form class="card" id="profile-form" novalidate>
-        <h2 class="card-title" data-i18n="profile_title">Child profile</h2>
+      <!-- Shown by family.js once it is ready (without it, the form would do nothing). -->
+      <form class="card" id="setup-form" novalidate hidden>
+        <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
+        <h2 class="card-title" data-i18n="fam_setup_title">Family setup</h2>
         <p class="hint" data-i18n="profile_note">Saved only on this device.</p>
         <div class="field">
-          <label for="nickname" data-i18n="nickname">Nickname</label>
-          <input id="nickname" name="nickname" type="text" maxlength="24" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:nickname_ph">
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label for="age" data-i18n="age">Age</label>
-            <select id="age" name="age">
-              <option value="6-9" data-i18n="age_6_9">6–9 years</option>
-              <option value="10-13" data-i18n="age_10_13">10–13 years</option>
-              <option value="14-18" data-i18n="age_14_18">14–18 years</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="ui-lang" data-i18n="ui_lang">Language</label>
-            <select id="ui-lang" name="lang">
-              <option value="en" lang="en">English</option>
-              <option value="fr" lang="fr">Français</option>
-              <option value="ar" lang="ar">العربية</option>
-            </select>
-          </div>
+          <label for="setup-lang" data-i18n="fam_parent_lang">Language for the grown-ups</label>
+          <select id="setup-lang">
+            <option value="en" lang="en">English</option>
+            <option value="fr" lang="fr">Français</option>
+            <option value="ar" lang="ar">العربية</option>
+          </select>
         </div>
 
         <fieldset class="consent">
@@ -102,11 +111,125 @@
             <label for="consent" data-i18n="consent_label">I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.</label>
           </div>
           <p class="hint" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
-          <p class="hint" id="consent-extra"></p>
+          <p class="hint consent-extra" id="consent-extra"></p>
         </fieldset>
 
+        <fieldset>
+          <legend data-i18n="fam_pin_legend">Parent PIN</legend>
+          <p class="hint" data-i18n="fam_pin_about">The PIN is a child lock: it keeps the parent area for the grown-ups. It has 4 to 6 digits.</p>
+          <div class="field-row">
+            <div class="field">
+              <label for="setup-pin" data-i18n="fam_pin_new">New PIN</label>
+              <input id="setup-pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+              <label for="setup-pin2" data-i18n="fam_pin_again">The same PIN again</label>
+              <input id="setup-pin2" type="password" inputmode="numeric" maxlength="12" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend data-i18n="fam_first_child">The first child</legend>
+          <div class="field">
+            <label for="nickname" data-i18n="nickname">Nickname</label>
+            <input id="nickname" name="nickname" type="text" maxlength="24" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:nickname_ph">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="age" data-i18n="age">Age</label>
+              <select id="age" name="age">
+                <option value="6-9" data-i18n="age_6_9">6–9 years</option>
+                <option value="10-13" data-i18n="age_10_13">10–13 years</option>
+                <option value="14-18" data-i18n="age_14_18">14–18 years</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="child-lang" data-i18n="fam_child_lang">Language of the child</label>
+              <select id="child-lang">
+                <option value="en" lang="en">English</option>
+                <option value="fr" lang="fr">Français</option>
+                <option value="ar" lang="ar">العربية</option>
+              </select>
+            </div>
+          </div>
+          <fieldset class="emoji-pick" id="setup-avatars" data-name="setup-avatar">
+            <legend data-i18n="fam_avatar">Picture</legend>
+          </fieldset>
+        </fieldset>
+
+        <p class="status" id="setup-status" role="status" aria-live="polite"></p>
         <button type="submit" class="btn btn-primary btn-wide" id="btn-start" data-i18n="start_button">Let's start</button>
       </form>
+    </section>
+
+    <!-- ===================== Who is learning? (later runs) ===================== -->
+    <section class="screen" id="screen-who" data-screen="who" aria-labelledby="who-title" hidden>
+      <h1 id="who-title" data-i18n="fam_who_title">Who is learning?</h1>
+      <div class="card card-notice">
+        <h2 class="card-title">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-robot"/></svg>
+          <span data-i18n="disclosure_title">Good to know</span>
+        </h2>
+        <p data-i18n="disclosure_text">Mommy is a computer program (an AI). It is not a person, and it is not your mum or dad. It can make mistakes, so a grown-up should stay close.</p>
+      </div>
+      <ul class="who-list" id="who-list"></ul>
+      <p class="hint" id="who-empty" data-i18n="fam_who_empty" hidden>No child yet. A grown-up can add one in the parent area.</p>
+      <div class="btn-row btn-row-end">
+        <button type="button" class="btn btn-small btn-parent" id="btn-who-parents">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>
+          <span data-i18n="fam_for_parents">For parents</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ===================== Child home ("My tasks") ===================== -->
+    <section class="screen" id="screen-home" data-screen="home" aria-labelledby="home-title" hidden>
+      <div class="card home-head">
+        <span class="home-avatar" id="home-avatar" aria-hidden="true"></span>
+        <div class="home-who">
+          <h1 id="home-title"></h1>
+          <p class="jar" id="home-jar"></p>
+          <div class="goal-bar" id="home-goal-bar" aria-hidden="true" hidden><span class="goal-fill" id="home-goal-fill"></span></div>
+          <p class="goal-line" id="home-goal" hidden></p>
+        </div>
+      </div>
+
+      <div id="home-surprises" aria-live="polite"></div>
+
+      <section class="home-sec" aria-labelledby="home-todo-h">
+        <h2 id="home-todo-h" data-i18n="fam_todo">To do</h2>
+        <ul class="task-list" id="home-todo"></ul>
+        <p class="hint" id="home-todo-empty" data-i18n="fam_todo_empty" hidden>Nothing to do right now.</p>
+      </section>
+      <section class="home-sec" aria-labelledby="home-wait-h">
+        <h2 id="home-wait-h" data-i18n="fam_waiting">Waiting for your parent</h2>
+        <ul class="task-list" id="home-wait"></ul>
+        <p class="hint" id="home-wait-empty" data-i18n="fam_waiting_empty" hidden>Nothing is waiting.</p>
+      </section>
+      <section class="home-sec" aria-labelledby="home-done-h">
+        <h2 id="home-done-h" data-i18n="fam_done">Done</h2>
+        <ul class="task-list shelf" id="home-done"></ul>
+        <p class="hint" id="home-done-empty" data-i18n="fam_done_empty" hidden>Finished tasks will be shown here.</p>
+      </section>
+
+      <section class="card" aria-labelledby="home-free-h">
+        <h2 id="home-free-h" data-i18n="fam_free">Free practice</h2>
+        <div class="practice-grid">
+          <button type="button" class="btn" data-go="prepare" data-i18n="nav_prepare">Prepare</button>
+          <button type="button" class="btn" data-go="recite" data-i18n="nav_recite">Recite</button>
+          <button type="button" class="btn" data-go="dictation" data-i18n="nav_dictation">Dictation</button>
+          <button type="button" class="btn" data-go="quran" data-i18n="nav_quran">Quran</button>
+        </div>
+      </section>
+
+      <div class="btn-row">
+        <button type="button" class="btn btn-small" id="btn-switch-child" data-i18n="fam_switch_child">Change child</button>
+        <button type="button" class="btn btn-small btn-parent" id="btn-home-parents">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>
+          <span data-i18n="fam_for_parents">For parents</span>
+        </button>
+      </div>
     </section>
 
     <!-- ===================== Prepare (parent) ===================== -->
@@ -158,6 +281,9 @@
             <span class="seg-body"><span class="seg-title" data-i18n="mode_contextual">The meaning</span><span class="seg-hint" data-i18n="mode_contextual_hint">Own words are fine if the meaning is right.</span></span>
           </label>
         </fieldset>
+        <!-- The confirmed text holds Quran words (its "contextual" flag is false): the
+             meaning is never judged by AI, so it is recited word by word only. -->
+        <p class="why" id="mode-meaning-why" role="status" aria-live="polite" hidden></p>
         <p class="hint" id="mode-offline-note" data-i18n="mode_contextual_offline" hidden>Without the online AI, the meaning check is only approximate.</p>
 
         <button type="button" class="btn btn-primary btn-wide" id="btn-confirm">
@@ -211,6 +337,8 @@
           <p class="feedback" id="recite-feedback"></p>
           <p class="hint" id="recite-quality" hidden></p>
           <p class="hint" id="recite-limit" data-i18n="max_reached" hidden>That's the longest I can listen to (2 minutes).</p>
+          <!-- What this result means for the task being done (family.js). -->
+          <div class="task-outcome" id="task-outcome-recite" aria-live="polite" hidden></div>
           <div class="ideas" id="recite-ideas" hidden>
             <div id="recite-missing-wrap" hidden><h3 data-i18n="missing_ideas">Ideas to add</h3><ul id="recite-missing"></ul></div>
             <div id="recite-wrong-wrap" hidden><h3 data-i18n="wrong_ideas">Ideas to fix</h3><ul id="recite-wrong"></ul></div>
@@ -340,6 +468,7 @@
           <p class="feedback" id="dict-child-feedback"></p>
           <div class="words" id="dict-child-words"></div>
           <ul class="legend" data-legend="written"></ul>
+          <div class="task-outcome" id="task-outcome-dictation" aria-live="polite" hidden></div>
           <div class="btn-row">
             <button type="button" class="btn" id="dict-listen" data-gate="dict-tts">
               <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-speaker"/></svg>
@@ -431,6 +560,7 @@
         <p class="hint" id="quran-first-error" hidden></p>
         <p class="hint" id="quran-limit" data-i18n="max_reached" hidden>That's the longest I can listen to (2 minutes).</p>
         <ul class="legend" data-legend="heard" data-sample-lang="ar"></ul>
+        <div class="task-outcome" id="task-outcome-quran" aria-live="polite" hidden></div>
         <div class="btn-row">
           <button type="button" class="btn btn-primary" id="quran-say-again" hidden data-gate="quran-rec">
             <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-repeat"/></svg>
@@ -456,9 +586,289 @@
         <ol class="candidates" id="quran-where-list" hidden></ol>
       </div>
     </section>
+
+    <!-- ===================== Parent area (behind the PIN) ===================== -->
+    <section class="screen" id="screen-parent" data-screen="parent" aria-labelledby="parent-title" hidden>
+      <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
+      <h1 id="parent-title" data-i18n="fam_parent_title">Parent area</h1>
+      <p class="hint" data-i18n="fam_parent_help">Praise and surprises keep children wanting to learn; rewards work best for effort the child can see.</p>
+
+      <nav class="psec-nav" id="psec-nav" data-i18n-attr="aria-label:fam_parent_sections">
+        <button type="button" class="psec-tab" data-psec="review" data-i18n="fam_sec_review">To review</button>
+        <button type="button" class="psec-tab" data-psec="tasks" data-i18n="fam_sec_tasks">Tasks</button>
+        <button type="button" class="psec-tab" data-psec="rewards" data-i18n="fam_sec_rewards">Rewards</button>
+        <button type="button" class="psec-tab" data-psec="children" data-i18n="fam_sec_children">Children</button>
+        <button type="button" class="psec-tab" data-psec="settings" data-i18n="fam_sec_settings">Settings</button>
+      </nav>
+
+      <!-- To review: the review queue (next step of the family UI). -->
+      <section class="psec card" data-psec="review" aria-labelledby="psec-review-h" hidden>
+        <h2 id="psec-review-h" tabindex="-1" data-i18n="fam_sec_review">To review</h2>
+        <p class="hint placeholder" data-i18n="fam_placeholder">This section is being built.</p>
+      </section>
+
+      <!-- Tasks: per child, create / edit / archive. -->
+      <section class="psec card" data-psec="tasks" aria-labelledby="psec-tasks-h" hidden>
+        <h2 id="psec-tasks-h" tabindex="-1" data-i18n="fam_sec_tasks">Tasks</h2>
+        <div class="field" id="pt-child-field">
+          <label for="pt-child" data-i18n="fam_tasks_of">Tasks of</label>
+          <select id="pt-child"></select>
+        </div>
+        <p class="hint" id="pt-nochild" data-i18n="fam_tasks_nochild" hidden>Please add a child first, in the section “Children”.</p>
+        <ul class="ptask-list" id="pt-list"></ul>
+        <p class="hint" id="pt-empty" data-i18n="fam_tasks_empty" hidden>No task yet.</p>
+        <p class="hint" id="pt-archived" hidden></p>
+        <p class="status" id="pt-status" role="status" aria-live="polite"></p>
+        <button type="button" class="btn btn-primary" id="pt-new" data-i18n="fam_task_new">New task</button>
+
+        <form class="task-form" id="tf" novalidate hidden aria-labelledby="tf-h">
+          <h3 id="tf-h" tabindex="-1"></h3>
+          <fieldset class="segmented segmented-3" id="tf-kind">
+            <legend data-i18n="fam_tf_kind">Kind of task</legend>
+            <label class="seg">
+              <input type="radio" name="tf-kind" value="recite" checked>
+              <span class="seg-body"><span class="seg-title" data-i18n="fam_kind_recite">Recite</span></span>
+            </label>
+            <label class="seg">
+              <input type="radio" name="tf-kind" value="dictation">
+              <span class="seg-body"><span class="seg-title" data-i18n="fam_kind_dictation">Dictation</span></span>
+            </label>
+            <label class="seg">
+              <input type="radio" name="tf-kind" value="quran">
+              <span class="seg-body"><span class="seg-title" data-i18n="fam_kind_quran">Quran</span></span>
+            </label>
+          </fieldset>
+
+          <div class="field">
+            <label for="tf-title" data-i18n="fam_tf_title">Title (optional)</label>
+            <input id="tf-title" type="text" maxlength="60" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:fam_tf_title_ph">
+          </div>
+
+          <div id="tf-text-group">
+            <div class="field">
+              <label for="tf-lang" data-i18n="text_lang">Language of the text</label>
+              <select id="tf-lang">
+                <option value="en" lang="en">English</option>
+                <option value="fr" lang="fr">Français</option>
+                <option value="ar" lang="ar">العربية</option>
+              </select>
+            </div>
+            <div class="btn-row">
+              <label class="btn file-btn" data-gate-label="prep-photo">
+                <input type="file" id="tf-take" accept="image/*" capture="environment" data-gate="prep-photo">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-camera"/></svg>
+                <span data-i18n="take_photo">Take a photo</span>
+              </label>
+              <label class="btn file-btn" data-gate-label="prep-photo">
+                <input type="file" id="tf-choose" accept="image/*" data-gate="prep-photo">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-image"/></svg>
+                <span data-i18n="choose_photo">Choose a photo</span>
+              </label>
+            </div>
+            <p class="why" data-why="prep-photo" hidden></p>
+            <p class="hint" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
+            <p class="status" id="tf-photo-status" role="status" aria-live="polite"></p>
+            <p class="status" id="tf-quran-note" role="status" aria-live="polite"></p>
+            <div class="field">
+              <label for="tf-text" data-i18n="fam_tf_text">Text</label>
+              <textarea id="tf-text" rows="6" spellcheck="false" data-i18n-attr="placeholder:page_text_ph"></textarea>
+            </div>
+          </div>
+
+          <fieldset class="segmented" id="tf-mode">
+            <legend data-i18n="mode_label">Reciting mode</legend>
+            <label class="seg">
+              <input type="radio" name="tf-mode" value="strict" checked>
+              <span class="seg-body"><span class="seg-title" data-i18n="mode_strict">Word by word</span><span class="seg-hint" data-i18n="mode_strict_hint">Every word must be right.</span></span>
+            </label>
+            <label class="seg">
+              <input type="radio" name="tf-mode" value="contextual">
+              <span class="seg-body"><span class="seg-title" data-i18n="mode_contextual">The meaning</span><span class="seg-hint" data-i18n="mode_contextual_hint">Own words are fine if the meaning is right.</span></span>
+            </label>
+          </fieldset>
+
+          <div id="tf-quran-group" hidden>
+            <p class="hint" data-i18n="fam_tf_quran_note">A Quran task is always checked word by word, against the verbatim Tanzil text.</p>
+            <div class="field">
+              <label for="tf-surah" data-i18n="surah">Surah</label>
+              <select id="tf-surah"></select>
+            </div>
+            <p class="status" id="tf-surah-status" role="status" aria-live="polite"></p>
+            <div class="field-row field-row-tight">
+              <div class="field">
+                <label for="tf-from" data-i18n="from_ayah">From ayah</label>
+                <input type="text" id="tf-from" inputmode="numeric" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="tf-to" data-i18n="to_ayah">To ayah</label>
+                <input type="text" id="tf-to" inputmode="numeric" autocomplete="off" spellcheck="false">
+              </div>
+            </div>
+            <p class="hint" data-i18n="range_capped">At most 50 ayat at a time.</p>
+            <fieldset class="segmented segmented-inline">
+              <legend data-i18n="fam_tf_qmode">How the child recites</legend>
+              <label class="seg">
+                <input type="radio" name="tf-qmode" value="looking" checked>
+                <span class="seg-body"><span class="seg-title" data-i18n="mode_looking">Recite looking</span></span>
+              </label>
+              <label class="seg">
+                <input type="radio" name="tf-qmode" value="memory">
+                <span class="seg-body"><span class="seg-title" data-i18n="mode_memory">From memory</span></span>
+              </label>
+            </fieldset>
+          </div>
+
+          <fieldset class="segmented segmented-3" id="tf-pass">
+            <legend data-i18n="fam_tf_pass">Pass level</legend>
+            <label class="seg">
+              <input type="radio" name="tf-pass" value="1" checked>
+              <span class="seg-body"><span class="seg-title" data-i18n="fam_pass_all_words">All words right</span></span>
+            </label>
+            <label class="seg">
+              <input type="radio" name="tf-pass" value="0.9">
+              <span class="seg-body"><span class="seg-title" data-i18n="fam_pass_nine_in_ten">9 of 10 words</span></span>
+            </label>
+            <label class="seg">
+              <input type="radio" name="tf-pass" value="0.8">
+              <span class="seg-body"><span class="seg-title" data-i18n="fam_pass_eight_in_ten">8 of 10 words</span></span>
+            </label>
+          </fieldset>
+          <p class="hint" id="tf-pass-meaning" data-i18n="fam_tf_pass_meaning" hidden>By meaning, the task passes when the meaning is the same, with no idea missing.</p>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="tf-stars" data-i18n="fam_tf_stars">Stars</label>
+              <select id="tf-stars"></select>
+            </div>
+            <div class="field">
+              <label for="tf-due" data-i18n="fam_tf_due">Due date (optional)</label>
+              <input id="tf-due" type="date">
+            </div>
+          </div>
+
+          <fieldset>
+            <legend data-i18n="fam_tf_reward">Reward (optional)</legend>
+            <div class="field">
+              <label for="tf-reward-text" data-i18n="fam_tf_reward_text">The reward</label>
+              <input id="tf-reward-text" type="text" maxlength="80" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:fam_tf_reward_ph">
+            </div>
+            <fieldset class="emoji-pick" id="tf-emojis" data-name="tf-emoji">
+              <legend data-i18n="fam_tf_reward_emoji">Picture of the reward</legend>
+            </fieldset>
+          </fieldset>
+
+          <p class="status" id="tf-status" role="status" aria-live="polite"></p>
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary" id="tf-save" data-i18n="fam_save">Save</button>
+            <button type="button" class="btn" id="tf-cancel" data-i18n="fam_cancel">Cancel</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Rewards: star jar, goals, surprises (next step of the family UI). -->
+      <section class="psec card" data-psec="rewards" aria-labelledby="psec-rewards-h" hidden>
+        <h2 id="psec-rewards-h" tabindex="-1" data-i18n="fam_sec_rewards">Rewards</h2>
+        <p class="hint placeholder" data-i18n="fam_placeholder">This section is being built.</p>
+      </section>
+
+      <!-- Children: add, edit, remove (with a confirmation). -->
+      <section class="psec card" data-psec="children" aria-labelledby="psec-children-h" hidden>
+        <h2 id="psec-children-h" tabindex="-1" data-i18n="fam_sec_children">Children</h2>
+        <ul class="pchild-list" id="pc-list"></ul>
+        <p class="status" id="pc-status" role="status" aria-live="polite"></p>
+        <div class="confirm-box" id="pc-remove" hidden>
+          <p id="pc-remove-text"></p>
+          <div class="btn-row">
+            <button type="button" class="btn btn-danger" id="pc-remove-yes" data-i18n="fam_remove">Remove</button>
+            <button type="button" class="btn" id="pc-remove-no" data-i18n="fam_cancel">Cancel</button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary" id="pc-add" data-i18n="fam_child_add">Add a child</button>
+
+        <form class="child-form" id="cf" novalidate hidden aria-labelledby="cf-h">
+          <h3 id="cf-h" tabindex="-1"></h3>
+          <div class="field">
+            <label for="cf-nick" data-i18n="nickname">Nickname</label>
+            <input id="cf-nick" type="text" maxlength="24" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:nickname_ph">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="cf-age" data-i18n="age">Age</label>
+              <select id="cf-age">
+                <option value="6-9" data-i18n="age_6_9">6–9 years</option>
+                <option value="10-13" data-i18n="age_10_13">10–13 years</option>
+                <option value="14-18" data-i18n="age_14_18">14–18 years</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="cf-lang" data-i18n="fam_child_lang">Language of the child</label>
+              <select id="cf-lang">
+                <option value="en" lang="en">English</option>
+                <option value="fr" lang="fr">Français</option>
+                <option value="ar" lang="ar">العربية</option>
+              </select>
+            </div>
+          </div>
+          <fieldset class="emoji-pick" id="cf-avatars" data-name="cf-avatar">
+            <legend data-i18n="fam_avatar">Picture</legend>
+          </fieldset>
+          <p class="status" id="cf-status" role="status" aria-live="polite"></p>
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary" id="cf-save" data-i18n="fam_save">Save</button>
+            <button type="button" class="btn" id="cf-cancel" data-i18n="fam_cancel">Cancel</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Settings: the consent box now; PIN, language and "delete all data" are the next step. -->
+      <section class="psec card" data-psec="settings" aria-labelledby="psec-settings-h" hidden>
+        <h2 id="psec-settings-h" tabindex="-1" data-i18n="fam_sec_settings">Settings</h2>
+        <p class="hint" data-i18n="fam_privacy_line">Everything here stays on this device.</p>
+        <fieldset class="consent">
+          <legend data-i18n="consent_title">For the parent</legend>
+          <div class="check">
+            <input type="checkbox" id="settings-consent">
+            <label for="settings-consent" data-i18n="consent_label">I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.</label>
+          </div>
+          <p class="hint" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
+          <p class="hint consent-extra"></p>
+        </fieldset>
+        <p class="hint placeholder" data-i18n="fam_placeholder">This section is being built.</p>
+      </section>
+
+      <div class="btn-row">
+        <button type="button" class="btn" id="btn-parent-close" data-i18n="fam_parent_close">Close the parent area</button>
+      </div>
+    </section>
   </main>
 
+  <!-- The parent PIN (family.js): create, enter, and "Forgot PIN" behind a parental gate.
+       Its text is in the parent's language, whatever the screen behind it. -->
+  <dialog class="pin-dialog" id="pin-dialog" aria-labelledby="pin-title" aria-describedby="pin-intro">
+    <form id="pin-form" novalidate>
+      <h2 id="pin-title"></h2>
+      <p class="hint" id="pin-intro"></p>
+      <div class="field" id="pin-f1">
+        <label for="pin-1" id="pin-1-label"></label>
+        <input id="pin-1" type="password" inputmode="numeric" maxlength="12" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field" id="pin-f2">
+        <label for="pin-2" id="pin-2-label"></label>
+        <input id="pin-2" type="password" inputmode="numeric" maxlength="12" autocomplete="off" spellcheck="false">
+      </div>
+      <p class="status" id="pin-status" role="status" aria-live="assertive"></p>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary" id="pin-ok"></button>
+        <button type="button" class="btn" id="pin-cancel"></button>
+      </div>
+      <button type="button" class="btn btn-small btn-ghost" id="pin-forgot"></button>
+    </form>
+  </dialog>
+
+  <!-- Order does not matter: app.js and family.js find each other (see their headers). -->
   <script src="recorder.js" defer></script>
+  <script src="rewards.js" defer></script>
+  <script src="family.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>

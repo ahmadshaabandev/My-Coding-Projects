@@ -21,12 +21,16 @@ Flows
   ``feedback.quran_feedback``. No Quran endpoint touches the brain or the synthesizer
   (hard rule 4).
 
-The general endpoints also refuse Quran text (``422 quran_text``, see
-:func:`looks_like_quran`): a passage of the Quran is checked only by the Quran section,
-against the verbatim Tanzil text, and is never given to the LLM or spoken by the voice.
-They refuse a text whose script does not match the chosen language (``422
-lang_mismatch``) and a text with ``[?]`` marks where a page reader could not read a
-word (``400 unreadable_text``).
+The general endpoints also refuse Quran text (``422 quran_text``): a passage of the
+Quran is checked only by the Quran section, against the verbatim Tanzil text, and is
+never given to the LLM or spoken by the voice. Each use of a text has its guard:
+:func:`looks_like_quran` word by word, :func:`looks_like_quran_for_meaning` when the
+brain judges the meaning, :func:`is_quran_phrase` for what the voice speaks, and
+:func:`dictation_speaks_quran` for a dictation (``scope: "phrase"``). They refuse a text
+whose script does not match the chosen language (``422 lang_mismatch``) and a text with
+``[?]`` marks where a page reader could not read a word (``400 unreadable_text``).
+``POST /api/text/check`` runs those checks alone (no audio, voice or brain) and says
+which uses of the text are possible.
 
 Privacy (hard rule 5)
 ---------------------
@@ -179,16 +183,29 @@ QURAN_GUARD_MIN_SCORE = 0.9
 QURAN_GUARD_RUN_WORDS = 5
 #: or, next to a framing formula (قال تعالى, صدق الله العظيم), this many.
 QURAN_GUARD_FRAMED_RUN_WORDS = 3
+#: Contextual mode (the meaning is judged by the brain): also a run of this many
+#: consecutive Quran words, everyday formulas left out (:data:`mommy.quran.EVERYDAY_FORMULAS`).
+QURAN_GUARD_CONTEXTUAL_RUN_WORDS = 4
+#: A phrase the voice would speak, and a text judged by meaning, may not contain a whole
+#: ayah of this many words or more (up to :data:`mommy.quran.SHORT_AYAH_MAX_WORDS`;
+#: longer ayat are runs of QURAN_GUARD_RUN_WORDS). Two-word ayat such as ثم نظر are
+#: ordinary Arabic and are refused only as a phrase of their own.
+QURAN_GUARD_CONTAINED_AYAH_WORDS = 3
+
+#: The Quran guard of a text check: word-by-word recitation (and the dictation check),
+#: recitation judged by meaning, or dictation (the voice reads the text out).
+GuardMode = Literal["strict", "contextual", "dictation"]
 
 QURAN_TEXT_MESSAGE = (
     "This text is from the Quran. Please use the Quran section: it checks recitation "
     "against the verbatim Tanzil text, without AI and without a synthetic voice."
 )
-#: /api/dictation/phrases, ``scope: "phrase"``: the text may be recited, but a phrase
-#: of it is a whole ayah (often the basmala on a line of its own) that is never spoken.
+#: The dictation guard, ``scope: "phrase"``: the text may be recited word by word, but a
+#: phrase or line of it is or holds a whole ayah (often the basmala on a line of its own),
+#: which is never spoken.
 QURAN_PHRASE_MESSAGE = (
-    "A phrase of this text is a whole ayah of the Quran, which is never read out by the "
-    "synthetic voice, so the text cannot be used for dictation. It can still be recited."
+    "A phrase of this text is or holds a whole ayah of the Quran, which is never read out by "
+    "the synthetic voice, so the text cannot be used for dictation. It can still be recited."
 )
 
 LangField = Literal["ar", "en", "fr"]
@@ -480,6 +497,16 @@ class PhrasesRequest(BaseModel):
     lang: LangField
 
 
+class TextCheckRequest(BaseModel):
+    """Body of ``POST /api/text/check``. ``text`` has the limits of every text field
+    (checked by the endpoint, which answers ``text_too_long``); ``mode`` defaults to
+    ``"strict"``."""
+
+    text: str
+    lang: LangField
+    mode: GuardMode | None = "strict"
+
+
 def _check_chars(text: str, field: str) -> None:
     """400 ``bad_text`` for text that cannot be encoded (a lone UTF-16 surrogate, which
     JSON can carry but UTF-8 cannot), and 400 ``text_too_long`` past the size limits."""
@@ -633,6 +660,28 @@ def _quality_unclear(quality: dict) -> bool:
     return bool(quality.get("too_quiet") or quality.get("too_short"))
 
 
+def _guard_tokens(text: str, quran: Quran | None) -> tuple[Quran, list[str], bool] | None:
+    """``(quran, tokens, framed)`` for the data-based Quran tests: the words of ``text``
+    without framing formulas (:meth:`mommy.quran.Quran.strip_framing`), or None when there
+    is nothing to test (no Tanzil text, or no Arabic letter)."""
+    if quran is None or not has_arabic(text):
+        return None
+    tokens, framed = quran.strip_framing(text)
+    return quran, tokens, framed
+
+
+def _quran_passage(quran: Quran, tokens: list[str], framed: bool) -> bool:
+    """The data-based part of :func:`looks_like_quran`, on the words without framing."""
+    if quran.quran_runs(tokens, QURAN_GUARD_RUN_WORDS):
+        return True
+    if framed and quran.quran_runs(tokens, QURAN_GUARD_FRAMED_RUN_WORDS):
+        return True
+    if len(tokens) < QURAN_GUARD_MIN_WORDS:
+        return False
+    best = quran.locate(" ".join(tokens), top_k=1, min_score=QURAN_GUARD_MIN_SCORE)
+    return bool(best) and best[0]["score"] >= QURAN_GUARD_MIN_SCORE
+
+
 def looks_like_quran(text: str, quran: Quran | None) -> bool:
     """True when ``text`` is, or contains, a passage of the Quran.
 
@@ -650,36 +699,90 @@ def looks_like_quran(text: str, quran: Quran | None) -> bool:
 
     An ordinary sentence that shares a few words with an ayah is not refused, and nor
     is a text that starts with the basmala. Without the Quran data only the script test
-    is possible.
+    is possible. This is the guard of word-by-word recitation (strict mode).
     """
     if is_quranic_script(text):
         return True
-    if quran is None or not has_arabic(text):
-        return False
-    tokens, framed = quran.strip_framing(text)
-    if quran.quran_runs(tokens, QURAN_GUARD_RUN_WORDS):
-        return True
-    if framed and quran.quran_runs(tokens, QURAN_GUARD_FRAMED_RUN_WORDS):
-        return True
-    if len(tokens) < QURAN_GUARD_MIN_WORDS:
-        return False
-    best = quran.locate(" ".join(tokens), top_k=1)
-    return bool(best) and best[0]["score"] >= QURAN_GUARD_MIN_SCORE
+    found = _guard_tokens(text, quran)
+    return found is not None and _quran_passage(*found)
 
 
 def is_whole_ayah(text: str, quran: Quran | None) -> bool:
     """True when ``text`` (framing formulas left out) is exactly one ayah of two words or
     more (``الله الصمد``)."""
-    if quran is None or not has_arabic(text):
-        return False
-    tokens, _ = quran.strip_framing(text)
-    return quran.whole_ayah(tokens) is not None
+    found = _guard_tokens(text, quran)
+    return found is not None and found[0].whole_ayah(found[1]) is not None
+
+
+def contains_short_ayah(text: str, quran: Quran | None) -> bool:
+    """True when the words of ``text`` (framing formulas left out) hold, one after the
+    other, a whole ayah of :data:`QURAN_GUARD_CONTAINED_AYAH_WORDS` (3) or 4 words
+    (:meth:`mommy.quran.Quran.contained_ayat`), wherever it sits: ``قل هو الله أحد``
+    followed by a name, a sentence ending with a three-word ayah. The everyday ayat of
+    :data:`mommy.quran.EVERYDAY_AYAT` do not count, and nor do two-word ayat (ثم نظر)."""
+    found = _guard_tokens(text, quran)
+    return found is not None and bool(found[0].contained_ayat(found[1], QURAN_GUARD_CONTAINED_AYAH_WORDS))
 
 
 def is_quran_phrase(text: str, quran: Quran | None) -> bool:
-    """:func:`looks_like_quran`, or a short phrase that is a whole ayah
-    (:func:`is_whole_ayah`): used for the text the voice would speak."""
-    return looks_like_quran(text, quran) or is_whole_ayah(text, quran)
+    """True when the voice may not speak ``text`` (``/api/tts``, a dictation phrase):
+    :func:`looks_like_quran`, a phrase that is exactly a whole ayah of two words or more
+    (:func:`is_whole_ayah`), or a phrase that contains a whole short ayah
+    (:func:`contains_short_ayah`)."""
+    if is_quranic_script(text):
+        return True
+    found = _guard_tokens(text, quran)
+    if found is None:
+        return False
+    q, tokens, _ = found
+    return (
+        q.whole_ayah(tokens) is not None
+        or bool(q.contained_ayat(tokens, QURAN_GUARD_CONTAINED_AYAH_WORDS))
+        or _quran_passage(*found)
+    )
+
+
+def looks_like_quran_for_meaning(text: str, quran: Quran | None) -> bool:
+    """The Quran guard of contextual mode, where the brain judges the meaning of the text:
+    :func:`looks_like_quran`, or a run of :data:`QURAN_GUARD_CONTEXTUAL_RUN_WORDS` (4)
+    consecutive Quran words that does not pass through an everyday formula
+    (:data:`mommy.quran.EVERYDAY_FORMULAS`), or a whole short ayah inside the text
+    (:func:`contains_short_ayah`)."""
+    if is_quranic_script(text):
+        return True
+    found = _guard_tokens(text, quran)
+    if found is None:
+        return False
+    q, tokens, _ = found
+    return (
+        bool(q.quran_runs(tokens, QURAN_GUARD_CONTEXTUAL_RUN_WORDS, exclude_formulas=True))
+        or bool(q.contained_ayat(tokens, QURAN_GUARD_CONTAINED_AYAH_WORDS))
+        or _quran_passage(*found)
+    )
+
+
+def dictation_speaks_quran(text: str, lang: Lang, quran: Quran | None) -> bool:
+    """True when a dictation of ``text`` would make the voice speak Quran text, although
+    the whole text passed :func:`looks_like_quran` (the ``scope: "phrase"`` refusal).
+
+    Checked with :func:`is_quran_phrase`: every phrase of :func:`split_phrases` and every
+    non-empty line of the text (the splitter joins the lines of a paragraph, so the
+    basmala on a line of its own without a full stop is glued to the next words), and
+    the text's words as a whole for a whole short ayah (:func:`contains_short_ayah`),
+    which the splitter may cut between two phrases that are each spoken.
+    """
+    if contains_short_ayah(text, quran):
+        return True
+    whole = text.strip()
+    if is_whole_ayah(whole, quran):
+        return True
+    seen = {whole}  # the whole text already passed looks_like_quran and the two tests above
+    for part in [*split_phrases(text, lang), *(line.strip() for line in text.splitlines())]:
+        if part and part not in seen:
+            seen.add(part)
+            if is_quran_phrase(part, quran):
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -731,16 +834,24 @@ def create_app(
             raise ApiError(503, "quran_unavailable", "The Quran text could not be loaded on this server.")
         return quran
 
-    def refuse_quran(text: str, *, phrase: bool = False) -> None:
-        """422 ``quran_text`` for Quran text (:func:`looks_like_quran`; with ``phrase``,
-        also a short phrase that is a whole ayah, :func:`is_quran_phrase`)."""
-        if (is_quran_phrase if phrase else looks_like_quran)(text, quran):
-            raise ApiError(422, "quran_text", QURAN_TEXT_MESSAGE)
+    def quran_guard(text: str, lang: Lang, mode: GuardMode) -> None:
+        """422 ``quran_text`` when the text may not be used in ``mode``.
 
-    def check_expected(text: str, lang: Lang, field: str) -> None:
-        """The checks of a text a child is to say, write or hear (after :func:`_clean_text`)."""
+        strict: :func:`looks_like_quran`; contextual: :func:`looks_like_quran_for_meaning`;
+        dictation: :func:`looks_like_quran` on the whole text, then
+        :func:`dictation_speaks_quran`, which is refused with ``scope: "phrase"`` (the text
+        may still be recited word by word).
+        """
+        if (looks_like_quran_for_meaning if mode == "contextual" else looks_like_quran)(text, quran):
+            raise ApiError(422, "quran_text", QURAN_TEXT_MESSAGE)
+        if mode == "dictation" and dictation_speaks_quran(text, lang, quran):
+            raise ApiError(422, "quran_text", QURAN_PHRASE_MESSAGE, extra={"scope": "phrase"})
+
+    def check_expected(text: str, lang: Lang, field: str, mode: GuardMode = "strict") -> None:
+        """The checks of a text a child is to say, write or hear (after :func:`_clean_text`):
+        ``[?]`` marks, the Quran guard of ``mode``, then the language."""
         _refuse_unreadable(text, field)
-        refuse_quran(text)
+        quran_guard(text, lang, mode)
         _refuse_lang_mismatch(text, lang, field)
 
     class decoding:
@@ -891,7 +1002,7 @@ def create_app(
         """Check a recitation: word by word (strict) or by meaning (contextual)."""
         started = time.perf_counter()
         expected = _clean_text(expected_text, "expected_text", lang)
-        check_expected(expected, lang, "expected_text")
+        check_expected(expected, lang, "expected_text", mode)
         require_asr()
         heard, quality, timings = listen(audio, lang)
 
@@ -944,18 +1055,49 @@ def create_app(
 
     @app.post("/api/dictation/phrases")
     def dictation_phrases(body: PhrasesRequest) -> dict[str, Any]:
-        """Cut the text into the phrases read out one at a time."""
+        """Cut the text into the phrases read out one at a time.
+
+        The Quran guard is that of ``/api/text/check`` in mode ``dictation``: a text that
+        passed :func:`looks_like_quran` (it can be recited and checked) can still hold a
+        phrase the voice may not speak, such as the basmala on its own line; that gives
+        ``scope: "phrase"``, which tells the client that only dictation is refused.
+        """
         text = _clean_text(body.text, "text")  # punctuation only still gives {"phrases": []}
         _check_words(text, "text", body.lang)
-        check_expected(text, body.lang, "text")
-        phrases = split_phrases(text, body.lang)
-        # The whole text passed looks_like_quran (it can be recited and checked); a short
-        # ayah can still be a phrase of its own, such as the basmala on its own line, and
-        # the voice would speak it. scope "phrase" tells the client that only dictation
-        # is refused.
-        if any(is_whole_ayah(phrase, quran) for phrase in phrases):
-            raise ApiError(422, "quran_text", QURAN_PHRASE_MESSAGE, extra={"scope": "phrase"})
-        return {"phrases": phrases}
+        check_expected(text, body.lang, "text", "dictation")
+        return {"phrases": split_phrases(text, body.lang)}
+
+    @app.post("/api/text/check")
+    def text_check(body: TextCheckRequest) -> dict[str, Any]:
+        """Check a text before it is used (Prepare's "Confirm text", a new task).
+
+        The checks of the recite and dictation endpoints, in their order, with no audio,
+        voice or brain: the text limits, ``[?]`` marks, the Quran guard of ``mode``, the
+        language. The answer also says whether the other uses are possible:
+        ``contextual`` (recitation judged by meaning) and ``dictation`` (the voice reads
+        it out), so one call in mode ``strict`` answers for all three.
+        """
+        started = time.perf_counter()
+        mode: GuardMode = body.mode or "strict"
+        text = _clean_text(body.text, "text", body.lang)
+        _refuse_unreadable(text, "text")
+        if quran is None and has_arabic(text):
+            # The general endpoints fall back to the script test without the Tanzil text;
+            # this answer vouches for every mode, which needs the text itself.
+            raise ApiError(503, "quran_unavailable", "The Quran text could not be loaded, so the text cannot be checked.")
+        quran_guard(text, body.lang, mode)
+        _refuse_lang_mismatch(text, body.lang, "text")
+        out = {
+            "ok": True,
+            "words": len(tokenize(text, body.lang)),
+            "dictation": mode == "dictation" or not dictation_speaks_quran(text, body.lang, quran),
+            "contextual": mode == "contextual" or not looks_like_quran_for_meaning(text, quran),
+        }
+        log.info(
+            "text/check %s %s: %d chars, %d words, %.3f s",
+            mode, body.lang, len(text), out["words"], time.perf_counter() - started,
+        )
+        return out
 
     @app.post("/api/tts")
     def speak(body: TTSRequest) -> Response:
@@ -974,7 +1116,8 @@ def create_app(
             raise ApiError(400, "text_too_long", f"The text is longer than {MAX_TTS_CHARS} characters.")
         _check_chars(text, "text")
         _refuse_unreadable(text, "text")
-        refuse_quran(text, phrase=True)
+        if is_quran_phrase(text, quran):
+            raise ApiError(422, "quran_text", QURAN_TEXT_MESSAGE)
         _refuse_lang_mismatch(text, body.lang, "text")
         check = "skipped"
         try:
@@ -1228,10 +1371,14 @@ __all__ = [
     "body_limit",
     "build_default_app",
     "clean_image",
+    "contains_short_ayah",
     "create_app",
+    "dictation_speaks_quran",
     "error_response",
     "is_quran_phrase",
+    "is_whole_ayah",
     "keep_uploads_in_memory",
     "looks_like_quran",
+    "looks_like_quran_for_meaning",
     "text_script",
 ]

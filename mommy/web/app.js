@@ -1,12 +1,24 @@
 /*
  * app.js: the Mommy web client (vanilla JS, no framework, no external requests).
  *
- * Screens: start (AI disclosure, parent consent, child profile), prepare a page (parent),
- * recite, dictation, and the Quran. The HTTP API is described in docs/CONTRACT.md.
+ * Screens: start (AI disclosure; the family setup form belongs to family.js), prepare a
+ * page (parent), recite, dictation, and the Quran. The HTTP API is described in
+ * docs/CONTRACT.md. The family screens (who is learning, the child's home, the parent
+ * area) and the tasks live in family.js, on top of rewards.js (docs/REWARDS.md).
+ *
+ * app.js <-> family.js (whatever order the scripts run in):
+ *   - app.js sets window.MommyApp (the hooks below, see `appApi`) and, if
+ *     window.MommyFamily is already there, calls MommyFamily.attach(MommyApp);
+ *   - family.js sets window.MommyFamily and, if window.MommyApp is already there, attaches
+ *     itself at once. attach() is idempotent, so either order ends with one attach.
+ *   - family.js then calls MommyApp.setHooks({...}): route(screen), langFor(screen),
+ *     enter(screen), leave(screen), onQuranPrefs(prefs), onLanguage(), onHealth().
+ *     Without family.js the app stays on the start screen (the AI disclosure).
  *
  * Privacy rules followed here:
- *   - Audio and photos live only in memory: a Blob is uploaded and then dropped. Nothing
- *     is put in localStorage except the child profile and a few display preferences.
+ *   - Audio and photos live only in memory: a Blob is uploaded and then dropped. This
+ *     file stores nothing: the family document (family.js) holds the children's profiles,
+ *     tasks and scores, never a recording, a photo or a transcript.
  *   - Photos are resized in the browser (long edge <= 2000 px) and re-encoded as JPEG,
  *     which drops EXIF metadata, before upload.
  *   - The microphone and camera stay disabled until a parent ticks the consent box.
@@ -26,7 +38,7 @@
       skip: 'Skip to content',
       badge: 'AI tutor — not a person',
       nav_label: 'Main',
-      nav_profile: 'Profile and settings',
+      nav_home: 'My tasks',
       nav_prepare: 'Prepare',
       nav_recite: 'Recite',
       nav_dictation: 'Dictation',
@@ -50,8 +62,8 @@
       consent_claude: 'Some things are sent to Claude, an AI service made by Anthropic: photos of pages and of handwriting, so that it can read them; the page text and a transcript of what your child says (in “The meaning” mode), so that it can judge the meaning; and the words your child got wrong, so that it can word the feedback. The recordings themselves are not sent.',
       consent_offline: 'Offline mode: nothing leaves this computer, and you type the texts yourself.',
       start_button: "Let's start",
-      consent_needed: 'A parent must tick the consent box on the start screen before the microphone or camera can be used.',
-      consent_needed_ai: 'Checking uses the online AI: a parent must first tick the consent box on the start screen.',
+      consent_needed: 'A parent must tick the consent box in the parent area (Settings) before the microphone or camera can be used.',
+      consent_needed_ai: 'Checking uses the online AI: a parent must first tick the consent box in the parent area (Settings).',
       server_down: "I can't reach the Mommy server. Is it running?",
       checking_server: 'Checking the server…',
       retry: 'Try again',
@@ -83,6 +95,7 @@
       mode_contextual: 'The meaning',
       mode_contextual_hint: 'Own words are fine if the meaning is right.',
       mode_contextual_offline: 'Without the online AI, the meaning check is only approximate.',
+      mode_meaning_off: '“The meaning” is not available for this text: it has words of the Quran (for example the basmala), so it is recited word by word.',
       confirm_text: 'Confirm text',
       checking_text: 'Checking the text…',
       text_confirmed: 'Text confirmed. Your child can now recite it or do a dictation.',
@@ -203,7 +216,7 @@
       skip: 'Aller au contenu',
       badge: 'Tuteur IA — pas une personne',
       nav_label: 'Principal',
-      nav_profile: 'Profil et réglages',
+      nav_home: 'Mes tâches',
       nav_prepare: 'Préparer',
       nav_recite: 'Réciter',
       nav_dictation: 'Dictée',
@@ -227,8 +240,8 @@
       consent_claude: "Certaines données sont envoyées à Claude, un service d'IA d'Anthropic : les photos de pages et d'écriture, pour qu'il puisse les lire ; le texte de la page et une transcription de ce que dit votre enfant (en mode « Le sens »), pour qu'il juge le sens ; et les mots où votre enfant a fait une erreur, pour qu'il rédige le message. Les enregistrements eux-mêmes ne sont pas envoyés.",
       consent_offline: 'Mode hors ligne : rien ne quitte cet ordinateur, et vous tapez les textes vous-même.',
       start_button: 'On commence',
-      consent_needed: "Un parent doit cocher la case d'accord sur l'écran d'accueil avant d'utiliser le micro ou l'appareil photo.",
-      consent_needed_ai: "La vérification utilise l'IA en ligne : un parent doit d'abord cocher la case d'accord sur l'écran d'accueil.",
+      consent_needed: "Un parent doit cocher la case d'accord dans l'espace parents (Réglages) avant d'utiliser le micro ou l'appareil photo.",
+      consent_needed_ai: "La vérification utilise l'IA en ligne : un parent doit d'abord cocher la case d'accord dans l'espace parents (Réglages).",
       server_down: "Je n'arrive pas à joindre le serveur Mommy. Est-il lancé ?",
       checking_server: 'Vérification du serveur…',
       retry: 'Réessayer',
@@ -260,6 +273,7 @@
       mode_contextual: 'Le sens',
       mode_contextual_hint: 'Ses propres mots, si le sens est juste.',
       mode_contextual_offline: "Sans l'IA en ligne, la vérification du sens est seulement approximative.",
+      mode_meaning_off: '« Le sens » n’est pas possible pour ce texte : il contient des mots du Coran (par exemple la basmala), il se récite donc mot à mot.',
       confirm_text: 'Valider le texte',
       checking_text: 'Vérification du texte…',
       text_confirmed: 'Texte validé. Votre enfant peut maintenant le réciter ou faire une dictée.',
@@ -380,7 +394,7 @@
       skip: 'الانتقال إلى المحتوى',
       badge: 'معلّم ذكاء اصطناعي — ليس إنسانًا',
       nav_label: 'القائمة الرئيسية',
-      nav_profile: 'الملف والإعدادات',
+      nav_home: 'مهامي',
       nav_prepare: 'تحضير',
       nav_recite: 'تسميع',
       nav_dictation: 'إملاء',
@@ -404,8 +418,8 @@
       consent_claude: 'تُرسَل بعض البيانات إلى Claude، وهي خدمة ذكاء اصطناعي من شركة Anthropic: صور الصفحات والكتابة لقراءتها، ونص الصفحة ونسخة مكتوبة مما يقوله طفلك (في طريقة «المعنى») للحكم على المعنى، والكلمات التي أخطأ فيها طفلك لصياغة الملاحظات. أمّا التسجيلات الصوتية نفسها فلا تُرسَل.',
       consent_offline: 'وضع بلا اتصال: لا يخرج شيء من هذا الحاسوب، وتُكتب النصوص يدويًا.',
       start_button: 'لنبدأ',
-      consent_needed: 'يجب أن يضع وليّ الأمر علامة في خانة الموافقة في شاشة البداية قبل استخدام الميكروفون أو الكاميرا.',
-      consent_needed_ai: 'التحقّق يستخدم الذكاء الاصطناعي عبر الإنترنت: يجب أولًا أن يضع وليّ الأمر علامة في خانة الموافقة في شاشة البداية.',
+      consent_needed: 'يجب أولًا وضع علامة في خانة الموافقة في قسم الكبار (الإعدادات) قبل استخدام الميكروفون أو الكاميرا.',
+      consent_needed_ai: 'التحقّق يستخدم الذكاء الاصطناعي عبر الإنترنت: يجب أولًا وضع علامة في خانة الموافقة في قسم الكبار (الإعدادات).',
       server_down: 'لا أستطيع الوصول إلى خادم Mommy. هل هو يعمل؟',
       checking_server: 'جارٍ التحقّق من الخادم…',
       retry: 'إعادة المحاولة',
@@ -437,6 +451,7 @@
       mode_contextual: 'المعنى',
       mode_contextual_hint: 'يمكن استخدام كلمات أخرى إذا كان المعنى صحيحًا.',
       mode_contextual_offline: 'من دون الذكاء الاصطناعي عبر الإنترنت، يكون التحقّق من المعنى تقريبيًا فقط.',
+      mode_meaning_off: '«المعنى» غير متاح لهذا النص: فيه كلمات من القرآن الكريم (مثل البسملة)، لذلك يُسمَّع كلمة بكلمة.',
       confirm_text: 'تأكيد النص',
       checking_text: 'جارٍ التحقّق من النص…',
       text_confirmed: 'تمّ تأكيد النص. يمكن الآن تسميعه أو كتابته إملاءً.',
@@ -555,8 +570,12 @@
 
   const LANGS = ['en', 'fr', 'ar'];
   const AGE_BANDS = ['6-9', '10-13', '14-18'];
-  const PROFILE_KEY = 'mommy.profile.v1';
-  const SCREENS = ['start', 'prepare', 'recite', 'dictation', 'quran'];
+  // 'start' is the family setup; 'who', 'home' and 'parent' are drawn by family.js.
+  const SCREENS = ['start', 'who', 'home', 'parent', 'prepare', 'recite', 'dictation', 'quran'];
+  // The screens of the active child (the nav tabs and the home button show on them).
+  const CHILD_SCREENS = ['home', 'prepare', 'recite', 'dictation', 'quran'];
+  // The screen of each kind of task.
+  const TASK_SCREENS = { recite: 'recite', dictation: 'dictation', quran: 'quran' };
   const MAX_IMAGE_EDGE = 2000;
   const JPEG_QUALITY = 0.85;
   const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -593,17 +612,26 @@
   // ===========================================================================
 
   const state = {
-    started: false, // the start screen was passed in this session
     screen: 'start',
-    consent: false, // never stored: asked again at the start of every session
+    // The parent's consent (family.js reads it from the family document): consent for the
+    // microphone and camera, aiConsent for what is sent to Claude when it is configured.
+    consent: false,
+    aiConsent: false,
     health: null,
     healthState: 'loading', // loading | ok | down
-    profile: defaultProfile(),
+    uiLang: defaultLang(), // the language of the interface (family.js: child or parent)
+    profile: defaultProfile(), // the active child (family.js: setChild)
+    childId: null,
     // langChosen: the parent picked the text language (or a photo set it); until then it
     // follows the interface language. confirmToken drops a confirmation overtaken by an edit.
     // noDictation: the server refused the confirmed text for dictation (a phrase is a whole
-    // ayah); it lasts until the text is changed or confirmed again.
-    page: { text: '', lang: 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0, noDictation: false },
+    // ayah); it lasts until the text is changed or confirmed again. noMeaning: the text has
+    // Quran words, so it may not be recited by meaning (/api/text/check "contextual": false).
+    page: emptyPage(defaultLang()),
+    // The task being done (family.js: startTask), or null in free practice:
+    // { kind, screen, quran: {surah, from, to, memory} | null, onResult, onLeave, saved }.
+    task: null,
+    hooks: {}, // set by family.js (setHooks)
     recording: null, // { control, recorder }
     // Bumped whenever spoken feedback that is still on its way must not play any more (a
     // recording starts, the screen changes, a new result arrives).
@@ -661,7 +689,7 @@
   }
 
   function uiLang() {
-    return state.profile.lang;
+    return state.uiLang;
   }
 
   /**
@@ -669,7 +697,12 @@
    * formatted here, in the current UI language, so they follow a language switch.
    */
   function t(key, vars) {
-    const table = STRINGS[uiLang()] || STRINGS.en;
+    return tIn(uiLang(), key, vars);
+  }
+
+  /** t() in a given language (the PIN dialog is in the parent's language on any screen). */
+  function tIn(lang, key, vars) {
+    const table = STRINGS[lang] || STRINGS.en;
     let s = table[key];
     if (s === undefined) s = STRINGS.en[key];
     if (s === undefined) return key;
@@ -677,19 +710,34 @@
       s = s.replace(/\{(\w+)\}/g, (m, name) => {
         const v = vars[name];
         if (v === undefined) return m;
-        return typeof v === 'number' ? fmtNum(v) : String(v);
+        return typeof v === 'number' ? fmtNum(v, lang) : String(v);
       });
     }
     return s;
   }
 
   /** A number in the UI language: Arabic-Indic digits in the Arabic UI, like the ayah markers. */
-  function fmtNum(n) {
-    if (uiLang() === 'ar') return arabicDigits(n);
+  function fmtNum(n, lang) {
+    const l = lang || uiLang();
+    if (l === 'ar') return arabicDigits(n);
     try {
-      return new Intl.NumberFormat(uiLang()).format(n);
+      return new Intl.NumberFormat(l).format(n);
     } catch (e) {
       return String(n);
+    }
+  }
+
+  /**
+   * Add string tables {en: {...}, fr: {...}, ar: {...}} (family.js). Keys already present
+   * are kept, so a module cannot change the app's own strings.
+   */
+  function addStrings(tables) {
+    for (const lang of LANGS) {
+      const add = tables && tables[lang];
+      if (!add) continue;
+      for (const [k, v] of Object.entries(add)) {
+        if (!(k in STRINGS[lang]) && typeof v === 'string') STRINGS[lang][k] = v;
+      }
     }
   }
 
@@ -782,50 +830,33 @@
   }
 
   // ===========================================================================
-  // Profile (localStorage only)
+  // The active child (family.js keeps the profiles in the family document)
   // ===========================================================================
 
-  function defaultProfile() {
-    let lang = 'en';
+  /** The browser's language when it is one of ours, else English (before family.js decides). */
+  function defaultLang() {
     try {
       const nav = (navigator.language || 'en').slice(0, 2).toLowerCase();
-      if (LANGS.includes(nav)) lang = nav;
+      if (LANGS.includes(nav)) return nav;
     } catch (e) {
       /* keep English */
     }
-    return { nickname: '', age: '6-9', lang, quran: { surah: DEFAULT_SURAH, from: 1, to: DEFAULT_RANGE, juzAmma: true } };
+    return 'en';
   }
 
-  function loadProfile() {
-    const base = defaultProfile();
-    try {
-      const raw = window.localStorage.getItem(PROFILE_KEY);
-      if (!raw) return base;
-      const p = JSON.parse(raw);
-      const out = Object.assign({}, base);
-      if (typeof p.nickname === 'string') out.nickname = p.nickname.slice(0, 24);
-      if (AGE_BANDS.includes(p.age)) out.age = p.age;
-      if (LANGS.includes(p.lang)) out.lang = p.lang;
-      if (p.quran && typeof p.quran === 'object') {
-        out.quran = {
-          surah: clampInt(p.quran.surah, 1, 114, base.quran.surah),
-          from: clampInt(p.quran.from, 1, 286, 1),
-          to: clampInt(p.quran.to, 1, 286, DEFAULT_RANGE),
-          juzAmma: p.quran.juzAmma !== false,
-        };
-      }
-      return out;
-    } catch (e) {
-      return base;
-    }
+  function defaultProfile() {
+    return { nickname: '', age: '6-9', lang: defaultLang(), quran: { surah: DEFAULT_SURAH, from: 1, to: DEFAULT_RANGE, juzAmma: true } };
   }
 
+  function emptyPage(lang) {
+    return { text: '', lang: lang || 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0, noDictation: false, noMeaning: false };
+  }
+
+  /** The Quran screen state of the child changed: family.js stores it (not during a task). */
   function saveProfile() {
-    try {
-      window.localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
-    } catch (e) {
-      /* private mode or storage blocked: the profile lasts for this session only */
-    }
+    if (state.task) return;
+    const cb = state.hooks.onQuranPrefs;
+    if (cb) cb(Object.assign({}, state.profile.quran));
   }
 
   function clampInt(v, lo, hi, fallback) {
@@ -865,9 +896,20 @@
     updateConsentExtra();
     updateHello();
     updateReciteModeLabel();
+    updateMeaningWhy();
     updateRecordButtons();
     renderSurahOptions();
     refreshGates();
+    if (state.hooks.onLanguage) state.hooks.onLanguage(lang);
+  }
+
+  /** Switch the interface language (and repaint) when it is not already `lang`. */
+  function setUiLang(lang) {
+    if (!LANGS.includes(lang) || lang === state.uiLang) return;
+    state.uiLang = lang;
+    // Until the parent picks the language of the text (or types one), it follows the UI.
+    if (!state.task && !state.page.langChosen && !state.page.confirmed && !$('#page-text').value.trim()) setPageLang(lang);
+    applyStrings();
   }
 
   // ===========================================================================
@@ -931,29 +973,32 @@
     return !!err && err.name === 'ApiError' && err.code === 'quran_text' && err.scope === 'phrase';
   }
 
-  // A line break between two lines of text (not a blank line).
-  const SINGLE_LINE_BREAK = /\S[^\S\n]*\n[^\S\n]*\S/;
+  /**
+   * /api/dictation/phrases for `text`. The server checks every phrase and every line of
+   * the text itself (a basmala on a line of its own gives quran_text with scope
+   * "phrase"), with the same rule as /api/text/check in mode "dictation".
+   */
+  function dictationPhrases(text, lang) {
+    return api('api/dictation/phrases', { json: { text, lang } });
+  }
 
   /**
-   * /api/dictation/phrases for `text`. The server joins the lines of a paragraph into
-   * one phrase, so a line that is a whole ayah (most often the basmala on a line of its
-   * own, without a full stop) would reach the voice glued to the next word, and be
-   * refused only once the dictation has started. So a text with such line breaks is
-   * also asked about with each line as a paragraph of its own; a refusal with scope
-   * "phrase" of that is thrown as the refusal of the text. Any other answer to the
-   * second question is ignored: the text itself was accepted.
+   * POST /api/text/check: {ok, words, dictation, contextual} for a text in `mode`
+   * ('strict' by default, 'contextual' or 'dictation'), or an ApiError with the codes of
+   * the other endpoints (empty_text, bad_text, text_too_long, unreadable_text,
+   * quran_text with scope "phrase" in mode dictation, lang_mismatch).
    */
-  async function dictationPhrases(text, lang) {
-    const res = await api('api/dictation/phrases', { json: { text, lang } });
-    if (SINGLE_LINE_BREAK.test(text)) {
-      const byLine = text.split('\n').map((line) => line.trim()).filter(Boolean).join('\n\n');
-      try {
-        await api('api/dictation/phrases', { json: { text: byLine, lang } });
-      } catch (err) {
-        if (isPhraseRefusal(err)) throw err;
-      }
-    }
-    return res;
+  async function checkText(text, lang, mode) {
+    const json = { text, lang };
+    if (mode && mode !== 'strict') json.mode = mode;
+    const res = await api('api/text/check', { json });
+    return {
+      ok: res && res.ok === true,
+      words: res && Number.isInteger(res.words) ? res.words : null,
+      // A missing flag counts as "possible": the server refuses later if it is not.
+      dictation: !(res && res.dictation === false),
+      contextual: !(res && res.contextual === false),
+    };
   }
 
   /** Server error codes with a message of their own. */
@@ -1007,6 +1052,7 @@
     updateOfflineNotes();
     refreshGates();
     if (state.screen === 'quran') enterQuran();
+    if (state.hooks.onHealth) state.hooks.onHealth(state.health ? Object.assign({}, state.health) : null);
   }
 
   // ===========================================================================
@@ -1026,7 +1072,7 @@
       else if (need === 'brain' && h.brain !== 'claude') return 'no_brain';
       else if (need === 'quran' && !h.quran) return 'no_quran';
       else if (need === 'consent' && !state.consent) return 'consent_needed';
-      else if (need === 'ai-consent' && h.brain === 'claude' && !state.consent) return 'consent_needed_ai';
+      else if (need === 'ai-consent' && h.brain === 'claude' && !state.aiConsent) return 'consent_needed_ai';
       else if (need === 'mic' && !(window.MommyRecorder && window.MommyRecorder.isSupported())) return 'no_mic_support';
       else if (need === 'dictation' && state.page.noDictation) return 'error_quran_phrase';
     }
@@ -1046,11 +1092,16 @@
       const recordingHere = state.recording && state.recording.control.button === ctl;
       // While one recording runs, the other record buttons wait.
       const otherRecording = state.recording !== null && !recordingHere && (ctl.classList.contains('rec-btn') || ctl.classList.contains('rec-pill'));
-      const disabled = !recordingHere && (reason !== null || busy || otherRecording);
+      // data-locked: fixed by the task being done (the Quran range of a Quran task).
+      const locked = ctl.dataset.locked === '1';
+      const disabled = !recordingHere && (reason !== null || busy || otherRecording || locked);
       ctl.disabled = disabled;
       const label = ctl.closest('[data-gate-label]');
       if (label) label.classList.toggle('is-disabled', disabled);
-      const why = $('[data-why="' + ctl.dataset.gate + '"]');
+      // The explanation on the same screen (the task form has its own "prep-photo" one).
+      const sel = '[data-why="' + ctl.dataset.gate + '"]';
+      const scope = ctl.closest('.stage, .screen');
+      const why = (scope && $(sel, scope)) || $(sel);
       if (why) {
         if (!why.id) why.id = 'why-' + ctl.dataset.gate + '-' + Math.random().toString(36).slice(2, 8);
         if (reason) ctl.setAttribute('aria-describedby', why.id);
@@ -1084,13 +1135,14 @@
     else node.disabled = !!busy;
   }
 
+  /** What the consent boxes say about Claude (setup and Settings): it depends on /api/health. */
   function updateConsentExtra() {
-    const node = $('#consent-extra');
-    if (!node) return;
-    if (state.health && state.health.brain === 'claude') setT(node, 'consent_claude');
-    else if (state.health) setT(node, 'consent_offline');
-    else setT(node, null);
-    node.hidden = !state.health;
+    for (const node of $$('.consent-extra')) {
+      if (state.health && state.health.brain === 'claude') setT(node, 'consent_claude');
+      else if (state.health) setT(node, 'consent_offline');
+      else setT(node, null);
+      node.hidden = !state.health;
+    }
   }
 
   function updateOfflineNotes() {
@@ -1104,7 +1156,7 @@
 
   function go(screen) {
     if (!SCREENS.includes(screen)) screen = 'start';
-    if (!state.started) screen = 'start';
+    screen = route(screen);
     if (location.hash !== '#' + screen) {
       location.hash = screen; // the hashchange handler shows it
     } else {
@@ -1112,86 +1164,59 @@
     }
   }
 
+  /** The screen to show for `screen`: family.js decides (setup, who is learning, PIN). */
+  function route(screen) {
+    const s = SCREENS.includes(screen) ? screen : 'start';
+    if (!state.hooks.route) return 'start';
+    const r = state.hooks.route(s);
+    return SCREENS.includes(r) ? r : 'start';
+  }
+
   function onHashChange() {
     const wanted = (location.hash || '').replace(/^#/, '');
-    let screen = SCREENS.includes(wanted) ? wanted : 'start';
-    if (!state.started) screen = 'start';
+    const screen = route(wanted);
+    // A screen that is not allowed (the parent area without the PIN, a child screen with
+    // no child chosen) is replaced in the history, not added to it.
+    if (screen !== wanted) history.replaceState(null, '', '#' + screen);
     showScreen(screen);
   }
 
   function showScreen(screen) {
+    // Leaving the screen of a task (back button, home button, a tab) leaves the task.
+    if (state.task && screen !== state.task.screen) endTask();
     if (state.screen !== screen) leaveScreen(state.screen);
     state.screen = screen;
+    // The child's screens are in the child's language, the parent area in the parent's.
+    const lang = state.hooks.langFor ? state.hooks.langFor(screen) : null;
+    if (lang) setUiLang(lang);
     for (const section of $$('.screen')) section.hidden = section.dataset.screen !== screen;
     for (const tab of $$('#nav .tab')) {
       if (tab.dataset.go === screen) tab.setAttribute('aria-current', 'page');
       else tab.removeAttribute('aria-current');
     }
-    $('#nav').hidden = !state.started;
-    $('#btn-profile').hidden = !state.started;
+    const childScreen = CHILD_SCREENS.includes(screen) && state.childId !== null;
+    // During a task the banner leads back: no tabs to other activities.
+    $('#nav').hidden = !childScreen || !!state.task;
+    $('#btn-home').hidden = !childScreen || screen === 'home';
+    $('#task-banner').hidden = !state.task;
     if (screen === 'recite') enterRecite();
     else if (screen === 'dictation') enterDictation();
     else if (screen === 'quran') enterQuran();
     else if (screen === 'prepare') enterPrepare();
+    if (state.hooks.enter) state.hooks.enter(screen);
     window.scrollTo(0, 0);
     const heading = $('.screen:not([hidden]) h1');
-    if (heading && state.started) {
+    if (heading && state.hooks.route) {
       heading.setAttribute('tabindex', '-1');
       heading.focus({ preventScroll: true });
     }
   }
 
-  function leaveScreen() {
+  function leaveScreen(screen) {
     state.speechToken++; // feedback still being fetched is not played on another screen
     cancelRecording();
     player.stop();
-  }
-
-  // ===========================================================================
-  // Start screen
-  // ===========================================================================
-
-  function initStart() {
-    const form = $('#profile-form');
-    $('#nickname').value = state.profile.nickname;
-    $('#age').value = state.profile.age;
-    $('#ui-lang').value = state.profile.lang;
-    $('#consent').checked = state.consent;
-
-    $('#ui-lang').addEventListener('change', (e) => {
-      const lang = e.target.value;
-      if (!LANGS.includes(lang)) return;
-      state.profile.lang = lang;
-      // Until the parent picks the language of the text (or types one), it is the one
-      // picked here. "Confirm text" also checks the script of the text.
-      if (!state.page.langChosen && !state.page.confirmed && !$('#page-text').value.trim()) setPageLang(lang);
-      saveProfile();
-      applyStrings();
-    });
-    $('#age').addEventListener('change', (e) => {
-      if (AGE_BANDS.includes(e.target.value)) {
-        state.profile.age = e.target.value;
-        saveProfile();
-      }
-    });
-    $('#nickname').addEventListener('change', (e) => {
-      state.profile.nickname = e.target.value.trim().slice(0, 24);
-      saveProfile();
-      updateHello();
-    });
-    $('#consent').addEventListener('change', (e) => {
-      state.consent = e.target.checked;
-      if (!state.consent) cancelRecording();
-      refreshGates();
-    });
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      state.profile.nickname = $('#nickname').value.trim().slice(0, 24);
-      saveProfile();
-      updateHello();
-      state.started = true;
-      go(state.page.confirmed ? 'recite' : 'prepare');
-    });
+    if (state.hooks.leave) state.hooks.leave(screen);
   }
 
   function updateHello() {
@@ -1594,6 +1619,7 @@
     // A confirmation still waiting for the server is for the old text: drop it.
     state.page.confirmToken++;
     setNoDictation(false);
+    setNoMeaning(false);
     setBusy($('#btn-confirm'), false);
     if (!state.page.confirmed) {
       if (status.dataset.i18n === 'checking_text') clearStatus(status);
@@ -1685,22 +1711,28 @@
     const lang = $('#page-lang').value;
     const token = ++state.page.confirmToken;
     let noDictation = false;
+    let noMeaning = false;
     setStatus(status, 'checking_text');
     setBusy(btn, true);
     try {
-      const res = await dictationPhrases(text, lang);
+      // One check (mode strict) answers for the three uses: reciting word by word (the
+      // call succeeds), by meaning ("contextual") and dictation ("dictation"); the server
+      // checks every phrase and every line for dictation itself.
+      const res = await checkText(text, lang, 'strict');
       if (token !== state.page.confirmToken) return;
-      const phrases = Array.isArray(res.phrases) ? res.phrases.filter((p) => typeof p === 'string' && p.trim()) : null;
-      if (phrases && !phrases.length) {
+      if (res.words === 0) {
         refuseText(status, { key: 'error_no_words' });
         return;
       }
+      // A phrase that is a whole ayah (often the basmala on its own line) only rules out
+      // dictation, which would read it aloud, and recitation by meaning, which an AI would
+      // judge: the text can still be recited word by word.
+      noDictation = !res.dictation;
+      noMeaning = !res.contextual;
     } catch (err) {
       if (token !== state.page.confirmToken) return;
       // A refused text is not confirmed. If the server cannot be reached, the text is
       // confirmed anyway: each activity reports the problem when it needs the server.
-      // A phrase that is a whole ayah (often the basmala on its own line) only rules out
-      // dictation, which would read it aloud: the text can still be recited.
       if (isPhraseRefusal(err)) {
         noDictation = true;
       } else if (err && err.name === 'ApiError' && err.status >= 400 && err.status < 500) {
@@ -1712,8 +1744,9 @@
     }
     state.page.text = text;
     state.page.lang = lang;
+    setNoMeaning(noMeaning);
     const mode = $('input[name="mode"]:checked');
-    state.page.mode = mode && mode.value === 'contextual' ? 'contextual' : 'strict';
+    state.page.mode = mode && mode.value === 'contextual' && !noMeaning ? 'contextual' : 'strict';
     state.page.confirmed = true;
     setNoDictation(noDictation);
     resetRecite();
@@ -1734,10 +1767,44 @@
     refreshGates();
   }
 
+  /**
+   * Recitation by meaning is ruled out for the confirmed text (it has Quran words), or
+   * allowed again: "The meaning" is disabled with the reason, and "Word by word" chosen.
+   */
+  function setNoMeaning(on) {
+    state.page.noMeaning = !!on;
+    if (on) {
+      const strict = $('input[name="mode"][value="strict"]');
+      if (strict && !strict.checked) {
+        strict.checked = true;
+        state.page.mode = 'strict';
+        updateReciteModeLabel();
+        resetRecite();
+      }
+    }
+    updateMeaningWhy();
+  }
+
+  /** The disabled "The meaning" option and its reason follow state.page (and a task's lock). */
+  function updateMeaningWhy() {
+    const why = $('#mode-meaning-why');
+    if (!why) return;
+    const off = state.page.noMeaning && !state.task;
+    const radio = $('input[name="mode"][value="contextual"]');
+    if (radio && !state.task) radio.disabled = off;
+    if (off) {
+      if (why.dataset.i18n !== 'mode_meaning_off') setT(why, 'mode_meaning_off');
+    } else if (why.dataset.i18n) {
+      setT(why, null);
+    }
+    why.hidden = !off;
+  }
+
   /** The text in the textarea cannot be used: say why ({key, action}) and unconfirm it. */
   function refuseText(status, info) {
     state.page.confirmed = false;
     setNoDictation(false);
+    setNoMeaning(false);
     $('#prep-next').hidden = true;
     setStatus(status, info.key, null, { error: true, action: info.action });
   }
@@ -1758,6 +1825,7 @@
       onBlob: checkRecitation,
       beforeStart: () => {
         $('#recite-result').hidden = true;
+        clearTaskOutcome('recite');
         showPlainPage();
         return true;
       },
@@ -1794,6 +1862,7 @@
     $('#recite-text').textContent = '';
     $('#recite-result').hidden = true;
     clearStatus($('#recite-status'));
+    clearTaskOutcome('recite');
     state.recite.lastFeedback = null;
     state.recite.feedbackBlob = null;
   }
@@ -1807,15 +1876,19 @@
     form.append('mode', state.page.mode);
     form.append('age', state.profile.age);
     setStatus(status, 'checking');
+    const task = state.task; // a task started or left meanwhile drops this answer
     let res;
     try {
       res = await api('api/recite/check', { form });
     } catch (err) {
+      if (state.task !== task) return;
       showError(status, err);
       return;
     }
+    if (state.task !== task) return;
     clearStatus(status);
     showReciteResult(res, info);
+    notifyTask('recite', res);
   }
 
   /** Non-empty strings of a list of ideas from the judgement. */
@@ -1825,6 +1898,7 @@
 
   function showReciteResult(res, info) {
     state.speechToken++; // the voice of an older result is not wanted any more
+    clearTaskOutcome('recite');
     const lang = state.page.lang;
     const box = $('#recite-result');
     const quality = res.quality || {};
@@ -2014,6 +2088,7 @@
     $('#dict-written').value = '';
     $('#dict-read-text').value = '';
     for (const id of ['#dict-intro-status', '#dict-speak-status', '#dict-check-status', '#dict-review-status', '#dict-child-status']) clearStatus($(id));
+    clearTaskOutcome('dictation');
     updateReviewConfirm();
     setDictStage('intro');
   }
@@ -2214,10 +2289,13 @@
     for (const b of buttons) setBusy(b, true);
     d.checking = true;
     updateReviewConfirm();
+    const task = state.task; // a task started or left meanwhile drops this answer
     let res;
     try {
       res = await api('api/dictation/check', { form });
+      if (state.task !== task) return;
     } catch (err) {
+      if (state.task !== task) return;
       if (err && err.code === 'needs_manual') {
         setStatus(status, 'needs_manual_writing', null, { error: true });
         $('#dict-written').focus();
@@ -2284,9 +2362,12 @@
     fb.textContent = d.result.feedback ? d.result.feedback.text : '';
     setTextLang(fb, lang);
     $('#dict-listen').hidden = !d.result.feedback;
+    clearTaskOutcome('dictation');
     setDictStage('child');
     $('#dict-main [data-stage="child"]').focus({ preventScroll: true });
     playFeedback('dictation', true);
+    // The result the parent confirmed is the one that counts for a task.
+    notifyTask('dictation', d.result.res);
   }
 
   // ===========================================================================
@@ -2307,6 +2388,7 @@
       beforeStart: () => {
         if (!state.quran.loaded) return false;
         $('#quran-result').hidden = true;
+        clearTaskOutcome('quran');
         clearQuranMarks();
         return true;
       },
@@ -2335,11 +2417,11 @@
       applyQuranMode();
     });
     $('#quran-juz').addEventListener('change', (e) => {
-      state.profile.quran.juzAmma = e.target.checked;
+      quranPrefs().juzAmma = e.target.checked;
       saveProfile();
       renderSurahOptions(); // may move the chosen surah into Juz' Amma
       const loaded = state.quran.loaded;
-      if (loaded && loaded.surah !== state.profile.quran.surah) onSurahChange();
+      if (loaded && loaded.surah !== quranPrefs().surah) onSurahChange();
     });
     $('#quran-surah').addEventListener('change', onSurahChange);
     for (const id of ['#quran-from', '#quran-to']) {
@@ -2357,6 +2439,32 @@
     }
   }
 
+  /**
+   * The Quran range shown: a Quran task's own range while it runs (never saved to the
+   * child's profile), else the child's last range.
+   */
+  function quranPrefs() {
+    return state.task && state.task.quran ? state.task.quran : state.profile.quran;
+  }
+
+  let surahsPromise = null;
+
+  /** The surah list (/api/quran/surahs), fetched once; a failure is retried next time. */
+  function loadSurahs() {
+    const q = state.quran;
+    if (q.surahs.length) return Promise.resolve(q.surahs);
+    if (!surahsPromise) {
+      surahsPromise = api('api/quran/surahs').then((res) => {
+        q.surahs = Array.isArray(res.surahs) ? res.surahs.filter((s) => s && Number.isInteger(s.number)) : [];
+        if (typeof res.attribution === 'string' && res.attribution) $('#quran-attribution').textContent = res.attribution;
+        return q.surahs;
+      }).finally(() => {
+        surahsPromise = null;
+      });
+    }
+    return surahsPromise;
+  }
+
   async function enterQuran() {
     if (!isOpen('quran')) return;
     const q = state.quran;
@@ -2364,9 +2472,7 @@
       const status = $('#quran-load-status');
       setStatus(status, 'loading');
       try {
-        const res = await api('api/quran/surahs');
-        q.surahs = Array.isArray(res.surahs) ? res.surahs.filter((s) => s && Number.isInteger(s.number)) : [];
-        if (typeof res.attribution === 'string' && res.attribution) $('#quran-attribution').textContent = res.attribution;
+        await loadSurahs();
         clearStatus(status);
       } catch (err) {
         showError(status, err);
@@ -2391,7 +2497,7 @@
     const select = $('#quran-surah');
     if (!select) return;
     const q = state.quran;
-    const prefs = state.profile.quran;
+    const prefs = quranPrefs();
     $('#quran-juz').checked = prefs.juzAmma;
     if (!q.surahs.length) return;
     const list = prefs.juzAmma ? q.surahs.filter((s) => s.number >= JUZ_AMMA_FIRST) : q.surahs;
@@ -2420,7 +2526,7 @@
   }
 
   function onSurahChange() {
-    const prefs = state.profile.quran;
+    const prefs = quranPrefs();
     const n = Number($('#quran-surah').value);
     const info = surahInfo(n);
     if (!info) return;
@@ -2433,7 +2539,7 @@
   }
 
   function onRangeChange() {
-    const prefs = state.profile.quran;
+    const prefs = quranPrefs();
     const info = surahInfo(prefs.surah);
     if (!info) return;
     const count = info.ayah_count;
@@ -2454,7 +2560,7 @@
 
   async function loadAyat() {
     const q = state.quran;
-    const prefs = state.profile.quran;
+    const prefs = quranPrefs();
     const info = surahInfo(prefs.surah);
     if (!info) return;
     const count = info.ayah_count;
@@ -2597,17 +2703,23 @@
     form.append('from', String(loaded.from));
     form.append('to', String(loaded.to));
     setStatus(status, 'checking');
+    const task = state.task; // a task started or left meanwhile drops this answer
     let res;
     try {
       res = await api('api/quran/check', { form });
     } catch (err) {
+      if (state.task !== task) return;
       showError(status, err);
       return;
     }
+    if (state.task !== task) return;
     clearStatus(status);
     if (q.loaded !== loaded) return;
     showQuranResult(res);
     $('#quran-limit').hidden = !(info && info.limit);
+    // A Quran task counts only a check of exactly its own range.
+    const tq = task && task.quran;
+    if (tq && loaded.surah === tq.surah && loaded.from === tq.from && loaded.to === tq.to) notifyTask('quran', res);
   }
 
   /**
@@ -2666,6 +2778,7 @@
   function showQuranResult(res) {
     const q = state.quran;
     const sayAgain = !!res.say_again || res.verdict === 'unclear';
+    clearTaskOutcome('quran');
     clearQuranMarks();
     if (!sayAgain) {
       const { byWord, insBefore, insEnd } = quranWordMarks(res);
@@ -2759,9 +2872,13 @@
       const title = el('p', { class: 'cand-title' });
       setT(title, 'found_at', { name, s: Number(c.surah), a: Number(c.ayah) });
       const preview = el('p', { class: 'cand-preview quran-font', lang: 'ar', dir: 'rtl' }, onlyText(c.display_preview));
-      const btn = el('button', { type: 'button', class: 'btn btn-small' });
-      setT(btn, 'go_there');
-      btn.addEventListener('click', () => goToAyah(c));
+      // A Quran task keeps its own range: no jump elsewhere while it runs.
+      let btn = null;
+      if (!state.task) {
+        btn = el('button', { type: 'button', class: 'btn btn-small' });
+        setT(btn, 'go_there');
+        btn.addEventListener('click', () => goToAyah(c));
+      }
       list.append(el('li', { class: 'candidate' }, [title, preview, btn]));
     }
     list.hidden = false;
@@ -2770,7 +2887,7 @@
   async function goToAyah(c) {
     const info = surahInfo(c.surah);
     if (!info) return;
-    const prefs = state.profile.quran;
+    const prefs = quranPrefs();
     if (info.number < JUZ_AMMA_FIRST && prefs.juzAmma) prefs.juzAmma = false;
     prefs.surah = info.number;
     prefs.from = clampInt(c.ayah, 1, info.ayah_count, 1);
@@ -2786,13 +2903,311 @@
   }
 
   // ===========================================================================
+  // The active child, the parent's consent (family.js)
+  // ===========================================================================
+
+  /**
+   * The active child, from the family document: {id, nickname, age, lang, quran: {surah,
+   * from, to, juzAmma}}, or null (nobody chosen yet). Another child starts with an empty
+   * page; a task in progress ends.
+   */
+  function setChild(child) {
+    const prev = state.childId;
+    if (!child) {
+      state.childId = null;
+      state.profile = defaultProfile();
+    } else {
+      const q = child.quran || {};
+      state.childId = child.id;
+      state.profile = {
+        nickname: onlyText(child.nickname),
+        age: AGE_BANDS.includes(child.age) ? child.age : '6-9',
+        lang: LANGS.includes(child.lang) ? child.lang : state.uiLang,
+        quran: {
+          surah: clampInt(q.surah, 1, 114, DEFAULT_SURAH),
+          from: clampInt(q.from, 1, 286, 1),
+          to: clampInt(q.to, 1, 286, DEFAULT_RANGE),
+          juzAmma: q.juzAmma !== false,
+        },
+      };
+    }
+    if (prev !== state.childId) {
+      if (state.task) endTask();
+      resetFreePractice();
+    }
+    updateHello();
+    renderSurahOptions();
+  }
+
+  /** Free practice starts again: no page, no result (another child, or after a task). */
+  function resetFreePractice() {
+    const token = state.page.confirmToken + 1;
+    state.page = emptyPage(state.profile.lang);
+    state.page.confirmToken = token;
+    $('#page-text').value = '';
+    setPageLang(state.page.lang);
+    const strict = $('input[name="mode"][value="strict"]');
+    if (strict) strict.checked = true;
+    for (const id of ['#prep-status', '#prep-quran-note', '#prep-confirm-status']) clearStatus($(id));
+    $('#prep-next').hidden = true;
+    setBusy($('#btn-confirm'), false);
+    updateMeaningWhy();
+    resetRecite();
+    resetDictation();
+    state.quran.loaded = null;
+    updateReciteModeLabel();
+    renderLegends();
+    refreshGates();
+  }
+
+  /** The parent's consent: {consent} for the microphone and camera, {aiConsent} for Claude. */
+  function setConsent(c) {
+    state.consent = !!(c && c.consent);
+    state.aiConsent = !!(c && c.aiConsent);
+    if (!state.consent) cancelRecording();
+    refreshGates();
+  }
+
+  // ===========================================================================
+  // Tasks (family.js): open a screen preloaded, lock it, report each result
+  // ===========================================================================
+
+  const QURAN_LOCKED = ['#quran-juz', '#quran-surah', '#quran-from', '#quran-to'];
+
+  /**
+   * Start a task. spec: {kind: 'recite' | 'dictation' | 'quran',
+   *   text, lang (recite, dictation), mode: 'strict' | 'contextual' (recite only),
+   *   quran: {surah, from, to, memory} (quran only),
+   *   onResult(response, outcomeNode): each check result of the task (recite and Quran:
+   *     every result shown; dictation: the result the parent confirmed), with the empty
+   *     node of the result card where the task's outcome goes;
+   *   onLeave(): the task was left (any way: the banner, the home button, another screen)}.
+   * The text was checked when the task was made, so it counts as confirmed. The
+   * free-practice page is kept aside and comes back when the task is left. Recite: the
+   * mode is fixed (the selector is disabled). Quran: the surah, the range and looking or
+   * from memory are fixed (there is no mode selector for the Quran). Returns true.
+   */
+  function startTask(spec) {
+    if (!spec || !TASK_SCREENS[spec.kind] || state.childId === null) return false;
+    if (state.task) endTask();
+    const kind = spec.kind;
+    const checkedMode = $('input[name="mode"]:checked');
+    const checkedQmode = $('input[name="qmode"]:checked');
+    const task = {
+      kind,
+      screen: TASK_SCREENS[kind],
+      quran: null,
+      onResult: typeof spec.onResult === 'function' ? spec.onResult : null,
+      onLeave: typeof spec.onLeave === 'function' ? spec.onLeave : null,
+      saved: { page: state.page, mode: checkedMode ? checkedMode.value : 'strict', qmode: checkedQmode ? checkedQmode.value : 'looking' },
+    };
+    cancelRecording();
+    player.stop();
+    if (kind === 'quran') {
+      const q = spec.quran || {};
+      const surah = clampInt(q.surah, 1, 114, DEFAULT_SURAH);
+      const from = clampInt(q.from, 1, 286, 1);
+      const to = clampInt(q.to, from, Math.min(286, from + MAX_AYAT - 1), from);
+      task.quran = { surah, from, to, juzAmma: surah >= JUZ_AMMA_FIRST, memory: !!q.memory };
+    }
+    state.task = task;
+    if (kind === 'quran') {
+      for (const sel of QURAN_LOCKED) $(sel).dataset.locked = '1';
+      for (const r of $$('input[name="qmode"]')) {
+        r.dataset.locked = '1';
+        r.checked = r.value === (task.quran.memory ? 'memory' : 'looking');
+      }
+      resetQuranView();
+      renderSurahOptions();
+    } else {
+      const lang = LANGS.includes(spec.lang) ? spec.lang : state.profile.lang;
+      state.page = Object.assign(emptyPage(lang), {
+        text: onlyText(spec.text),
+        mode: kind === 'recite' && spec.mode === 'contextual' ? 'contextual' : 'strict',
+        confirmed: true,
+        langChosen: true,
+        confirmToken: task.saved.page.confirmToken + 1,
+      });
+      lockMode(state.page.mode);
+      resetRecite();
+      resetDictation();
+      renderLegends();
+      updateReciteModeLabel();
+    }
+    refreshGates();
+    go(task.screen);
+    return true;
+  }
+
+  /** End the running task: the free-practice state comes back. */
+  function endTask() {
+    const task = state.task;
+    if (!task) return;
+    state.task = null;
+    state.speechToken++;
+    cancelRecording();
+    player.stop();
+    if (task.kind === 'quran') {
+      for (const sel of QURAN_LOCKED) delete $(sel).dataset.locked;
+      for (const r of $$('input[name="qmode"]')) {
+        delete r.dataset.locked;
+        r.checked = r.value === task.saved.qmode;
+      }
+      resetQuranView();
+      renderSurahOptions();
+    } else {
+      state.page = task.saved.page;
+      state.page.confirmToken += 2; // a confirmation still on its way is for another state
+      unlockMode(task.saved.mode);
+      resetRecite();
+      resetDictation();
+      renderLegends();
+      updateReciteModeLabel();
+    }
+    for (const kind of Object.keys(TASK_SCREENS)) clearTaskOutcome(kind);
+    $('#task-banner').hidden = true;
+    refreshGates();
+    if (task.onLeave) task.onLeave();
+  }
+
+  /** "Back to my tasks": end the task and show the child's home. */
+  function leaveTask() {
+    endTask();
+    go('home');
+  }
+
+  /** The Quran screen shows nothing loaded: the next visit loads its range afresh. */
+  function resetQuranView() {
+    const q = state.quran;
+    q.loadToken++;
+    q.loaded = null;
+    q.ayat = [];
+    q.words = [];
+    q.revealed = false;
+    q.hintStart = 0;
+    q.hintEnd = 0;
+    $('#quran-text').textContent = '';
+    $('#quran-result').hidden = true;
+    $('#quran-where-list').hidden = true;
+    clearStatus($('#quran-where-status'));
+    clearStatus($('#quran-status'));
+    $('#quran-range-note').hidden = true;
+  }
+
+  /** The recite mode of a task: the selector (on Prepare) shows it and cannot change. */
+  function lockMode(mode) {
+    for (const r of $$('input[name="mode"]')) {
+      r.checked = r.value === mode;
+      r.disabled = true;
+    }
+    updateMeaningWhy();
+  }
+
+  function unlockMode(value) {
+    for (const r of $$('input[name="mode"]')) {
+      r.checked = r.value === value;
+      r.disabled = false;
+    }
+    updateMeaningWhy(); // "The meaning" stays disabled for a text with Quran words
+  }
+
+  function clearTaskOutcome(kind) {
+    const node = $('#task-outcome-' + kind);
+    if (!node) return;
+    node.textContent = '';
+    node.hidden = true;
+  }
+
+  /** Give a check result of the running task to family.js, with the node for its outcome. */
+  function notifyTask(kind, res) {
+    const task = state.task;
+    if (!task || task.kind !== kind || !task.onResult) return;
+    task.onResult(res, $('#task-outcome-' + kind));
+  }
+
+  /**
+   * Read a page photo for the task form, as Prepare does: resized in the browser to a
+   * JPEG of at most 2000 px (no EXIF), then /api/page/read. Rejects with an ApiError, or
+   * an Error for a picture that cannot be opened.
+   */
+  async function readPage(file, lang) {
+    let jpeg = await shrinkImage(file);
+    const form = new FormData();
+    form.append('image', jpeg, 'page.jpg');
+    form.append('lang', LANGS.includes(lang) ? lang : state.uiLang);
+    jpeg = null;
+    return api('api/page/read', { form });
+  }
+
+  // ===========================================================================
+  // Hooks for family.js (window.MommyApp)
+  // ===========================================================================
+
+  let booted = false;
+
+  /**
+   * family.js: {route(screen) -> screen, langFor(screen) -> lang | null, enter(screen),
+   * leave(screen), onQuranPrefs(prefs), onLanguage(lang), onHealth(health)}.
+   */
+  function setHooks(hooks) {
+    state.hooks = Object.assign({}, hooks || {});
+    if (booted) bootScreen();
+  }
+
+  /** The AI disclosure is shown at the start of every session: setup or "Who is learning?". */
+  function bootScreen() {
+    const first = route('start');
+    history.replaceState(null, '', '#' + first);
+    showScreen(first);
+  }
+
+  const appApi = Object.freeze({
+    // strings, numbers, text direction
+    t,
+    tIn,
+    setT,
+    addStrings,
+    fmtNum,
+    arabicDigits,
+    asciiDigits,
+    uiLang,
+    setUiLang,
+    dirOf,
+    setTextLang,
+    el,
+    // status lines and errors (localized; the server's English message is never shown)
+    setStatus,
+    clearStatus,
+    showError,
+    errorInfo,
+    isPhraseRefusal,
+    // server
+    api,
+    checkText,
+    readPage,
+    takeFile,
+    loadSurahs,
+    health: () => (state.health ? Object.assign({}, state.health) : null),
+    // navigation and gates
+    setHooks,
+    go,
+    screen: () => state.screen,
+    refreshGates,
+    isOpen,
+    // the active child, the parent's consent
+    setChild,
+    setConsent,
+    // tasks
+    startTask,
+    leaveTask,
+    taskRunning: () => state.task !== null,
+  });
+
+  // ===========================================================================
   // Boot
   // ===========================================================================
 
   function init() {
-    state.profile = loadProfile();
-    state.page.lang = state.profile.lang;
-    initStart();
     initPrepare();
     initRecite();
     initDictation();
@@ -2801,10 +3216,8 @@
     for (const btn of $$('[data-go]')) {
       btn.addEventListener('click', () => go(btn.dataset.go));
     }
-    $('#btn-profile').addEventListener('click', () => {
-      state.started = true;
-      go('start');
-    });
+    $('#btn-home').addEventListener('click', () => go('home'));
+    $('#task-leave').addEventListener('click', leaveTask);
     $('#btn-retry').addEventListener('click', loadHealth);
     window.addEventListener('hashchange', onHashChange);
     // Release the microphone if the page is hidden or closed mid-recording.
@@ -2816,10 +3229,13 @@
     });
     window.addEventListener('pagehide', () => cancelRecording());
 
+    // The handshake with family.js (see the header): whichever runs second connects.
+    window.MommyApp = appApi;
+    if (window.MommyFamily && typeof window.MommyFamily.attach === 'function') window.MommyFamily.attach(appApi);
+
     applyStrings();
-    // The AI disclosure is shown at the start of every session.
-    if (location.hash && location.hash !== '#start') history.replaceState(null, '', '#start');
-    showScreen('start');
+    booted = true;
+    bootScreen();
     loadHealth();
   }
 
