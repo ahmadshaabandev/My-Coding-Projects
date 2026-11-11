@@ -170,13 +170,19 @@ def token_spans(text: str, lang: Lang) -> list[tuple[int, int]]   # extra: chara
 def has_arabic(text: str) -> bool; def is_arabic_char(c: str) -> bool   # extra
 # Speech only (extra), used by align.speech_joins and recitation_key:
 def digit_number(token: str, lang: Lang) -> str | None      # "12"/"١٢" -> "c12"; "21st", "1er", "2e" -> "o21", "o1", "o2"
-def spoken_number(tokens: Sequence[str], lang: Lang) -> str | None   # number words 0..100 -> the same values
+def spoken_number(tokens: Sequence[str], lang: Lang, *, conjunction: bool = False) -> str | None
+# number words 0..100 -> the same values as digit_number
 def is_number_word(token: str, lang: Lang) -> bool
 # en: zero..one hundred, "twenty five"/"twenty-five", ordinals (third, twenty-first);
 # fr: zéro..cent with "et", hyphens, soixante-dix, quatre-vingt(s), the Belgian/Swiss
 # septante/huitante/octante/nonante, ordinals (premier/première, deuxième, ...);
-# ar: both genders and cases (ثلاثة/ثلاث, عشرون/عشرين, اثنا عشر/اثنتي عشرة, واحد وعشرون
-# with و joined or apart, مائة/مئة).
+# ar: both genders and cases give one value (ثلاثة/ثلاث, عشرون/عشرين, اثنا عشر/اثنتي
+# عشرة/إثنى عشر, واحد وعشرون/إحدى وعشرين/أحد وعشرين with و joined or apart, مائة/مئة/مية,
+# the accusative with tanwin on an added alef: واحدًا, أربعًا, عشرًا, ثلاثًا وعشرين). A
+# word whose vowel marks rule the number out is not one (سَبُع a beast of prey, خُمُس a
+# fifth, تَسَعُ "holds", عُشْر a tenth, صَفَر the month); without marks سبع is seven.
+# conjunction=True (Arabic, used by speech_joins): a number led by و (وثلاث, و ثلاثة)
+# keeps it in the value ("وc3"), which equals no number without it and no digit value.
 def fold_english_spelling(key: str) -> str   # colour -> color, centre -> center, realise -> realize, ...
 def english_expansions(token: str) -> tuple[tuple[str, ...], ...]   # "they're" -> (("they", "are"),)
 ```
@@ -213,14 +219,23 @@ def align(expected: list[str], heard: list[str], key: Callable[[str], str]) -> l
 def align_with_joins(expected, heard, key, *, max_pieces=3, extra_joins=None) -> list[Op]   # extra
 # Speech only: an expected word equal to 2..3 heard tokens joined (or the reverse) is a
 # match at no cost; extra_joins = (join_heard, join_exp) adds caller equivalences
-# {(i, j): [k, ...]} (expected[i] ~ heard[j:j+k], expected[i:i+k] ~ heard[j]).
-def speech_joins(expected, heard, lang) -> tuple[dict, dict]   # extra
+# {(i, j): [k, ...]} (expected[i] ~ heard[j:j+k], expected[i:i+k] ~ heard[j]), and
+# extra_joins = (join_heard, join_exp, blocks) also blocks {(i, j): [(a, b), ...]}
+# (expected[i:i+a] ~ heard[j:j+b]): one move, matched as a whole or not at all, whose
+# ops pair the words in order (the last expected word takes the remaining heard words,
+# or the remaining expected words share the last heard word).
+Joins = Mapping[tuple[int, int], Sequence[int]]; Blocks = Mapping[tuple[int, int], Sequence[tuple[int, int]]]   # extra
+def speech_joins(expected, heard, lang) -> tuple[dict, dict, dict]   # extra: (join_heard, join_exp, blocks)
 # A number in digits matches the same number in 1..3 words on the other side (0..100,
-# en/fr/ar, see textnorm), and an English contraction matches its full form.
+# en/fr/ar, see textnorm); Arabic numbers in 1..3 words match by value on both sides, in
+# any gender or case (اثنتا عشرة = اثنا عشر = إثنى عشر, ثلاثة = ثلاث, عشرون = عشرين,
+# واحد وعشرون = إحدى وعشرين, وأربع = وأربعة, أربعًا = أربعة; ثلاثة != أربعة; سَبُع !=
+# سبعة); an English contraction matches its full form.
 def check_recitation(expected_text: str, heard_text: str, lang: Lang) -> CheckResult
 # Speech: recitation_key (normalize_word without tashkeel and accents, no hyphens or
 # apostrophes; English British spellings folded onto American), align_with_joins with
-# speech_joins.
+# speech_joins. Quran.check uses recitation_key but not speech_joins: there, a number
+# word said in another gender or case is a mistake.
 def check_writing(expected_text: str, written_text: str, lang: Lang, *, strict_tashkeel: bool = False) -> CheckResult
 # Dictation: writing_key (normalize_dictation_word; tashkeel compared only with
 # strict_tashkeel), plain align: a split word, a number in digits for words, a British or
@@ -284,14 +299,30 @@ def quran_feedback(kind: str, expected_word: str | None) -> str
 # a boy or a girl (no imperative). kind: correct, mistakes/mistake (= sub), sub, del,
 # ins, stopped, unclear. For example: "أحسنت، بارك الله فيك." when correct;
 # "تنبيه: «<word>»" for a mistake; "أحسنت فيما تلوت، وتوقفت التلاوة قبل «<word>»." when
-# the child stopped early; "التلاوة مرة أخرى من فضلك." when unclear.
+# the child stopped early; "لم تتّضح التلاوة جيدًا. هيا نعيدها مرة أخرى." when unclear
+# (too quiet, too short or far from the ayat: the Quran screen shows no other hint, so it
+# says the recitation did not come through, not that it was wrong). Shown as text only,
+# never spoken.
 QURAN_CORRECT; QURAN_UNCLEAR   # extra
 ```
 
 Use a warm parent-like tone with short sentences, adapted to age: playful for 6-9, plain for
-14-18. Messages must never say a person is speaking (no first person). Arabic messages
-avoid gendered imperatives (unvocalised past forms such as أحسنت and نسيت, verbal nouns,
-or "مرة أخرى من فضلك"). Contextual-mode wording lives in `llm.meaning_feedback`.
+14-18. Messages must never suggest that a person is speaking (no "I", no parent words).
+Arabic messages are for girls and boys alike:
+
+- no imperative and no visibly gendered second-person form; instructions and
+  encouragement use the inclusive "هيا" + first-person plural verb (هيا نُحاوِل مِن
+  جَدِيد!, هيا نُعِيد التَّسْمِيع) or a verbal noun; a past-tense form whose last letter
+  carries no vowel (أَحْسَنْت, اِقْتَرَبْت, نَسِيت) is fine;
+- every message except the Quran ones may be read aloud by the Arabic voice, whose
+  espeak-ng phonemizer gives a word without vowel marks no vowels unless it knows it,
+  and reads a bare final ك as masculine: the words it misreads carry their vowel marks
+  inside the word, never on the last letter, and no spoken message uses the suffix ـك;
+- terminology: التسميع (reciting a text), الإملاء (dictation), التلاوة (Quran
+  recitation), القرآن الكريم.
+
+Contextual-mode wording lives in `llm.meaning_feedback` and follows the same rules; the
+Claude prompts give the same Arabic rules.
 
 ### quran.py
 
@@ -504,7 +535,7 @@ ClaudeBrain:
 | POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `contains_quran`, `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
 | POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`) | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again`. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
 | POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str]}`; extra: a phrase that is a whole ayah gives `422 {"error": "quran_text", "message", "scope": "phrase"}` |
-| POST `/api/tts` | JSON `{"text","lang","slow":bool}` | `audio/wav`. 503 if TTS unavailable. 400 if text is empty or longer than 400 characters, or has nothing to pronounce. Extra: header `X-Speech-Check: passed\|failed\|skipped`: slow speech is transcribed back, unprompted, up to 2 takes, and must say exactly the phrase (`check_recitation`: numbers in digits match words). |
+| POST `/api/tts` | JSON `{"text","lang","slow":bool}` | `audio/wav`. 503 if TTS unavailable. 400 if text is empty or longer than 400 characters, or has nothing to pronounce. Extra: header `X-Speech-Check: passed\|failed\|skipped`: slow speech is transcribed back, unprompted, up to 2 takes, and must say exactly the phrase (`check_recitation`: numbers in digits match words, Arabic number words match by value). |
 | POST `/api/dictation/check` | multipart: `expected_text`, `lang`, `age`, and either `image` (photo of the child's paper) or `written_text` (parent typed it); extra: optional `strict_tashkeel` (bool) | `{"read_text","source":"claude"\|"typed","uncertain_words","result":CheckResult,"feedback","needs_parent_confirmation":true}`; extra: `legible`; `uncertain_words` includes `"[?]"` when a word could not be read. With an image and an offline brain, or when Claude reads nothing: 501 `needs_manual`. |
 | GET `/api/quran/surahs` | – | `{"surahs":[{number,name_ar,ayah_count, extra: name_translit, name_en}],"riwaya":"hafs","attribution","source_url":"https://tanzil.net"}`; extra: `licence` |
 | GET `/api/quran/ayat?surah=&from=&to=` | – | `{"ayat":[{surah,ayah,display,display_words}],"attribution"}`; extra: `riwaya`, `source_url`. At most 50 ayat per request. |
@@ -526,6 +557,15 @@ which configures the `mommy` loggers (level `MOMMY_LOG_LEVEL`, default INFO).
   and `quran_text` (with `scope: "phrase"`: the text is confirmed for reciting only), and
   shows its own localized message for `text_too_long`, `empty_text`, `bad_text`,
   `unreadable_text` and `lang_mismatch`, never the server's English message.
+- `split_phrases` joins the lines of a paragraph, so a line that is a whole ayah (the
+  basmala on a line of its own, without a full stop) would reach the voice glued to the
+  next word. At "Confirm text" and "Start the dictation" the client therefore also sends
+  a text with line breaks to `/api/dictation/phrases` with each line as a paragraph of
+  its own; a `scope: "phrase"` refusal of that rules out dictation like one of the text
+  (other answers to it are ignored). A `quran_text` refusal of a dictation phrase by
+  `/api/tts` (the text itself was accepted) also rules out dictation for that text: the
+  dictation goes back to its start, where the disabled button says why, never "this
+  text is from the Quran" with a button to the Quran section.
 - **Start screen:**
   - the AI disclosure;
   - a parent consent checkbox (camera and microphone; images sent to Claude when it is
@@ -552,7 +592,8 @@ which configures the `mommy` loggers (level `MOMMY_LOG_LEVEL`, default INFO).
 - **Quran.**
   - Pick a surah and ayah range (default Juz' Amma: surahs 78-114). Display the verbatim
     Uthmani text in an Arabic Quran-friendly font stack (no web fonts from CDNs). Show
-    "Hafs – Tanzil" and the attribution link.
+    "Hafs – Tanzil" ("رواية حفص عن عاصم (Tanzil)" in the Arabic UI) and the attribution
+    line (English, verbatim) with its link.
   - Modes:
     - "Recite looking": text shown.
     - "From memory": text hidden, first word shown as a hint on request. A

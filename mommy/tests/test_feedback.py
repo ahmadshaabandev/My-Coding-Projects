@@ -16,7 +16,8 @@ from mommy import feedback
 from mommy.align import check_recitation, result_summary
 from mommy.config import Settings, load_settings
 from mommy.feedback import AGE_BANDS, for_result, point_out, praise, quran_feedback, say_again
-from mommy.textnorm import has_arabic
+from mommy.llm import VERDICTS, meaning_feedback
+from mommy.textnorm import has_arabic, strip_tashkeel
 
 LANGS = ("ar", "en", "fr")
 KINDS = ("sub", "del", "ins")
@@ -62,7 +63,9 @@ def test_every_template_exists_and_is_short(lang: str, age: str) -> None:
     )
     for m in messages:
         assert m.strip() == m and m
-        assert len(m) <= 125
+        # Arabic vowel marks are not extra text to read; the raw text stays far below the
+        # 400 characters that /api/tts accepts.
+        assert len(strip_tashkeel(m)) <= 125 and len(m) <= 200
         assert m.count(".") + m.count("!") + m.count("?") + m.count("؟") <= 4
 
 
@@ -104,7 +107,7 @@ def test_language_of_messages() -> None:
 
 def test_messages_never_suggest_a_person_is_speaking() -> None:
     for lang, msg in all_messages():
-        assert not FIRST_PERSON[lang].search(msg), msg
+        assert not FIRST_PERSON[lang].search(strip_tashkeel(msg)), msg
 
 
 def test_tone_differs_by_age() -> None:
@@ -134,13 +137,71 @@ def test_invalid_arguments() -> None:
         point_out("en", "6-9", "cat", "match")
 
 
+# Imperatives addressed to one child are gendered (أعد/أعيدي, حاول/حاولي, ...). Checked on
+# the text without vowel marks, so a vocalised form cannot slip through.
+GENDERED_IMPERATIVES = re.compile(
+    r"(^|\s)(أعد|أعيدي|حاول|حاولي|اسمع|اسمعي|استمع|استمعي|انتبه|انتبهي|اقرأ|اقرئي|اقرا|"
+    r"أكمل|أكملي|اكمل|اكملي|تابع|تابعي|ابدأ|ابدئي|قل|قولي|تذكر|تذكري|اكتب|اكتبي|كرر|كرري|"
+    r"ركز|ركزي|جرب|جربي)(\s|[،.!؟:]|$)"
+)
+
+
+def arabic_spoken_messages() -> list[str]:
+    """Every Arabic message that the app may read aloud (Quran feedback is never spoken)."""
+    out = [msg for lang, msg in all_messages() if lang == "ar"]
+    for age in AGE_BANDS:
+        for verdict in VERDICTS:
+            for ideas in ([], [WORDS["ar"]]):
+                out.append(meaning_feedback(verdict, ideas, "ar", age))
+    return out
+
+
 def test_arabic_avoids_gendered_imperatives_in_children_templates() -> None:
-    # Imperatives such as أعد/أعيدي, حاول/حاولي, اسمع/اسمعي are gendered; the children's
-    # templates use neutral forms.
-    gendered = re.compile(r"(^|\s)(أعد|أعيدي|حاول|حاولي|اسمع|اسمعي|استمع|استمعي|انتبه|انتبهي)(\s|[،.!؟]|$)")
-    for lang, msg in all_messages():
-        if lang == "ar":
-            assert not gendered.search(msg), msg
+    for msg in arabic_spoken_messages():
+        assert not GENDERED_IMPERATIVES.search(strip_tashkeel(msg)), msg
+
+
+def test_arabic_encouragement_is_inclusive_first_person_plural() -> None:
+    # "هيا" is always followed by a "we" verb (هيا نُحاوِل، هيا نُعِيد), and the elliptical
+    # "مرة أخرى من فضلك" is gone.
+    seen = 0
+    for msg in arabic_spoken_messages():
+        bare = strip_tashkeel(msg)
+        for following in re.findall(r"هيا\s+(\S+)", bare):
+            assert following.startswith("ن"), msg
+            seen += 1
+        assert "من فضلك" not in bare, msg
+    assert seen > 20
+
+
+def test_arabic_spoken_messages_show_no_gender_to_the_voice() -> None:
+    # The synthetic voice reads a bare final ك as the masculine "-ka", and a vowel on a
+    # last ت or ك would fix the gender in writing. The only words ending in ك are
+    # demonstratives.
+    gender_vowel = re.compile("[\u062a\u0643][\u064e\u064f\u0650](?=[\\s،.!؟:»]|$)")
+    for msg in arabic_spoken_messages():
+        assert not gender_vowel.search(msg), msg
+        for word in re.findall(r"[\u0621-\u064a]+", strip_tashkeel(msg)):
+            if word.endswith("ك"):
+                assert word in ("هناك", "هنالك", "ذلك", "تلك", "كذلك"), msg
+
+
+def test_arabic_spoken_messages_have_vowels_for_the_synthetic_voice(mommy_root: Path) -> None:
+    # espeak-ng, which phonemizes for the Arabic voice, gives a word without vowel marks
+    # no vowels unless it knows the word (أحسنت -> ʔħsnt): the templates mark the vowels
+    # it needs. Measured with the voice and the recogniser: 0.64 of the words came back
+    # right with the unvocalised wording, 0.92 with this one.
+    from mommy.tts import find_phonemizer
+
+    phonemizer = find_phonemizer()
+    data = mommy_root / "models" / "vits-piper-ar_JO-kareem-medium" / "espeak-ng-data"
+    if phonemizer is None or not data.is_dir():
+        pytest.skip("no espeak-ng phonemizer or Arabic voice data")
+    vowel = re.compile("[aiueoæɑɐəɛɔ]")
+    for msg in arabic_spoken_messages():
+        for clause in phonemizer.phonemize(msg, "ar", data):
+            for word in clause.split():
+                assert vowel.search(word), (msg, clause)
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +213,11 @@ def test_quran_contract_examples() -> None:
     assert quran_feedback("correct", None).startswith("أحسنت")
     assert quran_feedback("sub", "كلمة") == "تنبيه: «كلمة»"
     assert quran_feedback("mistakes", "كلمة") == "تنبيه: «كلمة»"
-    assert quran_feedback("unclear", None) == "التلاوة مرة أخرى من فضلك."
+    # Unclear says that the recitation did not come through, not that it was wrong.
+    assert quran_feedback("unclear", None) == "لم تتّضح التلاوة جيدًا. هيا نعيدها مرة أخرى."
+    assert quran_feedback("del", "كلمة") == "تنبيه: فاتتك كلمة «كلمة»."
+    assert quran_feedback("ins", "كلمة") == "تنبيه: في التلاوة كلمة زائدة عند «كلمة»."
+    assert quran_feedback("sub", None) == "تنبيه: في التلاوة خطأ. هيا نعيدها مرة أخرى."
     assert quran_feedback("stopped", "كلمة") == "أحسنت فيما تلوت، وتوقفت التلاوة قبل «كلمة»."
 
 
@@ -334,9 +399,9 @@ def test_several_mistakes_are_not_worded_as_one(lang: str, age: str, kind: str) 
     singular = {
         "en": r"\b(one word|a word was|you skipped a word)\b",
         "fr": r"\bun mot (était|n'était)|il manquait un mot|tu as sauté un mot",
-        "ar": "كلمة واحدة|هناك كلمة مختلفة|سقطت كلمة",
+        "ar": "كلمة واحدة|هناك كلمة مختلفة|سقطت كلمة|نقصت كلمة|هربت كلمة",
     }[lang]
-    assert not re.search(singular, several, re.I), several
+    assert not re.search(singular, strip_tashkeel(several), re.I), several
 
 
 @pytest.mark.parametrize(

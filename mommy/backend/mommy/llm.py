@@ -434,31 +434,33 @@ _MEANING_TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
             "14-18": "Le sens ne correspond pas au texte. Relis-le et réessaie.",
         },
     },
+    # Arabic: neutral for a boy or a girl, and vocalised where the synthetic voice needs
+    # it, never on a last letter (see the module docstring of mommy.feedback).
     "ar": {
         "same_meaning": {
-            "6-9": "أحسنت! حكيت المعنى بشكل رائع!",
-            "10-13": "أحسنت! فهمت المعنى جيدًا.",
-            "14-18": "أحسنت. المعنى صحيح.",
+            "6-9": "أَحْسَنْت! عَبَّرْت عَن المعنى بِشَكْل رائِع!",
+            "10-13": "أَحْسَنْت! فَهِمْت المعنى جَيِّدًا.",
+            "14-18": "أَحْسَنْت. المعنى صَحِيح.",
         },
         "same_meaning_missing": {
-            "6-9": "أحسنت، المعنى كامل تقريبًا! ينقصه ذكر «{word}».",
-            "10-13": "أحسنت، المعنى شبه كامل. ينقصه ذكر «{word}» أيضًا.",
-            "14-18": "المعنى شبه كامل. ينقصه ذكر «{word}».",
+            "6-9": "أَحْسَنْت، المعنى كامِل تَقْرِيبًا! هيا نَذْكُر «{word}» أَيْضًا في المرة القادمة!",
+            "10-13": "أَحْسَنْت، المعنى شِبْه كامِل. يَنْقُصُه ذِكْر «{word}» أَيْضًا.",
+            "14-18": "المعنى شِبْه كامِل. يَنْقُصُه ذِكْر «{word}».",
         },
         "partly": {
-            "6-9": "محاولة جميلة! تذكرت جزءًا من المعنى، ونسيت «{word}». هيا مرة أخرى!",
-            "10-13": "محاولة جيدة، فهمت جزءًا من المعنى. فاتتك «{word}».",
-            "14-18": "المعنى صحيح جزئيًّا. فاتتك: «{word}».",
+            "6-9": "مُحاوَلَة جَمِيلَة! تَذَكَّرْت جُزْءًا مِن المعنى، ونَسِيت «{word}». هيا نُحاوِل مِن جَدِيد!",
+            "10-13": "مُحاوَلَة جَيِّدَة، فَهِمْت جُزْءًا مِن المعنى. يَنْقُصُه ذِكْر «{word}».",
+            "14-18": "المعنى صَحِيح جُزْئِيًّا. يَنْقُصُه ذِكْر «{word}».",
         },
         "partly_no_word": {
-            "6-9": "محاولة جميلة! جزء من المعنى لم يكن صحيحًا. هيا مرة أخرى!",
-            "10-13": "محاولة جيدة، لكن جزءًا من المعنى لم يكن صحيحًا. مرة أخرى من فضلك.",
-            "14-18": "المعنى صحيح جزئيًّا، وفيه جزء غير صحيح.",
+            "6-9": "مُحاوَلَة جَمِيلَة! جُزْء مِن المعنى لَم يَكُن صَحِيحًا. هيا نُحاوِل مِن جَدِيد!",
+            "10-13": "مُحاوَلَة جَيِّدَة، لَكِنّ جُزْءًا مِن المعنى لَم يَكُن صَحِيحًا. هيا نُحاوِل مِن جَدِيد.",
+            "14-18": "المعنى صَحِيح جُزْئِيًّا، وفيه جُزْء غَيْر صَحِيح.",
         },
         "different": {
-            "6-9": "محاولة جميلة! المعنى مختلف عن النص. مرة أخرى بعد قراءة النص، من فضلك!",
-            "10-13": "المعنى مختلف عن النص. مرة أخرى بعد قراءة النص من فضلك.",
-            "14-18": "المعنى لا يطابق النص. يرجى قراءة النص والمحاولة مجددًا.",
+            "6-9": "مُحاوَلَة جَمِيلَة! المعنى مُخْتَلِف عَن النص. هيا نَقْرَأ النص ثُمَّ نُحاوِل مِن جَدِيد!",
+            "10-13": "المعنى مُخْتَلِف عَن النص. هيا نَقْرَأ النص ثُمَّ نُحاوِل مِن جَدِيد.",
+            "14-18": "المعنى لا يُطابِق النص. هيا نَقْرَأ النص ونُعِيد المُحاوَلَة.",
         },
     },
 }
@@ -570,9 +572,14 @@ Adapt the wording to the age band:
 - "6-9": very simple words, short cheerful sentences, playful and encouraging.
 - "10-13": friendly, clear and encouraging.
 - "14-18": plain, respectful and concise; not childish.
-In Arabic, write simple Modern Standard Arabic and prefer wording that suits a boy or a \
-girl (for example unvocalised past-tense verbs such as أحسنت, or "مرة أخرى من فضلك" \
-instead of a gendered imperative). In French, use "tu"."""
+In Arabic, write simple Modern Standard Arabic that suits a girl or a boy alike: never \
+an imperative (not أعد/أعيدي, حاول/حاولي) and never a second-person form whose gender \
+shows. Encourage with هيا and a first-person plural verb (هيا نُحاوِل مِن جَدِيد!) or \
+with a verbal noun; a past-tense verb is fine when its last letter has no vowel mark \
+(أَحْسَنْت، نَسِيت). The feedback is read aloud by a synthetic voice that cannot guess \
+vowels: put vowel marks inside the words, but never on the last letter of a word that \
+refers to the child, and do not use the suffix ـك ("you"), which the voice reads as \
+masculine. In French, use "tu"."""
 
 READ_PAGE_SYSTEM = SYSTEM_BASE + """
 

@@ -22,11 +22,14 @@ words freely (``peut-être`` / ``peut être``, ``عبد الله`` / ``عبدا�
 word whose key equals the concatenated keys of two or three consecutive heard tokens (or
 the reverse) is a match at no cost. :func:`check_recitation` also lets it match a number
 written in digits with the same number in words (``12`` / ``twelve``, ``21`` / ``vingt et
-un`` / ``واحد وعشرون``) and an English contraction with its full form (``they're`` /
-``they are``); see :func:`speech_joins`. The op of a joined match keeps one
-``heard_index`` (the first heard piece) and its ``heard`` field holds the pieces joined
-by a space; when one heard token covers several expected words, each of them gets a
-match op that points to that same heard token.
+un`` / ``واحد وعشرون``), an Arabic number in words with the same number in another
+gender or case (``اثنتا عشرة`` / ``اثنا عشر``, ``ثلاثة`` / ``ثلاث``, ``واحد وعشرون`` /
+``إحدى وعشرين``) and an English contraction with its full form (``they're`` / ``they
+are``); see :func:`speech_joins`. The op of a joined match keeps one ``heard_index`` (the
+first heard piece) and its ``heard`` field holds the pieces joined by a space; when one
+heard token covers several expected words, each of them gets a match op that points to
+that same heard token. A run of several words matched with a run of several words (a
+block) gives one op per expected word, paired with the heard words in order.
 
 Verdicts
 --------
@@ -96,6 +99,10 @@ _UNREADABLE_RE = re.compile(r"\[\s*[?\u061f]\s*\]")
 #: :func:`align_with_joins`).
 Joins = Mapping[tuple[int, int], Sequence[int]]
 
+#: Block matches: ``(i, j)`` -> the sizes ``(a, b)`` for which expected[i:i+a] as a
+#: whole matches heard[j:j+b] as a whole (see :func:`align_with_joins`).
+Blocks = Mapping[tuple[int, int], Sequence[tuple[int, int]]]
+
 
 @dataclass
 class Op:
@@ -151,7 +158,7 @@ def align_with_joins(
     key: Callable[[str], str],
     *,
     max_pieces: int = MAX_JOINED_PIECES,
-    extra_joins: tuple[Joins, Joins] | None = None,
+    extra_joins: tuple[Joins, Joins] | tuple[Joins, Joins, Blocks] | None = None,
 ) -> list[Op]:
     """Like :func:`align`, but a word split or joined differently counts as a match.
 
@@ -162,9 +169,15 @@ def align_with_joins(
     to that heard token. Joined matches cost 0 and rank with matches in the tie-break.
 
     ``extra_joins`` adds equivalences found by the caller, as ``(join_heard,
-    join_exp)``: ``join_heard[(i, j)]`` lists the counts ``k`` for which expected[i]
-    matches heard[j:j+k], and ``join_exp[(i, j)]`` those for which expected[i:i+k]
-    matches heard[j] (``k`` may be 1). See :func:`speech_joins`.
+    join_exp)`` or ``(join_heard, join_exp, blocks)``: ``join_heard[(i, j)]`` lists the
+    counts ``k`` for which expected[i] matches heard[j:j+k], ``join_exp[(i, j)]`` those
+    for which expected[i:i+k] matches heard[j] (``k`` may be 1), and ``blocks[(i, j)]``
+    the sizes ``(a, b)`` for which expected[i:i+a] matches heard[j:j+b] as a whole
+    (one move: a block is matched entirely or not at all). A block gives one match op
+    per expected word, paired in order with the heard words: when ``b > a`` the last
+    expected word takes the remaining heard words (joined by a space), and when ``a >
+    b`` the remaining expected words all point to the last heard word, as for the joins
+    above. See :func:`speech_joins`.
 
     Use this for speech only: in dictation, writing ``peut être`` for ``peut-être`` is a
     spelling mistake. The key should already ignore hyphens and apostrophes.
@@ -180,7 +193,7 @@ def _align(
     key: Callable[[str], str],
     *,
     max_pieces: int,
-    extra_joins: tuple[Joins, Joins] | None = None,
+    extra_joins: tuple[Joins, Joins] | tuple[Joins, Joins, Blocks] | None = None,
 ) -> list[Op]:
     exp_keys = [key(t) for t in expected]
     heard_keys = [key(t) for t in heard]
@@ -192,11 +205,26 @@ def _align(
     heard_ids = np.array([ids.setdefault(k, len(ids)) for k in heard_keys], dtype=np.int64)
 
     join_heard, join_exp = _find_joins(exp_keys, heard_keys, max_pieces)
+    blocks: dict[tuple[int, int], list[tuple[int, int]]] = {}
     if extra_joins is not None:
-        for target, extra in zip((join_heard, join_exp), extra_joins):
+        extra_heard, extra_exp = extra_joins[0], extra_joins[1]
+        extra_blocks: Blocks = extra_joins[2] if len(extra_joins) == 3 else {}
+        for target, extra in ((join_heard, extra_heard), (join_exp, extra_exp)):
             for (i, j), ks in extra.items():
                 if 0 <= i < n and 0 <= j < m:
                     target[(i, j)] = sorted(set(target.get((i, j), ())) | {k for k in ks if k >= 1})
+        # A block with one word on a side is a join: one move, the same ops.
+        block_sets: dict[tuple[int, int], set[tuple[int, int]]] = defaultdict(set)
+        for (i, j), sizes in extra_blocks.items():
+            for a, b in sizes:
+                if not (a >= 1 and b >= 1 and 0 <= i and i + a <= n and 0 <= j and j + b <= m):
+                    continue
+                if a == 1 or b == 1:
+                    target, k = (join_heard, b) if a == 1 else (join_exp, a)
+                    target[(i, j)] = sorted(set(target.get((i, j), ())) | {k})
+                else:
+                    block_sets[(i, j)].add((a, b))
+        blocks = {pos: sorted(sizes) for pos, sizes in block_sets.items()}
         for (i, j), ks in list(join_heard.items()):
             join_heard[(i, j)] = [k for k in ks if j + k <= m]
         for (i, j), ks in list(join_exp.items()):
@@ -207,6 +235,9 @@ def _align(
     join_exp_rows: dict[int, list[tuple[int, int]]] = defaultdict(list)
     for (i, j), ks in join_exp.items():
         join_exp_rows[i].extend((j, k) for k in ks)
+    block_rows: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+    for (i, j), sizes in blocks.items():
+        block_rows[i].extend((j, a, b) for a, b in sizes)
 
     # score[i, j] = cost * big - matches for the best alignment of expected[i:] with
     # heard[j:]: the minimum cost first, then the most matched expected words (there
@@ -226,6 +257,8 @@ def _align(
             best[j] = min(best[j], score[i + 1, j + k] - 1)
         for j, k in join_exp_rows.get(i, ()):
             best[j] = min(best[j], score[i + k, j + 1] - k)
+        for j, a, b in block_rows.get(i, ()):
+            best[j] = min(best[j], score[i + a, j + b] - a)
         # Insertions run along the row: score[i, j] = min over j' >= j of
         # best[j'] + (j' - j) * big, i.e. a running minimum from the right.
         shifted = best + col_cost
@@ -245,6 +278,13 @@ def _align(
         elif (k := next((k for k in join_exp.get((i, j), ()) if score[i + k, j + 1] - k == here), 0)):
             ops.extend(Op("match", i + t, j, expected[i + t], heard[j]) for t in range(k))
             i, j = i + k, j + 1
+        elif (ab := next(((a, b) for a, b in blocks.get((i, j), ()) if score[i + a, j + b] - a == here), None)):
+            a, b = ab
+            for t in range(a):
+                lo = j + min(t, b - 1)
+                hi = j + b if t == a - 1 else lo + 1
+                ops.append(Op("match", i + t, lo, expected[i + t], " ".join(heard[lo:hi])))
+            i, j = i + a, j + b
         elif i < n and j < m and score[i + 1, j + 1] + big == here:
             ops.append(Op("sub", i, j, expected[i], heard[j]))
             i, j = i + 1, j + 1
@@ -295,22 +335,41 @@ def _find_joins(
 
 def speech_joins(
     expected: Sequence[str], heard: Sequence[str], lang: Lang, *, max_pieces: int = MAX_JOINED_PIECES
-) -> tuple[dict[tuple[int, int], list[int]], dict[tuple[int, int], list[int]]]:
+) -> tuple[
+    dict[tuple[int, int], list[int]],
+    dict[tuple[int, int], list[int]],
+    dict[tuple[int, int], list[tuple[int, int]]],
+]:
     """Speech equivalences between expected and heard tokens, as ``extra_joins``.
+
+    Returns ``(join_heard, join_exp, blocks)`` for :func:`align_with_joins`.
 
     * Numbers: a token written in digits matches the same number written in words in
       1..``max_pieces`` consecutive tokens on the other side (``12`` / ``twelve``, ``25``
       / ``twenty five``, ``21`` / ``vingt et un``, ``٢١`` / ``واحد وعشرون``, ``1er`` /
       ``premier``), for 0 to 100 (:func:`mommy.textnorm.spoken_number`). Digits match
-      digits through the key already.
+      digits through the key already (Western and Arabic-Indic alike).
+    * Arabic numbers in words match by value on both sides: a run of 1..``max_pieces``
+      number words matches a run on the other side that spells the same number in
+      another gender or case (``ثلاثة`` / ``ثلاث``, ``عشرون`` / ``عشرين``, ``اثنتا عشرة``
+      / ``اثنا عشر`` / ``إثنى عشر``, ``واحد وعشرون`` / ``إحدى وعشرين``), also with a
+      leading conjunction ``و`` on both sides (``وثلاث`` / ``وثلاثة``). The speech key
+      already drops the case endings, and the recogniser writes numbers in the gender it
+      prefers, so the difference cannot be put down to the child. Different values stay
+      different (``ثلاثة`` / ``أربعة``, ``ثلاثة عشر`` / ``ثلاثة``). A run of several
+      words on both sides is a block: matched as a whole or not at all. A page word
+      whose vowel marks rule the number out (``سَبُع`` a beast of prey, ``خُمُس`` a
+      fifth, ``تَسَعُ`` "holds") is not a number; without marks, ``سبع`` is seven.
     * English contractions: ``they're`` matches ``they are``, ``she's`` matches ``she
       is`` or ``she has``, ``don't`` matches ``do not``, on either side
       (:func:`mommy.textnorm.english_expansions`).
 
-    Speech only: in a dictation these are spelling differences.
+    Speech only: in a dictation these are spelling differences. The Quran check does not
+    use these equivalences either.
     """
     join_heard: dict[tuple[int, int], list[int]] = defaultdict(list)
     join_exp: dict[tuple[int, int], list[int]] = defaultdict(list)
+    blocks: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
 
     def digits_at(tokens: Sequence[str]) -> dict[str, list[int]]:
         where: dict[str, list[int]] = defaultdict(list)
@@ -320,6 +379,7 @@ def speech_joins(
         return where
 
     def word_numbers(tokens: Sequence[str]) -> list[tuple[int, int, str]]:
+        # With the conjunction, "وثلاث" is "وc3": it equals "وثلاثة", never a digit value.
         found = []
         for start, tok in enumerate(tokens):
             if not is_number_word(tok, lang):
@@ -327,19 +387,38 @@ def speech_joins(
             for k in range(1, max_pieces + 1):
                 if start + k > len(tokens):
                     break
-                if (value := spoken_number(tokens[start : start + k], lang)) is not None:
+                value = spoken_number(tokens[start : start + k], lang, conjunction=True)
+                if value is not None:
                     found.append((start, k, value))
         return found
 
+    exp_words, heard_words = word_numbers(expected), word_numbers(heard)
     exp_digits, heard_digits = digits_at(expected), digits_at(heard)
     if exp_digits:
-        for j, k, value in word_numbers(heard):
+        for j, k, value in heard_words:
             for i in exp_digits.get(value, ()):
                 join_heard[(i, j)].append(k)
     if heard_digits:
-        for i, k, value in word_numbers(expected):
+        for i, k, value in exp_words:
             for j in heard_digits.get(value, ()):
                 join_exp[(i, j)].append(k)
+
+    if lang == "ar" and exp_words and heard_words:
+        heard_by_value: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        for j, b, value in heard_words:
+            heard_by_value[value].append((j, b))
+        exp_ar = [recitation_key(t, lang) for t in expected]
+        heard_ar = [recitation_key(t, lang) for t in heard]
+        for i, a, value in exp_words:
+            for j, b in heard_by_value.get(value, ()):
+                if exp_ar[i : i + a] == heard_ar[j : j + b]:
+                    continue  # the same words: matched by their keys already
+                if a == 1:
+                    join_heard[(i, j)].append(b)
+                elif b == 1:
+                    join_exp[(i, j)].append(a)
+                else:
+                    blocks[(i, j)].append((a, b))
 
     if lang == "en":
         def keyed(tokens: Sequence[str]) -> list[str]:
@@ -362,7 +441,7 @@ def speech_joins(
             for full in english_expansions(tok):
                 for j in heard_runs[len(full)].get(tuple(recitation_key(w, "en") for w in full), ()):
                     join_heard[(i, j)].append(len(full))
-    return dict(join_heard), dict(join_exp)
+    return dict(join_heard), dict(join_exp), dict(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -480,8 +559,11 @@ def check_recitation(expected_text: str, heard_text: str, lang: Lang) -> CheckRe
     ``heard_index`` refer to those tokens) and compared with :func:`recitation_key`, so
     tashkeel, accents, case, punctuation and the Arabic letter variants a recogniser
     spells inconsistently do not count. Words split or joined differently by the
-    recogniser, numbers written in digits for words (or the reverse) and English
-    contractions are accepted (:func:`align_with_joins`, :func:`speech_joins`).
+    recogniser, numbers written in digits for words (or the reverse), Arabic numbers in
+    words of another gender or case (compared by value) and English contractions are
+    accepted (:func:`align_with_joins`, :func:`speech_joins`). The Quran check
+    (:meth:`mommy.quran.Quran.check`) uses :func:`recitation_key` without these
+    equivalences.
     """
     expected = tokenize(expected_text, lang)
     heard = tokenize(heard_text, lang)
@@ -567,6 +649,7 @@ __all__ = [
     "SAY_AGAIN_ERROR_RATE",
     "STOPPED_MIN_WORDS",
     "UNREADABLE",
+    "Blocks",
     "CheckResult",
     "Joins",
     "Op",

@@ -14,9 +14,12 @@ from pathlib import Path
 import pytest
 
 from mommy.textnorm import (
+    digit_number,
     has_arabic,
+    is_number_word,
     normalize_dictation_word,
     normalize_word,
+    spoken_number,
     strip_tashkeel,
     token_spans,
     tokenize,
@@ -497,3 +500,90 @@ def test_uthmani_hamza_on_tatweel_before_waw_matches_simple_clean() -> None:
                 checked += 1
                 assert normalize_word(a, "ar") == normalize_word(b, "ar"), (key, b)
     assert checked > 10
+
+
+# ---------------------------------------------------------------------------
+# Speech only: Arabic number words by value
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tokens", "value"),
+    [
+        (["ثلاثة"], "c3"),
+        (["ثلاث"], "c3"),
+        (["عشرون"], "c20"),
+        (["عشرين"], "c20"),
+        (["اثنتا", "عشرة"], "c12"),
+        (["اثنا", "عشر"], "c12"),
+        (["إثنى", "عشر"], "c12"),
+        (["اثني", "عشر"], "c12"),
+        (["إحدى", "عشرة"], "c11"),
+        (["واحد", "وعشرون"], "c21"),
+        (["إحدى", "وعشرين"], "c21"),
+        (["أحد", "و", "عشرين"], "c21"),
+        (["تِسْعٌ", "وَتِسْعُونَ"], "c99"),
+        (["مئة"], "c100"),
+        (["مية"], "c100"),
+        # The indefinite accusative, tanwin on an added alef.
+        (["واحدًا"], "c1"),
+        (["أربعًا"], "c4"),
+        (["ستًّا"], "c6"),
+        (["ثمانيًا"], "c8"),
+        (["عشرًا"], "c10"),
+        (["ثلاثًا", "وعشرين"], "c23"),
+        (["واحدًا", "وعشرين"], "c21"),
+        # With vowel marks that fit the number.
+        (["سَبْعَ"], "c7"),
+        (["خَمْسٌ"], "c5"),
+        (["تِسْعَ"], "c9"),
+        (["عَشَرَةُ"], "c10"),
+        (["أَحَدَ", "عَشَرَ"], "c11"),
+        (["ثَلاثَ", "عَشْرَةَ"], "c13"),
+        (["صِفْر"], "c0"),
+        # Not a number on its own, or not one number.
+        (["إحدى"], None),
+        (["أحد"], None),
+        (["اثنا"], None),
+        (["ثلاثة", "أربعة"], None),
+        (["وثلاث"], None),
+        (["البيت"], None),
+        (["ثلاثا", "عشر"], None),  # 11..19 never take the accusative tanwin
+        # Vowel marks that rule the number out: homographs of a number word.
+        (["سَبُعٌ"], None),  # a beast of prey
+        (["سُبْع"], None),  # a seventh
+        (["خُمُسَ"], None),  # a fifth
+        (["تَسَعُ"], None),  # "holds"
+        (["تُسْع"], None),  # a ninth
+        (["عُشْرُ"], None),  # a tenth
+        (["عِشْرَة"], None),  # companionship
+        (["صَفَر"], None),  # the month
+    ],
+)
+def test_spoken_arabic_numbers_of_both_genders_and_cases(tokens: list[str], value: str | None) -> None:
+    assert spoken_number(tokens, "ar") == value
+
+
+def test_spoken_number_with_a_leading_conjunction() -> None:
+    # Only on request (speech matching compares two runs of words), and the conjunction
+    # stays in the value: "and three" is not "three", nor the digit 3.
+    assert spoken_number(["وثلاث"], "ar") is None
+    assert spoken_number(["وثلاث"], "ar", conjunction=True) == "وc3"
+    assert spoken_number(["وثلاثة"], "ar", conjunction=True) == "وc3"
+    assert spoken_number(["و", "ثلاثة"], "ar", conjunction=True) == "وc3"
+    assert spoken_number(["وأربعة", "عشر"], "ar", conjunction=True) == "وc14"
+    assert spoken_number(["و", "أربع", "عشرة"], "ar", conjunction=True) == "وc14"
+    assert spoken_number(["واحد"], "ar", conjunction=True) == "c1"  # the و of واحد is a letter
+    assert spoken_number(["و"], "ar", conjunction=True) is None
+    assert spoken_number(["et", "trois"], "fr", conjunction=True) is None
+    assert digit_number("3", "ar") == "c3" != spoken_number(["وثلاثة"], "ar", conjunction=True)
+
+
+def test_vowel_marks_rule_a_number_out_also_after_the_conjunction() -> None:
+    assert spoken_number(["وَسَبْعُ"], "ar", conjunction=True) == "وc7"
+    assert spoken_number(["وَسُبْعُ"], "ar", conjunction=True) is None
+    assert spoken_number(["وَعُشْرُ"], "ar", conjunction=True) is None
+    assert is_number_word("سبع", "ar") and is_number_word("سَبْع", "ar")
+    assert not is_number_word("سَبُع", "ar") and not is_number_word("وَعُشْر", "ar")
+    # Without vowel marks the page cannot tell: the word is taken as the number.
+    assert spoken_number(["خمس"], "ar") == "c5"

@@ -253,6 +253,9 @@
             <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-speaker"/></svg>
             <span data-i18n="dict_start">Start the dictation</span>
           </button>
+          <!-- Why the dictation cannot start (a phrase of the text is a whole ayah). A live
+               region: the reason appears right after a press that the server refused. -->
+          <p class="why" data-why="dict-start" role="status" aria-live="polite" hidden></p>
           <p class="status" id="dict-intro-status" role="status" aria-live="polite"></p>
         </div>
 
@@ -402,7 +405,7 @@
           </button>
         </div>
         <footer class="attribution" id="quran-attribution-box">
-          <p class="riwaya" id="quran-riwaya">Hafs – Tanzil</p>
+          <p class="riwaya" id="quran-riwaya" data-i18n="riwaya">Hafs – Tanzil</p>
           <!-- One LTR run for the English attribution and its link, so that a wrapped line
                keeps "… verbatim · tanzil.net" in reading order in the Arabic (RTL) UI. -->
           <p class="attr-text"><span class="attr-run" dir="ltr" lang="en"><span id="quran-attribution">Quran text: Tanzil Project</span> · <a id="quran-link" href="https://tanzil.net" target="_blank" rel="noopener noreferrer">tanzil.net</a></span></p>

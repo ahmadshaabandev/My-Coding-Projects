@@ -178,23 +178,50 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
   at one place. A TTS phrase or dictation phrase that is a whole ayah of 2 words or more
   is refused too; `/api/dictation/phrases` then adds `"scope": "phrase"`, and the web
   client confirms such a text (for example a school text with the basmala on a line of
-  its own) for reciting only.
+  its own) for reciting only. Because the phrase splitter joins the lines of a
+  paragraph, the client also checks a text with line breaks line by line, so a basmala
+  line without a full stop is caught at "Confirm text" too; and if the voice still
+  refuses a dictation phrase, the dictation goes back to its start with the same
+  reason (never "this text is from the Quran").
 
 What counts as the same word:
 
 - Speech (recitation and the slow-dictation audio check): a number in digits matches
   the same number in words, 0 to 100 (`12` / twelve / douze / اثنا عشر, `21` / vingt et
-  un / واحد وعشرون, `1er` / premier); British spellings match American ones (colour /
-  color, centre / center, realise / realize) and contractions match their full form
-  (they're / they are); same-sound Arabic hamza spellings match (رءوف / رؤوف, مسئول /
+  un / واحد وعشرون / إحدى وعشرين, `1er` / premier); British spellings match American ones
+  (colour / color, centre / center, realise / realize) and contractions match their full
+  form (they're / they are); same-sound Arabic hamza spellings match (رءوف / رؤوف, مسئول /
   مسؤول, مائة / مئة). Among alignments of equal cost, the one that keeps the most words
   matched is reported.
+- Speech, Arabic numbers in words: they are compared by value on both sides, so the
+  gender and case variants of one number match each other (اثنتا عشرة / اثنا عشر / إثنى
+  عشر / اثني عشر, ثلاثة / ثلاث, عشرون / عشرين, واحد وعشرون / إحدى وعشرين, the accusative
+  واحدًا / واحد and أربعًا / أربعة, also with و: وأربع / وأربعة). The speech key already
+  ignores case endings (tashkeel is dropped), and Whisper writes numbers in the gender it
+  prefers, so these differences cannot be put down to the child. Different values still
+  differ (ثلاثة / أربعة), and a number of two or three words is matched as a whole (اثنتا
+  عشرة never matches اثنا alone); a shorter number inside it is a number of its own
+  (ثلاثة عشر heard as ثلاث: عشر is reported as skipped). Some number words are also
+  other words: سبع (a beast of prey), خمس (a fifth), تسع (the verb "holds"), عشر (a
+  tenth), صفر (the month). On a page with vowel marks that rule the number out (سَبُع,
+  خُمُس, تَسَعُ, عُشْر, صَفَر) the word is compared like any other, so سَبُع read as سبعة
+  is a mistake; without vowel marks the page cannot tell, the word is taken as the
+  number, and such a misreading is accepted. Only number words are affected: measured
+  on the Tanzil text, no speech key of its 14,868 distinct Simple-Clean (and 18,994
+  Uthmani) words changed, and of 31,179 pairs of ayat (each against itself, the next
+  ayah and three random one-word edits) none changed its result. The Quran check does
+  not use this: an ayah's number said in another gender stays a mistake.
 - Dictation: spelling counts, so all of these are differences (only Arabic-Indic and
   Western digits are the same).
 - Feedback follows the result: one mistake or several ("a few words were not right, the
   first one is ..."), where the child stopped early, and "say it louder" only when
   nothing usable was heard (a clear recording far from the text is asked to read again
   from the start; a misspelled dictation is never "unclear").
+- Arabic feedback suits a girl or a boy: no imperatives, encouragement as "هيا" with a
+  "we" verb (هيا نُحاوِل مِن جَدِيد!), past-tense praise whose last letter carries no vowel
+  (أَحْسَنْت). The words the Arabic voice misreads without vowel marks carry them inside
+  the word (never on the last letter, where the gender would show), and no spoken message
+  ends a word with the suffix ـك, which the voice reads as masculine.
 
 ## Tests
 

@@ -1,17 +1,35 @@
 """Fixed feedback messages: the offline wording, and the fallback when Claude fails.
 
 Tone: warm and encouraging, in short sentences, adapted to the age band (playful for
-6-9, plain for 14-18). Messages speak to the child in the second person and never in
-the first person, so nothing suggests that a person (let alone a parent) is speaking.
+6-9, plain for 14-18). Messages speak to the child in the second person, and nothing
+suggests that a person (let alone a parent) is speaking: no "I", no parent words.
 
-Arabic messages are Modern Standard Arabic that a young child understands. They avoid
-gendered imperatives where a neutral form is natural (``مرة أخرى من فضلك`` rather than
-``أعِد``/``أعيدي``); unvocalised past-tense forms such as ``أحسنت`` and ``نسيت`` read for
-a boy or a girl alike.
+Arabic messages are Modern Standard Arabic that a child of 6 understands and a teenager
+does not find childish. The children are girls and boys, so:
+
+* no imperative and no visibly gendered second-person form (not ``أعِد``/``أعيدي``,
+  ``حاول``/``حاولي``); an instruction or encouragement uses the inclusive first-person
+  plural ``هيا`` + verb (``هيا نُحاوِل مِن جَدِيد!``, ``هيا نُعِيد التَّسْمِيع``) or a
+  verbal noun; a past-tense form whose last letter is left without a vowel
+  (``أَحْسَنْت``, ``اِقْتَرَبْت``, ``نَسِيت``, ``تَوَقَّفْت``) reads for a boy or a girl
+  alike, and so does a third-person verb whose subject is a word (``سَقَطَت كَلِمَة``);
+* these messages are also read aloud by the Arabic synthetic voice, whose phonemizer
+  (espeak-ng) gives a word without vowel marks no vowels at all (``أحسنت`` becomes
+  ``ʔħsnt``, ``هيا نحاول`` is heard as ``هيا حاول``) and reads a bare final ``ك`` as the
+  masculine ``-ka``. So the words it misreads carry their vowel marks inside the word,
+  never on the last letter, which is where the gender would show; words it reads well
+  bare (``النص``، ``النهاية``، ``المرة القادمة``) stay bare; and no spoken message uses
+  the suffix ``ـك`` (``فاتتك``، ``من فضلك``). Measured by speaking every Arabic template with
+  the app's voice and transcribing it unprompted with Whisper turbo: 0.64 of the words
+  came back right with the earlier unvocalised wording (2 of 63 messages word for
+  word), 0.92 with this one (30 of 63).
+* terminology as in the interface: التسميع (reciting a text), الإملاء (dictation),
+  التلاوة (Quran recitation).
 
 The Quran feedback (:func:`quran_feedback`) is a separate, fixed and respectful set of
-Arabic messages that quotes at most the single word it is given. It follows the same
-neutrality rule (``تنبيه``, ``التلاوة مرة أخرى من فضلك`` rather than ``انتبه``/``أعد``).
+Arabic messages that quotes at most the single word it is given. It is shown as text
+only (never spoken), and follows the same neutrality rule (``تنبيه``, ``هيا نعيدها
+مرة أخرى`` rather than ``انتبه``/``أعد``).
 
 The messages match the result: one mistake is "one word", several are "a few words,
 the first one is ..."; a child who stopped early is told where; a clear recording far
@@ -72,19 +90,19 @@ _PRAISE: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "ar": {
         "6-9": (
-            "أحسنت! كل الكلمات صحيحة!",
-            "رائع! عمل جميل جدًّا!",
-            "ممتاز! لا يوجد أي خطأ!",
+            "أَحْسَنْت! كُلّ الكَلِمات صَحِيحَة!",
+            "رائِع جِدًّا! عَمَل جَمِيل!",
+            "مُمْتاز! لا يُوجَد أَيّ خَطَأ!",
         ),
         "10-13": (
-            "أحسنت! كل الكلمات صحيحة.",
-            "عمل ممتاز، دون أي خطأ!",
-            "عمل متقن، أحسنت!",
+            "أَحْسَنْت! كُلّ الكَلِمات صَحِيحَة.",
+            "عَمَل مُمْتاز، دُون أَيّ خَطَأ!",
+            "عَمَل مُتْقَن، أَحْسَنْت!",
         ),
         "14-18": (
-            "صحيح. أحسنت.",
-            "كل الكلمات صحيحة. عمل جيد.",
-            "دقة تامة دون أخطاء.",
+            "كُلّ الكَلِمات صَحِيحَة. أَحْسَنْت.",
+            "كُلّ الكَلِمات صَحِيحَة. عَمَل جَيِّد.",
+            "عَمَل دَقِيق، دُون أَيّ خَطَأ.",
         ),
     },
 }
@@ -126,19 +144,19 @@ _POINT_OUT: dict[str, dict[str, dict[str, str]]] = {
     },
     "ar": {
         "sub": {
-            "6-9": "اقتربت كثيرًا! الكلمة هي «{word}». هيا مرة أخرى!",
-            "10-13": "اقتربت! الكلمة الصحيحة هي «{word}». مرة أخرى من فضلك.",
-            "14-18": "هناك كلمة مختلفة، والصحيح: «{word}».",
+            "6-9": "اِقْتَرَبْت كَثِيرًا! الكَلِمَة هي «{word}». هيا نُحاوِل مِن جَدِيد!",
+            "10-13": "اِقْتَرَبْت! الكَلِمَة الصَّحِيحَة هي «{word}». هيا نُحاوِل مِن جَدِيد.",
+            "14-18": "هُناك كَلِمَة مُخْتَلِفَة، والصَّحِيح: «{word}».",
         },
         "del": {
-            "6-9": "أوه، هربت كلمة! نسيت كلمة «{word}». هيا مرة أخرى!",
-            "10-13": "فاتتك كلمة: «{word}». مرة أخرى من فضلك.",
-            "14-18": "سقطت كلمة: «{word}».",
+            "6-9": "هَرَبَت كَلِمَة! نَسِيت كَلِمَة «{word}». هيا نُحاوِل مِن جَدِيد!",
+            "10-13": "نَقَصَت كَلِمَة: «{word}». هيا نُحاوِل مِن جَدِيد.",
+            "14-18": "سَقَطَت كَلِمَة: «{word}».",
         },
         "ins": {
-            "6-9": "أوه، دخلت كلمة زائدة! هيا مرة أخرى!",
-            "10-13": "أضفت كلمة ليست في النص. مرة أخرى من فضلك.",
-            "14-18": "هناك كلمة زائدة ليست في النص.",
+            "6-9": "دَخَلَت كَلِمَة زائِدَة! هيا نُحاوِل مِن جَدِيد!",
+            "10-13": "أَضَفْت كَلِمَة لَيْسَت في النص. هيا نُحاوِل مِن جَدِيد.",
+            "14-18": "هُناك كَلِمَة زائِدَة لَيْسَت في النص.",
         },
     },
 }
@@ -182,19 +200,19 @@ _POINT_OUT_SEVERAL: dict[str, dict[str, dict[str, str]]] = {
     },
     "ar": {
         "sub": {
-            "6-9": "اقتربت كثيرًا! بعض الكلمات لم تكن صحيحة، وأولها «{word}». هيا مرة أخرى!",
-            "10-13": "اقتربت! بعض الكلمات لم تكن صحيحة، وأولها «{word}». مرة أخرى من فضلك.",
-            "14-18": "هناك عدة كلمات غير صحيحة، أولها: «{word}».",
+            "6-9": "اِقْتَرَبْت كَثِيرًا! بَعْض الكَلِمات لَم تَكُن صَحِيحَة، وأَوَّلُها «{word}». هيا نُحاوِل مِن جَدِيد!",
+            "10-13": "اِقْتَرَبْت! بَعْض الكَلِمات لَم تَكُن صَحِيحَة، وأَوَّلُها «{word}». هيا نُحاوِل مِن جَدِيد.",
+            "14-18": "هُناك عِدَّة كَلِمات غَيْر صَحِيحَة، أَوَّلُها: «{word}».",
         },
         "del": {
-            "6-9": "أوه، هربت بعض الكلمات! أول كلمة فاتتك: «{word}». هيا مرة أخرى!",
-            "10-13": "بعض الكلمات لم تكن صحيحة. أول كلمة فاتتك: «{word}». مرة أخرى من فضلك.",
-            "14-18": "هناك عدة أخطاء، أولها كلمة ساقطة: «{word}».",
+            "6-9": "هَرَبَت بَعْض الكَلِمات! أَوَّلُها «{word}». هيا نُحاوِل مِن جَدِيد!",
+            "10-13": "بَعْض الكَلِمات لَم تَكُن صَحِيحَة، وأَوَّلُها كَلِمَة ساقِطَة: «{word}». هيا نُحاوِل مِن جَدِيد.",
+            "14-18": "هُناك عِدَّة أَخْطاء، أَوَّلُها كَلِمَة ساقِطَة: «{word}».",
         },
         "ins": {
-            "6-9": "أوه، بعض الكلمات لم تكن صحيحة، ودخلت كلمة زائدة! هيا مرة أخرى!",
-            "10-13": "بعض الكلمات لم تكن صحيحة، أولها كلمة زائدة ليست في النص. مرة أخرى من فضلك.",
-            "14-18": "هناك عدة أخطاء، أولها كلمة زائدة ليست في النص.",
+            "6-9": "بَعْض الكَلِمات لَم تَكُن صَحِيحَة، ودَخَلَت كَلِمَة زائِدَة! هيا نُحاوِل مِن جَدِيد!",
+            "10-13": "بَعْض الكَلِمات لَم تَكُن صَحِيحَة، أَوَّلُها كَلِمَة زائِدَة لَيْسَت في النص. هيا نُحاوِل مِن جَدِيد.",
+            "14-18": "هُناك عِدَّة أَخْطاء، أَوَّلُها كَلِمَة زائِدَة لَيْسَت في النص.",
         },
     },
 }
@@ -212,9 +230,9 @@ _POINT_OUT_NO_WORD: dict[str, dict[str, str]] = {
         "14-18": "Un mot n'était pas juste.",
     },
     "ar": {
-        "6-9": "اقتربت كثيرًا! كلمة واحدة لم تكن صحيحة. هيا مرة أخرى!",
-        "10-13": "اقتربت! كلمة واحدة لم تكن صحيحة. مرة أخرى من فضلك.",
-        "14-18": "هناك كلمة غير صحيحة.",
+        "6-9": "اِقْتَرَبْت كَثِيرًا! كَلِمَة واحِدَة لَم تَكُن صَحِيحَة. هيا نُحاوِل مِن جَدِيد!",
+        "10-13": "اِقْتَرَبْت! كَلِمَة واحِدَة لَم تَكُن صَحِيحَة. هيا نُحاوِل مِن جَدِيد.",
+        "14-18": "هُناك كَلِمَة غَيْر صَحِيحَة.",
     },
 }
 
@@ -230,9 +248,9 @@ _POINT_OUT_SEVERAL_NO_WORD: dict[str, dict[str, str]] = {
         "14-18": "Plusieurs mots n'étaient pas justes.",
     },
     "ar": {
-        "6-9": "اقتربت كثيرًا! بعض الكلمات لم تكن صحيحة. هيا مرة أخرى!",
-        "10-13": "اقتربت! بعض الكلمات لم تكن صحيحة. مرة أخرى من فضلك.",
-        "14-18": "هناك عدة كلمات غير صحيحة.",
+        "6-9": "اِقْتَرَبْت كَثِيرًا! بَعْض الكَلِمات لَم تَكُن صَحِيحَة. هيا نُحاوِل مِن جَدِيد!",
+        "10-13": "اِقْتَرَبْت! بَعْض الكَلِمات لَم تَكُن صَحِيحَة. هيا نُحاوِل مِن جَدِيد.",
+        "14-18": "هُناك عِدَّة كَلِمات غَيْر صَحِيحَة.",
     },
 }
 
@@ -249,9 +267,9 @@ _STOPPED: dict[str, dict[str, str]] = {
         "14-18": "Il manque la fin, à partir de « {word} ». Va jusqu'au bout la prochaine fois.",
     },
     "ar": {
-        "6-9": "بداية جميلة! توقفت قبل «{word}». هيا حتى النهاية في المرة القادمة!",
-        "10-13": "بداية جيدة. توقفت قبل «{word}». مرة أخرى حتى النهاية من فضلك.",
-        "14-18": "توقفت قبل «{word}». يرجى الإكمال حتى النهاية.",
+        "6-9": "بِدايَة جَمِيلَة! تَوَقَّفْت قَبْل «{word}». هيا نُكْمِل حتى النهاية في المرة القادمة!",
+        "10-13": "بِدايَة جَيِّدَة. تَوَقَّفْت قَبْل «{word}». هيا نُكْمِل حتى النهاية في المرة القادمة.",
+        "14-18": "تَوَقَّفْت قَبْل «{word}». هيا نُكْمِل النص حتى النهاية.",
     },
 }
 
@@ -268,9 +286,9 @@ _UNREADABLE: dict[str, dict[str, str]] = {
         "14-18": "Certains mots n'ont pas pu être lus et doivent être vérifiés.",
     },
     "ar": {
-        "6-9": "بعض الكلمات صعبة القراءة، وستتم مراجعتها!",
-        "10-13": "تعذرت قراءة بعض الكلمات، ويلزم التحقق منها.",
-        "14-18": "تعذرت قراءة بعض الكلمات وتحتاج إلى مراجعة.",
+        "6-9": "بَعْض الكَلِمات صَعْبَة القِراءَة. هيا نُراجِعُها مَعًا!",
+        "10-13": "تَعَذَّرَت قِراءَة بَعْض الكَلِمات، ويَلْزَم التَّحَقُّق مِنْها.",
+        "14-18": "تَعَذَّرَت قِراءَة بَعْض الكَلِمات، وتَحْتاج إلى مُراجَعَة.",
     },
 }
 
@@ -288,9 +306,9 @@ _SAY_AGAIN_DIFFERENT: dict[str, dict[str, str]] = {
         "14-18": "L'enregistrement ne correspond pas bien au texte. Relis-le depuis le début.",
     },
     "ar": {
-        "6-9": "كان ما سُمع مختلفًا كثيرًا عن النص. هيا مرة أخرى من البداية إلى النهاية!",
-        "10-13": "كان ما سُمع مختلفًا كثيرًا عن النص. مرة أخرى من البداية من فضلك.",
-        "14-18": "التسجيل لا يطابق النص جيدًا. يرجى القراءة من البداية.",
+        "6-9": "كان ما سُمِع مُخْتَلِفًا كَثِيرًا عَن النص. هيا نُعِيد التَّسْمِيع مِن البداية إلى النهاية!",
+        "10-13": "كان ما سُمِع مُخْتَلِفًا كَثِيرًا عَن النص. هيا نُعِيد التَّسْمِيع مِن البداية.",
+        "14-18": "التَّسْجِيل لا يُطابِق النص جَيِّدًا. هيا نُعِيد التَّسْمِيع مِن البداية.",
     },
 }
 
@@ -307,9 +325,9 @@ _NOTHING_WRITTEN: dict[str, dict[str, str]] = {
         "14-18": "Aucun mot écrit n'a été trouvé. Recommence la dictée.",
     },
     "ar": {
-        "6-9": "لم توجد كلمات مكتوبة. هيا، الإملاء مرة أخرى!",
-        "10-13": "لم توجد كلمات مكتوبة. الإملاء مرة أخرى من فضلك.",
-        "14-18": "لم توجد كلمات مكتوبة. يرجى إعادة الإملاء.",
+        "6-9": "لَم تُوجَد كَلِمات مَكْتُوبَة. هيا نُعِيد الإِمْلاء مَعًا!",
+        "10-13": "لَم تُوجَد كَلِمات مَكْتُوبَة. هيا نَبْدَأ الإِمْلاء مِن جَدِيد.",
+        "14-18": "لَم تُوجَد كَلِمات مَكْتُوبَة. هيا نُعِيد الإِمْلاء.",
     },
 }
 
@@ -325,23 +343,27 @@ _SAY_AGAIN: dict[str, dict[str, str]] = {
         "14-18": "L'enregistrement n'était pas clair. Réessaie, s'il te plaît.",
     },
     "ar": {
-        "6-9": "لم يكن الصوت واضحًا. مرة أخرى بصوت أعلى قليلًا، من فضلك!",
-        "10-13": "لم يكن الصوت واضحًا بما يكفي. مرة أخرى من فضلك.",
-        "14-18": "التسجيل غير واضح. يرجى الإعادة.",
+        "6-9": "لَم يَكُن الصَّوْت واضِحًا. هيا نُحاوِل مِن جَدِيد بِصَوْت أَعْلى قَلِيلًا!",
+        "10-13": "لَم يَكُن الصَّوْت واضِحًا بِما يَكْفِي. هيا نُحاوِل مِن جَدِيد.",
+        "14-18": "التَّسْجِيل غَيْر واضِح. هيا نُعِيد المُحاوَلَة.",
     },
 }
 
 # Quran: fixed, respectful, Arabic only, and neutral for a boy or a girl (no imperative:
-# a noun or an unvocalised past-tense form instead of انتبه / أعد).
+# a noun, an unvocalised past-tense form or هيا + نفعل instead of انتبه / أعد). Shown as
+# text only, never spoken, so it is not vocalised for the synthetic voice.
 QURAN_CORRECT = "أحسنت، بارك الله فيك."
-QURAN_UNCLEAR = "التلاوة مرة أخرى من فضلك."
+# Unclear: too quiet or too short, or far from the chosen ayat. The Quran screen shows no
+# other hint, so the message says that the recitation did not come through, not that
+# it was wrong.
+QURAN_UNCLEAR = "لم تتّضح التلاوة جيدًا. هيا نعيدها مرة أخرى."
 _QURAN_MISTAKE = {
     "sub": "تنبيه: «{word}»",
-    "del": "تنبيه، فاتتك كلمة: «{word}»",
-    "ins": "تنبيه، في التلاوة كلمة زائدة عند «{word}»",
+    "del": "تنبيه: فاتتك كلمة «{word}».",
+    "ins": "تنبيه: في التلاوة كلمة زائدة عند «{word}».",
     "stopped": "أحسنت فيما تلوت، وتوقفت التلاوة قبل «{word}».",
 }
-_QURAN_MISTAKE_NO_WORD = "تنبيه، في التلاوة خطأ. التلاوة مرة أخرى من فضلك."
+_QURAN_MISTAKE_NO_WORD = "تنبيه: في التلاوة خطأ. هيا نعيدها مرة أخرى."
 _QURAN_KINDS = ("correct", "mistakes", "mistake", "sub", "del", "ins", "stopped", "unclear")
 
 

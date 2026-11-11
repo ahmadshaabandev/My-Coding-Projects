@@ -38,7 +38,7 @@
       profile_title: 'Child profile',
       profile_note: 'Saved only on this device.',
       nickname: 'Nickname',
-      nickname_ph: 'e.g. Sami',
+      nickname_ph: 'e.g. Salma or Sami',
       age: 'Age',
       age_6_9: '6–9 years',
       age_10_13: '10–13 years',
@@ -170,6 +170,7 @@
       quran_mode: 'How do you want to recite?',
       mode_looking: 'Recite looking',
       mode_memory: 'From memory',
+      riwaya: 'Hafs – Tanzil',
       quran_text_hidden: 'The text is hidden. Recite from memory!',
       hint: 'Hint: next word',
       hint_none: 'No more words.',
@@ -214,7 +215,7 @@
       profile_title: "Profil de l'enfant",
       profile_note: 'Enregistré uniquement sur cet appareil.',
       nickname: 'Surnom',
-      nickname_ph: 'ex. Sami',
+      nickname_ph: 'ex. Salma ou Sami',
       age: 'Âge',
       age_6_9: '6 à 9 ans',
       age_10_13: '10 à 13 ans',
@@ -346,6 +347,7 @@
       quran_mode: 'Comment veux-tu réciter ?',
       mode_looking: 'En regardant',
       mode_memory: 'De mémoire',
+      riwaya: 'Hafs – Tanzil',
       quran_text_hidden: 'Le texte est caché. Récite de mémoire !',
       hint: 'Indice : mot suivant',
       hint_none: "Il n'y a plus de mots.",
@@ -390,7 +392,7 @@
       profile_title: 'ملف الطفل',
       profile_note: 'يُحفظ على هذا الجهاز فقط.',
       nickname: 'الاسم المستعار',
-      nickname_ph: 'مثلًا: سامي',
+      nickname_ph: 'مثلًا: سلمى أو سامي',
       age: 'العمر',
       age_6_9: '٦–٩ سنوات',
       age_10_13: '١٠–١٣ سنة',
@@ -520,8 +522,9 @@
       to_ayah: 'إلى الآية',
       range_capped: 'خمسون آية على الأكثر في كل مرة.',
       quran_mode: 'طريقة التلاوة',
-      mode_looking: 'تلاوة مع النظر',
+      mode_looking: 'مع رؤية النص',
       mode_memory: 'من الحفظ',
+      riwaya: 'رواية حفص عن عاصم (Tanzil)',
       quran_text_hidden: 'النص مخفي. هيا نتلو من الحفظ!',
       hint: 'تلميح: الكلمة التالية',
       hint_none: 'لا توجد كلمات أخرى.',
@@ -573,7 +576,9 @@
     'prep-photo': ['server', 'brain', 'consent'],
     'recite-rec': ['server', 'asr', 'consent', 'mic'],
     'recite-tts': ['server', 'tts'],
-    'dict-start': ['server'],
+    // 'dictation': the confirmed text has a phrase that is a whole ayah (often the
+    // basmala on its own line), which the voice never reads: it can only be recited.
+    'dict-start': ['server', 'dictation'],
     // A typed check is worded by Claude when it is configured: that needs the consent.
     'dict-check': ['server', 'ai-consent'],
     'dict-play': ['server', 'tts'],
@@ -596,7 +601,9 @@
     profile: defaultProfile(),
     // langChosen: the parent picked the text language (or a photo set it); until then it
     // follows the interface language. confirmToken drops a confirmation overtaken by an edit.
-    page: { text: '', lang: 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0 },
+    // noDictation: the server refused the confirmed text for dictation (a phrase is a whole
+    // ayah); it lasts until the text is changed or confirmed again.
+    page: { text: '', lang: 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0, noDictation: false },
     recording: null, // { control, recorder }
     // Bumped whenever spoken feedback that is still on its way must not play any more (a
     // recording starts, the screen changes, a new result arrives).
@@ -919,6 +926,36 @@
     return o.as === 'blob' ? res.blob() : res.json();
   }
 
+  /** A refusal that rules out only dictation: a phrase of the text is a whole ayah. */
+  function isPhraseRefusal(err) {
+    return !!err && err.name === 'ApiError' && err.code === 'quran_text' && err.scope === 'phrase';
+  }
+
+  // A line break between two lines of text (not a blank line).
+  const SINGLE_LINE_BREAK = /\S[^\S\n]*\n[^\S\n]*\S/;
+
+  /**
+   * /api/dictation/phrases for `text`. The server joins the lines of a paragraph into
+   * one phrase, so a line that is a whole ayah (most often the basmala on a line of its
+   * own, without a full stop) would reach the voice glued to the next word, and be
+   * refused only once the dictation has started. So a text with such line breaks is
+   * also asked about with each line as a paragraph of its own; a refusal with scope
+   * "phrase" of that is thrown as the refusal of the text. Any other answer to the
+   * second question is ignored: the text itself was accepted.
+   */
+  async function dictationPhrases(text, lang) {
+    const res = await api('api/dictation/phrases', { json: { text, lang } });
+    if (SINGLE_LINE_BREAK.test(text)) {
+      const byLine = text.split('\n').map((line) => line.trim()).filter(Boolean).join('\n\n');
+      try {
+        await api('api/dictation/phrases', { json: { text: byLine, lang } });
+      } catch (err) {
+        if (isPhraseRefusal(err)) throw err;
+      }
+    }
+    return res;
+  }
+
   /** Server error codes with a message of their own. */
   const ERROR_KEYS = {
     quran_text: 'error_quran_text',
@@ -936,7 +973,7 @@
   function errorInfo(err) {
     if (err && err.name === 'ApiError') {
       if (err.status === 0) return { key: 'server_down' };
-      if (err.code === 'quran_text' && err.scope === 'phrase') return { key: 'error_quran_phrase' };
+      if (isPhraseRefusal(err)) return { key: 'error_quran_phrase' };
       if (err.code === 'quran_text') return { key: ERROR_KEYS.quran_text, action: 'quran' };
       if (ERROR_KEYS[err.code]) return { key: ERROR_KEYS[err.code] };
       if (err.status === 413) return { key: 'error_too_big' };
@@ -991,6 +1028,7 @@
       else if (need === 'consent' && !state.consent) return 'consent_needed';
       else if (need === 'ai-consent' && h.brain === 'claude' && !state.consent) return 'consent_needed_ai';
       else if (need === 'mic' && !(window.MommyRecorder && window.MommyRecorder.isSupported())) return 'no_mic_support';
+      else if (need === 'dictation' && state.page.noDictation) return 'error_quran_phrase';
     }
     return null;
   }
@@ -1031,8 +1069,10 @@
       if (show) seen.add(reason);
       why.hidden = !show;
       // A hidden duplicate keeps its text: aria-describedby still reads it to screen readers.
-      if (reason !== null && reason !== 'server_down' && reason !== 'checking_server') setT(why, reason);
-      else setT(why, null);
+      // The text is only written when the reason changes (a language switch repaints every
+      // [data-i18n] node), so a live explanation is not announced again on each refresh.
+      const key = reason !== null && reason !== 'server_down' && reason !== 'checking_server' ? reason : null;
+      if ((why.dataset.i18n || null) !== key) setT(why, key);
     }
   }
 
@@ -1553,6 +1593,7 @@
     const status = $('#prep-confirm-status');
     // A confirmation still waiting for the server is for the old text: drop it.
     state.page.confirmToken++;
+    setNoDictation(false);
     setBusy($('#btn-confirm'), false);
     if (!state.page.confirmed) {
       if (status.dataset.i18n === 'checking_text') clearStatus(status);
@@ -1647,7 +1688,7 @@
     setStatus(status, 'checking_text');
     setBusy(btn, true);
     try {
-      const res = await api('api/dictation/phrases', { json: { text, lang } });
+      const res = await dictationPhrases(text, lang);
       if (token !== state.page.confirmToken) return;
       const phrases = Array.isArray(res.phrases) ? res.phrases.filter((p) => typeof p === 'string' && p.trim()) : null;
       if (phrases && !phrases.length) {
@@ -1660,7 +1701,7 @@
       // confirmed anyway: each activity reports the problem when it needs the server.
       // A phrase that is a whole ayah (often the basmala on its own line) only rules out
       // dictation, which would read it aloud: the text can still be recited.
-      if (err && err.name === 'ApiError' && err.code === 'quran_text' && err.scope === 'phrase') {
+      if (isPhraseRefusal(err)) {
         noDictation = true;
       } else if (err && err.name === 'ApiError' && err.status >= 400 && err.status < 500) {
         refuseText(status, errorInfo(err));
@@ -1674,6 +1715,7 @@
     const mode = $('input[name="mode"]:checked');
     state.page.mode = mode && mode.value === 'contextual' ? 'contextual' : 'strict';
     state.page.confirmed = true;
+    setNoDictation(noDictation);
     resetRecite();
     resetDictation();
     renderLegends();
@@ -1685,9 +1727,17 @@
     else if (state.screen === 'dictation') enterDictation();
   }
 
+  /** Dictation is ruled out for the confirmed text (or allowed again): the gate says why. */
+  function setNoDictation(on) {
+    if (state.page.noDictation === !!on) return;
+    state.page.noDictation = !!on;
+    refreshGates();
+  }
+
   /** The text in the textarea cannot be used: say why ({key, action}) and unconfirm it. */
   function refuseText(status, info) {
     state.page.confirmed = false;
+    setNoDictation(false);
     $('#prep-next').hidden = true;
     setStatus(status, info.key, null, { error: true, action: info.action });
   }
@@ -1971,17 +2021,29 @@
   async function startDictation() {
     const status = $('#dict-intro-status');
     const btn = $('#btn-dict-start');
+    if (!isOpen('dict-start')) return;
+    // An answer for a text that was changed or confirmed again meanwhile is dropped.
+    const token = state.page.confirmToken;
     setStatus(status, 'preparing');
     setBusy(btn, true);
     let res;
     try {
-      res = await api('api/dictation/phrases', { json: { text: state.page.text, lang: state.page.lang } });
+      res = await dictationPhrases(state.page.text, state.page.lang);
     } catch (err) {
+      if (token !== state.page.confirmToken) return;
+      if (isPhraseRefusal(err)) {
+        // The same answer would come back on every press: the button stays disabled and
+        // the explanation next to it says why, until the text is changed or confirmed again.
+        clearStatus(status);
+        setNoDictation(true);
+        return;
+      }
       showError(status, err);
       return;
     } finally {
       setBusy(btn, false);
     }
+    if (token !== state.page.confirmToken) return; // confirming again cleared the status
     const phrases = Array.isArray(res.phrases) ? res.phrases.filter((p) => typeof p === 'string' && p.trim()) : [];
     if (!phrases.length) {
       setStatus(status, 'no_phrases', null, { error: true });
@@ -2073,6 +2135,15 @@
       if (!current()) return;
       setPhraseLoading(false);
       setNextWaiting(false);
+      if (err && err.name === 'ApiError' && err.code === 'quran_text') {
+        // The text was confirmed (it is not Quran text), but the voice found an ayah in
+        // this phrase: the text can be recited, not dictated. Back to the start of the
+        // dictation, where the disabled button says why (not "this text is from the
+        // Quran" with a button to the Quran section).
+        resetDictation();
+        setNoDictation(true);
+        return;
+      }
       showError(status, err);
       return;
     }

@@ -28,7 +28,12 @@
  *     whose feedback Claude words, a complete notice of what Claude receives, the text
  *     language following the UI and the script of the text, re-checking an edited
  *     dictation reading before the child sees it, the too_short hint, the length-limit
- *     note and the mode-change reset.
+ *     note and the mode-change reset; "Start the dictation" disabled, with the reason
+ *     shown, after a whole-ayah phrase refusal (reciting stays available), also for a
+ *     basmala on a line of its own (a text with line breaks is checked line by line too)
+ *     and for a phrase the voice refuses (back to the start of the dictation, not to
+ *     the Quran section); Arabic UI strings without singular imperatives or visibly
+ *     gendered second-person forms; the riwaya named in Arabic in the Arabic UI.
  *
  * Run:   node tests/web/smoke.cjs
  * Screenshots (optional): MOMMY_SHOTS_DIR=/some/dir node tests/web/smoke.cjs
@@ -351,7 +356,7 @@ function fakeQuranCheck(surah, from, to) {
     verdict: 'mistakes',
     say_again: false,
     first_error: { surah, ayah: first.ayah, word_index_display: first.dj, expected_display_word: first.display, kind: 'sub' },
-    feedback: 'انتبه: «' + first.display + '»',
+    feedback: 'تنبيه: «' + first.display + '»', // as feedback.quran_feedback words it
   };
 }
 
@@ -363,6 +368,12 @@ const isQuranSample = (s) => typeof s === 'string' && s.includes('قل هو ال
 /** A school text whose basmala is a phrase of its own: it may be recited, but the real
  * /api/dictation/phrases refuses it with scope "phrase" (the voice never reads an ayah). */
 const BASMALA_TEXT = 'بسم الله الرحمن الرحيم. ذهب الولد إلى المدرسة مع أخيه.';
+/** The same with the basmala on a line of its own, without a full stop: the real server
+ * joins the two lines into one phrase and accepts the text as typed, but refuses it with
+ * scope "phrase" when each line is a paragraph of its own. */
+const BASMALA_LINE = 'بسم الله الرحمن الرحيم';
+const BASMALA_LINE_TEXT = BASMALA_LINE + '\nذهب الولد إلى المدرسة مع أخيه.';
+const hasBasmalaParagraph = (s) => s.split(/\n[^\S\n]*\n/).some((part) => part.trim() === BASMALA_LINE);
 const QURAN_PHRASE_MESSAGE = 'A phrase of this text is a whole ayah of the Quran, which is never read out by the synthetic voice, so the text cannot be used for dictation. It can still be recited.';
 
 function makeFakeApi(opts) {
@@ -371,6 +382,7 @@ function makeFakeApi(opts) {
   const reciteQueue = [];
   const dictationQueue = [];
   const refused = new Set(); // endpoints that answer 422 quran_text whatever the text
+  const unreachable = new Set(); // endpoints whose requests fail as if the server were down
   let tts = { delay: () => 0, check: (j) => (j.slow ? 'passed' : 'skipped') };
   let pageRead = null;
   let healthDown = !!o.healthDown;
@@ -391,6 +403,7 @@ function makeFakeApi(opts) {
       }
     }
     calls.push(call);
+    if (unreachable.has(p)) return route.abort('connectionrefused');
     const json = (data, status) => route.fulfill({ status: status || 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(data) });
 
     if (p === '/api/health') {
@@ -416,7 +429,7 @@ function makeFakeApi(opts) {
     }
     if (p === '/api/dictation/phrases' && method === 'POST') {
       if (refuseQuran(p, call.json.text)) return quranRefusal();
-      if (call.json.text === BASMALA_TEXT) return json({ error: 'quran_text', message: QURAN_PHRASE_MESSAGE, scope: 'phrase' }, 422);
+      if (call.json.text === BASMALA_TEXT || hasBasmalaParagraph(call.json.text)) return json({ error: 'quran_text', message: QURAN_PHRASE_MESSAGE, scope: 'phrase' }, 422);
       if (call.json.text.includes('[?]')) return json({ error: 'unreadable_text', message: 'The text has [?] where a word could not be read. Please type the missing words first.' }, 400);
       if (call.json.text.length > 20000) return json({ error: 'text_too_long', message: 'The text is longer than 20000 characters.' }, 400);
       return json({ phrases: o.phrases });
@@ -462,6 +475,8 @@ function makeFakeApi(opts) {
     },
     /** Make an endpoint answer 422 quran_text (or stop doing so). */
     refuse: (p, on) => (on ? refused.add(p) : refused.delete(p)),
+    /** Make requests to an endpoint fail as a network error (or stop doing so). */
+    unreachable: (p, on) => (on ? unreachable.add(p) : unreachable.delete(p)),
     /** {delay(json) -> ms, check(json) -> X-Speech-Check value}; missing parts keep the default. */
     setTts: (t) => {
       tts = { delay: (t && t.delay) || (() => 0), check: (t && t.check) || ((j) => (j.slow ? 'passed' : 'skipped')) };
@@ -1051,7 +1066,7 @@ async function mainFlow(browser, base) {
     assert.equal((await page.textContent('#quran-text .qw.w-sub .w-heard')).trim(), 'هم');
     assert.equal((await page.textContent('#quran-text .qw.w-del')).replace(/\s*\(.*\)$/, ''), ayah(112, 2).display_words[1]);
     assert.ok(await page.isVisible('#quran-text .qw.w-first'));
-    assert.equal((await page.textContent('#quran-feedback')).trim(), 'انتبه: «' + expectedSub + '»');
+    assert.equal((await page.textContent('#quran-feedback')).trim(), 'تنبيه: «' + expectedSub + '»');
     assert.equal(await page.getAttribute('#quran-feedback', 'dir'), 'rtl');
     assert.match(await page.textContent('#quran-first-error'), /ayah 1/);
     // The feedback is brought into view: on a phone the result card starts below the fold.
@@ -1337,8 +1352,11 @@ async function serverDown(browser, base) {
 // ---------------------------------------------------------------------------
 
 const AR_TEXT = 'ذَهَبَ الْوَلَدُ إِلَى الْمَدْرَسَةِ مَعَ أَخِيهِ.';
-const AR_QURAN_MSG = 'هذا النص من القرآن الكريم. يُرجى التدرّب عليه في قسم القرآن.';
+const AR_QURAN_MSG = 'هذا النص من القرآن الكريم. يُرجى التدرّب عليه في قسم القرآن الكريم.';
 const EN_QURAN_MSG = 'This text is from the Quran. Please practise it in the Quran section.';
+const EN_PHRASE_MSG = 'Part of this text is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud, so this text cannot be used for dictation. It can still be recited.';
+const AR_PHRASE_MSG = 'جزء من هذا النص آية من القرآن الكريم (مثل البسملة)، والتطبيق لا يقرأ القرآن الكريم بصوت مسموع أبدًا، لذلك لا يمكن استخدام هذا النص في الإملاء، ولكن يمكن تسميعه.';
+const DICT_START_WHY = '[data-stage="intro"] [data-why="dict-start"]';
 const WESTERN_DIGIT = /[0-9]/;
 
 /**
@@ -1408,7 +1426,7 @@ async function arabicFlow(browser, base) {
     const call = fake.callsTo('/api/dictation/phrases').at(-1);
     assert.deepEqual(call.json, { text: QURAN_SAMPLE, lang: 'ar' });
     const go = page.locator('#prep-confirm-status + .status-action');
-    assert.equal((await go.textContent()).trim(), 'اذهب إلى قسم القرآن');
+    assert.equal((await go.textContent()).trim(), 'الانتقال إلى قسم القرآن الكريم');
     await go.click();
     await page.waitForSelector('#screen-quran:not([hidden])');
     await page.waitForSelector('#quran-text .ayah[data-ayah="10"]');
@@ -1452,16 +1470,39 @@ async function arabicFlow(browser, base) {
     assert.equal((await page.textContent('#recite-status')).trim(), AR_QURAN_MSG);
     assert.ok(await page.isVisible('#recite-status + .status-action'));
     fake.refuse('/api/recite/check', false);
+    // The voice refuses a phrase of a confirmed text (an ayah inside a school text): the
+    // text is not "from the Quran", so the child is not sent to the Quran section; the
+    // dictation goes back to its start, where the disabled button says why (R1).
     fake.refuse('/api/tts', true);
     await page.click('#nav [data-go="prepare"]');
     await pressConfirm(page); // a new confirmation starts a new dictation
     await page.click('#nav [data-go="dictation"]');
+    const before = fake.callsTo('/api/tts').length;
     await page.click('#btn-dict-start');
-    await page.waitForSelector('#dict-speak-status.is-error');
-    assert.equal((await page.textContent('#dict-speak-status')).trim(), AR_QURAN_MSG);
-    await page.click('#dict-speak-status + .status-action');
-    await page.waitForSelector('#screen-quran:not([hidden])');
+    await waitForCall(fake, '/api/tts', before + 1);
+    await page.waitForSelector('#btn-dict-start[disabled]:not([data-busy])');
+    assert.ok(await page.isVisible('[data-stage="intro"]'));
+    assert.ok(await page.isVisible(DICT_START_WHY));
+    assert.equal((await page.textContent(DICT_START_WHY)).trim(), AR_PHRASE_MSG);
+    assert.equal((await page.textContent('#dict-intro-status')).trim(), '');
+    assert.equal(await page.locator('#dict-speak-status + .status-action, #dict-intro-status + .status-action').count(), 0);
+    await shot(page, 'dictation-voice-refused-ar-360');
     fake.refuse('/api/tts', false);
+    await page.click('#nav [data-go="quran"]');
+    await page.waitForSelector('#screen-quran:not([hidden])');
+  });
+
+  await check('ar: the Quran screen names the riwaya in Arabic, keeps the English attribution verbatim, and the two modes read as a pair (R4, R10)', async () => {
+    await page.waitForSelector('#quran-text .ayah[data-ayah="10"]');
+    assert.equal((await page.textContent('#quran-riwaya')).trim(), 'رواية حفص عن عاصم (Tanzil)');
+    assert.equal((await page.textContent('#quran-attribution')).trim(), ATTRIBUTION);
+    const modes = await page.$$eval('#screen-quran .seg-title', (els) => els.map((e) => e.textContent.trim()));
+    assert.deepEqual(modes, ['مع رؤية النص', 'من الحفظ']);
+    for (const box of await page.$$('#screen-quran .seg-title')) {
+      const fits = await box.evaluate((e) => e.scrollWidth <= e.clientWidth + 1);
+      assert.ok(fits, 'a mode label overflows at 360 px');
+    }
+    await noHorizontalScroll(page);
   });
 
   await check('ar: ayah range fields show Arabic-Indic digits and accept both digit systems; "look again at ayah" too (W4)', async () => {
@@ -1477,7 +1518,7 @@ async function arabicFlow(browser, base) {
     assert.equal(await page.inputValue('#quran-to'), '٥');
     await record(page, '#quran-rec', 600);
     await page.waitForSelector('#quran-result:not([hidden])');
-    assert.equal((await page.textContent('#quran-first-error')).trim(), 'راجع الآية ٢.');
+    assert.equal((await page.textContent('#quran-first-error')).trim(), 'هيا نراجع الآية ٢.');
     assert.equal(await page.getAttribute('#quran-text .ayah-num', 'aria-label'), 'الآية ٢');
   });
 
@@ -1728,14 +1769,15 @@ async function fixesFlow(browser, base) {
     await page.waitForSelector('#screen-recite:not([hidden])');
     assert.equal((await page.textContent('#recite-text')).trim(), BASMALA_TEXT);
     assert.ok(await page.isEnabled('#recite-rec'));
-    // Dictation: the start refusal is the specific, localized message (no English server text).
+    // Dictation: the refusal is already known, so "Start the dictation" is disabled and
+    // the specific, localized reason is shown next to it (no English server text).
+    const before = fake.callsTo('/api/dictation/phrases').length;
     await page.click('#nav [data-go="dictation"]');
     await page.waitForSelector('#screen-dictation:not([hidden])');
-    const before = fake.callsTo('/api/dictation/phrases').length;
-    await page.click('#btn-dict-start');
-    await waitForCall(fake, '/api/dictation/phrases', before + 1);
-    await page.waitForSelector('#dict-intro-status.is-error');
-    assert.equal((await page.textContent('#dict-intro-status')).trim(), 'Part of this text is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud, so this text cannot be used for dictation. It can still be recited.');
+    assert.ok(await page.isDisabled('#btn-dict-start'));
+    assert.ok(await page.isVisible(DICT_START_WHY));
+    assert.equal((await page.textContent(DICT_START_WHY)).trim(), EN_PHRASE_MSG);
+    assert.equal(fake.callsTo('/api/dictation/phrases').length, before, 'nothing is asked again');
     assert.equal(fake.callsTo('/api/tts').filter((c) => c.json.text.includes('بسم')).length, 0);
     await page.click('#nav [data-go="prepare"]');
     await page.selectOption('#page-lang', 'en');
@@ -1748,6 +1790,221 @@ async function fixesFlow(browser, base) {
     assert.deepEqual(expected4xx(problems), []);
   });
   await context.close();
+}
+
+/**
+ * A text with a phrase that is a whole ayah (often the basmala on its own line) can be
+ * recited but not dictated. Once the server has said so, "Start the dictation" stays
+ * disabled with the reason next to it, until the text is changed or confirmed again.
+ */
+async function dictationPhraseFlow(browser, base) {
+  const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 });
+  await page.goto(base + '/');
+  await startSession(page, { consent: true, nickname: 'Lina' });
+  await page.waitForSelector('#screen-prepare:not([hidden])');
+  const phraseCalls = () => fake.callsTo('/api/dictation/phrases').length;
+  const NO_DICTATION_NOTE = 'Text confirmed for reciting. It cannot be used for dictation: part of it is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud.';
+
+  /** Confirm the text while the server cannot be reached: it is confirmed anyway. */
+  async function confirmOffline() {
+    fake.unreachable('/api/dictation/phrases', true);
+    const before = phraseCalls();
+    await pressConfirm(page);
+    await waitForCall(fake, '/api/dictation/phrases', before + 1);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    fake.unreachable('/api/dictation/phrases', false);
+  }
+
+  /** Press "Start the dictation": the server refuses the text (scope "phrase"). */
+  async function startRefused() {
+    await page.click('#nav [data-go="dictation"]');
+    await page.waitForSelector('#screen-dictation:not([hidden])');
+    assert.ok(await page.isEnabled('#btn-dict-start'), 'the refusal is not known yet');
+    assert.ok(await page.isHidden(DICT_START_WHY));
+    const before = phraseCalls();
+    await page.click('#btn-dict-start');
+    await waitForCall(fake, '/api/dictation/phrases', before + 1);
+    // Disabled for the refusal, not only busy while the request runs.
+    await page.waitForSelector('#btn-dict-start[disabled]:not([data-busy])');
+  }
+
+  await check('dictation: after a whole-ayah phrase refusal, "Start the dictation" is disabled with the reason shown once, and a press sends nothing (W3)', async () => {
+    await page.selectOption('#page-lang', 'ar');
+    await page.fill('#page-text', BASMALA_TEXT);
+    await confirmOffline();
+    await startRefused();
+    assert.ok(await page.isVisible(DICT_START_WHY));
+    assert.equal((await page.textContent(DICT_START_WHY)).trim(), EN_PHRASE_MSG);
+    assert.equal(await page.getAttribute('#btn-dict-start', 'aria-describedby'), await page.getAttribute(DICT_START_WHY, 'id'));
+    assert.equal((await page.textContent('#dict-intro-status')).trim(), '', 'the reason is not repeated in the status line');
+    const n = phraseCalls();
+    await page.$eval('#btn-dict-start', (b) => b.click()); // a disabled button ignores it
+    await sleep(300);
+    assert.equal(phraseCalls(), n, 'nothing is asked again');
+    assert.ok(await page.isVisible('[data-stage="intro"]'));
+    // The reason follows the interface language.
+    await page.click('#btn-profile');
+    await page.selectOption('#ui-lang', 'ar');
+    await page.click('#btn-start');
+    await page.click('#nav [data-go="dictation"]');
+    await page.waitForSelector('#screen-dictation:not([hidden])');
+    assert.ok(await page.isDisabled('#btn-dict-start'));
+    assert.ok(await page.isVisible(DICT_START_WHY));
+    assert.equal((await page.textContent(DICT_START_WHY)).trim(), AR_PHRASE_MSG);
+    await shot(page, 'dictation-phrase-refused-ar-360');
+    await noHorizontalScroll(page);
+    await page.click('#btn-profile');
+    await page.selectOption('#ui-lang', 'en');
+    await page.click('#btn-start');
+  });
+
+  await check('dictation: with dictation ruled out, reciting the same text stays available (W3)', async () => {
+    await page.click('#nav [data-go="recite"]');
+    await page.waitForSelector('#recite-main:not([hidden])');
+    assert.equal((await page.textContent('#recite-text')).trim(), BASMALA_TEXT);
+    assert.ok(await page.isEnabled('#recite-rec'));
+    const before = fake.callsTo('/api/recite/check').length;
+    await record(page, '#recite-rec', 600);
+    const call = await waitForCall(fake, '/api/recite/check', before + 1);
+    assert.equal(call.form.expected_text.text, BASMALA_TEXT);
+    await page.waitForSelector('#recite-result:not([hidden])');
+  });
+
+  await check('dictation: confirming the text again asks again (still refused: still disabled); a changed text can be dictated (W3)', async () => {
+    // Confirmed again while the server is unreachable: the old refusal no longer counts.
+    await page.click('#nav [data-go="prepare"]');
+    await confirmOffline();
+    await startRefused();
+    // Confirmed again with the server answering: refused at "Confirm text", so the
+    // button is disabled before anyone presses it.
+    await page.click('#nav [data-go="prepare"]');
+    const before = phraseCalls();
+    await pressConfirm(page);
+    await waitForCall(fake, '/api/dictation/phrases', before + 1);
+    assert.equal((await page.textContent('#prep-confirm-status')).trim(), NO_DICTATION_NOTE);
+    await page.click('#prep-next [data-go="dictation"]');
+    assert.ok(await page.isDisabled('#btn-dict-start'));
+    assert.equal((await page.textContent(DICT_START_WHY)).trim(), EN_PHRASE_MSG);
+    // The parent takes the basmala line out: the changed text must be confirmed first...
+    await page.click('#nav [data-go="prepare"]');
+    await page.fill('#page-text', AR_TEXT);
+    await page.click('#nav [data-go="dictation"]');
+    await page.waitForSelector('#dict-empty:not([hidden])');
+    // ... and then it can be dictated.
+    await page.click('#nav [data-go="prepare"]');
+    await pressConfirm(page);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    await page.click('#prep-next [data-go="dictation"]');
+    assert.ok(await page.isEnabled('#btn-dict-start'));
+    assert.ok(await page.isHidden(DICT_START_WHY));
+    await page.click('#btn-dict-start');
+    await page.waitForSelector('[data-stage="speak"]:not([hidden])');
+  });
+
+  await check('dictation: a basmala on a line of its own, without a full stop, rules out dictation at "Confirm text": a text with line breaks is also checked line by line (R1)', async () => {
+    await page.click('#nav [data-go="prepare"]');
+    await page.waitForSelector('#screen-prepare:not([hidden])');
+    // An ordinary text on two lines: asked about as typed, then with each line as a
+    // paragraph; it is confirmed for dictation as before.
+    const lines = 'ذهب الولد إلى المدرسة\nمع أخيه صباحا.';
+    let before = phraseCalls();
+    await page.fill('#page-text', lines);
+    await pressConfirm(page);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    assert.equal(phraseCalls(), before + 2);
+    assert.deepEqual(fake.callsTo('/api/dictation/phrases').slice(before).map((c) => c.json.text), [lines, 'ذهب الولد إلى المدرسة\n\nمع أخيه صباحا.']);
+    assert.notEqual((await page.textContent('#prep-confirm-status')).trim(), NO_DICTATION_NOTE);
+    // A text without line breaks is asked about once.
+    before = phraseCalls();
+    await page.fill('#page-text', AR_TEXT);
+    await pressConfirm(page);
+    assert.equal(phraseCalls(), before + 1);
+    // The basmala on a line of its own: the text as typed is accepted, line by line it
+    // is refused, so dictation is ruled out before anyone presses "Start the dictation".
+    before = phraseCalls();
+    await page.fill('#page-text', BASMALA_LINE_TEXT);
+    await pressConfirm(page);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    assert.equal(phraseCalls(), before + 2);
+    assert.equal(fake.callsTo('/api/dictation/phrases')[before].json.text, BASMALA_LINE_TEXT);
+    assert.equal((await page.textContent('#prep-confirm-status')).trim(), NO_DICTATION_NOTE);
+    await page.click('#prep-next [data-go="dictation"]');
+    await page.waitForSelector('#screen-dictation:not([hidden])');
+    assert.ok(await page.isDisabled('#btn-dict-start'));
+    assert.equal((await page.textContent(DICT_START_WHY)).trim(), EN_PHRASE_MSG);
+    assert.equal(fake.callsTo('/api/tts').filter((c) => c.json.text.includes('بسم')).length, 0, 'the voice never got the basmala');
+    // Reciting the same text stays available.
+    await page.click('#nav [data-go="recite"]');
+    await page.waitForSelector('#recite-main:not([hidden])');
+    assert.ok(await page.isEnabled('#recite-rec'));
+  });
+
+  await check('whole-ayah phrase flow: no console errors (besides the refusals and the unreachable server asked for), page errors or external requests', async () => {
+    assert.deepEqual(expected4xx(problems).filter((p) => !/Failed to load resource: net::ERR_CONNECTION_REFUSED/.test(p)), []);
+  });
+  await context.close();
+}
+
+/** The `key: 'text'` entries of one language block of STRINGS in app.js. */
+function uiStrings(lang) {
+  const source = fs.readFileSync(path.join(WEB, 'app.js'), 'utf8');
+  const start = source.indexOf('\n    ' + lang + ': {\n');
+  assert.ok(start > 0, 'no ' + lang + ' block');
+  const end = source.indexOf('\n    },', start);
+  const out = {};
+  for (const m of source.slice(start, end).matchAll(/^ {6}(\w+): (['"])(.*)\2,$/gm)) out[m[1]] = m[3].replace(/\\(['"])/g, '$1');
+  return out;
+}
+
+/**
+ * Parents are most often mothers, and children are girls and boys: the Arabic UI uses
+ * يُرجى + a verbal noun for the parent, "هيا + we" for the child and verbal nouns on
+ * buttons, never a singular imperative or a visibly gendered "you". A quoted button label
+ * is the label itself (in every language).
+ */
+function arabicWording() {
+  const ar = uiStrings('ar');
+  assert.ok(Object.keys(ar).length > 150, 'the Arabic block was read');
+  // Harakat are dropped (the shadda stays), so أعِد and أعد are the same token.
+  const norm = (w) => w.replace(/[ً-ِْ]/g, '');
+  const BANNED = new Set([
+    // singular masculine imperatives
+    'اضغط', 'اضغطه', 'اكتب', 'الصقه', 'ابدأ', 'انتظر', 'اذهب', 'انتقل', 'حاول', 'أعد', 'راجع', 'صوّر',
+    'استمع', 'جرّب', 'استخدم', 'اقرأ', 'أحضر', 'دعني', 'اقترب', 'ارفع', 'أخف', 'اتل', 'ابحث', 'صحّح',
+    'أكّد', 'اطلب', 'أظهر', 'التقط', 'اختر', 'انظر',
+    // singular feminine imperatives
+    'اضغطي', 'اكتبي', 'ابدئي', 'انتظري', 'حاولي', 'أعيدي', 'استمعي', 'اقرئي',
+    // a gendered "you" (masculine and feminine present forms)
+    // (not تكتب: undiacritized it is also the passive "is written")
+    'تريد', 'تريدين', 'تعرف', 'تعرفين', 'تكتبين', 'تنتهي', 'تنتهين', 'لتبدأ', 'لتبدئي', 'لتسمعه', 'لتسمعيه',
+    'أنتَ', 'أنتِ',
+  ].map(norm));
+  const bad = [];
+  const texts = Object.entries(ar);
+  // Static Arabic text in index.html (the page is translated from app.js, but a fallback
+  // written there would be seen before the script runs).
+  const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf8').replace(/<[^>]*>/g, ' ');
+  texts.push(['index.html', html.split(/\s+/).filter((w) => /\p{Script=Arabic}/u.test(w)).join(' ')]);
+  for (const [key, text] of texts) {
+    for (const raw of text.split(/[\s«»"“”()،؛؟.,:!…—–\[\]{}]+/u)) {
+      const w = norm(raw);
+      if (!w) continue;
+      const bare = /^[وف]/.test(w) && BANNED.has(w.slice(1)) ? w.slice(1) : w;
+      if (BANNED.has(bare)) bad.push(`${key}: ${raw}`);
+    }
+  }
+  assert.deepEqual(bad, []);
+  // «label» quotes name a label that exists.
+  const QUOTES = { ar: /«\s*([^»]+?)\s*»/g, fr: /«\s*([^»]+?)\s*»/g, en: /“([^”]+)”/g };
+  for (const [lang, re] of Object.entries(QUOTES)) {
+    const table = lang === 'ar' ? ar : uiStrings(lang);
+    const labels = new Set(Object.values(table));
+    const missing = [];
+    for (const [key, text] of Object.entries(table)) {
+      for (const m of text.matchAll(re)) if (!labels.has(m[1])) missing.push(`${lang}.${key}: ${m[1]}`);
+    }
+    assert.deepEqual(missing, [], 'quoted labels that are not a label');
+  }
 }
 
 async function consentFlow(browser, base) {
@@ -1851,6 +2108,8 @@ async function main() {
   await check('node --check web/*.js', checkSyntax);
   console.log('# recorder helpers (Node)');
   await recorderUnitTests();
+  console.log('# Arabic UI wording (Node)');
+  await check('ar: UI strings use no singular imperative or visibly gendered second-person form', arabicWording);
 
   TANZIL.uthmani = readTanzil('quran-uthmani.txt');
   TANZIL.clean = readTanzil('quran-simple-clean.txt');
@@ -1881,6 +2140,8 @@ async function main() {
     await arabicFlow(browser, base);
     console.log('# browser: review fixes');
     await fixesFlow(browser, base);
+    console.log('# browser: dictation of a text with a whole-ayah phrase');
+    await dictationPhraseFlow(browser, base);
     console.log('# browser: consent and Claude');
     await consentFlow(browser, base);
     console.log('# browser: length limit');

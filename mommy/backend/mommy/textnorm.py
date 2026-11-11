@@ -601,8 +601,13 @@ def tokenize(text: str, lang: Lang) -> list[str]:
 #
 # A speech recogniser writes "12" where the page prints "twelve" (and the reverse),
 # "color" for "colour" and "they're" for "they are". The child said the text right, so
-# speech matching (mommy.align.check_recitation) treats these as the same words.
-# Dictation never uses these rules: writing "3" for "three" is a difference there.
+# speech matching (mommy.align.check_recitation) treats these as the same words. In
+# Arabic it also writes a number in another gender or case than the page (اثنا عشر for
+# اثنتا عشرة, ثلاثة for ثلاث, عشرين for عشرون): the speech key already drops the case
+# endings, and the recogniser's choice of gender cannot be put down to the child, so
+# speech matching compares Arabic number words by value (spoken_number) on both sides.
+# Dictation never uses these rules: writing "3" for "three", or ثلاثة for ثلاث, is a
+# difference there; and the Quran check does not use them either (it stays strict).
 
 #: Numbers whose words are known, in each language: 0..NUMBER_WORDS_MAX.
 NUMBER_WORDS_MAX = 100
@@ -638,7 +643,17 @@ _AR_UNITS: dict[int, tuple[str, ...]] = {
     8: ("ثمانية", "ثماني", "ثمان", "ثمانى"),
     9: ("تسعة", "تسع"),
 }
+# The indefinite accusative, whose tanwin is written on an added alef (واحدًا تلو الآخر,
+# صلى أربعًا, ثلاثًا وعشرين): units and 10 standing alone or before و + tens, never in
+# 11..19, whose two words keep a plain fatha (ثلاثَ عشرةَ).
+_AR_UNITS_ACCUSATIVE: dict[int, tuple[str, ...]] = {
+    1: ("واحدا",), 3: ("ثلاثا",), 4: ("أربعا",), 5: ("خمسا",), 6: ("ستا",), 7: ("سبعا",),
+    8: ("ثمانيا",), 9: ("تسعا",),
+}
+_AR_TEN_ACCUSATIVE = "عشرا"
 _AR_TEEN_ONE = ("أحد", "إحدى")
+# The unit of 21, 31, ... 91: واحد وعشرون, إحدى وعشرون (and أحد وعشرون).
+_AR_COMPOUND_ONE = (*_AR_UNITS[1], *_AR_UNITS_ACCUSATIVE[1], *_AR_TEEN_ONE)
 _AR_TEEN_TWO = ("اثنا", "اثني", "اثنتا", "اثنتي", "اثنى")
 _AR_TEN = ("عشر", "عشرة")
 _AR_TENS = {20: ("عشرون", "عشرين"), 30: ("ثلاثون", "ثلاثين"), 40: ("أربعون", "أربعين"),
@@ -646,6 +661,49 @@ _AR_TENS = {20: ("عشرون", "عشرين"), 30: ("ثلاثون", "ثلاثين
             80: ("ثمانون", "ثمانين"), 90: ("تسعون", "تسعين")}
 _AR_HUNDRED = ("مائة", "مئة", "مية")
 _AR_AND = "و"
+
+# Number words that are also other words: in a text with vowel marks, a mark the number
+# never has rules the number out (speech matching then compares the word like any
+# other). The vowels each number allows on its first and second letter (a sukun or no
+# mark is always allowed; any other harakah or a shadda rules it out):
+# سَبْع (not سَبُع a beast of prey, سُبْع a seventh), خَمْس (not خُمُس a fifth), تِسْع (not
+# the verb تَسَعُ "holds", تُسْع a ninth), عَشْر / عَشَرَة / أحدَ عَشَرَ (not عُشْر a tenth,
+# عِشْرَة companionship), صِفْر (not صَفَر the month). Without vowel marks such a word is
+# taken as the number: the page cannot tell, so neither can the code.
+_SHADDA = "\u0651"
+_AR_NUMBER_VOWELS: dict[str, tuple[str, str]] = {
+    "سبع": (FATHA, ""), "سبعا": (FATHA, ""),
+    "خمس": (FATHA, ""), "خمسا": (FATHA, ""),
+    "تسع": (KASRA, ""), "تسعا": (KASRA, ""),
+    "عشر": (FATHA, FATHA), "عشرة": (FATHA, FATHA), "عشرا": (FATHA, ""),
+    "صفر": (KASRA, ""),
+}
+_AR_RULING_MARKS = frozenset((FATHA, DAMMA, KASRA, _SHADDA))
+
+
+def _vowels_rule_out_number(token: str) -> bool:
+    """True when the vowel marks of an Arabic ``token`` show it is not the number it
+    spells (``سَبُع``, ``خُمُس``, ``تَسَعُ``, ``عُشْر``, ``وَعُشْر``; see
+    :data:`_AR_NUMBER_VOWELS`)."""
+    if not _TASHKEEL_RE.search(token):
+        return False
+    letters: list[str] = []
+    marks: list[set[str]] = []
+    for c in unicodedata.normalize("NFC", token):
+        if _MARK_RE.match(c):
+            if marks:
+                marks[-1].add(c)
+        elif c != TATWEEL:
+            letters.append(c)
+            marks.append(set())
+    bare = "".join(letters)
+    start = 1 if bare[:1] == _AR_AND and bare[1:] in _AR_NUMBER_VOWELS else 0
+    allowed = _AR_NUMBER_VOWELS.get(bare[start:])
+    if allowed is None:
+        return False
+    return any(
+        (marks[start + k] & _AR_RULING_MARKS) - set(allowed[k]) for k in range(2)
+    )
 
 
 def _words(spelling: str) -> tuple[str, ...]:
@@ -731,10 +789,12 @@ def _fr_ordinal_forms(n: int, spelling: tuple[str, ...]) -> list[tuple[str, ...]
 
 
 def _ar_number_forms() -> dict[int, list[tuple[str, ...]]]:
+    # A unit standing alone, and before و + tens, in every form (the accusative too).
+    alone = {n: (*ws, *_AR_UNITS_ACCUSATIVE.get(n, ())) for n, ws in _AR_UNITS.items()}
     forms: dict[int, list[tuple[str, ...]]] = {0: [("صفر",)]}
-    for n, ws in _AR_UNITS.items():
+    for n, ws in alone.items():
         forms[n] = [(w,) for w in ws]
-    forms[10] = [(w,) for w in _AR_TEN]
+    forms[10] = [(w,) for w in (*_AR_TEN, _AR_TEN_ACCUSATIVE)]
     forms[11] = [(a, b) for a in _AR_TEEN_ONE for b in _AR_TEN]
     forms[12] = [(a, b) for a in _AR_TEEN_TWO for b in _AR_TEN]
     for n in range(13, 20):
@@ -742,7 +802,8 @@ def _ar_number_forms() -> dict[int, list[tuple[str, ...]]]:
     for tens, ws in _AR_TENS.items():
         forms[tens] = [(w,) for w in ws]
         for unit in range(1, 10):
-            forms[tens + unit] = [(u, _AR_AND, w) for u in _AR_UNITS[unit] for w in ws]
+            units = _AR_COMPOUND_ONE if unit == 1 else alone[unit]
+            forms[tens + unit] = [(u, _AR_AND, w) for u in units for w in ws]
     forms[100] = [(w,) for w in _AR_HUNDRED]
     return forms
 
@@ -810,7 +871,7 @@ def digit_number(token: str, lang: Lang) -> str | None:
     return None
 
 
-def spoken_number(tokens: Sequence[str], lang: Lang) -> str | None:
+def spoken_number(tokens: Sequence[str], lang: Lang, *, conjunction: bool = False) -> str | None:
     """The value of a number written in words (0 to :data:`NUMBER_WORDS_MAX`), or None.
 
     ``tokens`` are consecutive tokens that together spell exactly one number:
@@ -818,13 +879,24 @@ def spoken_number(tokens: Sequence[str], lang: Lang) -> str | None:
     "un"]``, ``["quatre-vingt-dix"]``, ``["واحد", "وعشرون"]``; values as in
     :func:`digit_number`. English and French ordinals (``"twenty-first"``,
     ``"deuxième"``, ``"premier"``) give ``"o<n>"``. Arabic forms of both genders and
-    cases are accepted (``ثلاثة``/``ثلاث``, ``عشرون``/``عشرين``, ``اثنا عشر``/``اثنتي
-    عشرة``), with the ``و`` of a compound number written on its own or joined.
+    cases are accepted and give the same value (``ثلاثة``/``ثلاث``, ``عشرون``/``عشرين``,
+    ``اثنا عشر``/``اثنتي عشرة``/``إثنى عشر``, ``واحد وعشرون``/``إحدى وعشرين``, the
+    accusative ``واحدًا``/``أربعًا``/``عشرًا``), with the ``و`` of a compound number
+    written on its own or joined. A word whose vowel marks rule the number out is not one
+    (``سَبُع`` a beast of prey, ``خُمُس`` a fifth, ``تَسَعُ`` "holds", ``عُشْر`` a tenth;
+    :data:`_AR_NUMBER_VOWELS`); without marks, ``سبع`` is seven.
+
+    ``conjunction=True`` (Arabic only) also accepts a number led by the conjunction
+    ``و`` (``وثلاث``, ``و ثلاثة``, ``وعشرون``) and keeps it in the value: ``"وc3"``,
+    ``"وc20"``. Such a value equals that of the same number with ``و`` in any gender or
+    case, never a number without it, nor any value of :func:`digit_number`.
     """
     table = _number_table(lang)
     vocabulary = _number_vocabulary(lang)
     words: list[str] = []
     for token in tokens:
+        if lang == "ar" and _vowels_rule_out_number(token):
+            return None
         for part in _normalize_word_cached(token, False, False).replace("'", "").split("-"):
             if not part:
                 continue
@@ -834,11 +906,20 @@ def spoken_number(tokens: Sequence[str], lang: Lang) -> str | None:
                 words.extend((_AR_AND, part[1:]))  # وعشرون -> و عشرون
             else:
                 return None
-    return table.get(tuple(words)) if words else None
+    if not words:
+        return None
+    value = table.get(tuple(words))
+    if value is None and conjunction and lang == "ar" and words[0] == _AR_AND:
+        rest = table.get(tuple(words[1:]))
+        if rest is not None:
+            value = _AR_AND + rest
+    return value
 
 
 def is_number_word(token: str, lang: Lang) -> bool:
     """True when ``token`` can start a number written in words (see :func:`spoken_number`)."""
+    if lang == "ar" and _vowels_rule_out_number(token):
+        return False
     key = _normalize_word_cached(token, False, False).replace("'", "")
     first = key.split("-", 1)[0]
     vocabulary = _number_vocabulary(lang)

@@ -616,6 +616,161 @@ def test_arabic_indic_and_western_digits_are_equal_in_both_modes(check: Any) -> 
     assert check("Il a 21 ans.", "Il a ٢١ ans.", "fr").verdict == "correct"
 
 
+# Arabic numbers in words match by value in speech: the recogniser writes the gender and
+# case it prefers, and the speech key already ignores case endings.
+@pytest.mark.parametrize(
+    ("expected", "heard"),
+    [
+        ("اثنتا عشرة", "إثنى عشر"),
+        ("اثنتا عشرة", "اثنا عشر"),
+        ("اثنتا عشرة", "اثني عشر"),
+        ("اِثْنَتَا عَشْرَةَ", "اثنا عشر"),  # with tashkeel on the page
+        ("ثلاثة", "ثلاث"),
+        ("ثلاث", "ثلاثة"),
+        ("عشرون", "عشرين"),
+        ("عشرة", "عشر"),
+        ("اثنتان", "اثنين"),
+        ("ثماني", "ثمانية"),
+        ("مية", "مائة"),
+        ("ثلاث عشرة", "ثلاثة عشر"),
+        ("إحدى عشرة", "أحد عشر"),
+        ("واحد وعشرون", "إحدى وعشرين"),
+        ("واحد و عشرون", "إحدى وعشرين"),  # three words against two
+        ("إحدى وعشرين", "واحد و عشرين"),  # two words against three
+        ("تسع وتسعون", "تسعة وتسعين"),
+        ("وأربع", "وأربعة"),  # with the conjunction on both sides
+        ("عندي ثلاث كرات وأربع دمى", "عندي ثلاثة كرات وأربعة دمى"),
+        ("في الصف ثلاث عشرة بنتا وأربعة عشر ولدا", "في الصف ثلاثة عشر بنتا و أربع عشرة ولدا"),
+        ("في السنة اثنا عشر شهرا وفي الأسبوع سبعة أيام", "في السنة اثنتي عشرة شهرا وفي الأسبوع سبع أيام"),
+        # The indefinite accusative (tanwin on an added alef).
+        ("صلى أربعًا", "صلى أربعة"),
+        ("دخلوا واحدًا بعد الآخر", "دخلوا واحد بعد الآخر"),
+        ("عاش ثلاثًا وعشرين سنة", "عاش ثلاث وعشرين سنة"),
+        ("عاش ثلاثًا وعشرين سنة", "عاش ٢٣ سنة"),
+        # Vowel marks that fit the number.
+        ("سَبْعَ سَنَوات", "سبعة سنوات"),
+        ("خَمْسَةَ عَشَرَ", "خمس عشرة"),
+        ("أَحَدَ عَشَرَ كَوْكَبًا", "إحدى عشرة كوكبا"),
+        ("ثَلاثَ عَشْرَةَ بِنْتًا", "ثلاثة عشر بنتا"),
+        # Digits and words still interoperate, Western and Arabic-Indic.
+        ("عمري ٢١ سنة", "عمري إحدى وعشرين سنة"),
+        ("عمري إحدى وعشرون سنة", "عمري 21 سنة"),
+        ("اشترينا 12 قلما", "اشترينا اثنتي عشرة قلما"),
+        ("اشترينا اثنتا عشرة قلما", "اشترينا ١٢ قلما"),
+    ],
+)
+def test_arabic_number_words_match_by_value_in_speech(expected: str, heard: str) -> None:
+    r = check_recitation(expected, heard, "ar")
+    assert r.verdict == "correct", errors_of(r)
+    # Every expected word is covered once, in order.
+    assert [op.exp_index for op in r.ops if op.kind != "ins"] == list(range(r.n_expected))
+
+
+@pytest.mark.parametrize(
+    ("expected", "heard", "errors"),
+    [
+        ("ثلاثة", "أربعة", [("sub", "ثلاثة", "أربعة")]),
+        ("عشرون", "عشرة", [("sub", "عشرون", "عشرة")]),
+        ("ثلاث", "ثلاثون", [("sub", "ثلاث", "ثلاثون")]),
+        ("ستة", "ستين", [("sub", "ستة", "ستين")]),
+        ("ثلاثة عشر", "ثلاثة", [("del", "عشر", None)]),
+        ("اثنا عشر", "اثنان", [("sub", "اثنا", "اثنان"), ("del", "عشر", None)]),
+        ("واحد وعشرون", "واحد وثلاثون", [("sub", "وعشرون", "وثلاثون")]),
+        ("خمسة عشر", "خمس وعشرون", [("sub", "عشر", "وعشرون")]),
+        # The conjunction is a word of its own: it must be said.
+        ("وثلاث", "ثلاث", [("sub", "وثلاث", "ثلاث")]),
+        # إحدى and أحد on their own are not numbers ("one of the girls").
+        ("إحدى البنات", "أحد البنات", [("sub", "إحدى", "أحد")]),
+    ],
+)
+def test_different_arabic_numbers_still_differ_in_speech(
+    expected: str, heard: str, errors: list[tuple[str, str | None, str | None]]
+) -> None:
+    sentence = "كان في الحديقة {} من الأطفال"
+    r = check_recitation(sentence.format(expected), sentence.format(heard), "ar")
+    assert errors_of(r) == errors
+
+
+@pytest.mark.parametrize(
+    ("expected", "heard", "errors"),
+    [
+        ("رأيت سَبُعًا في الغابة", "رأيت سبعة في الغابة", [("sub", "سَبُعًا", "سبعة")]),  # a beast of prey
+        ("أخذ خُمُسَ المال", "أخذ خمسة المال", [("sub", "خُمُسَ", "خمسة")]),  # a fifth
+        ("الغرفة تَسَعُ خمسة أشخاص", "الغرفة تسعة خمسة أشخاص", [("sub", "تَسَعُ", "تسعة")]),  # "holds"
+        ("أخذ عُشْرَ المال", "أخذ عشرة المال", [("sub", "عُشْرَ", "عشرة")]),  # a tenth
+        ("ولد في شهر صَفَر", "ولد في شهر ٠", [("sub", "صَفَر", "٠")]),  # the month
+        # The same word heard is still the same word.
+        ("رأيت سَبُعًا في الغابة", "رأيت سبعا في الغابة", []),
+        ("الغرفة تَسَعُ خمسة أشخاص", "الغرفة تسع خمسة أشخاص", []),
+        # Without vowel marks the page cannot tell: the word is taken as the number.
+        ("رأيت سبع في الغابة", "رأيت سبعة في الغابة", []),
+    ],
+)
+def test_vowel_marks_tell_a_number_word_from_its_homograph(
+    expected: str, heard: str, errors: list[tuple[str, str | None, str | None]]
+) -> None:
+    assert errors_of(check_recitation(expected, heard, "ar")) == errors
+
+
+def test_arabic_number_values_are_for_speech_only() -> None:
+    # Dictation: the gender of a number is spelling.
+    r = check_writing("في الصف ثلاث عشرة بنتا", "في الصف ثلاثة عشر بنتا", "ar")
+    assert errors_of(r) == [("sub", "ثلاث", "ثلاثة"), ("sub", "عشرة", "عشر")]
+    assert errors_of(check_writing("صلى أربعًا", "صلى أربعة", "ar")) == [("sub", "أربعًا", "أربعة")]
+    # English and French number words are not compared by value: un/une, premier/première
+    # sound different.
+    assert check_recitation("Il a vingt et un ans.", "Il a vingt et une ans.", "fr").verdict == "mistakes"
+    assert errors_of(check_recitation("C'est le premier jour de l'année.", "C'est le première jour de l'année.", "fr")) == [
+        ("sub", "premier", "première")
+    ]
+
+
+def test_quran_check_stays_strict_on_number_words(quran_dir: Any) -> None:
+    from mommy.quran import Quran
+
+    quran = Quran(quran_dir)
+    words = quran.ayat(2, 60, 60)[0].match_words
+    at = words.index("اثنتا")
+    assert words[at + 1] == "عشرة"
+    heard = " ".join(words[:at] + ["اثنا", "عشر"] + words[at + 2 :])
+    assert check_recitation(" ".join(words), heard, "ar").verdict == "correct"  # speech
+    result = quran.check(2, 60, 60, heard)  # Quran: strict, as before
+    assert [(op["kind"], op["expected"], op["heard"]) for op in result["ops"] if op["kind"] != "match"] == [
+        ("sub", "اثنتا", "اثنا"),
+        ("sub", "عشرة", "عشر"),
+    ]
+
+
+def test_block_matches_in_align_with_joins() -> None:
+    # expected[0:2] ~ heard[0:3] and expected[2:5] ~ heard[3:5], each as a whole.
+    ops = align_with_joins(
+        ["a", "b", "c", "d", "e", "z"],
+        ["p", "q", "r", "s", "t", "z"],
+        ident,
+        extra_joins=({}, {}, {(0, 0): [(2, 3)], (2, 3): [(3, 2)]}),
+    )
+    assert [(op.kind, op.exp_index, op.heard_index, op.heard) for op in ops] == [
+        ("match", 0, 0, "p"),
+        ("match", 1, 1, "q r"),
+        ("match", 2, 3, "s"),
+        ("match", 3, 4, "t"),
+        ("match", 4, 4, "t"),
+        ("match", 5, 5, "z"),
+    ]
+    # A block is matched as a whole or not at all, and one out of range is ignored.
+    ops = align_with_joins(["a", "b"], ["p", "b"], ident, extra_joins=({}, {}, {(0, 0): [(2, 2)]}))
+    assert [op.kind for op in ops] == ["match", "match"]
+    ops = align_with_joins(["a", "b"], ["p"], ident, extra_joins=({}, {}, {(0, 0): [(2, 2)]}))
+    assert "match" not in kinds(ops)
+    # Blocks of one word on a side are the joins of the two-map form.
+    assert align_with_joins(["a", "b"], ["p"], ident, extra_joins=({}, {}, {(0, 0): [(2, 1)]})) == align_with_joins(
+        ["a", "b"], ["p"], ident, extra_joins=({}, {(0, 0): [2]})
+    )
+    assert align_with_joins(["a"], ["p", "q"], ident, extra_joins=({}, {}, {(0, 0): [(1, 2)]})) == align_with_joins(
+        ["a"], ["p", "q"], ident, extra_joins=({(0, 0): [2]}, {})
+    )
+
+
 @pytest.mark.parametrize(
     ("expected", "heard"),
     [
@@ -727,3 +882,44 @@ def test_unreadable_word_in_dictation_is_not_a_skipped_word() -> None:
     assert errors_of(r) == [("sub", "إلى", "[?]"), ("sub", "المدرسة", "المدرسه")]
     assert r.n_unreadable == 1
     assert [e["expected"] for e in result_summary(r)["errors"]] == ["المدرسة"]
+
+
+def test_number_values_change_only_number_words_of_the_quran_text(quran_dir: Any) -> None:
+    """Measured on the verbatim Simple-Clean text: the words that can take part in a
+    value match are number words, and a number said in another gender or case is
+    accepted by speech matching but still a mistake for the Quran check (which does not
+    use speech_joins). If a count changes, re-check which words joined the set."""
+    from mommy.quran import Quran
+    from mommy.textnorm import _number_table, is_number_word, spoken_number, tokenize
+
+    lines = [
+        line.split("|", 2)
+        for line in (quran_dir / "quran-simple-clean.txt").read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    words = {w for _, _, text in lines for w in tokenize(text, "ar")}
+    numbers = {w for w in words if is_number_word(w, "ar")}
+    valued = {w for w in numbers if spoken_number([w], "ar", conjunction=True) is not None}
+    # The accusative forms added 5 words, all numbers where they stand: واحدا (2:133 ...),
+    # سبعا (15:87, 78:12), تسعا (18:25), عشرا (20:103, 28:27) and وعشرا (2:234).
+    assert (len(words), len(numbers), len(valued)) == (14868, 47, 41)
+
+    spellings: dict[str, list[tuple[str, ...]]] = {}
+    for spelling, value in _number_table("ar").items():
+        spellings.setdefault(value, []).append(spelling)
+    quran = Quran(quran_dir)
+    checked = 0
+    for s, a, text in lines:
+        tokens = tokenize(text, "ar")
+        for start in range(len(tokens)):
+            for k in (1, 2):
+                value = spoken_number(tokens[start : start + k], "ar") if start + k <= len(tokens) else None
+                if value is None:
+                    continue
+                own = tuple(recitation_key(t, "ar") for t in tokens[start : start + k])
+                for other in [sp for sp in spellings[value] if sp != own][:2]:
+                    heard = " ".join(tokens[:start] + list(other) + tokens[start + k :])
+                    assert check_recitation(text, heard, "ar").n_errors == 0, (s, a, other)
+                    assert quran.check(int(s), int(a), int(a), heard)["n_errors"] > 0, (s, a, other)
+                    checked += 1
+    assert checked > 100
