@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- The access gate of an online Mommy (backend/mommy/access.py). It is served at any
+       path to a browser without the access cookie, so every URL here is absolute.
+       Privacy: only this server is contacted; no inline script or style. form-action
+       'none' and the field without a name keep the code out of any URL, even without
+       JavaScript. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <title>Mommy — private test</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/access.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <span class="brand"><span class="brand-mark" aria-hidden="true">M</span><span class="brand-name">Mommy</span></span>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <h1 id="access-title" data-i18n="title">This is a private test of Mommy.</h1>
+    <p class="status" id="access-status" role="status" aria-live="polite"></p>
+
+    <form class="card" id="access-form" method="post" novalidate>
+      <div class="field">
+        <label for="access-code" data-i18n="label">Access code</label>
+        <input type="text" id="access-code" dir="ltr" maxlength="64" autocomplete="off" autocapitalize="none"
+               autocorrect="off" spellcheck="false" enterkeyhint="go" aria-describedby="access-hint access-error">
+        <p class="hint" id="access-hint" data-i18n="hint">Please type the access code that came with the link.</p>
+      </div>
+      <p class="status is-error" id="access-error" role="alert"></p>
+      <button type="submit" class="btn btn-primary btn-wide" id="access-submit" data-i18n="submit">Enter</button>
+    </form>
+  </main>
+</body>
+</html>

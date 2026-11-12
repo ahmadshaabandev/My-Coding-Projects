@@ -1,0 +1,14 @@
+# The build context holds only what the image needs (see Dockerfile): everything is
+# left out, then the app files are let back in. Never .venv, models/ (symlinks), tests,
+# docs, .git or scratch files.
+*
+!backend/
+!web/
+!data/quran/
+!scripts/download_models.sh
+!scripts/space_start.sh
+!requirements.lock
+**/__pycache__
+**/*.py[co]
+**/.*
+**/*~

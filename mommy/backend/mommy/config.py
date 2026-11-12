@@ -15,7 +15,11 @@ Environment variables:
 * ``MOMMY_EFFORT``: the effort level sent with Claude requests (default ``"low"``);
 * ``MOMMY_ALLOWED_HOSTS``: comma-separated host names the server answers to (default
   ``127.0.0.1,localhost,::1``). Requests with any other ``Host`` header are refused,
-  which blocks DNS-rebinding pages from reaching the API.
+  which blocks DNS-rebinding pages from reaching the API;
+* ``MOMMY_ACCESS_CODE``: the access code of an online deployment (:mod:`mommy.access`).
+  Unset or blank: no gate at all (local use). Set: every request needs the access
+  cookie that ``POST /api/access`` gives for this code. The value is kept out of
+  ``repr(Settings)`` and is never logged.
 
 When the key or either model is missing, the app runs offline (see ``Settings.claude_configured``).
 """
@@ -23,7 +27,7 @@ When the key or either model is missing, the app runs offline (see ``Settings.cl
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
@@ -34,6 +38,8 @@ DEFAULT_ASR_MODEL = "turbo"
 DEFAULT_ASR_THREADS = 4
 DEFAULT_EFFORT = "low"
 DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+#: Shortest accepted ``MOMMY_ACCESS_CODE`` (the deploy script makes 12 characters).
+MIN_ACCESS_CODE_CHARS = 8
 
 #: The ``mommy/`` directory: ``mommy/backend/mommy/config.py`` -> ``mommy/``.
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -54,6 +60,8 @@ class Settings:
     text_model: str | None  # env MOMMY_TEXT_MODEL
     effort: str  # env MOMMY_EFFORT, default "low"
     allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS  # env MOMMY_ALLOWED_HOSTS
+    #: env MOMMY_ACCESS_CODE; None: no access gate. Never in repr (it would reach a log).
+    access_code: str | None = field(default=None, repr=False)
 
     @property
     def claude_configured(self) -> bool:
@@ -78,8 +86,9 @@ def load_settings(root: Path | None = None) -> Settings:
     ``os.environ`` at call time.
 
     Blank variables count as unset. Raises ValueError for an unknown ASR model, a thread
-    count that is not a positive integer, an unknown effort level, or an allowed-hosts
-    list with no host in it.
+    count that is not a positive integer, an unknown effort level, an allowed-hosts
+    list with no host in it, or an access code shorter than
+    :data:`MIN_ACCESS_CODE_CHARS` (the message never quotes the code).
     """
     env = os.environ
     base = Path(root).resolve() if root is not None else DEFAULT_ROOT
@@ -111,6 +120,10 @@ def load_settings(root: Path | None = None) -> Settings:
         if not allowed_hosts:
             raise ValueError("MOMMY_ALLOWED_HOSTS must name at least one host")
 
+    access_code = _get(env, "MOMMY_ACCESS_CODE")
+    if access_code is not None and len(access_code) < MIN_ACCESS_CODE_CHARS:
+        raise ValueError(f"MOMMY_ACCESS_CODE must have at least {MIN_ACCESS_CODE_CHARS} characters")
+
     return Settings(
         root=base,
         models_dir=base / "models",
@@ -123,7 +136,8 @@ def load_settings(root: Path | None = None) -> Settings:
         text_model=_get(env, "MOMMY_TEXT_MODEL"),
         effort=effort,
         allowed_hosts=allowed_hosts,
+        access_code=access_code,
     )
 
 
-__all__ = ["ASR_MODELS", "DEFAULT_ALLOWED_HOSTS", "EFFORT_LEVELS", "Settings", "load_settings"]
+__all__ = ["ASR_MODELS", "DEFAULT_ALLOWED_HOSTS", "EFFORT_LEVELS", "MIN_ACCESS_CODE_CHARS", "Settings", "load_settings"]

@@ -57,10 +57,15 @@ Privacy (hard rule 5)
   JSON 500 and logged as a class name and code location, because exception messages and
   tracebacks can quote content.
 * Every ``/api/*`` response has ``Cache-Control: no-store``.
+* Online, with ``MOMMY_ACCESS_CODE`` set, nothing answers without the access cookie
+  (:mod:`mommy.access`): ``POST /api/access`` trades the code for it, an HTML
+  navigation without it gets the gate page, and every other request a 401. Without the
+  variable there is no gate at all.
 
 Errors are ``{"error": <code>, "message": <text>}`` with status 400 (bad input, or an
-unknown host name), 403 (a cross-origin write), 413 (too large or too long), 422
-(missing or invalid fields, Quran text, a language that does not match the text), 501
+unknown host name), 401 (no access cookie, online only), 403 (a cross-origin write, a
+wrong access code), 413 (too large or too long), 422 (missing or invalid fields, Quran
+text, a language that does not match the text), 429 (too many wrong access codes), 501
 (the handwriting needs to be typed) or 503 (a component is unavailable, or the server
 is busy); unknown paths and methods get 404 and 405 in the same shape, and an internal
 error 500.
@@ -98,6 +103,15 @@ from starlette.routing import Match, Mount
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__, feedback
+from .access import (
+    ACCESS_COOKIE,
+    ACCESS_COOKIE_MAX_AGE,
+    ACCESS_PATH,
+    BAD_CODE_MESSAGE,
+    TOO_MANY_MESSAGE,
+    AccessGate,
+    AccessGateMiddleware,
+)
 from .align import UNREADABLE, CheckResult, has_unreadable, recitation_key, result_summary, tokenize_written
 from .asr import ASRUnavailable, SherpaWhisper, Transcriber, audio_quality, decode_wav, wav_duration
 from .config import DEFAULT_ALLOWED_HOSTS, Settings, load_settings
@@ -480,6 +494,12 @@ class PhrasesRequest(BaseModel):
     lang: LangField
 
 
+class AccessRequest(BaseModel):
+    """Body of ``POST /api/access`` (online only, see :mod:`mommy.access`)."""
+
+    code: str
+
+
 class TextCheckRequest(BaseModel):
     """Body of ``POST /api/text/check``. ``text`` has the limits of every text field
     (checked by the endpoint, which answers ``text_too_long``); ``mode`` defaults to
@@ -685,6 +705,9 @@ def create_app(
 
     ``quran`` is None when the Tanzil files could not be loaded: ``/api/health`` then
     says ``"quran": false`` and the Quran endpoints answer 503.
+
+    With ``settings.access_code`` set, the access gate of :mod:`mommy.access` guards
+    every request and ``POST /api/access`` is added; without it, neither exists.
     """
     keep_uploads_in_memory(MAX_BODY_BYTES)
     offline = OfflineBrain()
@@ -701,7 +724,24 @@ def create_app(
     app.state.settings = settings
     app.add_exception_handler(StarletteHTTPException, _http_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
+    access_code = getattr(settings, "access_code", None)
+    gate = AccessGate(access_code, settings.web_dir) if access_code else None
+    app.state.access_gate = gate
+    # Middleware order. Starlette runs the middleware added LAST first, so a request goes
+    #   ResponseHeaders -> HostOrigin -> AccessGate (online only) -> RequestGuard -> routes
+    # * ResponseHeaders is outermost, so every answer, the gate's own included (its page
+    #   and its 401s), gets nosniff, no-referrer, the anti-framing headers and, on
+    #   /api/*, Cache-Control: no-store.
+    # * HostOrigin comes before the gate: an unknown Host is refused before anything else
+    #   (DNS rebinding), and POST /api/access is a write like any other, so a page on
+    #   another site cannot post a code with its Origin (403 bad_origin).
+    # * The gate comes before RequestGuard and the routes: without the cookie no endpoint
+    #   and no static file runs, and no request body is even read (a large upload is
+    #   answered 401 at once). Only POST /api/access and the gate page's own files pass,
+    #   and RequestGuard still bounds that POST's body and answers its errors.
     app.add_middleware(RequestGuardMiddleware)
+    if gate is not None:
+        app.add_middleware(AccessGateMiddleware, gate=gate)
     app.add_middleware(HostOriginMiddleware, allowed_hosts=tuple(getattr(settings, "allowed_hosts", DEFAULT_ALLOWED_HOSTS)))
     app.add_middleware(ResponseHeadersMiddleware)
     decode_slots = threading.BoundedSemaphore(MAX_CONCURRENT_DECODES)
@@ -1267,6 +1307,39 @@ def create_app(
 
     # -- the web client ------------------------------------------------------------
 
+    if gate is not None:
+
+        @app.post(ACCESS_PATH, status_code=204, response_class=Response)
+        async def access(body: AccessRequest, request: Request) -> Response:
+            """Trade the access code for the access cookie (see :mod:`mommy.access`).
+
+            The client is ``request.client.host``, which uvicorn's ``--proxy-headers`` set
+            from ``X-Forwarded-For``; behind a proxy that is the proxy's own address
+            otherwise. Neither the code nor the cookie is ever logged.
+            """
+            client = request.client.host if request.client is not None else "unknown"
+            wait = gate.limiter.retry_after(client)
+            if wait is not None:
+                log.info("access code attempts paused for a client (%d s left)", wait)
+                return error_response(429, "too_many_attempts", TOO_MANY_MESSAGE, headers={"Retry-After": str(wait)})
+            if not gate.code_matches(body.code):
+                failures = gate.limiter.record_failure(client)
+                log.info("refused a wrong access code (%d of %d in the window)", failures, gate.limiter.max_failures)
+                return error_response(403, "bad_access_code", BAD_CODE_MESSAGE)
+            gate.limiter.clear(client)
+            log.info("access code accepted")
+            response = Response(status_code=204)
+            response.set_cookie(
+                ACCESS_COOKIE,
+                gate.cookie,
+                max_age=ACCESS_COOKIE_MAX_AGE,
+                path="/",
+                secure=request.url.scheme == "https",
+                httponly=True,
+                samesite="lax",
+            )
+            return response
+
     if settings.web_dir.is_dir():
         app.router.routes.append(WebMount("/", app=StaticFiles(directory=settings.web_dir, html=True), name="web"))
     else:
@@ -1329,6 +1402,8 @@ __all__ = [
     "MAX_TEXT_CHARS",
     "MAX_TTS_CHARS",
     "MAX_TEXT_WORDS",
+    "AccessGateMiddleware",
+    "AccessRequest",
     "ApiError",
     "HostOriginMiddleware",
     "RequestGuardMiddleware",

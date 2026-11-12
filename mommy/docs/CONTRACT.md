@@ -65,6 +65,12 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
      which drops EXIF) before upload.
    - The UI shows that this is an AI, not a person, at the start of each session.
    - A parent must tick a consent box before the camera or microphone is used.
+   - Online (extra, `MOMMY_ACCESS_CODE` set): nothing answers without the access cookie,
+     so only people given the code can send audio or photos or use the server (see
+     "Access gate" under HTTP API). The code is never logged, never written to disk and
+     never put in a URL query: the link carries it in the fragment (`/#code=...`), which
+     browsers never send to a server, and the gate page POSTs it. Without the variable
+     there is no gate at all and local use is unchanged.
 6. No Claude model identifiers or Claude model version names appear anywhere in the
    repository: no code strings, comments, docs or tests. Claude models are configured only
    through the environment variables `MOMMY_VISION_MODEL` and `MOMMY_TEXT_MODEL`. Tests use
@@ -113,15 +119,20 @@ mommy/
     __init__.py
     config.py   textnorm.py   align.py   phrases.py   feedback.py
     quran.py    guard.py      asr.py     tts.py       llm.py       app.py
+    access.py   the access gate of an online deployment (extra; MOMMY_ACCESS_CODE)
   web/
     index.html  app.js  recorder.js  styles.css
     rewards.js  family.js     the tasks and rewards (docs/REWARDS.md): pure logic, and the family UI
+    access.html access.js     the access gate page (extra; served only online, to a browser without the cookie)
   tests/        pytest; run with:  cd mommy && .venv/bin/python -m pytest -q
   tests/arabic_school_sentences.txt   ordinary Arabic sentences that measure the Quran guards (tests/test_quran_guard.py)
   tests/quran_parts_texts.txt         lessons, Quran texts, partial ayat and misquotes that measure the Quran parts (tests/test_quran_parts.py)
   tests/quran_fixtures.py             fills the placeholders of both fixtures from Tanzil (no Quran word is typed in them)
   tests/web/    Node.js tests of the web client (see tests/web/README.md): rewards.test.cjs (web/rewards.js in
-                Node), smoke.cjs and family.cjs (headless Chromium through Playwright, fake API)
+                Node), smoke.cjs and family.cjs (headless Chromium through Playwright, fake API),
+                access.cjs (extra: the access gate in Chromium against the real app under uvicorn,
+                with MOMMY_ACCESS_CODE set and fake speech components)
+  tests/test_access.py                the access gate (extra)
 ```
 
 `tests/conftest.py` puts `mommy/backend` on `sys.path`. Imports look like
@@ -151,10 +162,14 @@ class Settings:
     text_model: str | None     # env MOMMY_TEXT_MODEL
     effort: str                # env MOMMY_EFFORT, default "low"
     allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS   # extra; env MOMMY_ALLOWED_HOSTS (comma-separated)
+    access_code: str | None = field(default=None, repr=False)   # extra; env MOMMY_ACCESS_CODE (None: no gate)
     claude_configured: bool    # property (extra): key and both models set
+MIN_ACCESS_CODE_CHARS = 8      # extra
 def load_settings(root: Path | None = None) -> Settings
 # Blank variables count as unset. ValueError for an unknown ASR model or effort, a
-# thread count that is not a positive integer, or an allowed-hosts list with no host.
+# thread count that is not a positive integer, an allowed-hosts list with no host, or an
+# access code shorter than MIN_ACCESS_CODE_CHARS (the message never quotes the code).
+# The access code is stripped; it is kept out of repr(Settings), so it cannot reach a log.
 ```
 
 Whisper turbo is the default: on the 4-core test machine it has the same warm latency as
@@ -675,11 +690,41 @@ ClaudeBrain:
   and `httpcore2` loggers are capped at INFO (their DEBUG logs hold request bodies).
 - Use `max_tokens=16000` for OCR and 4000 for text (hard rule 7).
 
+### access.py (extra: the access gate of an online deployment)
+
+```python
+ACCESS_COOKIE = "mommy_access"; ACCESS_COOKIE_MAX_AGE = 180 * 24 * 60 * 60; ACCESS_PATH = "/api/access"
+GATE_PAGE = "access.html"; GATE_ASSETS = frozenset({"/access.html", "/access.js", "/styles.css"})
+MAX_FAILURES = 10; FAILURE_WINDOW_S = 600.0; MAX_TRACKED_CLIENTS = 10_000
+CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"; CODE_LENGTH = 12   # what the deploy script makes
+def normalize_code(code: str) -> str
+# Trimmed; Arabic-Indic (U+0660-0669) and Eastern Arabic-Indic (U+06F0-06F9) digits -> ASCII.
+# Letter case is kept.
+def cookie_value(code: str) -> str
+# HMAC-SHA256(key = SHA-256(fixed label + normalize_code(code)), "mommy_access"), base64url
+# without padding (43 characters). Depends on the code only: a restart keeps people in, a
+# new code invalidates every cookie. No session list is kept.
+class FailureLimiter(*, max_failures=10, window_s=600.0, max_clients=10_000, clock=time.monotonic)
+    def retry_after(self, client: str) -> int | None   # seconds (>= 1) while blocked, else None
+    def record_failure(self, client: str) -> int       # failures of the client in the window
+    def clear(self, client: str) -> None
+# A sliding window per client; an LRU of the clients that failed most recently, at most
+# max_failures timestamps each: the memory is bounded whatever the number of clients.
+class AccessGate(code: str, web_dir: Path | None, *, limiter: FailureLimiter | None = None)
+    cookie: str; limiter: FailureLimiter; page: bytes | None    # the code itself is not kept
+    def code_matches(self, candidate: str) -> bool   # constant time (compares the two tags)
+    def has_access(self, headers) -> bool            # the request's mommy_access cookie, constant time
+class AccessGateMiddleware(app, gate: AccessGate)    # pure ASGI, see "Access gate" below
+def is_navigation(headers) -> bool
+# Sec-Fetch-Mode: navigate; for a client without fetch metadata, an Accept with text/html.
+```
+
 ## HTTP API (FastAPI, `app.py`: `create_app(settings, transcriber, tts, brain, quran) -> FastAPI`)
 
 - All JSON responses use UTF-8 (`application/json; charset=utf-8`).
 - Errors return `{"error": "<code>", "message": "<human text>"}` with status 400, 403,
-  413, 422, 501 or 503; unknown paths and methods get 404 and 405, an internal error a
+  413, 422, 501 or 503 (online also 401 `access_required` and 429 `too_many_attempts`,
+  see "Access gate"); unknown paths and methods get 404 and 405, an internal error a
   JSON 500 (logged as a class name and code location only). Error messages never quote
   the text that was sent.
 - Upload limits: audio at most 10 MB and 120 s (read from the WAV header before
@@ -706,6 +751,47 @@ ClaudeBrain:
   `bad_origin`. Every response has `X-Content-Type-Options: nosniff`, `Referrer-Policy:
   no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors
   'none'`; every `/api/*` response has `Cache-Control: no-store`.
+- **Access gate (extra, online only; `access.py`).** With `MOMMY_ACCESS_CODE` unset or
+  blank there is no gate, no `/api/access` (404) and nothing below applies. With it set:
+  - Every request needs the cookie `mommy_access` (`cookie_value(code)`), except `GET`
+    and `HEAD` of the gate's own files (`/access.html`, `/access.js`, `/styles.css`,
+    exact paths) and `POST /api/access`.
+  - Without it: an `/api/*` request gets `401 {"error": "access_required", "message"}`
+    (the usual error shape, `Cache-Control: no-store`); an HTML navigation (`GET`/`HEAD`,
+    `Sec-Fetch-Mode: navigate`, or an `Accept` with `text/html` from a client without
+    fetch metadata) gets the gate page `web/access.html` with status 200 at whatever path
+    it asked for (no redirect, so the `#code=...` fragment stays in the browser) and
+    `Cache-Control: no-store`; any other request gets 401 `access_required`. No endpoint
+    and no static file runs, and the request body is never read.
+  - With it, every response that is not `/api/*` and sets no `Cache-Control` gets
+    `Cache-Control: private, no-cache`: a browser asks again (through the gate) before
+    reusing a cached page, so a changed code shows the gate page, never a stale app.
+  - Middleware order (`create_app`; Starlette runs the last added first): ResponseHeaders
+    -> HostOrigin -> AccessGate -> RequestGuard -> routes. The security headers are on the
+    gate's answers too; an unknown `Host` is refused before the gate, and `POST
+    /api/access` is a write like any other (403 `bad_origin` from another site's page);
+    RequestGuard bounds its body (256 KB) and answers its errors.
+  - `POST /api/access`, JSON `{"code": str}`: the code is compared in constant time after
+    `normalize_code` (trimmed; Arabic-Indic and Eastern Arabic-Indic digits as ASCII).
+    Right: `204` with `Set-Cookie: mommy_access=<tag>; HttpOnly; Max-Age=15552000;
+    Path=/; SameSite=lax`, plus `Secure` when the request scheme is `https`, and the
+    client's failures are cleared. Wrong: `403 {"error": "bad_access_code", "message"}`.
+    Missing or invalid body: 422 as everywhere (not counted). A client with 10 wrong codes
+    in the last 10 minutes gets `429 {"error": "too_many_attempts", "message"}` with
+    `Retry-After` (seconds until its oldest failure is 10 minutes old), even for the right
+    code; at most 10,000 clients are remembered (LRU).
+  - The client is `request.client.host`, and the scheme `request.url.scheme`, as uvicorn's
+    `--proxy-headers` set them from `X-Forwarded-For` and `X-Forwarded-Proto` for a
+    trusted proxy (`--forwarded-allow-ips`). Behind a proxy without them, every visitor is
+    the proxy (one shared failure limit) and the cookie is never `Secure`. Trust only the
+    proxy's addresses: with `--forwarded-allow-ips='*'` uvicorn takes the left-most
+    `X-Forwarded-For` entry, which a visitor can set, so the failure limit could be
+    dodged by changing it (a code of 12 characters out of 31 still leaves about 8 x 10^17
+    possibilities).
+  - Logs: "access code accepted", "refused a wrong access code (n of 10 in the window)",
+    "access code attempts paused for a client"; these lines never carry the code, the
+    cookie or the client's address. The code never appears in a URL the server sees, so
+    uvicorn's access log cannot show it either (`tests/web/access.cjs` checks the log).
 - Text checks on the general endpoints (recite, dictation, phrases, TTS, text check), in
   this order: 400 `bad_text` (a lone UTF-16 surrogate), 400 `text_too_long` (over
   20,000 characters; checked before the words, so a text that is too long and has no
@@ -882,6 +968,7 @@ ClaudeBrain:
 
 | Method & path | Request | Response |
 |---|---|---|
+| POST `/api/access` (extra, online only) | JSON `{"code": str}` | `204` with the `mommy_access` cookie; `403 bad_access_code`; `429 too_many_attempts` with `Retry-After`; see "Access gate". Absent (404) when no code is set. |
 | GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable) |
 | POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
 | POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`) | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again`; strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
@@ -934,6 +1021,20 @@ FastAPI` (real components, for uvicorn: `uvicorn mommy.app:build_default_app --f
 which configures the `mommy` loggers (level `MOMMY_LOG_LEVEL`, default INFO).
 
 ## Web client (vanilla HTML/CSS/JS, no frameworks, no CDN)
+
+- **The access gate page (extra, online only).** `access.html` loads `/styles.css` and
+  `/access.js` (absolute URLs: the page is served at any path), a CSP meta tag with
+  `'self'` only and `form-action 'none'`, no inline script or style. `access.js` picks
+  en, fr or ar from `navigator.language` (`dir="rtl"` for ar) and says in one line that
+  this is a private test of Mommy. With `#code=...` in `location.hash` it removes the
+  fragment at once (`history.replaceState`), POSTs the code to `/api/access` and goes to
+  `/` (`location.replace`) on 204 (and on 404: that server has no gate). Otherwise, or
+  when the code is refused, it shows a form (the field has no `name`, so a form sent
+  without the script carries nothing) with a translated error: wrong code, too many
+  tries (with the wait in minutes from `Retry-After`; Arabic-Indic digits and the Arabic
+  dual and plural), empty field, server unreachable, other error. Its strings follow the
+  rules of `app.js` (يُرجى + a verbal noun, verbal-noun buttons, French no-break spaces).
+  It stores nothing and never reads the cookie (it is HttpOnly).
 
 - Classic scripts loaded with `defer` in this order: `recorder.js` (`window.MommyRecorder`),
   `rewards.js` (`window.MommyRewards`, the pure logic of tasks and rewards),
