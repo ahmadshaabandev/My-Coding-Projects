@@ -19,7 +19,10 @@ Environment variables:
 * ``MOMMY_ACCESS_CODE``: the access code of an online deployment (:mod:`mommy.access`).
   Unset or blank: no gate at all (local use). Set: every request needs the access
   cookie that ``POST /api/access`` gives for this code. The value is kept out of
-  ``repr(Settings)`` and is never logged.
+  ``repr(Settings)`` and is never logged;
+* ``MOMMY_REQUIRE_ACCESS_CODE``: any non-blank value makes a missing or blank access code
+  an error instead of "no gate". The container image sets it (it listens on every
+  interface, so it must never run without the gate); ``./run.sh`` does not.
 
 When the key or either model is missing, the app runs offline (see ``Settings.claude_configured``).
 """
@@ -87,8 +90,9 @@ def load_settings(root: Path | None = None) -> Settings:
 
     Blank variables count as unset. Raises ValueError for an unknown ASR model, a thread
     count that is not a positive integer, an unknown effort level, an allowed-hosts
-    list with no host in it, or an access code shorter than
-    :data:`MIN_ACCESS_CODE_CHARS` (the message never quotes the code).
+    list with no host in it, an access code shorter than :data:`MIN_ACCESS_CODE_CHARS`
+    (the message never quotes the code), or no access code while
+    ``MOMMY_REQUIRE_ACCESS_CODE`` is set.
     """
     env = os.environ
     base = Path(root).resolve() if root is not None else DEFAULT_ROOT
@@ -120,7 +124,14 @@ def load_settings(root: Path | None = None) -> Settings:
         if not allowed_hosts:
             raise ValueError("MOMMY_ALLOWED_HOSTS must name at least one host")
 
+    # Blank means unset here and in the gate alike (str.strip removes every Unicode white
+    # space, a no-break space included), so this is the only place that decides.
     access_code = _get(env, "MOMMY_ACCESS_CODE")
+    if access_code is None and _get(env, "MOMMY_REQUIRE_ACCESS_CODE") is not None:
+        raise ValueError(
+            "MOMMY_ACCESS_CODE is not set (or is blank), and MOMMY_REQUIRE_ACCESS_CODE says this "
+            "server must not run without the access gate"
+        )
     if access_code is not None and len(access_code) < MIN_ACCESS_CODE_CHARS:
         raise ValueError(f"MOMMY_ACCESS_CODE must have at least {MIN_ACCESS_CODE_CHARS} characters")
 

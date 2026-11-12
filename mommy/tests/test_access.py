@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from mommy import access as access_mod
+from mommy import app as app_mod
 from mommy.access import (
     ACCESS_COOKIE,
     ACCESS_COOKIE_MAX_AGE,
@@ -27,21 +28,28 @@ from mommy.access import (
     CODE_LENGTH,
     FAILURE_WINDOW_S,
     GATE_ASSETS,
+    MAX_CLIENT_KEY_CHARS,
     MAX_FAILURES,
     MAX_TRACKED_CLIENTS,
     AccessGate,
     AccessGateMiddleware,
     FailureLimiter,
+    access_cookie_values,
+    client_key,
     cookie_value,
+    is_public_client,
     normalize_code,
 )
 from mommy.app import (
+    HSTS_VALUE,
     MAX_BODY_BYTES,
     MAX_JSON_BYTES,
     HostOriginMiddleware,
     RequestGuardMiddleware,
     ResponseHeadersMiddleware,
     create_app,
+    is_loopback_host,
+    start_preload,
 )
 from mommy.asr import FakeTranscriber
 from mommy.config import Settings, load_settings
@@ -61,6 +69,12 @@ SUBRESOURCE = {"accept": "*/*", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "
 FETCH = {"accept": "*/*", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty"}
 GATE_PAGE_BYTES = (WEB / "access.html").read_bytes()
 INDEX_BYTES = (WEB / "index.html").read_bytes()
+#: The proxy networks scripts/space_start.sh gives uvicorn's --forwarded-allow-ips.
+SPACE_TRUSTED_PROXIES = re.search(
+    r"^TRUSTED_PROXIES='([^']+)'$", (ROOT / "scripts" / "space_start.sh").read_text("utf-8"), flags=re.M
+).group(1)
+#: Blank to Python's str.strip(), though not to a shell's ' \t\r\n' (SEC-1).
+UNICODE_BLANKS = ["", " ", "\t\n", "\u00a0", "\x0b", "\x0c", "\x1f", "\u2003", "\u3000", " \u00a0\u3000 "]
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +162,19 @@ class Clock:
 @pytest.fixture
 def no_code_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("MOMMY_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("MOMMY_REQUIRE_ACCESS_CODE", raising=False)
     yield
+
+
+@pytest.fixture
+def restore_mommy_logger() -> Iterator[None]:
+    """build_default_app configures the ``mommy`` logger; put it back for other tests."""
+    logger = logging.getLogger("mommy")
+    saved = (list(logger.handlers), logger.level, logger.propagate)
+    yield
+    logger.handlers[:] = saved[0]
+    logger.setLevel(saved[1])
+    logger.propagate = saved[2]
 
 
 # ---------------------------------------------------------------------------
@@ -195,8 +221,17 @@ class TestWithoutCode:
         assert r.status_code == 404  # no gate page at other paths
         for r in responses:
             assert "set-cookie" not in r.headers
+            assert "strict-transport-security" not in r.headers
             assert r.headers["x-frame-options"] == "DENY"
         assert client.cookies.get(ACCESS_COOKIE) is None
+
+    def test_no_preload_without_code(
+        self, no_code_env: None, monkeypatch: pytest.MonkeyPatch, restore_mommy_logger: None
+    ) -> None:
+        """Local use keeps loading each language on first use."""
+        started = fake_default_components(monkeypatch)
+        app_mod.build_default_app()
+        assert started == []
 
     def test_gate_files_are_plain_static_files(self, no_code_env: None) -> None:
         client = client_for(make_app(None))
@@ -215,6 +250,38 @@ class TestSettings:
         settings = load_settings()
         assert settings.access_code == CODE
         assert CODE not in repr(settings) and CODE not in str(settings)
+
+    @pytest.mark.parametrize("blank", UNICODE_BLANKS)
+    def test_unicode_blank_code_means_no_gate(self, blank: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MOMMY_REQUIRE_ACCESS_CODE", raising=False)
+        monkeypatch.setenv("MOMMY_ACCESS_CODE", blank)
+        settings = load_settings()
+        assert settings.access_code is None
+        assert create_app(settings, FakeTranscriber("hello"), FakeTTS(), OfflineBrain(), None).state.access_gate is None
+
+    @pytest.mark.parametrize("blank", [None, *UNICODE_BLANKS])
+    def test_required_code_cannot_be_blank(self, blank: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
+        """SEC-1: the image sets MOMMY_REQUIRE_ACCESS_CODE; a code that is blank to Python
+        (a no-break or ideographic space, \\v, \\x1f...) then stops the server instead of
+        giving an app with no gate."""
+        monkeypatch.setenv("MOMMY_REQUIRE_ACCESS_CODE", "1")
+        if blank is None:
+            monkeypatch.delenv("MOMMY_ACCESS_CODE", raising=False)
+        else:
+            monkeypatch.setenv("MOMMY_ACCESS_CODE", blank)
+        with pytest.raises(ValueError, match="MOMMY_ACCESS_CODE is not set"):
+            load_settings()
+
+    def test_required_code_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MOMMY_REQUIRE_ACCESS_CODE", "1")
+        monkeypatch.setenv("MOMMY_ACCESS_CODE", "\u00a0" + CODE + "\u3000")
+        settings = load_settings()
+        assert settings.access_code == CODE
+        app = create_app(settings, FakeTranscriber("hello"), FakeTTS(), OfflineBrain(), None)
+        assert app.state.access_gate is not None and app.state.access_gate.cookie == cookie_value(CODE)
+        monkeypatch.setenv("MOMMY_REQUIRE_ACCESS_CODE", "   ")  # blank: not required
+        monkeypatch.delenv("MOMMY_ACCESS_CODE")
+        assert load_settings().access_code is None
 
     def test_short_code_is_refused_without_quoting_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MOMMY_ACCESS_CODE", "abc12")
@@ -339,6 +406,21 @@ class TestGateWithoutCookie:
         client = TestClient(make_app(), base_url="http://evil.example")
         assert_error(client.get("/", headers=NAV), 400, "bad_host")
         assert_error(client.post("/api/access", json={"code": CODE}), 400, "bad_host")
+
+    def test_refused_host_name_is_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """OPS-9: the log names the host that was refused (what MOMMY_ALLOWED_HOSTS lacks),
+        quoted and cut, so a forged Host header cannot write log lines of its own."""
+        logger = logging.getLogger("mommy")
+        logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.INFO):
+                TestClient(make_app(), base_url="http://Other-Mommy.hf.space:443").get("/", headers=NAV)
+                TestClient(make_app(), base_url="http://127.0.0.1").get("/", headers={"host": "a\nb" + "x" * 200})
+        finally:
+            logger.removeHandler(caplog.handler)
+        lines = list(dict.fromkeys(r.getMessage() for r in caplog.records if "unknown host" in r.getMessage()))
+        assert lines[0] == "refused a request for an unknown host 'other-mommy.hf.space'"
+        assert "\n" not in lines[1] and lines[1].endswith("x'") and len(lines[1]) < 140
 
     def test_cross_origin_code_post_is_refused(self) -> None:
         client = client_for(make_app())
@@ -512,38 +594,284 @@ class TestCodeAndCookie:
 
 class TestBehindProxy:
     HOST = "someone-mommy.hf.space"
+    #: The address of the proxy as the container sees it (a private network).
+    PROXY = ("10.20.30.40", 41000)
 
-    def proxied(self, **settings: Any) -> TestClient:
+    def proxied(self, trusted: str = SPACE_TRUSTED_PROXIES, **settings: Any) -> TestClient:
+        """The app as scripts/space_start.sh runs it (uvicorn --proxy-headers with its
+        --forwarded-allow-ips), the test client connecting from the proxy's address."""
         app = make_app(allowed_hosts=(self.HOST,), **settings)
-        # What uvicorn --proxy-headers wraps the app in (trusting the test client).
-        return TestClient(ProxyHeadersMiddleware(app, trusted_hosts="*"), base_url=f"http://{self.HOST}")
+        self.app = app
+        return TestClient(ProxyHeadersMiddleware(app, trusted_hosts=trusted), base_url=f"http://{self.HOST}", client=self.PROXY)
 
-    def test_secure_when_the_proxy_says_https(self) -> None:
+    @pytest.mark.parametrize(
+        "proto",
+        [["https"], ["HTTPS"], ["https, http"], ["https,https"], ["https", "http"], [], ["http"], ["ftp"]],
+    )
+    def test_cookie_is_secure_whatever_the_proxy_sends(self, proto: list[str]) -> None:
+        """SEC-3: online the cookie is Secure even when uvicorn does not take the proxy's
+        X-Forwarded-Proto (upper case, a list, repeated, missing): only an exact https
+        makes the scheme https."""
         client = self.proxied()
-        origin = {"origin": f"https://{self.HOST}"}
-        r = login(client, **origin, **{"x-forwarded-proto": "https", "x-forwarded-for": "203.0.113.7"})
+        headers = [("x-forwarded-for", "203.0.113.7")] + [("x-forwarded-proto", p) for p in proto]
+        r = client.post("/api/access", json={"code": CODE}, headers=headers)
         assert r.status_code == 204
         _, value, attrs = cookie_attributes(r.headers["set-cookie"])
         assert value == cookie_value(CODE)
         assert "secure" in attrs and "httponly" in attrs and attrs["samesite"].lower() == "lax"
-        # Plain http (no X-Forwarded-Proto): no Secure.
-        r = login(client, **{"x-forwarded-for": "203.0.113.7"})
-        assert r.status_code == 204 and "secure" not in cookie_attributes(r.headers["set-cookie"])[2]
+        assert r.headers["strict-transport-security"] == HSTS_VALUE
 
-    def test_failures_are_counted_per_forwarded_client(self) -> None:
+    @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "[::1]", "127.0.0.2", "app.localhost"])
+    def test_no_secure_on_a_loopback_host_over_http(self, host: str) -> None:
+        """The local test of the image (http://localhost:7860) keeps working: over plain
+        http only a loopback host gets a cookie without Secure, and no HSTS."""
+        name = host.strip("[]")
+        app = make_app(allowed_hosts=(name,))
+        client = TestClient(app, base_url=f"http://{host}:7860")
+        r = login(client)
+        assert r.status_code == 204
+        assert "secure" not in cookie_attributes(r.headers["set-cookie"])[2]
+        assert "strict-transport-security" not in r.headers
+        assert client.get("/api/health").status_code == 200
+        assert "strict-transport-security" not in client.get("/", headers=NAV).headers
+        # Over https a loopback host gets Secure too.
+        secure = TestClient(ProxyHeadersMiddleware(app, trusted_hosts="127.0.0.1"), base_url=f"http://{host}:7860", client=("127.0.0.1", 5))
+        r = login(secure, **{"x-forwarded-proto": "https"})
+        assert "secure" in cookie_attributes(r.headers["set-cookie"])[2]
+
+    def test_hsts_on_every_answer_online(self) -> None:
         client = self.proxied()
-        first = {"x-forwarded-proto": "https", "x-forwarded-for": "203.0.113.7"}
-        second = {"x-forwarded-proto": "https", "x-forwarded-for": "198.51.100.9"}
+        nav = client.get("/", headers=NAV)
+        assert nav.content == GATE_PAGE_BYTES
+        answers = [nav, client.get("/api/health"), client.get("/app.js", headers=SUBRESOURCE), client.get("/access.js")]
+        answers.append(login(client, OTHER_CODE, **{"x-forwarded-for": "203.0.113.8"}))
+        answers.append(login(client, **{"x-forwarded-for": "203.0.113.8"}))
+        answers.append(client.get("/", headers=NAV))
+        for r in answers:
+            assert r.headers["strict-transport-security"] == HSTS_VALUE, r.request.url
+            assert_security_headers(r)
+
+    def test_loopback_hosts(self) -> None:
+        for name in ("localhost", "127.0.0.1", "127.1.2.3", "::1", "a.localhost"):
+            assert is_loopback_host(name), name
+        for name in ("someone-mommy.hf.space", "10.0.0.5", "0.0.0.0", "", "localhost.example", "::"):
+            assert not is_loopback_host(name), name
+
+    def test_failures_are_counted_per_client_the_proxy_saw(self) -> None:
+        """SEC-2: with the proxy networks of space_start.sh, uvicorn takes the right-most
+        address that is not a proxy, the one the proxy appended; what the visitor wrote
+        to the left of it does not change its count."""
+        client = self.proxied()
+        visitor = "198.51.100.7"
         for _ in range(MAX_FAILURES):
-            assert_error(login(client, OTHER_CODE, **first), 403, "bad_access_code")
-        assert_error(login(client, OTHER_CODE, **first), 429, "too_many_attempts")
-        assert_error(login(client, OTHER_CODE, **second), 403, "bad_access_code")
-        assert login(client, **second).status_code == 204
+            assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": visitor}), 403, "bad_access_code")
+        assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": visitor}), 429, "too_many_attempts")
+        # The same visitor with made-up addresses in front of its own, or behind a second
+        # proxy hop: still the same count.
+        for i in range(1, 31):
+            assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": f"192.0.2.{i}, {visitor}"}), 429, "too_many_attempts")
+        assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": f"10.9.9.9, {visitor}, 172.16.0.3"}), 429, "too_many_attempts")
+        assert_error(login(client, **{"x-forwarded-for": f"{visitor}, 10.0.0.7"}), 429, "too_many_attempts")
+        # Another visitor has a count of its own, also when it claims the first one's address.
+        assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": f"{visitor}, 203.0.113.9"}), 403, "bad_access_code")
+        assert login(client, **{"x-forwarded-for": "203.0.113.9"}).status_code == 204
+
+    def test_nobody_can_lock_out_another_visitor(self) -> None:
+        """SEC-2: ten wrong codes sent with the friend's address written in X-Forwarded-For
+        count against the sender, not the friend."""
+        client = self.proxied()
+        friend = "198.51.100.50"
+        for _ in range(MAX_FAILURES + 2):
+            login(client, OTHER_CODE, **{"x-forwarded-for": f"{friend}, 203.0.113.66"})
+        assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": "203.0.113.66"}), 429, "too_many_attempts")
+        assert login(client, **{"x-forwarded-for": friend}).status_code == 204
+
+    def test_ipv6_clients_are_counted_per_64(self) -> None:
+        """SEC-2: other spellings of an address, and the other addresses of its /64, share
+        its count; an IPv4-mapped address is the IPv4 address."""
+        client = self.proxied()
+        for _ in range(MAX_FAILURES):
+            assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": "2001:db8::9"}), 403, "bad_access_code")
+        for same in ("2001:DB8::9", "2001:db8:0::9", "2001:db8::a", "2001:db8:0:0:ffff::1", "[2001:db8::9]"):
+            assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": same}), 429, "too_many_attempts")
+        assert_error(login(client, OTHER_CODE, **{"x-forwarded-for": "2001:db8:0:1::9"}), 403, "bad_access_code")
+        for _ in range(MAX_FAILURES):
+            login(client, OTHER_CODE, **{"x-forwarded-for": "203.0.113.20"})
+        assert_error(login(client, **{"x-forwarded-for": "::ffff:203.0.113.20"}), 429, "too_many_attempts")
+
+    def test_keys_stay_small_whatever_the_header(self) -> None:
+        """SEC-5: the limiter keeps a short key, never the raw X-Forwarded-For text. Even
+        with every forwarded address trusted ('*', the left-most entry), 10,000 distinct
+        10 KB values hold one key."""
+        client = self.proxied(trusted="*")
+        limiter = self.app.state.access_gate.limiter
+        for i in range(300):
+            login(client, OTHER_CODE, **{"x-forwarded-for": f"{'x' * 10_000}{i}"})
+        assert len(limiter) == 1 and all(len(k) <= MAX_CLIENT_KEY_CHARS for k in limiter._failures)
+        # The limiter itself, with the keys client_key gives for 10,000 distinct long values.
+        mem = FailureLimiter(clock=Clock())
+        for i in range(10_000):
+            mem.record_failure(client_key(f"{i:x}" + "a" * 10_000))
+        assert list(mem._failures) == ["other"]
+        for i in range(10_000):
+            mem.record_failure(client_key(f"2001:db8:{i // 65536:x}:{i % 65536:x}::1"))
+        assert len(mem) == 10_000 and max(len(k) for k in mem._failures) <= MAX_CLIENT_KEY_CHARS
 
     def test_cross_origin_still_refused_behind_the_proxy(self) -> None:
         client = self.proxied()
         r = login(client, **{"origin": "https://evil.example", "x-forwarded-proto": "https"})
         assert_error(r, 403, "bad_origin")
+
+    def test_private_client_address_is_reported_once(self, caplog: pytest.LogCaptureFixture) -> None:
+        """When the proxy's X-Forwarded-For is not taken (its address is not trusted),
+        every visitor has the proxy's own private address: the log says so, once, and
+        names no address."""
+        logger = logging.getLogger("mommy")
+        logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.INFO):
+                client = self.proxied(trusted="192.0.2.1")  # not the proxy
+                for _ in range(3):
+                    login(client, OTHER_CODE, **{"x-forwarded-for": "8.8.4.4"})
+                public = self.proxied()
+                login(public, OTHER_CODE, **{"x-forwarded-for": "8.8.4.4"})
+        finally:
+            logger.removeHandler(caplog.handler)
+        warnings = list({id(r): r for r in caplog.records if "private or unknown client address" in r.getMessage()}.values())
+        assert len(warnings) == 1 and warnings[0].levelno == logging.WARNING
+        assert not any(addr in caplog.text for addr in ("10.20.30.40", "8.8.4.4"))
+
+
+class TestClientKey:
+    @pytest.mark.parametrize(
+        ("host", "key"),
+        [
+            ("203.0.113.7", "203.0.113.7"),
+            (" 203.0.113.7 ", "203.0.113.7"),
+            ("::ffff:203.0.113.7", "203.0.113.7"),
+            ("2001:DB8::9", "2001:db8::/64"),
+            ("[2001:db8:0:0:1::9]", "2001:db8::/64"),
+            ("fe80::1%eth0", "fe80::/64"),
+            ("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "ffff:ffff:ffff:ffff::/64"),
+            ("testclient", "other"),
+            ("203.0.113.7:443", "other"),
+            ("x" * 15_000, "other"),
+            ("", "unknown"),
+            (None, "unknown"),
+        ],
+    )
+    def test_keys(self, host: str | None, key: str) -> None:
+        assert client_key(host) == key
+        assert len(client_key(host)) <= MAX_CLIENT_KEY_CHARS
+
+    def test_public(self) -> None:
+        assert is_public_client("8.8.4.4") and is_public_client("2a00:1450:4001:80b::/64")
+        for key in ("10.1.2.3", "192.168.1.1", "100.64.0.1", "127.0.0.1", "fd00::/64", "other", "unknown"):
+            assert not is_public_client(key), key
+
+
+class TestCookieHeaders:
+    def test_split_cookie_headers(self) -> None:
+        """SEC-8: an HTTP/2 client may send its cookies in several Cookie fields."""
+        client = client_for(make_app())
+        good = cookie_value(CODE)
+        r = client.get("/api/health", headers=[("cookie", "a=1"), ("cookie", f"{ACCESS_COOKIE}={good}")])
+        assert r.status_code == 200
+        r = client.get("/api/health", headers=[("cookie", f"{ACCESS_COOKIE}={good}"), ("cookie", "b=2")])
+        assert r.status_code == 200
+
+    def test_a_cookie_of_the_same_name_does_not_hide_the_right_one(self) -> None:
+        client = client_for(make_app())
+        good = cookie_value(CODE)
+        for header in (f"{ACCESS_COOKIE}={good}; {ACCESS_COOKIE}=AAAA", f"{ACCESS_COOKIE}=AAAA; {ACCESS_COOKIE}={good}"):
+            assert client.get("/api/health", headers={"cookie": header}).status_code == 200, header
+        r = client.get("/api/health", headers=[("cookie", f"{ACCESS_COOKIE}=AAAA"), ("cookie", f"{ACCESS_COOKIE}={good}")])
+        assert r.status_code == 200
+        # Only wrong values: still refused.
+        assert_access_required(client.get("/api/health", headers=[("cookie", f"{ACCESS_COOKIE}=AAAA"), ("cookie", f"{ACCESS_COOKIE}={good[:-1]}")]))
+
+    def test_values(self) -> None:
+        from starlette.datastructures import Headers
+
+        headers = Headers(raw=[(b"cookie", b'a=1; mommy_access="x"; mommy_access = y ;mommy_access='), (b"cookie", b"mommy_access=z; mommy_access2=w")])
+        assert access_cookie_values(headers) == ["x", "y", "z"]
+
+
+# ---------------------------------------------------------------------------
+# Preloading the models online (OPS-7)
+# ---------------------------------------------------------------------------
+
+
+class PreloadingTranscriber(FakeTranscriber):
+    def __init__(self, fail: str | None = None) -> None:
+        super().__init__("hello")
+        self.loaded: list[tuple[str, ...]] = []
+        self.model = "fake"
+        self.fail = fail
+
+    def preload(self, langs: tuple[str, ...]) -> None:
+        if self.fail in langs:
+            raise RuntimeError("secret detail that must not be logged")
+        self.loaded.append(langs)
+
+
+class PreloadingTTS(FakeTTS):
+    def __init__(self) -> None:
+        super().__init__()
+        self.loaded: list[tuple[str, ...]] = []
+
+    def preload(self, langs: tuple[str, ...]) -> None:
+        self.loaded.append(langs)
+
+
+def fake_default_components(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Make build_default_app() use fakes; returns the list of preload threads started."""
+    monkeypatch.setattr(app_mod.SherpaWhisper, "from_settings", classmethod(lambda cls, settings: PreloadingTranscriber()))
+    monkeypatch.setattr(app_mod.PiperTTS, "from_settings", classmethod(lambda cls, settings: PreloadingTTS()))
+    monkeypatch.setattr(app_mod, "Quran", lambda directory: None)
+    started: list[Any] = []
+    real = app_mod.start_preload
+
+    def recording(transcriber: Any, tts: Any) -> Any:
+        thread = real(transcriber, tts)
+        started.append((thread, transcriber, tts))
+        return thread
+
+    monkeypatch.setattr(app_mod, "start_preload", recording)
+    return started
+
+
+class TestPreload:
+    def test_one_language_at_a_time(self, caplog: pytest.LogCaptureFixture) -> None:
+        transcriber, tts = PreloadingTranscriber(fail="en"), PreloadingTTS()
+        logger = logging.getLogger("mommy")
+        logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.INFO):
+                start_preload(transcriber, tts).join(10)
+        finally:
+            logger.removeHandler(caplog.handler)
+        assert transcriber.loaded == [("ar",), ("fr",)]
+        assert tts.loaded == [("ar",), ("en",), ("fr",)]
+        assert "preloading the en recogniser failed (RuntimeError)" in caplog.text
+        assert "secret detail" not in caplog.text
+        assert "preloaded the recognisers and voices" in caplog.text
+
+    def test_components_without_preload_are_skipped(self) -> None:
+        start_preload(FakeTranscriber("x"), FakeTTS()).join(10)
+        unavailable = PreloadingTranscriber()
+        unavailable.available = False
+        start_preload(unavailable, PreloadingTTS()).join(10)
+        assert unavailable.loaded == []
+
+    def test_online_app_preloads(self, monkeypatch: pytest.MonkeyPatch, restore_mommy_logger: None) -> None:
+        monkeypatch.setenv("MOMMY_ACCESS_CODE", CODE)
+        started = fake_default_components(monkeypatch)
+        app = app_mod.build_default_app()
+        assert app.state.access_gate is not None
+        [(thread, transcriber, tts)] = started
+        thread.join(10)
+        assert transcriber.loaded == [("ar",), ("en",), ("fr",)] and tts.loaded == [("ar",), ("en",), ("fr",)]
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +940,7 @@ def test_no_log_record_contains_the_code(caplog: pytest.LogCaptureFixture, monke
             for _ in range(MAX_FAILURES + 1):
                 login(client, OTHER_CODE)
             login(client, "k٧m٢p٩q٤r٨s٣")
-            app.state.access_gate.limiter.clear("testclient")
+            app.state.access_gate.limiter.clear(client_key("testclient"))
             login(client, "k٧m٢p٩q٤r٨s٣")
             client.get("/api/health")
             client.post("/api/access", json={"code": CODE, "extra": CODE})

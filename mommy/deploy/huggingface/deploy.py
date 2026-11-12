@@ -10,20 +10,27 @@
 What it does (README.md, "Run it online", has the whole procedure):
 
 1. Finds the account of HF_TOKEN (``whoami``) and creates the public Docker Space
-   ``<user>/mommy`` if it does not exist yet.
+   ``<user>/mommy`` if it does not exist yet. Hugging Face asks for a paid plan (PRO for
+   a personal account) to create a Docker Space: without one, the script stops before
+   creating anything (``--try-anyway`` tries all the same, in case that changes).
 2. Sets the Space variable MOMMY_ALLOWED_HOSTS to the Space's host name
    (``<user>-mommy.hf.space``), and MOMMY_VISION_MODEL / MOMMY_TEXT_MODEL when
-   --anthropic-model-vision / --anthropic-model-text are given.
+   --anthropic-model-vision / --anthropic-model-text are given; a variable that already
+   has that value is left alone.
 3. Sets the Space secret MOMMY_ACCESS_CODE to a new random code when the Space has none
-   yet or when --new-code is given, and then prints the share link
-   ``https://<user>-mommy.hf.space/#code=<code>`` (the only time the code is shown; it
-   is never written to a file). The Hub never returns a secret's value, but it lists
-   the names of the secrets that are set, which is how "none yet" is decided.
+   yet or when --new-code is given, and prints the share link
+   ``https://<user>-mommy.hf.space/#code=<code>`` at once, before anything else can fail
+   (the only time the code is shown; it is never written to a file). The Hub never
+   returns a secret's value, but it lists the names of the secrets that are set, which is
+   how "none yet" is decided.
 4. Uploads the Space README (deploy/huggingface/README.md), the Dockerfile, the
-   .dockerignore and the app files (backend/, web/, data/quran/, requirements.lock and
-   the two scripts the image runs), and deletes every other file of the Space, in one
-   commit. Never .venv, models, tests, docs or scratch files. The Space then builds the
-   image (the models are downloaded during the build) and starts it.
+   .dockerignore and the app files (backend/, web/, data/quran/,
+   requirements-runtime.lock and the two scripts the image uses), and deletes every other
+   file of the Space, in one commit. Never .venv, models, tests, docs or scratch files.
+   The Space then builds the image (the models are downloaded during the build) and
+   starts it. When nothing changed in the files (so no new build) but a secret or a
+   variable did, it restarts the Space, so the running app takes the new values: a new
+   code shuts out the old link only once the app has restarted with it.
 
 The script never reads, sets or prints an Anthropic API key: the owner adds
 ANTHROPIC_API_KEY as a Space secret in the Space's settings (optional; without it the
@@ -73,7 +80,7 @@ SINGLE_FILES: tuple[tuple[str, str], ...] = (
     ("deploy/huggingface/README.md", "README.md"),
     ("Dockerfile", "Dockerfile"),
     (".dockerignore", ".dockerignore"),
-    ("requirements.lock", "requirements.lock"),
+    ("requirements-runtime.lock", "requirements-runtime.lock"),
     ("scripts/download_models.sh", "scripts/download_models.sh"),
     ("scripts/space_start.sh", "scripts/space_start.sh"),
 )
@@ -233,6 +240,15 @@ def _variables(api, repo_id: str) -> dict[str, str]:
         return {}
 
 
+def _hub_failure(exc: BaseException, http_errors: tuple[type[BaseException], ...]) -> str:
+    """One line for an error of a Hub call: the Hub's own reason for an HTTP error, the
+    exception's class and first line otherwise (a dropped connection, a timeout)."""
+    if isinstance(exc, http_errors):
+        return f"the Hub refused a request: {_reason(exc)}"
+    first = (str(exc).splitlines() or [""])[0][:200]
+    return f"a request to the Hub failed ({type(exc).__name__}{': ' + first if first else ''})"
+
+
 def deploy(args: argparse.Namespace, files: dict[str, Path], folder: Path, changed: list[str]) -> None:
     """Create or update the Space from ``folder`` (assembled from ``files``; ``changed``
     lists those with uncommitted changes)."""
@@ -254,14 +270,23 @@ def deploy(args: argparse.Namespace, files: dict[str, Path], folder: Path, chang
         me = api.whoami()
     except http_errors as exc:
         raise DeployError(f"the Hub refused HF_TOKEN ({_reason(exc)}): a token with write access is needed") from None
+    except Exception as exc:  # noqa: BLE001 - network errors: one line, no traceback
+        raise DeployError(_hub_failure(exc, http_errors)) from None
     user = me["name"]
     repo_id = f"{user}/{SPACE_NAME}"
-    if me.get("isPro") is False:
-        print("note: Hugging Face asks for a PRO plan to create a Docker Space (the CPU basic "
-              "hardware itself is free); if the Hub refuses, that is why.")
 
+    code = None  # set once the new code is in the Space's secret (the link is then printed)
     try:
         existed = api.repo_exists(repo_id, repo_type="space")
+        if not existed and me.get("isPro") is False:
+            if not args.try_anyway:
+                raise DeployError(
+                    "Hugging Face asks for a paid plan (PRO for a personal account) to create a Docker "
+                    "Space, and this account has none, so nothing was created. The CPU basic hardware "
+                    "itself is free. With a PRO plan, run this again; to try without one all the same "
+                    "(in case that rule has changed), add --try-anyway."
+                )
+            print("note: this account has no PRO plan; trying all the same (--try-anyway)")
         names = _secret_names(api, repo_id) if existed else set()
         if names is None and not args.new_code:
             raise DeployError(
@@ -274,7 +299,9 @@ def deploy(args: argparse.Namespace, files: dict[str, Path], folder: Path, chang
         api.create_repo(repo_id, repo_type="space", space_sdk="docker", private=False, exist_ok=True)
         print(f"{'updating' if existed else 'created'} the Space https://huggingface.co/spaces/{repo_id}")
 
-        subdomain = getattr(api.space_info(repo_id), "subdomain", None)
+        info = api.space_info(repo_id)
+        before = getattr(info, "sha", None)
+        subdomain = getattr(info, "subdomain", None)
         if not subdomain:
             subdomain = space_subdomain(user)
             print(f"note: the Hub gave no subdomain; using {subdomain} (see space_subdomain)")
@@ -282,20 +309,33 @@ def deploy(args: argparse.Namespace, files: dict[str, Path], folder: Path, chang
             print(f"note: the Hub's subdomain is {subdomain}, not {space_subdomain(user)}; using the Hub's")
         host = f"{subdomain}.hf.space"
 
-        api.add_space_variable(repo_id, HOSTS_VARIABLE, host,
-                               description="The host name the app answers to (deploy.py)")
+        # A variable is set only when its value changes (setting it again could restart
+        # the Space for nothing).
+        current = _variables(api, repo_id) if existed else {}
+        wanted = {HOSTS_VARIABLE: (host, "The host name the app answers to (deploy.py)")}
         if args.anthropic_model_vision:
-            api.add_space_variable(repo_id, VISION_VARIABLE, args.anthropic_model_vision,
-                                   description="Claude model that reads photos (deploy.py)")
+            wanted[VISION_VARIABLE] = (args.anthropic_model_vision, "Claude model that reads photos (deploy.py)")
         if args.anthropic_model_text:
-            api.add_space_variable(repo_id, TEXT_VARIABLE, args.anthropic_model_text,
-                                   description="Claude model for meaning and feedback (deploy.py)")
+            wanted[TEXT_VARIABLE] = (args.anthropic_model_text, "Claude model for meaning and feedback (deploy.py)")
+        settings_changed = False
+        for key, (value, description) in wanted.items():
+            if current.get(key) != value:
+                api.add_space_variable(repo_id, key, value, description=description)
+                settings_changed = True
 
-        code = None
         if set_code:
-            code = new_access_code()
-            api.add_space_secret(repo_id, ACCESS_SECRET, code,
+            new_code = new_access_code()
+            api.add_space_secret(repo_id, ACCESS_SECRET, new_code,
                                  description="Access code of the private test link (deploy.py)")
+            code = new_code
+            settings_changed = True
+            # Printed now: the Hub never gives the code back, so if a later step fails,
+            # this is still the code the Space has (a new run keeps it).
+            print()
+            print("Share link (send it privately: anyone who has it can use the app):")
+            print(f"  {share_link(host, code)}")
+            print("It is printed only now. If a step below fails, run deploy.py again: this link stays valid.")
+            print()
 
         # delete_patterns="*": every file of the Space that is not in this upload goes
         # (the Hub always keeps .gitattributes).
@@ -303,26 +343,39 @@ def deploy(args: argparse.Namespace, files: dict[str, Path], folder: Path, chang
             repo_id=repo_id, repo_type="space", folder_path=str(folder),
             commit_message=commit_message(changed), delete_patterns="*",
         )
+        print(f"uploaded {len(files)} files ({getattr(commit, 'commit_url', '') or 'one commit'})")
+        after = getattr(commit, "oid", None)
+        restarted = False
+        if settings_changed and existed and before is not None and after == before:
+            # No new commit, so no new build: the running app still has the old values.
+            api.restart_space(repo_id)
+            restarted = True
+            print("no file changed, so the Space was restarted to take the new settings")
+        elif settings_changed and existed and (before is None or after is None):
+            print("note: if the Space does not rebuild, use Restart in its settings so the app takes the new settings")
         variables = _variables(api, repo_id)
         names = _secret_names(api, repo_id)
-    except http_errors as exc:
-        raise DeployError(f"the Hub refused a request: {_reason(exc)}") from None
+    except DeployError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - Hub and network errors: one clear line
+        message = _hub_failure(exc, http_errors)
+        if code is not None:
+            message += ". The share link printed above is valid (the Space has its code): run deploy.py again to finish"
+        raise DeployError(message) from None
 
-    print(f"uploaded {len(files)} files ({getattr(commit, 'commit_url', '') or 'one commit'})")
     if names is not None and ANTHROPIC_SECRET in names and variables.get(VISION_VARIABLE) and variables.get(TEXT_VARIABLE):
         print("Claude: configured")
     else:
         print(f"Claude: not configured, the app runs offline (it needs the secret {ANTHROPIC_SECRET}, "
               f"added in the Space settings, and both model variables)")
     print()
-    print(f"The Space now builds the image (several minutes): https://huggingface.co/spaces/{repo_id} (Logs).")
+    action = "restarts" if restarted else "now builds the image (several minutes)"
+    print(f"The Space {action}: https://huggingface.co/spaces/{repo_id} (Logs).")
     print(f"App: https://{host}/")
     if code is not None:
-        print()
-        print("Share link (send it privately: anyone who has it can use the app):")
-        print(f"  {share_link(host, code)}")
         if existed:
-            print("The previous link, and every browser that used it, now need this new link.")
+            print("The previous link, and every browser that used it, stop working once the Space shows "
+                  "Running again with the new code.")
     else:
         print("The access code was kept (--new-code makes a new one; the old link then stops working).")
 
@@ -344,6 +397,8 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"set the Space variable {VISION_VARIABLE} (a vision-capable Claude model id)")
     parser.add_argument("--anthropic-model-text", metavar="MODEL",
                         help=f"set the Space variable {TEXT_VARIABLE} (a Claude model id)")
+    parser.add_argument("--try-anyway", action="store_true",
+                        help="create the Space even though the account has no PRO plan (Hugging Face asks for one)")
     parser.add_argument("--dry-run", action="store_true",
                         help="assemble the upload and list it, with no network call")
     parser.add_argument("--out", metavar="DIR", type=Path,

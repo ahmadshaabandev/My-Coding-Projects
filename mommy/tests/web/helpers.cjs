@@ -777,6 +777,7 @@ function makeFakeApi(opts) {
   let pageRead = null;
   let unmarked = () => false; // texts for which the server's dictation safety net fires
   let healthDown = !!o.healthDown;
+  let accessRequired = false; // online, with a cookie that no longer opens the app
   const analyse = (text, lang) => fakeQuranAnalysis(text, lang, { unmarked: unmarked(String(text || '').trim()) });
 
   async function handler(route, request) {
@@ -796,6 +797,7 @@ function makeFakeApi(opts) {
     calls.push(call);
     if (unreachable.has(p)) return route.abort('connectionrefused');
     const json = (data, status) => route.fulfill({ status: status || 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(data) });
+    if (accessRequired) return json({ error: 'access_required', message: 'This is a private test of Mommy: an access code is needed.' }, 401);
 
     if (p === '/api/health') {
       if (healthDown) return route.abort('connectionrefused');
@@ -915,6 +917,10 @@ function makeFakeApi(opts) {
     queueQuran: (kind) => quranQueue.push(kind),
     setHealthDown: (v) => {
       healthDown = v;
+    },
+    /** Answer every /api/* call 401 access_required, as the access gate does for an old cookie. */
+    setAccessRequired: (v) => {
+      accessRequired = !!v;
     },
     /** Make an endpoint answer 422 quran_text (or stop doing so). */
     refuse: (p, on) => (on ? refused.add(p) : refused.delete(p)),

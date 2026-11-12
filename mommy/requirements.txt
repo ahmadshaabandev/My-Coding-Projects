@@ -25,9 +25,9 @@ numpy==2.5.4
 # Image checks (metadata removal)
 pillow==13.0.0
 
-# Tests
-pytest==9.2.0
-httpx==0.28.1
+# Tests ("tests only": left out of requirements-runtime.lock, so not in the container image)
+pytest==9.2.0  # tests only
+httpx==0.28.1  # tests only
 
 # Speech synthesis with sherpa-onnx 2.x also needs an espeak-ng phonemizer (without one,
 # /api/health reports "tts": false and dictation cannot be spoken). This wheel bundles

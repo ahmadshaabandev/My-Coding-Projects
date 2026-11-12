@@ -535,6 +535,16 @@ class PiperTTS:
             log.info("loaded %s voice in %.1f s", lang, time.perf_counter() - started)
         return voice
 
+    def preload(self, langs: tuple[Lang, ...] = LANGUAGES) -> None:
+        """Load the voices for ``langs`` now instead of on first use (one lock hold per
+        voice, so a request in between is not kept waiting for all of them)."""
+        for lang in langs:
+            _check_lang(lang)
+            if lang not in self.languages:
+                raise TTSUnavailable(self.unavailable_reason or f"no {lang} voice")
+            with self._lock:
+                self._voice(lang)
+
     def phoneme_codepoints(self, text: str, lang: Lang) -> list[list[int]]:
         """The phoneme code points sent to the voice: one list per sentence, NFD (as
         ``piper_phonemize`` produces them), keeping only symbols the voice knows."""

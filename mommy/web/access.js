@@ -4,11 +4,18 @@
  *
  * - The language follows navigator.language: Arabic (right to left), French, or English.
  * - A link https://<host>/#code=<code> opens the app: the fragment is removed from the
- *   address bar and the history at once (history.replaceState), then the code is POSTed
- *   to /api/access, which answers 204 with an HttpOnly cookie, and the page goes to "/".
- *   A URL fragment is never sent to a server, so the code never reaches a server log;
- *   it is never put in a query string either.
+ *   address bar and from this tab's history entry at once (history.replaceState), then
+ *   the code is POSTed to /api/access, which answers 204 with an HttpOnly cookie, and the
+ *   page goes to "/". A URL fragment is never sent to a server, so the code never reaches
+ *   a server log; it is never put in a query string either. The browser's own history
+ *   list (and its sync, and address-bar suggestions) still holds the link as it was
+ *   opened: on a shared device, delete that entry, or ask the owner for a new code.
+ * - The same happens when the link is pasted into a tab that already shows this page
+ *   (only the fragment changes, so the page is not loaded again: "hashchange").
  * - Otherwise, or when the code is refused, a form asks for it, with a translated error.
+ *   While the app is starting (the proxy answers 502, 503 or 504) or cannot be reached,
+ *   a link's code is kept in memory: it is tried once more by itself after 20 s, and
+ *   "Enter" with an empty field tries it again.
  * No external request, no inline script; nothing is stored by this script.
  */
 (function () {
@@ -26,6 +33,7 @@
       err_bad: 'This code is not right. Please check it and try again.',
       err_many: 'Too many tries. Please wait {wait} and try again.',
       err_network: 'The server could not be reached. Please try again.',
+      err_starting: 'The app is starting. Please wait a minute and try again.',
       err_other: 'Something went wrong. Please try again.',
       minutes_one: '1 minute',
       minutes_other: '{n} minutes',
@@ -41,6 +49,7 @@
       err_bad: 'Ce code n’est pas le bon. Veuillez le vérifier et réessayer.',
       err_many: 'Trop d’essais. Veuillez patienter {wait}, puis réessayer.',
       err_network: 'Le serveur ne répond pas. Veuillez réessayer.',
+      err_starting: 'L’application démarre. Veuillez patienter une minute, puis réessayer.',
       err_other: 'Une erreur s’est produite. Veuillez réessayer.',
       minutes_one: '1 minute',
       minutes_other: '{n} minutes',
@@ -56,6 +65,7 @@
       err_bad: 'هذا الرمز غير صحيح. يُرجى التحقق منه ثم المحاولة من جديد.',
       err_many: 'محاولات كثيرة. يُرجى الانتظار {wait} ثم المحاولة من جديد.',
       err_network: 'تعذّر الوصول إلى الخادم. يُرجى المحاولة من جديد.',
+      err_starting: 'جارٍ تشغيل التطبيق. يُرجى الانتظار دقيقة واحدة ثم المحاولة من جديد.',
       err_other: 'حدث خطأ ما. يُرجى المحاولة من جديد.',
       minutes_one: 'دقيقة واحدة',
       minutes_two: 'دقيقتين',
@@ -96,13 +106,18 @@
     return t(n === 1 ? 'minutes_one' : 'minutes_other', { n: num(n) });
   }
 
-  // The code of a #code=... link, removed from the address bar (and its history entry)
-  // before anything else happens.
-  let linkCode = null;
-  if (/(^#|&)code=/.test(location.hash)) {
-    linkCode = new URLSearchParams(location.hash.slice(1)).get('code');
+  /** The code of a #code=... link (or null), removed from the address bar and this
+   * tab's history entry before anything else happens. */
+  function takeLinkCode() {
+    if (!/(^#|&)code=/.test(location.hash)) return null;
+    const code = new URLSearchParams(location.hash.slice(1)).get('code');
     history.replaceState(null, '', location.pathname + location.search);
+    return code;
   }
+
+  const firstLinkCode = takeLinkCode();
+  /** How long a link's code waits before it is tried once more, while the app starts. */
+  const RETRY_MS = 20000;
 
   const root = document.documentElement;
   root.lang = lang;
@@ -116,6 +131,15 @@
   const error = document.getElementById('access-error');
   const submit = document.getElementById('access-submit');
   let busy = false;
+  // A link's code whose try failed for a passing reason (the app starting, no network):
+  // kept in memory only, for "Enter" with an empty field and for one automatic retry.
+  let pendingLinkCode = null;
+  let retryTimer = null;
+
+  function cancelRetry() {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+  }
 
   function showError(key, vars) {
     busy = false;
@@ -127,7 +151,22 @@
     input.select();
   }
 
-  async function tryCode(code) {
+  /** A passing failure of a link's code: keep it, and try it once more after RETRY_MS. */
+  function keepLinkCode(code, retryLater) {
+    pendingLinkCode = code;
+    if (retryLater) {
+      cancelRetry();
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (!busy && pendingLinkCode === code) tryCode(code, { link: true, retry: false });
+      }, RETRY_MS);
+    }
+  }
+
+  /** POST `code`. how.link: it came from a link; how.retry: one automatic retry allowed. */
+  async function tryCode(code, how) {
+    const h = how || {};
+    cancelRetry();
     busy = true;
     submit.disabled = true;
     error.textContent = '';
@@ -142,6 +181,7 @@
         cache: 'no-store',
       });
     } catch (e) {
+      if (h.link) keepLinkCode(code, h.retry);
       showError('err_network');
       return;
     }
@@ -157,6 +197,13 @@
       body = null;
     }
     const errorCode = body && body.error;
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      // The proxy answers this while the Space starts (after a deploy, a restart or sleep).
+      if (h.link) keepLinkCode(code, h.retry);
+      showError('err_starting');
+      return;
+    }
+    pendingLinkCode = null;
     if (res.status === 429 || errorCode === 'too_many_attempts') {
       const wait = Number(res.headers.get('Retry-After'));
       showError('err_many', { wait: minutes(Number.isFinite(wait) && wait > 0 ? wait : 600) });
@@ -170,17 +217,33 @@
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     if (busy) return;
-    const code = input.value.trim();
-    if (!code) {
+    const typed = input.value.trim();
+    if (typed) {
+      pendingLinkCode = null;
+      tryCode(typed);
+    } else if (pendingLinkCode) {
+      tryCode(pendingLinkCode, { link: true, retry: false });
+    } else {
       showError('err_empty');
-      return;
     }
-    tryCode(code);
   });
 
-  if (linkCode) {
+  /** Use the code of a link: hide the form and try it (one automatic retry allowed). */
+  function useLinkCode(code) {
+    pendingLinkCode = null;
     form.hidden = true;
-    tryCode(linkCode);
+    tryCode(code, { link: true, retry: true });
+  }
+
+  // The link pasted into this tab while it shows the code page: only the fragment
+  // changes, so the page is not loaded again. The fragment is removed at once, always.
+  window.addEventListener('hashchange', () => {
+    const code = takeLinkCode();
+    if (code && !busy) useLinkCode(code);
+  });
+
+  if (firstLinkCode) {
+    useLinkCode(firstLinkCode);
   } else {
     input.focus();
   }

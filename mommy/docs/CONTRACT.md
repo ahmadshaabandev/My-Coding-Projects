@@ -108,9 +108,12 @@ mommy/
   README.md                 how to install, download models, run, and test
   requirements.txt          direct dependencies, pinned
   requirements.lock         every package, pinned and hashed (pip install --require-hashes -r requirements.lock)
+  requirements-runtime.lock the same pins and hashes without the "# tests only" requirements (extra; what the image installs)
   run.sh                    starts uvicorn on 127.0.0.1:8080 (PORT to change), serving the API and web/
-  scripts/download_models.sh  fetches the sherpa-onnx Whisper turbo model (small with --small) and the Piper voices into models/
-  scripts/lock_requirements.py  regenerates requirements.lock (development only: the one script that uses the network)
+  scripts/download_models.sh  fetches the sherpa-onnx Whisper turbo model (small with --small) and the Piper voices into models/,
+                            each archive checked against its pinned sha256 before it is unpacked
+  scripts/lock_requirements.py  regenerates both lock files (development only: the one script that uses the network)
+  Dockerfile .dockerignore scripts/space_start.sh deploy/huggingface/   the online deployment (extra; README.md, "Run it online")
   docs/CONTRACT.md          this file
   data/quran/quran-uthmani.txt, quran-simple-clean.txt   verbatim Tanzil text (txt-2: sura|aya|text; licence block at end)
   data/quran/quran-data.js  verbatim Tanzil metadata (surah names, ayah counts; CC BY 3.0)
@@ -133,6 +136,8 @@ mommy/
                 access.cjs (extra: the access gate in Chromium against the real app under uvicorn,
                 with MOMMY_ACCESS_CODE set and fake speech components)
   tests/test_access.py                the access gate (extra)
+  tests/test_space_image.py           the image's start script, model checksums and Dockerfile (extra)
+  tests/test_deploy.py                deploy/huggingface/deploy.py against a fake Hub (extra)
 ```
 
 `tests/conftest.py` puts `mommy/backend` on `sys.path`. Imports look like
@@ -167,8 +172,11 @@ class Settings:
 MIN_ACCESS_CODE_CHARS = 8      # extra
 def load_settings(root: Path | None = None) -> Settings
 # Blank variables count as unset. ValueError for an unknown ASR model or effort, a
-# thread count that is not a positive integer, an allowed-hosts list with no host, or an
-# access code shorter than MIN_ACCESS_CODE_CHARS (the message never quotes the code).
+# thread count that is not a positive integer, an allowed-hosts list with no host, an
+# access code shorter than MIN_ACCESS_CODE_CHARS (the message never quotes the code), or
+# (extra) no access code while MOMMY_REQUIRE_ACCESS_CODE is set (any non-blank value; the
+# container image sets it, run.sh does not). "Blank" is str.strip()'s: any Unicode white
+# space, so a no-break space is no code; this is the only place that decides it.
 # The access code is stripped; it is kept out of repr(Settings), so it cannot reach a log.
 ```
 
@@ -632,6 +640,7 @@ class PiperTTS:   # sherpa_onnx.OfflineTts with OfflineTtsVitsModelConfig per la
     # phonemizer (piper_phonemize, or libespeak-ng through espeakng_loader or the system
     # library). Without one, available is False with a reason.
     # Refuses text in Uthmani Quranic script (QuranTextRefused, a ValueError).
+    # preload(langs=LANGUAGES) (extra): loads those voices now, one lock hold per voice.
 class FakeTTS
 class TTSUnavailable(RuntimeError); class QuranTextRefused(ValueError); def is_quranic_script(text) -> bool
 def roundtrip_ok(tts: Synthesizer, asr: Transcriber, text: str, lang: Lang, *, slow: bool = False) -> bool
@@ -695,7 +704,7 @@ ClaudeBrain:
 ```python
 ACCESS_COOKIE = "mommy_access"; ACCESS_COOKIE_MAX_AGE = 180 * 24 * 60 * 60; ACCESS_PATH = "/api/access"
 GATE_PAGE = "access.html"; GATE_ASSETS = frozenset({"/access.html", "/access.js", "/styles.css"})
-MAX_FAILURES = 10; FAILURE_WINDOW_S = 600.0; MAX_TRACKED_CLIENTS = 10_000
+MAX_FAILURES = 10; FAILURE_WINDOW_S = 600.0; MAX_TRACKED_CLIENTS = 10_000; MAX_CLIENT_KEY_CHARS = 24
 CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"; CODE_LENGTH = 12   # what the deploy script makes
 def normalize_code(code: str) -> str
 # Trimmed; Arabic-Indic (U+0660-0669) and Eastern Arabic-Indic (U+06F0-06F9) digits -> ASCII.
@@ -704,6 +713,13 @@ def cookie_value(code: str) -> str
 # HMAC-SHA256(key = SHA-256(fixed label + normalize_code(code)), "mommy_access"), base64url
 # without padding (43 characters). Depends on the code only: a restart keeps people in, a
 # new code invalidates every cookie. No session list is kept.
+def client_key(host: str | None) -> str
+# The key a client's wrong codes are counted under, for request.client.host: an IPv4
+# address (also written IPv4-mapped), any other IPv6 address as its /64 network
+# ("2001:db8::/64": one line has a whole /64, and other spellings are the same client),
+# "unknown" without an address, "other" for anything that is not an IP address. At most
+# MAX_CLIENT_KEY_CHARS characters, whatever X-Forwarded-For held.
+def is_public_client(key: str) -> bool   # a globally routed address or network
 class FailureLimiter(*, max_failures=10, window_s=600.0, max_clients=10_000, clock=time.monotonic)
     def retry_after(self, client: str) -> int | None   # seconds (>= 1) while blocked, else None
     def record_failure(self, client: str) -> int       # failures of the client in the window
@@ -714,6 +730,9 @@ class AccessGate(code: str, web_dir: Path | None, *, limiter: FailureLimiter | N
     cookie: str; limiter: FailureLimiter; page: bytes | None    # the code itself is not kept
     def code_matches(self, candidate: str) -> bool   # constant time (compares the two tags)
     def has_access(self, headers) -> bool            # the request's mommy_access cookie, constant time
+    # Every Cookie header and every mommy_access value in them is a candidate
+    # (access_cookie_values): split cookie fields and a same-named cookie do not hide it.
+def access_cookie_values(headers) -> list[str]
 class AccessGateMiddleware(app, gate: AccessGate)    # pure ASGI, see "Access gate" below
 def is_navigation(headers) -> bool
 # Sec-Fetch-Mode: navigate; for a client without fetch metadata, an Accept with text/html.
@@ -774,23 +793,37 @@ def is_navigation(headers) -> bool
   - `POST /api/access`, JSON `{"code": str}`: the code is compared in constant time after
     `normalize_code` (trimmed; Arabic-Indic and Eastern Arabic-Indic digits as ASCII).
     Right: `204` with `Set-Cookie: mommy_access=<tag>; HttpOnly; Max-Age=15552000;
-    Path=/; SameSite=lax`, plus `Secure` when the request scheme is `https`, and the
+    Path=/; SameSite=lax`, plus `Secure` (see below), and the
     client's failures are cleared. Wrong: `403 {"error": "bad_access_code", "message"}`.
     Missing or invalid body: 422 as everywhere (not counted). A client with 10 wrong codes
     in the last 10 minutes gets `429 {"error": "too_many_attempts", "message"}` with
     `Retry-After` (seconds until its oldest failure is 10 minutes old), even for the right
     code; at most 10,000 clients are remembered (LRU).
-  - The client is `request.client.host`, and the scheme `request.url.scheme`, as uvicorn's
-    `--proxy-headers` set them from `X-Forwarded-For` and `X-Forwarded-Proto` for a
-    trusted proxy (`--forwarded-allow-ips`). Behind a proxy without them, every visitor is
-    the proxy (one shared failure limit) and the cookie is never `Secure`. Trust only the
-    proxy's addresses: with `--forwarded-allow-ips='*'` uvicorn takes the left-most
-    `X-Forwarded-For` entry, which a visitor can set, so the failure limit could be
-    dodged by changing it (a code of 12 characters out of 31 still leaves about 8 x 10^17
-    possibilities).
+  - The cookie is `Secure` unless the request's host is a loopback one (`localhost`,
+    `*.localhost`, `127.0.0.0/8`, `::1`; `is_loopback_host`), and also then over https:
+    online the page is HTTPS whatever `X-Forwarded-Proto` the proxy sends (uvicorn takes
+    only an exact `https`), so the cookie never goes over plain http; over plain http the
+    gate works on a loopback host only (the local test of the image). Online, every
+    response for a host that is not a loopback one also has `Strict-Transport-Security:
+    max-age=31536000` (`ResponseHeadersMiddleware(hsts=True)`; never without the gate).
+  - The client is `client_key(request.client.host)`, as uvicorn's `--proxy-headers` set
+    it from `X-Forwarded-For` for a trusted proxy (`--forwarded-allow-ips`). The image
+    (`scripts/space_start.sh`) trusts the private and shared networks (10/8, 172.16/12,
+    192.168/16, 100.64/10, 127/8, 169.254/16, ::1, fc00::/7, fe80::/10; the Space
+    variable `MOMMY_FORWARDED_ALLOW_IPS` replaces the list): uvicorn then takes the
+    right-most address that is not one of them, the one the proxy appended, so what a
+    visitor writes to its left neither gives it a fresh count nor uses up another
+    visitor's. Never `'*'` by default: uvicorn would take the left-most entry, which the
+    visitor writes. Behind a proxy whose address is not trusted, every visitor is the
+    proxy (one shared failure limit): the first wrong or right code from a private or
+    unknown address, for a host that is not a loopback one, logs one warning that says
+    so (no address). The limit is defence in depth; the protection is the code (12
+    characters out of 31, about 59 bits).
   - Logs: "access code accepted", "refused a wrong access code (n of 10 in the window)",
-    "access code attempts paused for a client"; these lines never carry the code, the
-    cookie or the client's address. The code never appears in a URL the server sees, so
+    "access code attempts paused for a client", and once the private-address warning;
+    these lines never carry the code, the cookie or the client's address. (A refused
+    `Host` is logged by HostOriginMiddleware with the name received, quoted and cut to
+    80 characters: it tells the owner what `MOMMY_ALLOWED_HOSTS` lacks.) The code never appears in a URL the server sees, so
     uvicorn's access log cannot show it either (`tests/web/access.cjs` checks the log).
 - Text checks on the general endpoints (recite, dictation, phrases, TTS, text check), in
   this order: 400 `bad_text` (a lone UTF-16 surrogate), 400 `text_too_long` (over
@@ -1018,7 +1051,12 @@ Serialise `CheckResult` and `Op` with `dataclasses.asdict`. Static files: mount 
 method gets 405). `/docs` and `/redoc` are disabled (they load scripts from a CDN); the
 schema is at `/api/openapi.json`. `app.py` also exposes `def build_default_app() ->
 FastAPI` (real components, for uvicorn: `uvicorn mommy.app:build_default_app --factory`),
-which configures the `mommy` loggers (level `MOMMY_LOG_LEVEL`, default INFO).
+which configures the `mommy` loggers (level `MOMMY_LOG_LEVEL`, default INFO). Extra:
+online (an access code set) it also calls `start_preload(transcriber, tts) ->
+threading.Thread`, a daemon thread that loads the recognisers, then the voices, one
+language at a time (the locks are released in between; a failure is logged by its class
+name), so the first recording after a cold start does not wait for its model; locally
+each language is still loaded on first use.
 
 ## Web client (vanilla HTML/CSS/JS, no frameworks, no CDN)
 
@@ -1034,7 +1072,17 @@ which configures the `mommy` loggers (level `MOMMY_LOG_LEVEL`, default INFO).
   tries (with the wait in minutes from `Retry-After`; Arabic-Indic digits and the Arabic
   dual and plural), empty field, server unreachable, other error. Its strings follow the
   rules of `app.js` (يُرجى + a verbal noun, verbal-noun buttons, French no-break spaces).
-  It stores nothing and never reads the cookie (it is HttpOnly).
+  It stores nothing and never reads the cookie (it is HttpOnly). Extra: the link pasted
+  into a tab that already shows the page (only the fragment changes) is handled the same
+  way (`hashchange`); while the app is starting (502, 503 or 504 from the proxy:
+  "The app is starting...") or cannot be reached, a link's code is kept in memory, tried
+  once more by itself after 20 s, and "Enter" with an empty field tries it. The comment
+  says it plainly: `replaceState` clears the address bar and this tab's history entry,
+  not the browser's history list.
+- **A cookie that no longer opens the app (extra, online only).** `app.js`'s `api()`
+  reloads the page on `401 access_required` (the owner set a new code): the server
+  answers that navigation with the code page, so it cannot loop, and the call never
+  settles. Without the gate no endpoint answers 401.
 
 - Classic scripts loaded with `defer` in this order: `recorder.js` (`window.MommyRecorder`),
   `rewards.js` (`window.MommyRewards`, the pure logic of tasks and rewards),

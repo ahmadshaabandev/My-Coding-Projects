@@ -78,6 +78,7 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -111,6 +112,8 @@ from .access import (
     TOO_MANY_MESSAGE,
     AccessGate,
     AccessGateMiddleware,
+    client_key,
+    is_public_client,
 )
 from .align import UNREADABLE, CheckResult, has_unreadable, recitation_key, result_summary, tokenize_written
 from .asr import ASRUnavailable, SherpaWhisper, Transcriber, audio_quality, decode_wav, wav_duration
@@ -303,27 +306,39 @@ def body_limit(path: str) -> int:
     return BODY_LIMITS.get(path.rstrip("/") or "/", MAX_JSON_BYTES)
 
 
+#: Sent online (access gate on) to every host but a loopback one: browsers then only ever
+#: reach the app over HTTPS, so the access cookie cannot go out in clear text (they
+#: ignore the header on a plain-http answer).
+HSTS_VALUE = "max-age=31536000"
+
+
 class ResponseHeadersMiddleware:
     """``Cache-Control: no-store`` on every ``/api/*`` response; ``nosniff``,
     ``Referrer-Policy: no-referrer``, ``X-Frame-Options: DENY`` and
     ``Content-Security-Policy: frame-ancestors 'none'`` on every response (a page in
     another site's frame could otherwise drive the app; a CSP meta tag cannot set
-    ``frame-ancestors``)."""
+    ``frame-ancestors``). With ``hsts`` (online only), also
+    ``Strict-Transport-Security`` (:data:`HSTS_VALUE`) on every response for a host that
+    is not a loopback one (:func:`is_loopback_host`)."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, hsts: bool = False) -> None:
         self.app = app
+        self.hsts = hsts
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         api = _is_api(scope["path"])
+        hsts = self.hsts and not is_loopback_host(_host_name(Headers(scope=scope).get("host", "")))
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
                 if api:
                     headers["Cache-Control"] = "no-store"
+                if hsts:
+                    headers.setdefault("Strict-Transport-Security", HSTS_VALUE)
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("Referrer-Policy", "no-referrer")
                 headers.setdefault("X-Frame-Options", "DENY")
@@ -340,6 +355,18 @@ def _host_name(host: str) -> str:
     if host.startswith("["):
         return host[1 : host.find("]")] if "]" in host else host[1:]
     return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def is_loopback_host(name: str) -> bool:
+    """True for a host name that only reaches this machine: ``localhost`` (and
+    ``*.localhost``) or a loopback address (``127.0.0.0/8``, ``::1``). ``name`` is a
+    :func:`_host_name` (lower case, no port)."""
+    if name == "localhost" or name.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
 
 
 class HostOriginMiddleware:
@@ -366,7 +393,9 @@ class HostOriginMiddleware:
         headers = Headers(scope=scope)
         host = headers.get("host", "")
         if _host_name(host) not in self.allowed:
-            log.info("refused a request for an unknown host")
+            # The name received (a host name, not personal data; repr and cut, so a forged
+            # header cannot forge log lines): it says what MOMMY_ALLOWED_HOSTS lacks.
+            log.info("refused a request for an unknown host %r", _host_name(host)[:80])
             await error_response(400, "bad_host", "This server does not answer to that host name.")(scope, receive, send)
             return
         origin = headers.get("origin")
@@ -743,7 +772,7 @@ def create_app(
     if gate is not None:
         app.add_middleware(AccessGateMiddleware, gate=gate)
     app.add_middleware(HostOriginMiddleware, allowed_hosts=tuple(getattr(settings, "allowed_hosts", DEFAULT_ALLOWED_HOSTS)))
-    app.add_middleware(ResponseHeadersMiddleware)
+    app.add_middleware(ResponseHeadersMiddleware, hsts=gate is not None)
     decode_slots = threading.BoundedSemaphore(MAX_CONCURRENT_DECODES)
 
     # -- component helpers -------------------------------------------------------
@@ -1308,6 +1337,7 @@ def create_app(
     # -- the web client ------------------------------------------------------------
 
     if gate is not None:
+        proxy_warned = False
 
         @app.post(ACCESS_PATH, status_code=204, response_class=Response)
         async def access(body: AccessRequest, request: Request) -> Response:
@@ -1315,9 +1345,25 @@ def create_app(
 
             The client is ``request.client.host``, which uvicorn's ``--proxy-headers`` set
             from ``X-Forwarded-For``; behind a proxy that is the proxy's own address
-            otherwise. Neither the code nor the cookie is ever logged.
+            otherwise. It is counted under :func:`~mommy.access.client_key`. Neither the
+            code, the cookie nor the address is ever logged.
+
+            The cookie is ``Secure`` unless the request is for a loopback host: online the
+            page is HTTPS, whatever ``X-Forwarded-Proto`` the proxy sends (uvicorn takes
+            only an exact ``https``), and a cookie that opens the app for 180 days must
+            never go over plain http. Over plain http only ``localhost`` (a local test of
+            the image) can keep it.
             """
-            client = request.client.host if request.client is not None else "unknown"
+            nonlocal proxy_warned
+            client = client_key(request.client.host if request.client is not None else None)
+            loopback = is_loopback_host(_host_name(request.headers.get("host", "")))
+            if not loopback and not proxy_warned and not is_public_client(client):
+                proxy_warned = True
+                log.warning(
+                    "an access code came from a private or unknown client address: if every visitor "
+                    "does, the proxy's X-Forwarded-For is not used (MOMMY_FORWARDED_ALLOW_IPS, "
+                    "scripts/space_start.sh) and all of them share one failure limit"
+                )
             wait = gate.limiter.retry_after(client)
             if wait is not None:
                 log.info("access code attempts paused for a client (%d s left)", wait)
@@ -1334,7 +1380,7 @@ def create_app(
                 gate.cookie,
                 max_age=ACCESS_COOKIE_MAX_AGE,
                 path="/",
-                secure=request.url.scheme == "https",
+                secure=request.url.scheme == "https" or not loopback,
                 httponly=True,
                 samesite="lax",
             )
@@ -1367,6 +1413,32 @@ def _configure_logging() -> None:
         logger.propagate = False
 
 
+def start_preload(transcriber: Transcriber, tts: Synthesizer) -> threading.Thread:
+    """Load the recognisers, then the voices, in a background thread, one language at a
+    time (the components' locks are released in between, so a request is never kept
+    waiting for more than one load). Online only (``build_default_app``): after a cold
+    start the first recording would otherwise wait for its recogniser (7 to 40 s on 2
+    vCPU), while a visitor spends that time on the code page and the family setup. A
+    failure is logged by its class name and skipped."""
+
+    def run() -> None:
+        started = time.perf_counter()
+        for kind, component in (("recogniser", transcriber), ("voice", tts)):
+            preload = getattr(component, "preload", None)
+            if preload is None or not getattr(component, "available", False):
+                continue
+            for lang in LANGUAGES:
+                try:
+                    preload((lang,))
+                except Exception as exc:  # noqa: BLE001 - a background warm-up must not stop
+                    log.warning("preloading the %s %s failed (%s)", lang, kind, type(exc).__name__)
+        log.info("preloaded the recognisers and voices in %.1f s", time.perf_counter() - started)
+
+    thread = threading.Thread(target=run, name="mommy-preload", daemon=True)
+    thread.start()
+    return thread
+
+
 def build_default_app() -> FastAPI:
     """The app with the real components: local Whisper and Piper, Claude when configured
     (otherwise offline), and the Tanzil Quran. A component that cannot run is reported
@@ -1389,7 +1461,11 @@ def build_default_app() -> FastAPI:
         "starting: asr=%s (%s) tts=%s brain=%s quran=%s",
         transcriber.available, transcriber.model, tts.available, brain.name, quran is not None,
     )
-    return create_app(settings, transcriber, tts, brain, quran)
+    app = create_app(settings, transcriber, tts, brain, quran)
+    if settings.access_code is not None:
+        # Online only: local use keeps loading each language on first use.
+        start_preload(transcriber, tts)
+    return app
 
 
 __all__ = [
@@ -1402,6 +1478,7 @@ __all__ = [
     "MAX_TEXT_CHARS",
     "MAX_TTS_CHARS",
     "MAX_TEXT_WORDS",
+    "HSTS_VALUE",
     "AccessGateMiddleware",
     "AccessRequest",
     "ApiError",
@@ -1417,11 +1494,13 @@ __all__ = [
     "find_quran_parts",
     "dictation_speaks_quran",
     "error_response",
+    "is_loopback_host",
     "is_quran_phrase",
     "is_whole_ayah",
     "keep_uploads_in_memory",
     "looks_like_quran",
     "looks_like_quran_for_meaning",
+    "start_preload",
     "text_script",
     "QURAN_GUARD_CONTAINED_AYAH_WORDS",
     "QURAN_GUARD_CONTEXTUAL_RUN_WORDS",

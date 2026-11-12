@@ -855,6 +855,42 @@ async function serverDown(browser, base) {
   await context.close();
 }
 
+/**
+ * Online, the owner sets a new access code while the app is open: every API call then
+ * answers 401 access_required. The app reloads (OPS-4), and the server answers that
+ * navigation with its code page; it never shows "server down" with a retry that cannot
+ * work. Here a route plays the server's part for the navigation.
+ */
+async function accessRevoked(browser, base) {
+  const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 });
+  await check('online, the cookie no longer opens the app: the app reloads to the code page', async () => {
+    await page.goto(base + '/');
+    await H.setupFamily(page, { consent: true, nickname: 'Sami' });
+    await page.waitForSelector('#server-banner', { state: 'hidden' });
+    const before = new URL(page.url());
+    const navigations = [];
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) navigations.push(frame.url());
+    });
+    fake.setAccessRequired(true);
+    await page.route(base + '/**', (route, request) =>
+      request.isNavigationRequest()
+        ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: '<!doctype html><title>code page</title><p id="code-page">code page</p>' })
+        : route.fallback(),
+    );
+    const healthCalls = fake.callsTo('/api/health').length;
+    await page.evaluate(() => document.getElementById('btn-retry').click()); // any API call
+    await page.waitForSelector('#code-page');
+    assert.equal(fake.callsTo('/api/health').length, healthCalls + 1);
+    assert.equal(new URL(page.url()).pathname, before.pathname); // the same page, reloaded
+    await sleep(500);
+    assert.equal(navigations.length, 1, navigations.join(', ')); // once, no loop
+    // Chromium logs the 401 as a failed load; nothing else.
+    assert.deepEqual(problems.filter((p) => !/status of 401/.test(p)), []);
+  });
+  await context.close();
+}
+
 // ---------------------------------------------------------------------------
 // Regression checks for the review findings (each one failed before its fix)
 // ---------------------------------------------------------------------------
@@ -2060,6 +2096,8 @@ async function main() {
     await unavailableFeatures(browser, base);
     console.log('# browser: server down');
     await serverDown(browser, base);
+    console.log('# browser: online, access revoked');
+    await accessRevoked(browser, base);
     console.log('# browser: Arabic UI (review fixes)');
     await arabicFlow(browser, base);
     console.log('# browser: review fixes');

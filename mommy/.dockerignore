@@ -7,7 +7,7 @@
 !data/quran/
 !scripts/download_models.sh
 !scripts/space_start.sh
-!requirements.lock
+!requirements-runtime.lock
 **/__pycache__
 **/*.py[co]
 **/.*

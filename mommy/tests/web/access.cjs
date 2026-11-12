@@ -7,10 +7,13 @@
  * failure limit of one check does not reach the next.
  *
  * Checks: the link /#code=<code> lands in the app with the fragment gone and an HttpOnly
- * cookie; a reload stays in; a wrong code shows the translated error in en, fr and ar
- * (RTL, Arabic-Indic digits), typed or from the link; typing the code works (also with
- * Arabic-Indic digits); too many tries; the page at 360 px; no console errors, no other
- * host; the server log never shows the code.
+ * cookie; a reload stays in; the link pasted into a tab that already shows the code page
+ * works too (hashchange); a wrong code shows the translated error in en, fr and ar (RTL,
+ * Arabic-Indic digits), typed or from the link; typing the code works (also with
+ * Arabic-Indic digits); too many tries; while the app is starting (503) or cannot be
+ * reached, a link's code is kept, tried again by itself after 20 s, and "Enter" with an
+ * empty field tries it; the page at 360 px; no console errors, no other host; the server
+ * log never shows the code.
  *
  *   node tests/web/access.cjs            (about 30 s; MOMMY_SHOTS_DIR=... for screenshots)
  */
@@ -99,8 +102,10 @@ async function open(browser, base, lang) {
   return { context, page, problems };
 }
 
-/** Chromium logs the 403 of a wrong code and the 429 of too many as console errors. */
-const refusedCode = (problems) => problems.filter((p) => !/Failed to load resource: the server responded with a status of (403|429)/.test(p));
+/** Chromium logs the 403 of a wrong code, the 429 of too many and the 503 of a starting
+ * app as console errors (and a refused connection as a failed load). */
+const refusedCode = (problems) =>
+  problems.filter((p) => !/Failed to load resource: (the server responded with a status of (403|429|503)|net::ERR_CONNECTION_REFUSED)/.test(p));
 
 async function inApp(page) {
   await page.waitForSelector('#ai-badge', { timeout: 10000 }); // index.html, not the gate page
@@ -150,7 +155,7 @@ function stringChecks() {
     assert.ok(!/[0-9]/.test(v), 'ar ' + k + ' has Latin digits');
     for (const w of v.split(/[\s.،؛؟!…]+/u)) assert.ok(!BANNED.includes(w), `ar ${k}: ${w}`);
   }
-  for (const k of ['hint', 'err_empty', 'err_bad', 'err_many', 'err_network', 'err_other']) assert.match(ar[k], /يُرجى/, 'ar ' + k);
+  for (const k of ['hint', 'err_empty', 'err_bad', 'err_many', 'err_network', 'err_starting', 'err_other']) assert.match(ar[k], /يُرجى/, 'ar ' + k);
   assert.equal(ar.submit, 'دخول');
 }
 
@@ -198,6 +203,61 @@ async function main() {
       assert.deepEqual(en.problems, []);
     });
     await en.context.close();
+
+    const pasted = await open(browser, base, 'en');
+    await check('en: the link pasted into a tab that shows the code page opens the app (hashchange)', async () => {
+      await pasted.page.goto(base + '/');
+      await gateShown(pasted.page, 'en');
+      await pasted.page.goto(base + '/#code=' + CODE); // only the fragment changes: no new page load
+      await inApp(pasted.page);
+      assert.ok(!pasted.page.url().includes('code='), pasted.page.url());
+      assert.equal((await pasted.context.cookies()).length, 1);
+      assert.deepEqual(pasted.problems, []);
+    });
+    await pasted.context.close();
+
+    console.log('# the app is starting, or cannot be reached');
+    for (const lang of ['ar', 'fr']) {
+      const S = H.uiStrings(lang, 'access.js');
+      const ctx = await open(browser, base, lang);
+      await check(`${lang}: while the app is starting (503) the link's code is kept and tried again after 20 s`, async () => {
+        await ctx.page.clock.install();
+        let starting = true;
+        let posts = 0;
+        await ctx.page.route('**/api/access', (route) => {
+          posts += 1;
+          return starting ? route.fulfill({ status: 503, contentType: 'text/html', body: '<html>starting</html>' }) : route.fallback();
+        });
+        await ctx.page.goto(base + '/#code=' + CODE);
+        await gateShown(ctx.page, lang);
+        await ctx.page.waitForFunction(() => document.getElementById('access-error').textContent !== '');
+        assert.equal((await ctx.page.textContent('#access-error')).trim(), S.err_starting);
+        assert.equal(ctx.page.url(), base + '/'); // the code is in memory only
+        await layout(ctx.page, `access-${lang}-starting`);
+        assert.equal(posts, 1);
+        starting = false;
+        await ctx.page.clock.fastForward(20000);
+        await inApp(ctx.page);
+        assert.equal(posts, 2);
+        assert.deepEqual(refusedCode(ctx.problems), []);
+      });
+      await ctx.context.close();
+    }
+    const offline = await open(browser, base, 'en');
+    await check('en: after a network error, Enter with an empty field tries the link\'s code again', async () => {
+      let down = true;
+      await offline.page.route('**/api/access', (route) => (down ? route.abort('connectionrefused') : route.fallback()));
+      await offline.page.goto(base + '/#code=' + CODE);
+      await gateShown(offline.page, 'en');
+      await offline.page.waitForFunction(() => document.getElementById('access-error').textContent !== '');
+      assert.equal((await offline.page.textContent('#access-error')).trim(), H.uiStrings('en', 'access.js').err_network);
+      assert.equal(await offline.page.inputValue('#access-code'), ''); // never shown in the field
+      down = false;
+      await offline.page.press('#access-code', 'Enter');
+      await inApp(offline.page);
+      assert.deepEqual(refusedCode(offline.problems), []);
+    });
+    await offline.context.close();
 
     console.log('# a wrong code, in each language');
     for (const lang of ['en', 'fr', 'ar']) {

@@ -1092,6 +1092,14 @@
       } catch (e) {
         /* not JSON */
       }
+      if (res.status === 401 && code === 'access_required') {
+        // Online only: the access cookie no longer opens the app (the owner set a new
+        // code, or the cookie was cleared). Reloading is a navigation without a valid
+        // cookie, which the server answers with the code page, so this cannot loop; the
+        // call never settles, as the page is going away.
+        location.reload();
+        return new Promise(() => {});
+      }
       throw new ApiError(res.status, code, message, range, reason);
     }
     if (o.as === 'response') return res;

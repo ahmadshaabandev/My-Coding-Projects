@@ -60,3 +60,29 @@ def test_uvicorn_extras_are_not_installed_by_the_lock() -> None:
     assert "uvicorn" in names
     assert "[" not in (ROOT / "requirements.txt").read_text().split("uvicorn", 1)[1].split("\n", 1)[0]
     assert not {"uvloop", "httptools", "websockets", "watchfiles", "pyyaml", "python-dotenv"} & set(_lock_entries())
+
+
+def _entries(path: Path) -> dict[str, tuple[str, list[str]]]:
+    text = path.read_text(encoding="utf-8")
+    entries: dict[str, tuple[str, list[str]]] = {}
+    for block in re.split(r"\n(?=[a-z0-9])", text.split("\n\n", 1)[1].strip()):
+        name, version = block.split(" ", 1)[0].split("==")
+        entries[name] = (version, re.findall(r"--hash=sha256:([0-9a-f]{64})", block))
+    return entries
+
+
+def test_runtime_lock_is_the_app_part_of_the_lock() -> None:
+    """SEC-10: the container image installs requirements-runtime.lock: the same pins and
+    hashes as requirements.lock, without the test tools."""
+    tool = _lock_tool()
+    full = _lock_entries()
+    runtime = _entries(ROOT / "requirements-runtime.lock")
+    assert runtime and all(full[name] == entry for name, entry in runtime.items())
+    assert set(runtime) == set(tool.closure(tool.direct_requirements(runtime_only=True)))
+    assert not {"pytest", "pluggy", "iniconfig", "pygments", "httpx", "httpcore", "packaging"} & set(runtime)
+    for needed in ("fastapi", "starlette", "uvicorn", "anthropic", "httpx2", "sherpa-onnx", "numpy", "pillow", "espeakng-loader"):
+        assert needed in runtime, needed
+    tests_only = {r.name for r in tool.direct_requirements()} - {r.name for r in tool.direct_requirements(runtime_only=True)}
+    assert tests_only == {"pytest", "httpx"}
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "-r requirements-runtime.lock" in dockerfile and "-r requirements.lock" not in dockerfile

@@ -43,7 +43,8 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
   host names (`MOMMY_ALLOWED_HOSTS`, default `127.0.0.1,localhost,::1`, which blocks
   DNS-rebinding pages) and refuses cross-origin writes to the API and framing by other
   sites. The web client makes no external requests: no analytics, no third-party
-  scripts, no web fonts from CDNs.
+  scripts, no web fonts from CDNs. Putting it online is a separate, deliberate step,
+  behind an access code ("Run it online" below).
 - **Claude is optional.** Only when it is configured are page photos, handwriting photos
   and texts sent to the Claude API, and only after the parent ticks the consent box. The
   Batch and Files APIs are never used.
@@ -64,7 +65,8 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
 ## Quick start
 
 Requirements: Python 3.13, `curl`, `tar` with bzip2, about 1 GB of disk for the models,
-about 6 GB of RAM with the three recognisers loaded, and a recent browser.
+about 5 GB of RAM with the three recognisers loaded (peaks stay under 6 GB), and a
+recent browser.
 
 ```sh
 cd mommy
@@ -88,9 +90,10 @@ Then open <http://127.0.0.1:8080>. Browsers allow the microphone on `127.0.0.1` 
   files are missing but the other model is present, the other one is used, logged, and
   reported by `/api/health` as `asr_model`.
 - `requirements.txt` lists the direct dependencies; `requirements.lock` pins and hashes
-  every package. After changing `requirements.txt`, install it and run
-  `.venv/bin/python scripts/lock_requirements.py` (it reads the hashes from PyPI;
-  `--check` only compares).
+  every package, and `requirements-runtime.lock` the same without the ones marked
+  `# tests only` (what the container image installs). After changing `requirements.txt`,
+  install it and run `.venv/bin/python scripts/lock_requirements.py` (it reads the
+  hashes from PyPI and writes both; `--check` only compares).
 - `GET /api/health` shows which parts are available.
 
 ### Speech synthesis needs espeak-ng
@@ -171,7 +174,193 @@ No `thinking` parameter is sent.
 
 Other settings: `MOMMY_ASR_MODEL` (`turbo`, default, or `small`), `MOMMY_ASR_THREADS`
 (default 4), `MOMMY_ALLOWED_HOSTS` (default `127.0.0.1,localhost,::1`),
+`MOMMY_ACCESS_CODE` (unset by default: no access gate; see the next section),
+`MOMMY_REQUIRE_ACCESS_CODE` (set in the container image: no start without a code),
 `MOMMY_LOG_LEVEL` (default `INFO`), `PORT` (default 8080).
+
+## Run it online (Hugging Face Spaces)
+
+To let a friend use the app from anywhere, it can run as a Hugging Face Docker Space,
+behind an access code. Local use does not change: `./run.sh` still listens on
+`127.0.0.1` only, with no gate.
+
+**First, the plan.** Hugging Face's documentation says that creating a Docker Space needs
+a paid plan: **PRO for a personal account** (Team or Enterprise for an organization),
+even though the "CPU basic" hardware it runs on has no hourly cost. Without PRO,
+`deploy.py` stops before creating anything (`--try-anyway` tries all the same, in case
+that rule changes); another host would then be needed.
+
+- **Where it runs.** A public Docker Space, `<user>/mommy`, on the free "CPU basic"
+  hardware (2 vCPU, 16 GB RAM), at `https://<user>-mommy.hf.space` over HTTPS.
+  Hugging Face builds the image from the `Dockerfile` (the models are downloaded during
+  the build, 729 MB, and each archive is checked against its pinned sha256) and runs it
+  as uid 1000 on port 7860.
+- **Who can use it.** Only people with the link: every page and API call needs the
+  access cookie, which the access code gives (`POST /api/access`). Anyone else gets
+  the code page and `401` on the API. The container refuses to start without a code
+  (`MOMMY_REQUIRE_ACCESS_CODE=1` in the image, checked by the app's own settings).
+- **Wrong codes.** After 10 wrong codes in 10 minutes from one address (an IPv6
+  address counts as its /64 network), that address waits (`429`). The address is the one
+  Hugging Face's proxy saw, read from the right end of `X-Forwarded-For`: what a visitor
+  writes in that header does not change its count, and nobody can use up another
+  person's tries. This limit is a second line of defence, not the protection itself:
+  the code has 12 characters out of 31 (about 59 bits), far beyond guessing.
+
+### What the owner does
+
+1. A Hugging Face account with a PRO plan (see above).
+2. An access token with write access (<https://huggingface.co/settings/tokens>).
+3. Install the Hub client in a virtual environment of its own (it is not an app
+   dependency), and deploy:
+
+   ```sh
+   python3 -m venv ~/.venvs/hf
+   ~/.venvs/hf/bin/pip install huggingface_hub
+   read -rs HF_TOKEN && export HF_TOKEN       # paste the token (kept out of the shell history)
+   ~/.venvs/hf/bin/python deploy/huggingface/deploy.py --dry-run   # what would be uploaded
+   ~/.venvs/hf/bin/python deploy/huggingface/deploy.py
+   ```
+
+   The script creates or updates the Space, sets its variable `MOMMY_ALLOWED_HOSTS` to
+   the Space's host name (only when it changes) and its secret `MOMMY_ACCESS_CODE`, and
+   uploads the Space card (`deploy/huggingface/README.md`), the `Dockerfile`,
+   `.dockerignore`, `requirements-runtime.lock`, `backend/`, `web/`, `data/quran/` and
+   the two scripts the image uses (never `.venv`, `models/`, `tests/` or `docs/`). Files
+   of the Space that are not in the upload are deleted. It refuses to deploy a checkout
+   without the access gate. Run it again after every change to the app: the access code
+   is kept.
+4. On the first run it prints the **share link**,
+   `https://<user>-mommy.hf.space/#code=<code>`, as soon as the code is set, before the
+   upload: if a later step fails, run the script again, and the link stays valid. The
+   code is 12 letters and digits (no i, l, o, 0 or 1); it is printed only then, and kept
+   only as the Space's secret (no file on this computer holds it: keep the link
+   somewhere safe, or make a new code later).
+5. The first build takes several minutes; follow it in the Space's "Logs" tab. Then open
+   the link yourself: the code page, then the app. The Space page on huggingface.co
+   shows an empty frame, because the app refuses to be shown inside another site: use
+   the `hf.space` link.
+6. Shortly before the friend uses it, open `https://<user>-mommy.hf.space/` (or the
+   Space page) so that a sleeping Space is awake, then send the link privately, with a
+   note such as:
+
+   - en: "Open this link in Safari or Chrome (not inside a messaging app). If a Hugging
+     Face page appears instead of Mommy, wait until it says Running, then open the link
+     again."
+   - fr: « Ouvrez ce lien dans Safari ou Chrome (pas dans une application de
+     messagerie). Si une page de Hugging Face s’affiche à la place de Mommy, attendez
+     qu’elle indique Running, puis rouvrez le lien. »
+   - ar: «يُرجى فتح هذا الرابط في Safari أو Chrome (لا داخل تطبيق مراسلة). إذا ظهرت صفحة
+     من Hugging Face بدلًا من Mommy، يُرجى الانتظار حتى تظهر كلمة Running، ثم فتح الرابط
+     من جديد.»
+
+   A messaging app's own browser keeps its cookies apart and may not allow the
+   microphone.
+
+**On the friend's side.** The page removes the code from the address bar at once (it is
+in the `#` part, which the browser never sends to a server, so it reaches no log), and
+the browser keeps the access cookie for 180 days; after that,
+`https://<user>-mommy.hf.space/` is enough. The browser's history list still holds the
+full link: on a shared device, delete that entry, or make a new code. In another
+browser, a private window or after clearing the site's data, the link is needed again
+(or the code can be typed on the code page, also with Arabic-Indic digits). If the app
+is restarting, the code page says so and tries the link's code again by itself.
+
+**A new code** (a lost link, or to shut out everyone who had it):
+`deploy.py --new-code`. It prints the new link at once. When no file changed (so no new
+build), the script restarts the Space itself; the old link and every browser that used
+it stop working once the Space shows "Running" again (the cookie is derived from the
+code, so no old cookie opens the app). An open app then reloads to the code page. This
+is the only way to take access back: the cookie is the same for everyone who has the
+code, and a copied cookie works until the code changes.
+
+**Claude (optional).** Without it the Space runs offline, as locally. To turn it on,
+add `ANTHROPIC_API_KEY` as a **secret** in the Space's settings ("Variables and
+secrets"; `deploy.py` never handles the key), and pass the models once:
+`deploy.py --anthropic-model-vision <a vision-capable Claude model id>
+--anthropic-model-text <a Claude model id>` (ids from the Claude documentation; they
+become the Space variables `MOMMY_VISION_MODEL` and `MOMMY_TEXT_MODEL`). The script
+reports whether Claude is configured.
+
+**Stopping it.** "Pause" in the Space's settings stops it until it is restarted;
+deleting the Space removes it.
+
+### What to expect
+
+- **Sleep and cold start.** On CPU basic, a Space that nobody uses for 48 hours goes
+  to sleep; the next visit wakes it up (no rebuild). Hugging Face then starts the
+  container again, which can take a minute or more; the app itself answers 3 to 5 s
+  after the container starts. Online, the app then loads the three recognisers and
+  voices in the background, one language at a time (7 to 40 s for the first after a
+  cold start, about 3 s for each other one), while the friend is on the code page and
+  the family setup; a recording made before its language is loaded waits for it.
+- **Speed on 2 vCPU** (measured in the container limited to 2 CPUs, warm): a recording
+  is checked in about half its length or a little more: 2.8 s for a 3.4 s French clip,
+  3.4 to 3.8 s for a 5.3 s Arabic one, 3.3 to 3.5 s for a 6.6 s English one, 7.4 to
+  8.5 s for a 16.7 s one. The voice answers in 0.2 to 0.4 s; slow dictation phrases
+  (checked by the recogniser) take 1.4 to 3.5 s in French and 2 to 4 s in Arabic. With
+  the three languages loaded the server uses about 5 GB of RAM (peaks under 6 GB).
+- **One user at a time.** It is the same single-process prototype: one recognition runs
+  at a time, so recordings sent together queue (about 3.5 s more for each one ahead).
+- **Each browser has its own family data.** Children, tasks, stars and rewards stay in
+  the friend's browser (`localStorage`), as locally; nothing of it is on the Space.
+
+### What leaves the device
+
+- **Audio and photos go to the Space over HTTPS**, together with the texts typed or
+  checked. Hugging Face's servers carry this traffic and end the HTTPS connection; the
+  app then processes the audio and photos in memory and never stores them (the same
+  rules as locally: nothing is written to disk, and the logs, which the Space's owner
+  can read in the "Logs" tab, hold only sizes and timings). Uvicorn's access log is off,
+  so client addresses and paths are not logged either. The access cookie is always
+  `Secure` online and the app sends `Strict-Transport-Security`, so browsers reach it
+  over HTTPS only. A restart of the Space keeps nothing.
+- **With Claude configured,** page photos, handwriting photos and texts also go from
+  the Space to the Claude API, as they do from a local server, and only after the
+  parent's consent.
+- **Public, private.** The Space's files are public (they are this repository's code),
+  and so are its variables (the host name and the model ids). Its secrets (the access
+  code, the API key) reach only the running app; the Space's settings and the Hub API
+  never show their values.
+
+### Test the image locally
+
+Docker can run the same image here without downloading the models into it:
+
+```sh
+docker build --build-arg SKIP_MODELS=1 -t mommy-space .
+read -rs MOMMY_ACCESS_CODE && export MOMMY_ACCESS_CODE   # any code of 8 characters or more
+docker run --rm -p 127.0.0.1:7860:7860 -e MOMMY_ACCESS_CODE -e MOMMY_ALLOWED_HOSTS=localhost \
+  -v "$(readlink -f models/sherpa-onnx-whisper-turbo)":/home/user/app/models/sherpa-onnx-whisper-turbo:ro \
+  -v "$(readlink -f models/vits-piper-ar_JO-kareem-medium)":/home/user/app/models/vits-piper-ar_JO-kareem-medium:ro \
+  -v "$(readlink -f models/vits-piper-en_US-lessac-medium)":/home/user/app/models/vits-piper-en_US-lessac-medium:ro \
+  -v "$(readlink -f models/vits-piper-fr_FR-siwis-medium)":/home/user/app/models/vits-piper-fr_FR-siwis-medium:ro \
+  mommy-space
+```
+
+Then open <http://localhost:7860> and type the code: over plain http the gate works on
+`localhost` only (anywhere else the cookie is `Secure`, so it needs HTTPS). The image is
+about 0.5 GB without the models and 1.7 GB with them; it installs
+`requirements-runtime.lock` (no test tools) and starts from a `python:3.13-slim` pinned
+by digest. `deploy.py --dry-run --out DIR` assembles exactly what would be uploaded, for
+`docker build DIR`.
+
+### If something is wrong
+
+- **`400 bad_host`**: the request's host name is not one the app answers to. It always
+  answers to `SPACE_HOST` (set by Hugging Face) and to `MOMMY_ALLOWED_HOSTS`; the log
+  names the host that was refused.
+- **The Space does not start**: its log says why (for example a missing or blank
+  `MOMMY_ACCESS_CODE`).
+- **The log says "an access code came from a private or unknown client address"**:
+  Hugging Face's proxy did not pass the visitor's address in a way the app trusts, so
+  every visitor may share one count of wrong codes (10 wrong codes by anyone would then
+  pause everyone's first entry for 10 minutes; a browser that has the cookie is never
+  affected). A quick check from two networks (for example a computer and a phone on
+  mobile data): 10 wrong codes from the first, then one from the second should still
+  say "wrong code", not "too many tries". If it does not, set the Space variable
+  `MOMMY_FORWARDED_ALLOW_IPS` to the proxy's networks, or, as a last resort, to `*`
+  (every visitor then has a count of its own, but one a visitor can reset at will;
+  the code itself stays the protection).
 
 ## API notes
 
@@ -323,14 +512,19 @@ Quran text). Integration tests with the real Whisper and Piper models skip clean
 the models are missing. The Quran guards and the Quran parts are measured on two
 fixtures, `tests/arabic_school_sentences.txt` and `tests/quran_parts_texts.txt`, whose
 Quran words all come from Tanzil placeholders filled by `tests/quran_fixtures.py` (no
-Quran word is typed in them; misquotes are made by code). The web client has three
-test files of its own, which need Node.js (the browser ones also Playwright with
-Chromium) and start no backend (see `tests/web/README.md`):
+Quran word is typed in them; misquotes are made by code). The online deployment has
+tests of its own: `tests/test_access.py` (the access gate), `tests/test_space_image.py`
+(the start script, the model checksums, the Dockerfile) and `tests/test_deploy.py`
+(`deploy.py` against a fake Hub). The web client has four test files, which need
+Node.js (the browser ones also Playwright with Chromium); the first three start no
+backend, `access.cjs` starts the real app with fake speech components (see
+`tests/web/README.md`):
 
 ```sh
 node tests/web/rewards.test.cjs   # web/rewards.js in Node: tasks, stars, goals, PIN, validation
 node tests/web/smoke.cjs          # the screens through a fake API, Quran in school texts, wording checks
 node tests/web/family.cjs         # the family UI: setup, parent area, tasks, rewards, PIN, storage
+node tests/web/access.cjs         # the access gate of an online deployment, in en, fr and ar
 ```
 
 `smoke.cjs` also compares the fake API's Quran parts with the server's
@@ -382,7 +576,8 @@ node tests/web/family.cjs         # the family UI: setup, parent area, tasks, re
   for that reason.
 - **One user at a time.** The models run on the CPU, one recognition at a time, and at
   most two image or audio decodes at once; this is a single-machine prototype, not a
-  hosted service.
+  hosted service. The Hugging Face Space is for a small private test (a few people
+  with the link), on 2 vCPU.
 - **Quran.** The disjoined letters that open 29 surahs (الم, يس, ...) are accepted when
   recited by their letter names (ألف لام ميم), joined or apart; this was checked with
   typed text only, not with recordings of real recitations.
@@ -436,13 +631,18 @@ node tests/web/family.cjs         # the family UI: setup, parent area, tasks, re
 ```text
 mommy/
   README.md  requirements.txt  requirements.lock  run.sh
-  scripts/download_models.sh   fetches the Whisper model(s) and Piper voices into models/
-  scripts/lock_requirements.py regenerates requirements.lock (development only)
+  requirements-runtime.lock    the app's part of requirements.lock (no test tools): what the image installs
+  Dockerfile  .dockerignore    the Hugging Face Space image (models downloaded at build time)
+  deploy/huggingface/          README.md (the Space card) and deploy.py (creates or updates the Space)
+  scripts/download_models.sh   fetches the Whisper model(s) and Piper voices into models/ (sha256 checked)
+  scripts/space_start.sh       the image's start command: checks the access code, runs uvicorn
+  scripts/lock_requirements.py regenerates both lock files (development only)
   docs/CONTRACT.md             module boundaries, HTTP API, hard rules
   data/quran/                  verbatim Tanzil text and metadata (read-only)
   models/                      git-ignored: downloaded models
   backend/mommy/               config, textnorm, align, phrases, feedback, quran, guard, asr, tts, llm, app
   web/                         index.html, app.js, recorder.js, styles.css, rewards.js (tasks and
-                               rewards logic), family.js (the family UI)
+                               rewards logic), family.js (the family UI), access.html and
+                               access.js (the code page of an online deployment)
   tests/                       pytest suite; tests/web/ has the web client's tests
 ```
