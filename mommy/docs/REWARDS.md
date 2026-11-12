@@ -599,3 +599,11 @@ resolved. Where the result differs from the text above, or the text left a choic
   cannot be told apart); a three-word ayah with a dropped word or a two-letter changed
   word outside a framing formula, and a misquote with two errors, are not found
   (measured in `docs/CONTRACT.md`).
+
+## Decisions and deviations recorded while making the privacy texts true online (2026-11-12)
+
+- **The privacy line of Settings** (and of the family setup, which said "Saved only on
+  this device") now names the data it covers: "The family data (children, tasks, stars,
+  rewards and the PIN) stays in this browser, on this device." It is true in every way
+  the app runs; online, the recordings, photos and texts go to the Mommy server, as the
+  consent box under it says (`docs/CONTRACT.md`, "Start screen").

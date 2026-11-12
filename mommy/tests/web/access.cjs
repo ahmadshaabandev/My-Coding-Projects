@@ -12,8 +12,10 @@
  * Arabic-Indic digits), typed or from the link; typing the code works (also with
  * Arabic-Indic digits); too many tries; while the app is starting (503) or cannot be
  * reached, a link's code is kept, tried again by itself after 20 s, and "Enter" with an
- * empty field tries it; the page at 360 px; no console errors, no other host; the server
- * log never shows the code.
+ * empty field tries it; the page at 360 px; in the app, the consent box follows the real
+ * /api/health ("online": true with the gate on): the recordings and texts go to this
+ * server, never "nothing leaves this computer" (en, fr, ar); no console errors, no other
+ * host; the server log never shows the code.
  *
  *   node tests/web/access.cjs            (about 30 s; MOMMY_SHOTS_DIR=... for screenshots)
  */
@@ -124,6 +126,23 @@ async function gateShown(page, lang) {
   assert.equal((await page.textContent('#access-submit')).trim(), S.submit);
 }
 
+/**
+ * In the app, the consent box of the family setup as the real server makes it: online
+ * (the gate is on) with the offline brain, so the recordings and texts go to this
+ * server and nothing to an AI service; no sentence says that nothing leaves the device.
+ */
+async function onlineConsent(page, lang) {
+  const health = await page.evaluate(async () => (await fetch('/api/health')).json());
+  assert.equal(health.online, true);
+  assert.equal(health.brain, 'offline');
+  await page.waitForSelector('#consent-extra:not([hidden])');
+  assert.equal(await page.getAttribute('html', 'lang'), lang);
+  const S = H.allStrings(lang);
+  assert.equal((await page.textContent('#consent-privacy')).trim(), S.consent_online_no_photos);
+  assert.equal((await page.textContent('#consent-extra')).trim(), S.consent_online_no_ai);
+  assert.deepEqual(await H.localSentencesShown(page), []);
+}
+
 async function layout(page, name) {
   await H.noHorizontalScroll(page);
   assert.deepEqual(await H.overflowing(page), []);
@@ -188,6 +207,12 @@ async function main() {
       assert.ok(!en.page.url().includes(CODE), en.page.url());
       assert.deepEqual(en.problems, []);
     });
+    await check('en: in the app, the consent box says that the recordings and texts go to this server (/api/health "online"), never "nothing leaves this computer"', async () => {
+      await en.page.goto(base + '/');
+      await inApp(en.page);
+      await onlineConsent(en.page, 'en');
+      assert.deepEqual(en.problems, []);
+    });
     await check('en: a reload stays in, and so does a new tab', async () => {
       await en.page.goto(base + '/');
       await inApp(en.page);
@@ -239,6 +264,7 @@ async function main() {
         await ctx.page.clock.fastForward(20000);
         await inApp(ctx.page);
         assert.equal(posts, 2);
+        await onlineConsent(ctx.page, lang);
         assert.deepEqual(refusedCode(ctx.problems), []);
       });
       await ctx.context.close();

@@ -43,6 +43,9 @@
  *     "Forgot PIN" behind a multiplication in words, which keeps all the data;
  *   - v1 migration; a corrupt document kept aside; a repaired one; a full storage shown;
  *     another tab's change reloaded;
+ *   - the privacy texts of the parent area in the four ways the app runs (local or
+ *     online, with or without Claude): Settings' family data line and consent box, the
+ *     task form's photo note, in en, fr and ar; online, no local-only sentence;
  *   - the Arabic UI at 360 px (the setup, the child's home, every parent section): RTL,
  *     Arabic-Indic digits, no overflow, touch targets of at least 44 px; dark mode; the
  *     app.js/family.js handshake in either script order;
@@ -549,7 +552,7 @@ async function familyFlow(browser, base) {
     assert.ok(await page.isVisible('#prw-ledger-empty'));
     await H.parentSection(page, 'settings');
     assert.ok(await page.isChecked('#settings-consent'));
-    assert.equal(await text(page, '#screen-parent .psec[data-psec="settings"] .hint'), 'Everything here stays on this device.');
+    assert.equal(await text(page, '#screen-parent .psec[data-psec="settings"] .hint'), 'The family data (children, tasks, stars, rewards and the PIN) stays in this browser, on this device.');
     assert.equal(await page.inputValue('#ps-lang'), 'en');
     for (const sel of ['#ps-pin-change', '#ps-delete']) assert.ok(await page.isVisible(sel), sel);
     assert.ok(await page.isHidden('#ps-delete-1'));
@@ -2239,6 +2242,52 @@ async function offlineTaskFormFlow(browser, base) {
   await context.close();
 }
 
+/**
+ * The parent area's privacy texts in the four ways the app runs (local or online, with
+ * or without Claude; the fake /api/health): in Settings the family data line and the
+ * consent box, and the task form's photo note, in en, fr and ar (the parent's language).
+ * Online, no local-only sentence ("nothing leaves this computer", ...) is on the page.
+ */
+async function privacySettingsFlow(browser, base) {
+  for (const mode of H.PRIVACY_MODES) {
+    const { context, page, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) });
+    await check(`privacy, ${mode.name}: Settings (the family data line, the consent box) and the task form's photo note, in en, fr and ar`, async () => {
+      await page.goto(base + '/');
+      await H.setupFamily(page, { nickname: 'Sami' });
+      await H.openParent(page);
+      const settings = '#screen-parent .psec[data-psec="settings"]';
+      for (const lang of ['en', 'fr', 'ar']) {
+        const S = H.allStrings(lang);
+        await H.parentSection(page, 'settings');
+        if ((await page.inputValue('#ps-lang')) !== lang) {
+          await page.selectOption('#ps-lang', lang);
+          await page.waitForSelector(`html[lang="${lang}"]`);
+        }
+        assert.equal(await text(page, `${settings} > .hint`), S.fam_privacy_line, lang);
+        assert.equal(await text(page, `${settings} .consent-privacy`), S[mode.privacy], lang);
+        assert.ok(await page.isVisible(`${settings} .consent-extra`));
+        assert.equal(await text(page, `${settings} .consent-extra`), S[mode.extra], lang);
+        if (mode.online) assert.deepEqual(await H.localSentencesShown(page), [], lang + ': a local-only sentence online');
+        await H.noHorizontalScroll(page);
+        // The photo note of the task form (the photo buttons need Claude).
+        await H.parentSection(page, 'tasks');
+        await page.click('#pt-new');
+        await page.waitForSelector('#tf:not([hidden])');
+        assert.equal(await text(page, '#tf .photo-privacy'), S[mode.photo], lang);
+        assert.equal(await page.isDisabled('#tf-take'), mode.brain !== 'claude');
+        if (mode.online) assert.deepEqual(await H.localSentencesShown(page), [], lang);
+        await page.click('#tf-cancel');
+        await page.waitForSelector('#tf', { state: 'hidden' });
+      }
+      // The consent stays what it was: the data line covers the family document only.
+      const doc = await H.storedDoc(page);
+      assert.ok(doc.parent.consentAt && doc.children.length === 1);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+}
+
 /** app.js and family.js find each other whatever the order of the script tags. */
 async function handshakeFlow(browser, base) {
   const { context, page, problems } = await H.newPage(browser, base, VIEW);
@@ -2289,6 +2338,8 @@ async function main() {
     await quranTasksFlow(browser, base);
     console.log('# browser: the task form without the online AI');
     await offlineTaskFormFlow(browser, base);
+    console.log('# browser: privacy texts in Settings and the task form, local or online, with or without Claude');
+    await privacySettingsFlow(browser, base);
     console.log('# browser: script order');
     await handshakeFlow(browser, base);
   } finally {

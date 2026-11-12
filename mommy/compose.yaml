@@ -1,0 +1,87 @@
+# Mommy on your own computer, reachable from anywhere through a free Cloudflare quick
+# tunnel (an https://<random words>.trycloudflare.com address, no account needed), behind
+# the access code. Step by step, for Windows, macOS and Linux: SELF_HOST.md.
+#
+# In this folder (mommy/):
+#   docker compose up -d --build                           start, or update after new code
+#   docker compose exec mommy python -m mommy.share_link   the link to send (code included)
+#   docker compose down                                    stop (the code is kept)
+#
+# Two containers: "mommy" (the app, built from ./Dockerfile; the first build downloads the
+# speech models) and "tunnel" (cloudflared, which carries the HTTPS requests from
+# Cloudflare to the app). Nothing is published to the network: the app's port is open
+# only to this computer (http://localhost:8080, with the same code).
+
+name: mommy
+
+services:
+  mommy:
+    build: .
+    environment:
+      # The code is made on the first start and kept in the volume below; it never goes
+      # into this file, the image or a log. share_link prints the link with it.
+      MOMMY_ACCESS_CODE_FILE: /data/access-code
+      # The names the app answers to: this computer, and every quick-tunnel address
+      # (a leading dot: any name under trycloudflare.com, never that name itself).
+      MOMMY_ALLOWED_HOSTS: localhost,127.0.0.1,.trycloudflare.com
+      # X-Forwarded-For (the visitor's address, which the gate counts wrong codes by) is
+      # taken only from this project's own network: the tunnel, and Docker's forwarding
+      # of the port below (scripts/space_start.sh).
+      MOMMY_FORWARDED_ALLOW_IPS: container-networks
+      # Where share_link asks the tunnel for its address (the tunnel service below).
+      MOMMY_TUNNEL_METRICS_URL: http://tunnel:2000
+      # A laptop has 4 or more cores (the image's default, 2, is for Hugging Face).
+      MOMMY_ASR_THREADS: "4"
+    volumes:
+      - mommy-data:/data
+    ports:
+      # 127.0.0.1 only: other devices on the home network cannot reach it this way.
+      - "127.0.0.1:8080:7860"
+    # The app writes nothing to disk but its code file in /data; it needs no privileges.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      # The code page is served without the code: an answer means the app is up.
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:7860/access.html', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 3m
+      start_interval: 2s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  tunnel:
+    # cloudflared 2026.10.7, pinned by the digest of its multi-platform index (linux/amd64
+    # and linux/arm64). To take a newer one: docker buildx imagetools inspect
+    # cloudflare/cloudflared:<version>, then replace the tag and the digest.
+    image: cloudflare/cloudflared:2026.10.7@sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba
+    # A quick tunnel to the app. Its random address changes each time this container
+    # starts. The metrics server (port 2000) answers GET /quicktunnel with that address,
+    # for share_link; it is reachable only inside this project's network (no "ports").
+    command: tunnel --no-autoupdate --url http://mommy:7860 --metrics 0.0.0.0:2000
+    depends_on:
+      mommy:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  # The access code (/data/access-code). "docker compose down" keeps it;
+  # "docker compose down --volumes" deletes it (a new code on the next start).
+  mommy-data:

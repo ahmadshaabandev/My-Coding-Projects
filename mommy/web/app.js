@@ -1017,7 +1017,7 @@
     }
     renderLegends();
     for (const box of $$('.quran-parts')) if (box.__qp) renderQuranParts(box, box.__qp.info, box.__qp.opts);
-    updateConsentExtra();
+    updatePrivacyTexts();
     updateHello();
     updateReciteModeLabel();
     updateMeaningWhy();
@@ -1231,6 +1231,9 @@
         tts: !!h.tts,
         brain: h.brain === 'claude' ? 'claude' : 'offline',
         quran: !!h.quran,
+        // The app may be used from another device (the access gate is on, or the server
+        // answers to a host name that is not a loopback one): the data leaves the device.
+        online: h.online === true,
       };
       state.healthState = 'ok';
     } catch (e) {
@@ -1238,7 +1241,7 @@
       state.healthState = 'down';
     }
     $('#server-banner').hidden = state.healthState !== 'down';
-    updateConsentExtra();
+    updatePrivacyTexts();
     updateOfflineNotes();
     refreshGates();
     if (state.screen === 'quran') enterQuran();
@@ -1328,14 +1331,47 @@
     else node.disabled = !!busy;
   }
 
-  /** What the consent boxes say about Claude (setup and Settings): it depends on /api/health. */
-  function updateConsentExtra() {
-    for (const node of $$('.consent-extra')) {
-      if (state.health && state.health.brain === 'claude') setT(node, 'consent_claude');
-      else if (state.health) setT(node, 'consent_offline');
-      else setT(node, null);
-      node.hidden = !state.health;
+  /** True when this page was loaded from a loopback host (127.0.0.0/8, ::1, localhost). */
+  function loopbackPage() {
+    const h = String(location.hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+    return h === '' || h === 'localhost' || h.endsWith('.localhost') || h === '::1' || /^127(\.\d{1,3}){3}$/.test(h);
+  }
+
+  /**
+   * True when the child's recordings, photos and texts leave this device for the Mommy
+   * server: /api/health says "online" (the access gate is on, or the server answers to a
+   * host name that is not a loopback one), or this page itself did not come from a
+   * loopback host (also while the server cannot be reached, and behind a tunnel that
+   * rewrites the Host header). "Nothing leaves this computer" is never said then.
+   */
+  function isOnline() {
+    return !!(state.health && state.health.online) || !loopbackPage();
+  }
+
+  /**
+   * Every sentence that says where the data goes, true in each way the app runs (local
+   * or online, with or without Claude). The consent boxes (setup and Settings) say
+   * first where the recordings, photos and texts are checked (online: sent to the Mommy
+   * server, which keeps none of them), then what goes to Claude, or that nothing goes to
+   * an AI service. Also the photo note and the "approximate" label. The family data
+   * line (fam_privacy_line) is the same in every mode: that data stays in this browser.
+   */
+  function updatePrivacyTexts() {
+    const h = state.health;
+    const online = isOnline();
+    const claude = !!h && h.brain === 'claude';
+    for (const node of $$('.consent-privacy')) {
+      // Without Claude no photo is sent (the photo buttons need it), so none is listed.
+      setT(node, !online ? 'consent_privacy' : claude || !h ? 'consent_online' : 'consent_online_no_photos');
     }
+    for (const node of $$('.consent-extra')) {
+      if (claude) setT(node, 'consent_claude');
+      else if (h) setT(node, online ? 'consent_online_no_ai' : 'consent_offline');
+      else setT(node, null);
+      node.hidden = !h;
+    }
+    for (const node of $$('.photo-privacy')) setT(node, online ? 'photo_privacy_online' : 'photo_privacy');
+    setT($('#recite-approx'), online ? 'approximate_online' : 'approximate');
   }
 
   /**

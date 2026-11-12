@@ -317,6 +317,9 @@ deleting the Space removes it.
 - **With Claude configured,** page photos, handwriting photos and texts also go from
   the Space to the Claude API, as they do from a local server, and only after the
   parent's consent.
+- **The consent text adapts:** online (`/api/health` `"online": true`) it says that the
+  recordings, photos and texts go to the Mommy server, never "nothing leaves this
+  computer".
 - **Public, private.** The Space's files are public (they are this repository's code),
   and so are its variables (the host name and the model ids). Its secrets (the access
   code, the API key) reach only the running app; the Space's settings and the Hub API
@@ -371,8 +374,9 @@ or PNG, at most 4096 x 4096 pixels, 50 MP for a JPEG), text fields 20 000 charac
 and 3 000 words, `/api/tts` 400 characters, 50 ayat per Quran request. At most two image
 or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
 
-- `/api/health` also returns `tts_languages`, `asr_model` (the Whisper model in use)
-  and `reasons` (why the recogniser or the voices are unavailable).
+- `/api/health` also returns `tts_languages`, `asr_model` (the Whisper model in use),
+  `reasons` (why the recogniser or the voices are unavailable) and `online` (the access
+  gate is on, or an allowed host is not a loopback one).
 - `/api/recite/check` returns a top-level `say_again`; results carry
   `say_again_reason` (`empty` or `error_rate`), `stopped_at_exp_index` (where the child
   stopped early) and `n_unreadable`. `/api/page/read` returns `contains_quran`

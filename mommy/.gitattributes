@@ -1,0 +1,13 @@
+# Line endings. The container's scripts and build files must keep LF on every checkout,
+# also a Windows clone where core.autocrlf is true (the Git for Windows default): a CRLF
+# shell script stops at its first line. The image strips a stray CR from the scripts it
+# runs anyway (Dockerfile), in case a copy was converted some other way.
+*.sh                 text eol=lf
+Dockerfile           text eol=lf
+.dockerignore        text eol=lf
+compose*.yaml        text eol=lf
+*.lock               text eol=lf
+requirements*.txt    text eol=lf
+
+# The Tanzil Quran files are kept byte for byte, never converted.
+data/quran/**        -text

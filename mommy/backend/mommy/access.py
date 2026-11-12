@@ -28,21 +28,41 @@ child's audio or photos to it or use its resources:
 The link a deploy script hands out is ``https://<host>/#code=<code>``: a URL fragment
 is never sent to the server, so the code reaches no access log; ``web/access.js``
 removes it from the address bar at once and POSTs it.
+
+Two helpers of a self-hosted deployment (``compose.yaml``, a Cloudflare quick tunnel)
+live here too, since they decide who reaches the app:
+
+* :class:`HostMatcher`: the host names of ``MOMMY_ALLOWED_HOSTS``. An entry is an exact
+  name (as before), or a *suffix entry* that starts with a dot (``.trycloudflare.com``):
+  it matches every host name that ends with it and has at least one more label, never
+  the bare domain. A suffix needs two labels at least (``.com`` and ``.`` are refused,
+  :func:`host_entry`). The ``Origin`` check of a write uses the same matcher.
+* The code file (``MOMMY_ACCESS_CODE_FILE``, :func:`read_code_file`,
+  :func:`create_code_file`, :func:`replace_code_file`): when ``MOMMY_ACCESS_CODE`` is
+  unset, the code is kept in a file (mode 0600) that the app makes at its first start
+  (:func:`generate_code`), so a tunnel's changing link can be rebuilt with the same code
+  (``python -m mommy.share_link``). Creation is atomic and exclusive: two processes that
+  start together end with one code. The code is never logged.
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import ipaddress
 import json
 import math
+import os
+import re
+import secrets
+import tempfile
 import threading
 import time
 from collections import OrderedDict, deque
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -361,6 +381,313 @@ class AccessGateMiddleware:
         await _send_json(send, 401, {"error": "access_required", "message": ACCESS_REQUIRED_MESSAGE})
 
 
+# ---------------------------------------------------------------------------
+# Allowed host names (MOMMY_ALLOWED_HOSTS), with suffix entries
+# ---------------------------------------------------------------------------
+
+#: The fewest labels a suffix entry may have (``.trycloudflare.com`` has two): a bare
+#: top-level domain (``.com``) or ``.`` would let anyone's domain in.
+MIN_SUFFIX_LABELS = 2
+#: The longest host name (RFC 1035) a suffix entry is matched against.
+MAX_HOST_NAME_CHARS = 253
+#: Second-level labels that, under a two-letter country domain, make a public suffix
+#: anyone can register names under (``.co.uk``, ``.com.au``): refused as suffix entries.
+_PUBLIC_SECOND_LEVEL = frozenset({"ac", "co", "com", "edu", "go", "gob", "gov", "gv", "ne", "net", "or", "org"})
+#: One label of a host name: letters, digits and inner hyphens, 1 to 63 characters
+#: (lower case: names are lowered first). ``xn--`` labels (IDNA) are ordinary labels.
+_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def _without_dot(name: str) -> str:
+    """``name`` without one trailing dot (``example.com.`` is ``example.com``)."""
+    return name[:-1] if name.endswith(".") else name
+
+
+def _authority_key(value: str) -> str:
+    """A ``Host`` value or an origin's host part as compared by
+    :meth:`HostMatcher.same_origin`: trimmed, lower case, and without a trailing dot on
+    the name (``Example.com.:8080`` -> ``example.com:8080``); a bracketed IPv6 form is
+    kept as it is."""
+    text = value.strip().lower()
+    if text.startswith("["):
+        return text
+    name, port = split_host(text)
+    return _without_dot(name) + (f":{port}" if port is not None else "")
+
+
+def is_dns_name(name: str) -> bool:
+    """True for a lower-case ASCII host name of valid labels (no empty label, no
+    trailing dot), at most :data:`MAX_HOST_NAME_CHARS` characters."""
+    return 0 < len(name) <= MAX_HOST_NAME_CHARS and all(_LABEL.fullmatch(label) for label in name.split("."))
+
+
+def host_entry(entry: str) -> str:
+    """One ``MOMMY_ALLOWED_HOSTS`` entry, normalized.
+
+    An exact entry is trimmed, lowered and loses IPv6 brackets (``[::1]`` -> ``::1``), as
+    before. A suffix entry starts with a dot and keeps it (``.TryCloudflare.com.`` ->
+    ``.trycloudflare.com``: lower case, without a trailing dot). Raises ValueError for a
+    suffix that is too broad (fewer than :data:`MIN_SUFFIX_LABELS` labels: ``.com``,
+    ``.``), that is not a host name (an empty label, a character other than letters,
+    digits and hyphens, non-ASCII: write an IDNA name in its ``xn--`` form), that ends in
+    a number (an address, not a domain) or that is a country's public second level
+    (``.co.uk``, ``.com.au``), and for a ``*`` wildcard (write ``.example.com``).
+    """
+    text = entry.strip()
+    if "*" in text:
+        raise ValueError(
+            f"MOMMY_ALLOWED_HOSTS entry {text[:80]!r}: wildcards are not supported; a suffix entry "
+            "starts with a dot, such as .trycloudflare.com"
+        )
+    if not text.startswith("."):
+        return text.lower().strip("[]")
+    if not text.isascii():
+        raise ValueError(
+            f"MOMMY_ALLOWED_HOSTS entry {text[:80]!r} is not ASCII: write the domain in its IDNA (xn--) form"
+        )
+    name = _without_dot(text[1:].lower())
+    labels = name.split(".") if name else []
+    if len(labels) < MIN_SUFFIX_LABELS:
+        raise ValueError(
+            f"MOMMY_ALLOWED_HOSTS entry {text[:80]!r} is too broad: a suffix entry needs at least "
+            f"{MIN_SUFFIX_LABELS} labels, such as .trycloudflare.com"
+        )
+    if not is_dns_name(name):
+        raise ValueError(f"MOMMY_ALLOWED_HOSTS entry {text[:80]!r} is not a host name suffix")
+    if labels[-1].isdigit():
+        raise ValueError(f"MOMMY_ALLOWED_HOSTS entry {text[:80]!r} ends in a number: a suffix entry is a domain")
+    if len(labels) == 2 and len(labels[1]) == 2 and labels[0] in _PUBLIC_SECOND_LEVEL:
+        raise ValueError(
+            f"MOMMY_ALLOWED_HOSTS entry {text[:80]!r} is too broad: anyone can register a name under it"
+        )
+    return "." + name
+
+
+def split_host(value: str) -> tuple[str, str | None]:
+    """(host name, port or None) of a ``Host`` header value or an origin's host part.
+
+    The name is trimmed, IPv6 brackets removed (``[::1]:8080`` -> ``("::1", "8080")``); a
+    value with more than one colon and no brackets is a bare IPv6 address. Letter case is
+    kept (:class:`HostMatcher` decides)."""
+    text = value.strip()
+    if text.startswith("["):
+        end = text.find("]")
+        if end < 0:
+            return text[1:], None
+        rest = text[end + 1 :]
+        return text[1:end], (rest[1:] if rest.startswith(":") else None)
+    if text.count(":") == 1:
+        name, port = text.split(":")
+        return name, port
+    return text, None
+
+
+class HostMatcher:
+    """Decides whether a host name is one of ``MOMMY_ALLOWED_HOSTS`` (see :func:`host_entry`).
+
+    * An exact entry matches the name itself: lower case, without the port (as before).
+    * A suffix entry (``.trycloudflare.com``) matches a name that ends with it and has at
+      least one more label (``abc.trycloudflare.com``, ``a.b.trycloudflare.com``), whatever
+      its case, port or trailing dot; never the bare domain (``trycloudflare.com``), a
+      longer label (``evil-trycloudflare.com``) or a name that only contains it
+      (``trycloudflare.com.evil.com``). Every label must be letters, digits and inner
+      hyphens: an empty label, ``_``, ``%`` or a non-ASCII character never matches.
+    * A name that is not ASCII never matches, so no Unicode case folding can turn a
+      look-alike (the Kelvin sign, a fullwidth dot) into an allowed name.
+
+    Raises ValueError for an entry :func:`host_entry` refuses.
+    """
+
+    def __init__(self, entries: Iterable[str]) -> None:
+        exact: set[str] = set()
+        suffixes: list[str] = []
+        for raw in entries:
+            entry = host_entry(raw)
+            if entry.startswith("."):
+                if entry not in suffixes:
+                    suffixes.append(entry)
+            elif entry:
+                exact.add(entry)
+        #: The exact names (lower case).
+        self.exact: frozenset[str] = frozenset(exact)
+        #: The suffix entries, each with its leading dot.
+        self.suffixes: tuple[str, ...] = tuple(suffixes)
+
+    def allows_name(self, name: str) -> bool:
+        """True when ``name`` (a host name without the port) is allowed."""
+        if not name or not name.isascii():
+            return False
+        name = name.lower()
+        if name in self.exact:
+            return True
+        if not self.suffixes:
+            return False
+        name = _without_dot(name)
+        if not is_dns_name(name):
+            return False
+        return any(name.endswith(suffix) and len(name) > len(suffix) for suffix in self.suffixes)
+
+    def allows_host(self, host: str) -> bool:
+        """True when the ``Host`` header value ``host`` names an allowed host (the port,
+        if any, is not looked at)."""
+        return self.allows_name(split_host(host)[0])
+
+    def same_origin(self, origin: str, host: str) -> bool:
+        """True when ``origin`` (an ``Origin`` header) is this server itself: ``http`` or
+        ``https`` followed by the request's ``Host`` header value (the same name, case and
+        a trailing dot aside, and the same port or none on both), and an allowed host
+        (:meth:`allows_name`). ``null``, a path, user information, any other scheme or
+        another name under the same suffix entry is not."""
+        text = origin.strip()
+        if not text.isascii():
+            return False
+        scheme, sep, authority = text.lower().partition("://")
+        if not sep or scheme not in ("http", "https") or not authority:
+            return False
+        if any(c in authority for c in "/?#@\\ \t"):
+            return False
+        if not self.allows_name(split_host(authority)[0]):
+            return False
+        return _authority_key(authority) == _authority_key(host)
+
+
+# ---------------------------------------------------------------------------
+# The access code file (MOMMY_ACCESS_CODE_FILE)
+# ---------------------------------------------------------------------------
+
+#: The largest code file read (a code is a few characters; this is not one).
+CODE_FILE_MAX_BYTES = 1024
+#: The mode of a code file: read and written by its owner only.
+CODE_FILE_MODE = 0o600
+#: How long an empty code file is read again (a writer on a file system without hard
+#: links creates it, then writes it).
+CODE_FILE_SETTLE_S = 1.0
+
+
+def generate_code() -> str:
+    """A new access code: :data:`CODE_LENGTH` characters of :data:`CODE_ALPHABET`, from
+    the ``secrets`` module (about 59 bits)."""
+    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
+
+
+def read_code_file(path: Path, *, settle_s: float | None = None) -> str:
+    """The code held in ``path``: its text, trimmed (``str.strip``, as for
+    ``MOMMY_ACCESS_CODE``; a UTF-8 byte-order mark is dropped). Possibly empty or short:
+    the caller checks it.
+
+    Raises FileNotFoundError when the file does not exist, and ValueError (whose message
+    names the file, never its content) when it cannot be read (a directory, no
+    permission), is larger than :data:`CODE_FILE_MAX_BYTES`, is not UTF-8 or holds more
+    than one line. An empty file is read again for up to ``settle_s`` seconds (default
+    :data:`CODE_FILE_SETTLE_S`)."""
+    deadline = time.monotonic() + (CODE_FILE_SETTLE_S if settle_s is None else settle_s)
+    while True:
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read(CODE_FILE_MAX_BYTES + 1)
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            raise ValueError(f"the access code file {path} cannot be read ({type(exc).__name__})") from None
+        if len(data) > CODE_FILE_MAX_BYTES:
+            raise ValueError(f"the access code file {path} is larger than {CODE_FILE_MAX_BYTES} bytes")
+        try:
+            text = data.decode("utf-8-sig").strip()
+        except UnicodeDecodeError:
+            raise ValueError(f"the access code file {path} is not UTF-8 text") from None
+        if "\n" in text or "\r" in text:
+            raise ValueError(f"the access code file {path} holds more than one line")
+        if text or time.monotonic() >= deadline:
+            return text
+        time.sleep(0.05)
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Make a new directory entry durable (best effort: not every file system can)."""
+    with contextlib.suppress(OSError):
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _write_temp(directory: Path, name: str, code: str) -> str:
+    """A new file in ``directory`` (mode 0600) holding ``code`` and a newline, flushed to
+    disk; returns its path."""
+    fd, temp = tempfile.mkstemp(prefix=f".{name}.", suffix=".new", dir=directory)
+    try:
+        os.fchmod(fd, CODE_FILE_MODE)
+        data = (code + "\n").encode("utf-8")
+        while data:
+            data = data[os.write(fd, data) :]
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd)
+        with contextlib.suppress(OSError):
+            os.unlink(temp)
+        raise
+    os.close(fd)
+    return temp
+
+
+def create_code_file(path: Path) -> str | None:
+    """Write a new code (:func:`generate_code`) to ``path`` unless the file exists.
+
+    Returns the new code, or None when ``path`` already existed (another process made it
+    first; the caller reads that one). Atomic and exclusive: the code is written to a
+    temporary file of mode 0600 in the same directory, which is then hard-linked to
+    ``path`` (a link never replaces a file), so no reader ever sees a partial file and two
+    processes that start together end with one code. On a file system without hard links
+    the file is created with ``O_EXCL`` and then written (a reader then waits for it, see
+    :func:`read_code_file`). Raises OSError when the directory is missing or not writable.
+    """
+    path = Path(path)
+    directory = path.parent
+    code = generate_code()
+    temp = _write_temp(directory, path.name, code)
+    try:
+        try:
+            os.link(temp, path)
+        except FileExistsError:
+            return None
+        except OSError:
+            # No hard links here (some network or FUSE file systems): exclusive create.
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, CODE_FILE_MODE)
+            except FileExistsError:
+                return None
+            try:
+                os.fchmod(fd, CODE_FILE_MODE)
+                data = (code + "\n").encode("utf-8")
+                while data:
+                    data = data[os.write(fd, data) :]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(temp)
+    _fsync_dir(directory)
+    return code
+
+
+def replace_code_file(path: Path, code: str) -> None:
+    """Put ``code`` in ``path`` (mode 0600), replacing the code there, atomically: a
+    temporary file in the same directory is renamed over it, so a reader sees the old
+    code or the new one, never a mix. Raises OSError when the directory is missing or not
+    writable."""
+    path = Path(path)
+    temp = _write_temp(path.parent, path.name, code)
+    try:
+        os.replace(temp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temp)
+        raise
+    _fsync_dir(path.parent)
+
+
 __all__ = [
     "ACCESS_COOKIE",
     "ACCESS_COOKIE_MAX_AGE",
@@ -368,23 +695,36 @@ __all__ = [
     "ACCESS_REQUIRED_MESSAGE",
     "BAD_CODE_MESSAGE",
     "CODE_ALPHABET",
+    "CODE_FILE_MAX_BYTES",
+    "CODE_FILE_MODE",
+    "CODE_FILE_SETTLE_S",
     "CODE_LENGTH",
     "FAILURE_WINDOW_S",
     "GATE_ASSETS",
     "GATE_PAGE",
     "MAX_CLIENT_KEY_CHARS",
     "MAX_FAILURES",
+    "MAX_HOST_NAME_CHARS",
     "MAX_TRACKED_CLIENTS",
+    "MIN_SUFFIX_LABELS",
     "OTHER_CLIENT",
     "TOO_MANY_MESSAGE",
     "UNKNOWN_CLIENT",
     "AccessGate",
     "AccessGateMiddleware",
     "FailureLimiter",
+    "HostMatcher",
     "access_cookie_values",
     "client_key",
     "cookie_value",
+    "create_code_file",
+    "generate_code",
+    "host_entry",
+    "is_dns_name",
     "is_navigation",
     "is_public_client",
     "normalize_code",
+    "read_code_file",
+    "replace_code_file",
+    "split_host",
 ]

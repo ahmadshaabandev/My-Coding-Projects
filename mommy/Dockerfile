@@ -16,6 +16,14 @@
 # Behind a TLS-intercepting proxy, add --network host and
 # --secret id=build_ca,src=<CA bundle> to the build (read by curl and pip only, never
 # stored in a layer).
+#
+# compose.yaml builds this same image to run Mommy on one's own computer behind a
+# Cloudflare quick tunnel (SELF_HOST.md). It sets MOMMY_ACCESS_CODE_FILE (the code is
+# made once and kept in the /data volume, see below) instead of MOMMY_ACCESS_CODE.
+# The image builds natively for linux/amd64 and linux/arm64 (Apple Silicon): the base
+# index lists both, and the lock holds the hash of a manylinux aarch64 wheel of every
+# package with native code. The scripts it runs may have Windows line endings (a clone
+# with core.autocrlf): their CRs are stripped before use (.gitattributes keeps LF too).
 
 # Python 3.13: the version requirements.lock was resolved and tested on. "slim" already
 # has everything the wheels link to (the C++ runtime, zlib); nothing else is installed
@@ -46,6 +54,7 @@ RUN --mount=type=secret,id=build_ca \
       apt-get install -y --no-install-recommends curl bzip2; \
       rm -rf /var/lib/apt/lists/*; \
       if [ -s /run/secrets/build_ca ]; then export CURL_CA_BUNDLE=/run/secrets/build_ca; fi; \
+      sed -i 's/\r$//' scripts/download_models.sh; \
       bash scripts/download_models.sh; \
       rm -rf models/*/test_wavs; \
     fi
@@ -86,8 +95,14 @@ COPY backend/ backend/
 COPY web/ web/
 COPY data/quran/ data/quran/
 # Byte-compile now: the code directory is read-only for uid 1000, and a cold start
-# (after the Space slept) should not compile anything.
-RUN python -m compileall -q backend
+# (after the Space slept) should not compile anything. The start script loses any CR
+# (a Windows checkout). /data, owned by uid 1000 and private to it, is where
+# compose.yaml mounts its volume: a new named volume takes this owner and mode, so the
+# app can write its access code file there (nothing else is written; unused on Hugging
+# Face).
+RUN sed -i 's/\r$//' scripts/space_start.sh \
+    && python -m compileall -q backend \
+    && install -d -o 1000 -g 1000 -m 700 /data
 
 USER 1000:1000
 EXPOSE 7860

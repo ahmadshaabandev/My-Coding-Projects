@@ -112,6 +112,7 @@ from .access import (
     TOO_MANY_MESSAGE,
     AccessGate,
     AccessGateMiddleware,
+    HostMatcher,
     client_key,
     is_public_client,
 )
@@ -386,17 +387,23 @@ class HostOriginMiddleware:
 
     * A request whose ``Host`` header names another host gets 400 ``bad_host``: a page
       on another site that re-points its own domain name at 127.0.0.1 (DNS rebinding)
-      cannot reach the server, which holds the Claude key and the children's data.
+      cannot reach the server, which holds the Claude key and the children's data. The
+      names are matched by :class:`~mommy.access.HostMatcher`: exact names, and suffix
+      entries such as ``.trycloudflare.com`` (any name under it, never the domain itself).
     * A ``/api/*`` request other than GET, HEAD or OPTIONS that carries an ``Origin``
       header gets 403 ``bad_origin`` unless the origin is this server itself
-      (``http://<Host>``). A form or ``fetch`` from another site's page is a simple
+      (``http(s)://<Host>``, :meth:`~mommy.access.HostMatcher.same_origin`, with the
+      same matcher): another name under the same suffix (someone else's tunnel) is
+      another site. A form or ``fetch`` from another site's page is a simple
       request that browsers send without asking first; this refuses it. Clients that
       send no ``Origin`` (curl, tests) are not browsers acting for a third party.
+
+    Raises ValueError for an entry the matcher refuses (a suffix such as ``.com``).
     """
 
     def __init__(self, app: ASGIApp, allowed_hosts: tuple[str, ...]) -> None:
         self.app = app
-        self.allowed = frozenset(h.lower() for h in allowed_hosts)
+        self.hosts = HostMatcher(allowed_hosts)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -404,7 +411,7 @@ class HostOriginMiddleware:
             return
         headers = Headers(scope=scope)
         host = headers.get("host", "")
-        if _host_name(host) not in self.allowed:
+        if not self.hosts.allows_host(host):
             # The name received (a host name, not personal data; repr and cut, so a forged
             # header cannot forge log lines): it says what MOMMY_ALLOWED_HOSTS lacks.
             log.info("refused a request for an unknown host %r", _host_name(host)[:80])
@@ -415,7 +422,7 @@ class HostOriginMiddleware:
             origin is not None
             and _is_api(scope["path"])
             and scope.get("method") not in ("GET", "HEAD", "OPTIONS")
-            and origin.strip().lower() not in (f"http://{host.strip().lower()}", f"https://{host.strip().lower()}")
+            and not self.hosts.same_origin(origin, host)
         ):
             log.info("refused a cross-origin %s on %s", scope.get("method"), scope["path"])
             await error_response(403, "bad_origin", "Requests from another site are not accepted.")(scope, receive, send)

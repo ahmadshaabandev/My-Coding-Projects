@@ -1094,6 +1094,47 @@ function allStrings(lang) {
 }
 
 // ---------------------------------------------------------------------------
+// Privacy texts: the four ways the app runs (/api/health "online" and "brain")
+// ---------------------------------------------------------------------------
+
+/**
+ * Local or online, with or without Claude, and the string keys each one shows: the
+ * consent boxes' first line (`privacy`, where recordings, photos and texts are checked)
+ * and second line (`extra`), the photo note and the "approximate" label. The family
+ * data line (fam_privacy_line) is the same in every mode.
+ */
+const PRIVACY_MODES = [
+  { name: 'local, no Claude', online: false, brain: 'offline', privacy: 'consent_privacy', extra: 'consent_offline', photo: 'photo_privacy', approx: 'approximate' },
+  { name: 'local, Claude', online: false, brain: 'claude', privacy: 'consent_privacy', extra: 'consent_claude', photo: 'photo_privacy', approx: 'approximate' },
+  { name: 'online, no Claude', online: true, brain: 'offline', privacy: 'consent_online_no_photos', extra: 'consent_online_no_ai', photo: 'photo_privacy_online', approx: 'approximate_online' },
+  { name: 'online, Claude', online: true, brain: 'claude', privacy: 'consent_online', extra: 'consent_claude', photo: 'photo_privacy_online', approx: 'approximate_online' },
+];
+
+/** The fake API's /api/health answer for one of PRIVACY_MODES. */
+function privacyHealth(mode) {
+  return { asr: true, tts: true, brain: mode.brain, quran: true, languages: ['ar', 'en', 'fr'], online: mode.online };
+}
+
+/**
+ * Sentences that are false online, in every language: "nothing leaves this computer"
+ * (consent_offline) and the local first line, which says nothing of the server.
+ */
+function localOnlySentences() {
+  const out = [];
+  for (const lang of ['en', 'fr', 'ar']) {
+    const S = uiStrings(lang, 'app.js');
+    out.push(S.consent_offline, S.consent_privacy, S.photo_privacy, S.approximate);
+  }
+  return out.concat(['nothing leaves', 'rien ne quitte', 'لا يخرج شيء', 'Offline mode', 'Mode hors ligne', 'وضع بلا اتصال']);
+}
+
+/** The local-only sentences found in the page's whole text (hidden nodes included). */
+async function localSentencesShown(page) {
+  const all = await page.evaluate(() => document.body.textContent);
+  return localOnlySentences().filter((s) => all.includes(s));
+}
+
+// ---------------------------------------------------------------------------
 // Family helpers (family.js): setup, child picker, PIN, parent area
 // ---------------------------------------------------------------------------
 
@@ -1231,6 +1272,10 @@ module.exports = {
   expected4xx,
   uiStrings,
   allStrings,
+  PRIVACY_MODES,
+  privacyHealth,
+  localOnlySentences,
+  localSentencesShown,
   PIN,
   setupFamily,
   enterPin,

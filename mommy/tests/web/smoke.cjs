@@ -47,6 +47,11 @@
  *     net and "dictation": false; a text that is Quran opening the Quran section on its
  *     ayat; the screens in en, fr and ar at 360 px and in dark mode; and, over every
  *     flow, no /api/tts request holding a Quran part.
+ *   - the privacy texts in the four ways the app runs (local or online, with or without
+ *     Claude: the fake /api/health "online" and "brain"): the setup's consent box and
+ *     family data line in en, fr and ar, the photo note and the "approximate" label;
+ *     online, never "nothing leaves this computer" (nor any other local-only sentence);
+ *     a page from a host that is not a loopback one counts as online.
  *
  * Shared helpers (server, fake API, page helpers) are in helpers.cjs; the family UI
  * itself is tested by family.cjs.
@@ -2012,6 +2017,72 @@ async function consentFlow(browser, base) {
   await offline.context.close();
 }
 
+/**
+ * The privacy texts in the four ways the app runs (local or online, with or without
+ * Claude), from the fake /api/health: the consent box of the family setup in en, fr and
+ * ar, the family data line next to it, the photo note of Prepare and the "approximate"
+ * label of Recite. Online, "nothing leaves this computer" (and every local-only
+ * sentence) is never on the page.
+ */
+async function privacyFlow(browser, base) {
+  const LANGS = ['en', 'fr', 'ar'];
+  for (const mode of H.PRIVACY_MODES) {
+    const { context, page, problems } = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(mode) });
+    await check(`privacy, ${mode.name}: the setup's consent box and family data line, in en, fr and ar`, async () => {
+      await page.goto(base + '/');
+      await page.waitForSelector('#consent-extra:not([hidden])');
+      for (const lang of LANGS) {
+        const S = H.allStrings(lang);
+        await page.selectOption('#setup-lang', lang);
+        assert.equal((await page.textContent('#consent-privacy')).trim(), S[mode.privacy], lang);
+        assert.equal((await page.textContent('#consent-extra')).trim(), S[mode.extra], lang);
+        assert.equal((await page.textContent('#setup-form .hint >> nth=0')).trim(), S.fam_privacy_line, lang);
+        if (mode.online) {
+          assert.deepEqual(await H.localSentencesShown(page), [], lang + ': a local-only sentence online');
+          assert.match(S[mode.privacy], /Mommy/);
+        }
+        await H.noHorizontalScroll(page);
+      }
+      await page.selectOption('#setup-lang', 'en');
+    });
+    await check(`privacy, ${mode.name}: the photo note of Prepare and the "approximate" label of Recite`, async () => {
+      await startSession(page, { consent: true, nickname: 'Sami' });
+      const S = H.allStrings('en');
+      assert.equal((await page.textContent('#screen-prepare .photo-privacy')).trim(), S[mode.photo]);
+      // Without Claude no photo can be sent: the buttons are off, as the consent box says.
+      assert.equal(await page.isDisabled('#prep-take'), mode.brain !== 'claude');
+      assert.equal((await page.textContent('#recite-approx')).trim(), S[mode.approx]);
+      if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+
+  // A page that did not come from a loopback host (behind a tunnel that rewrites the
+  // Host header, the server cannot tell): online texts, whatever /api/health says.
+  const remote = 'http://mommy-test.example';
+  const local = H.PRIVACY_MODES[0];
+  const { context, page, problems } = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(local) });
+  await page.route(remote + '/**', async (route) => {
+    const u = new URL(route.request().url());
+    if (u.pathname.startsWith('/api/')) return route.fallback();
+    return route.fulfill({ response: await route.fetch({ url: base + u.pathname + u.search }) });
+  });
+  await check('privacy: a page loaded from a host that is not a loopback one says the data goes to the server, even if /api/health says "online": false', async () => {
+    await page.goto(remote + '/');
+    await page.waitForSelector('#consent-extra:not([hidden])');
+    for (const lang of LANGS) {
+      const S = H.allStrings(lang);
+      await page.selectOption('#setup-lang', lang);
+      assert.equal((await page.textContent('#consent-privacy')).trim(), S.consent_online_no_photos, lang);
+      assert.equal((await page.textContent('#consent-extra')).trim(), S.consent_online_no_ai, lang);
+      assert.deepEqual(await H.localSentencesShown(page), [], lang);
+    }
+    assert.deepEqual(problems.filter((p) => !p.startsWith('external request: ' + remote)), []);
+  });
+  await context.close();
+}
+
 /** recorder.js with a 1 s limit instead of 120 s, so the limit can be reached in a test. */
 function shortLimit() {
   let api;
@@ -2054,6 +2125,33 @@ async function limitFlow(browser, base) {
  * French typography (UX-12): a no-break space, never a plain one, before : ; ! ? and
  * inside « », so that no ":" or "«" is left alone at the start or end of a line.
  */
+/** The privacy strings: every mode's keys in en, fr and ar, and what each one says. */
+function privacyStrings() {
+  const KEYS = ['consent_privacy', 'consent_offline', 'consent_claude', 'consent_online', 'consent_online_no_photos', 'consent_online_no_ai', 'photo_privacy', 'photo_privacy_online', 'approximate', 'approximate_online', 'fam_privacy_line'];
+  for (const lang of ['en', 'fr', 'ar']) {
+    const S = H.allStrings(lang);
+    for (const key of KEYS) assert.ok(S[key], `${lang}.${key}`);
+    for (const mode of H.PRIVACY_MODES) for (const k of ['privacy', 'extra', 'photo', 'approx']) assert.ok(S[mode[k]], `${lang}.${mode[k]}`);
+    // Online, the server is named, and no line says that the data stays here.
+    for (const key of ['consent_online', 'consent_online_no_photos', 'photo_privacy_online']) {
+      assert.match(S[key], /Mommy/, `${lang}.${key}`);
+      for (const local of H.localOnlySentences()) assert.ok(!S[key].includes(local), `${lang}.${key} holds "${local}"`);
+    }
+    // Arabic: no word ending in the suffix ـك (it addresses the parent as a man or a woman).
+    if (lang === 'ar') {
+      for (const key of ['consent_online', 'consent_online_no_photos', 'consent_online_no_ai', 'photo_privacy_online', 'approximate_online', 'fam_privacy_line']) {
+        const words = S[key].replace(/[ً-ْ]/g, '').split(/[\s«»()،؛؟.,:!…]+/u);
+        assert.deepEqual(words.filter((w) => /ك$/.test(w)), [], 'ar.' + key);
+      }
+    }
+  }
+  const en = H.allStrings('en');
+  assert.match(en.consent_online, /voice recordings, the photos and the texts are sent over a secure connection to the Mommy server that runs the app, where they are checked in memory and not kept/);
+  assert.doesNotMatch(en.consent_online_no_photos, /photo/, 'without Claude no photo is ever sent');
+  assert.match(en.consent_online_no_photos, /voice recordings and the texts are sent over a secure connection/);
+  assert.match(en.fam_privacy_line, /children, tasks, stars, rewards and the PIN\) stays in this browser, on this device/);
+}
+
 function frenchTypography() {
   const bad = [];
   for (const file of ['app.js', 'family.js']) {
@@ -2072,6 +2170,7 @@ async function main() {
   console.log('# Arabic UI wording (Node)');
   await check('ar: UI strings use no singular imperative or visibly gendered second-person form', arabicWording);
   await check('fr: a no-break space before : ; ! ? and inside « » (no plain space)', frenchTypography);
+  await check('privacy strings: each way the app runs has its sentences in en, fr and ar; online ones name the server and never say the data stays here', privacyStrings);
 
   H.loadTanzil();
   console.log('# the fake Quran parts against the server\'s finder (Python)');
@@ -2108,6 +2207,8 @@ async function main() {
     await quranPartsLanguages(browser, base);
     console.log('# browser: consent and Claude');
     await consentFlow(browser, base);
+    console.log('# browser: privacy texts, local or online, with or without Claude');
+    await privacyFlow(browser, base);
     console.log('# browser: length limit');
     await limitFlow(browser, base);
   } finally {
