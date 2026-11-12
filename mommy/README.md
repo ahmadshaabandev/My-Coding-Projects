@@ -212,7 +212,8 @@ the computer). The setup is `compose.yaml`: the app (`MOMMY_ACCESS_CODE_FILE`: t
 is made at the first start and kept in a Docker volume; `MOMMY_ALLOWED_HOSTS` with the
 suffix entry `.trycloudflare.com`; its port only on `127.0.0.1:8080`, which asks for the
 same code) and `cloudflared`, pinned by digest, whose metrics server tells `share_link`
-the tunnel's address (it changes when the tunnel restarts; the code does not).
+the tunnel's address (it changes when the tunnel restarts; the code does not, but the
+family data a friend's browser keeps is per address, so a new address starts empty).
 `compose.test.yaml` is only for testing the kit without downloading the models (see its
 header). Local use with `./run.sh` does not change.
 
@@ -315,7 +316,8 @@ is restarting, the code page says so and tries the link's code again by itself.
 `deploy.py --new-code`. It prints the new link at once. When no file changed (so no new
 build), the script restarts the Space itself; the old link and every browser that used
 it stop working once the Space shows "Running" again (the cookie is derived from the
-code, so no old cookie opens the app). An open app then reloads to the code page. This
+code and the host name, so no old cookie opens the app, and a cookie of another host,
+such as `localhost`, opens nothing here). An open app then reloads to the code page. This
 is the only way to take access back: the cookie is the same for everyone who has the
 code, and a copied cookie works until the code changes.
 
@@ -694,6 +696,7 @@ mommy/
   scripts/download_models.sh   fetches the Whisper model(s) and Piper voices into models/ (sha256 checked)
   scripts/space_start.sh       the image's start command: checks the access code, runs uvicorn
   scripts/lock_requirements.py regenerates both lock files (development only)
+  scripts/refresh_pins.py      shows or moves the pinned images (cloudflared, Caddy, Python) to newer digests (development only)
   docs/CONTRACT.md             module boundaries, HTTP API, hard rules
   data/quran/                  verbatim Tanzil text and metadata (read-only)
   models/                      git-ignored: downloaded models

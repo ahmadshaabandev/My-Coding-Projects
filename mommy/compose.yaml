@@ -62,12 +62,14 @@ services:
 
   tunnel:
     # cloudflared 2026.10.7, pinned by the digest of its multi-platform index (linux/amd64
-    # and linux/arm64). To take a newer one: docker buildx imagetools inspect
-    # cloudflare/cloudflared:<version>, then replace the tag and the digest.
+    # and linux/arm64). A pin never moves by itself: python3 scripts/refresh_pins.py moves
+    # it to a newer version (share_link notes a cloudflared more than 9 months old).
     image: cloudflare/cloudflared:2026.10.7@sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba
     # A quick tunnel to the app. Its random address changes each time this container
     # starts. The metrics server (port 2000) answers GET /quicktunnel with that address,
-    # for share_link; it is reachable only inside this project's network (no "ports").
+    # for share_link. It is not published ("ports"), so other devices cannot reach it; it
+    # also serves cloudflared's metrics, its configuration and Go's debug pages (no
+    # secret among them), which the app and, on Linux, programs of this computer can read.
     command: tunnel --no-autoupdate --url http://mommy:7860 --metrics 0.0.0.0:2000
     depends_on:
       mommy:

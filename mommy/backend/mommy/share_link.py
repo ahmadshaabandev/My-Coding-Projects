@@ -22,6 +22,11 @@ What it does:
 3. Prints the link ``https://<name>/#code=<code>`` (the code is in the fragment, which
    browsers never send to a server) and a one-line reminder (:data:`REMINDER`): the
    link changes when the tunnel restarts (a reboot, for example), the code does not.
+4. Reads cloudflared's version from ``GET /metrics`` (``build_info``) and, when it is
+   more than :data:`OLD_TUNNEL_MONTHS` months old (its version is its release's year and
+   month), adds a note on standard error: Cloudflare supports a cloudflared release for
+   about a year, and ``compose.yaml`` pins one (``scripts/refresh_pins.py`` moves the
+   pin), so the owner is told to take the latest Mommy files.
 
 ``--new-code`` writes a new code to the code file (atomically, mode 0600), says to run
 :data:`RESTART_COMMAND` (the app reads the code when it starts; the old link and every
@@ -36,7 +41,9 @@ logged; the code appears only in the link's fragment.
 from __future__ import annotations
 
 import argparse
+import datetime
 import http.client
+import re
 import json
 import os
 import sys
@@ -63,6 +70,15 @@ POLL_INTERVAL_S = 1.0
 REQUEST_TIMEOUT_S = 3.0
 #: The largest answer read from the metrics server.
 MAX_ANSWER_BYTES = 4096
+#: cloudflared's Prometheus metrics, where ``build_info`` gives its version, and the
+#: largest part of them read.
+METRICS_PATH = "/metrics"
+MAX_METRICS_BYTES = 1 << 20
+#: A cloudflared older than this many months gets a note (Cloudflare supports a release
+#: for about a year).
+OLD_TUNNEL_MONTHS = 9
+#: ``build_info{...,version="2026.10.7"} 1``: cloudflared's versions are year.month.n.
+_BUILD_INFO = re.compile(r'^build_info\{[^}\n]*\bversion="(\d{4})\.(\d{1,2})\.(\d+)"', re.M)
 
 #: The commands the owner is told to run (from the ``mommy/`` directory).
 SHARE_COMMAND = "docker compose exec mommy python -m mommy.share_link"
@@ -223,6 +239,48 @@ def wait_for_tunnel(
     raise TunnelError(f"the tunnel did not answer at {base} within {wait_s:g} s ({problem})")
 
 
+def tunnel_version(metrics_text: str) -> tuple[str, int, int] | None:
+    """(version, year, month) of cloudflared from its ``/metrics`` text (``build_info``),
+    or None when it is not there."""
+    match = _BUILD_INFO.search(metrics_text)
+    if match is None:
+        return None
+    year, month = int(match.group(1)), int(match.group(2))
+    if not 1 <= month <= 12:
+        return None
+    return f"{year}.{month}.{match.group(3)}", year, month
+
+
+def old_tunnel_note(metrics_text: str, today: datetime.date) -> str | None:
+    """The note for a cloudflared more than :data:`OLD_TUNNEL_MONTHS` months older than
+    ``today``, else None."""
+    found = tunnel_version(metrics_text)
+    if found is None:
+        return None
+    version, year, month = found
+    age = (today.year - year) * 12 + (today.month - month)
+    if age <= OLD_TUNNEL_MONTHS:
+        return None
+    return (
+        f"Note: the tunnel program (cloudflared {version}, from {year}-{month:02d}) is {age} months old, and "
+        "Cloudflare supports a version for about a year. Take the latest Mommy files and update "
+        "(SELF_HOST.md, \"To update Mommy\"), which brings a newer one when there is."
+    )
+
+
+def read_metrics(metrics_url: str, *, request_timeout_s: float = REQUEST_TIMEOUT_S) -> str:
+    """cloudflared's ``/metrics`` text (at most :data:`MAX_METRICS_BYTES`), or ``""`` when
+    it does not answer 200."""
+    base = metrics_url.strip().rstrip("/")
+    try:
+        with _no_proxy_opener().open(base + METRICS_PATH, timeout=request_timeout_s) as response:
+            if response.status != 200:
+                return ""
+            return response.read(MAX_METRICS_BYTES).decode("utf-8", "replace")
+    except (OSError, ValueError, http.client.HTTPException):
+        return ""
+
+
 def _get(env: Mapping[str, str], name: str) -> str | None:
     value = env.get(name)
     if value is None:
@@ -272,6 +330,7 @@ def main(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
     interval_s: float = POLL_INTERVAL_S,
+    today: datetime.date | None = None,
 ) -> int:
     """The command line (see the module docstring); returns the exit status."""
     out = sys.stdout if stdout is None else stdout
@@ -373,6 +432,9 @@ def main(
             '"400 bad_host". Add .trycloudflare.com to MOMMY_ALLOWED_HOSTS.',
             to=err,
         )
+    note = old_tunnel_note(read_metrics(metrics_url), today or datetime.date.today())
+    if note is not None:
+        say(note, to=err)
     say(share_link(tunnel.hostname, code))
     if not args.link_only:
         say(REMINDER)

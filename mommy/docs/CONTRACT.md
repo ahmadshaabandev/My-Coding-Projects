@@ -128,9 +128,13 @@ mommy/
   scripts/download_models.sh  fetches the sherpa-onnx Whisper turbo model (small with --small) and the Piper voices into models/,
                             each archive checked against its pinned sha256 before it is unpacked
   scripts/lock_requirements.py  regenerates both lock files (development only: the one script that uses the network)
+  scripts/refresh_pins.py   shows or moves the image pins (cloudflared, Caddy, the Python base) to a tag's current
+                            digest, checking linux/amd64 and linux/arm64 (development only; extra)
   Dockerfile .dockerignore scripts/space_start.sh deploy/huggingface/   the online deployment (extra; README.md, "Run it online")
   compose.yaml compose.test.yaml .gitattributes   self-hosting on one's own computer behind a Cloudflare quick tunnel
                             (extra; SELF_HOST.md; compose.test.yaml is for testing the kit only)
+  deploy/oracle/            the same on an Oracle Cloud Always Free VM (extra; ORACLE.md): setup.sh,
+                            compose.oracle.yaml, compose.stable.yaml and Caddyfile (the permanent link)
   docs/CONTRACT.md          this file
   data/quran/quran-uthmani.txt, quran-simple-clean.txt   verbatim Tanzil text (txt-2: sura|aya|text; licence block at end)
   data/quran/quran-data.js  verbatim Tanzil metadata (surah names, ayah counts; CC BY 3.0)
@@ -141,6 +145,8 @@ mommy/
     quran.py    guard.py      asr.py     tts.py       llm.py       app.py
     access.py   the access gate of an online deployment (extra; MOMMY_ACCESS_CODE), allowed host names, the code file
     share_link.py  python -m mommy.share_link: the link to share a self-hosted Mommy (extra)
+    proxies.py     python -m mommy.proxies: the proxies trusted for X-Forwarded-For with
+                   MOMMY_FORWARDED_ALLOW_IPS=container-networks (extra)
   web/
     index.html  app.js  recorder.js  styles.css
     rewards.js  family.js     the tasks and rewards (docs/REWARDS.md): pure logic, and the family UI
@@ -157,6 +163,8 @@ mommy/
   tests/test_selfhost.py              suffix host entries, the code file and share_link against a fake
                                       cloudflared metrics server (extra)
   tests/test_space_image.py           the image's start script, model checksums and Dockerfile (extra)
+  tests/test_compose_kit.py           compose.yaml, the start script as compose runs it, proxies.py, the pins (extra)
+  tests/test_oracle_kit.py            deploy/oracle: setup.sh's helpers and dry runs, the compose files, Caddyfile (extra)
   tests/test_deploy.py                deploy/huggingface/deploy.py against a fake Hub (extra)
 ```
 
@@ -750,10 +758,15 @@ CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"; CODE_LENGTH = 12   # what the
 def normalize_code(code: str) -> str
 # Trimmed; Arabic-Indic (U+0660-0669) and Eastern Arabic-Indic (U+06F0-06F9) digits -> ASCII.
 # Letter case is kept.
-def cookie_value(code: str) -> str
-# HMAC-SHA256(key = SHA-256(fixed label + normalize_code(code)), "mommy_access"), base64url
-# without padding (43 characters). Depends on the code only: a restart keeps people in, a
-# new code invalidates every cookie. No session list is kept.
+def cookie_key(code: str) -> bytes   # SHA-256(fixed label "mommy access cookie v2\0" + normalize_code(code))
+def host_key(host: str) -> str       # a Host value as a cookie names it: lower case, no port, brackets or trailing dot
+def cookie_value(code: str, host: str) -> str
+# HMAC-SHA256(cookie_key(code), "mommy_access" + NUL + host_key(host)), base64url without
+# padding (43 characters). Depends on the code and the host name only: a restart keeps
+# people in, a new code invalidates every cookie, and a cookie given for one host opens
+# no other (browsers send a localhost cookie to every port of localhost over plain http,
+# so a local server could read it: it must not open the tunnel's or a Space's host).
+# No session list is kept.
 def client_key(host: str | None) -> str
 # The key a client's wrong codes are counted under, for request.client.host: an IPv4
 # address (also written IPv4-mapped), any other IPv6 address as its /64 network
@@ -768,9 +781,10 @@ class FailureLimiter(*, max_failures=10, window_s=600.0, max_clients=10_000, clo
 # A sliding window per client; an LRU of the clients that failed most recently, at most
 # max_failures timestamps each: the memory is bounded whatever the number of clients.
 class AccessGate(code: str, web_dir: Path | None, *, limiter: FailureLimiter | None = None)
-    cookie: str; limiter: FailureLimiter; page: bytes | None    # the code itself is not kept
-    def code_matches(self, candidate: str) -> bool   # constant time (compares the two tags)
-    def has_access(self, headers) -> bool            # the request's mommy_access cookie, constant time
+    limiter: FailureLimiter; page: bytes | None    # the code itself is not kept, only cookie_key(code)
+    def code_matches(self, candidate: str) -> bool   # constant time (compares the two keys)
+    def cookie_for(self, host: str) -> str           # cookie_value(code, host)
+    def has_access(self, headers) -> bool            # the mommy_access cookie for the request's Host, constant time
     # Every Cookie header and every mommy_access value in them is a candidate
     # (access_cookie_values): split cookie fields and a same-named cookie do not hide it.
 def access_cookie_values(headers) -> list[str]
@@ -780,6 +794,7 @@ def is_navigation(headers) -> bool
 
 # Allowed host names (MOMMY_ALLOWED_HOSTS), used by app.HostOriginMiddleware:
 MIN_SUFFIX_LABELS = 2; MAX_HOST_NAME_CHARS = 253
+SUFFIX_PORTS = frozenset({None, "80", "443"})   # the ports a Host may name for a suffix entry
 def host_entry(entry: str) -> str
 # One entry, normalized. An exact entry: trimmed, lower case, IPv6 brackets removed
 # ("[::1]" -> "::1"), as before suffix entries existed. A suffix entry starts with a dot
@@ -796,8 +811,9 @@ def is_dns_name(name: str) -> bool   # lower-case ASCII labels [a-z0-9-], 1-63 e
 class HostMatcher(entries: Iterable[str])     # ValueError for an entry host_entry refuses
     exact: frozenset[str]; suffixes: tuple[str, ...]
     def allows_name(self, name: str) -> bool  # a name without the port
-    def allows_host(self, host: str) -> bool  # a Host header value; the port is ignored
-    def same_origin(self, origin: str, host: str) -> bool
+    def allows_host(self, host: str) -> bool  # a Host value: any port for an exact entry, SUFFIX_PORTS for a suffix one
+    def matches_suffix(self, host: str) -> bool   # allowed through a suffix entry only (a quick tunnel's name)
+    def same_origin(self, origin: str, host: str, *, https_only: bool = False) -> bool
 # allows_name: a name that is not ASCII never matches (so no Unicode case folding, such
 # as the Kelvin sign or a fullwidth dot, can make an allowed name). An exact entry
 # matches the name in lower case, exactly as before (no trailing-dot folding: the
@@ -808,11 +824,16 @@ class HostMatcher(entries: Iterable[str])     # ValueError for an entry host_ent
 # "abc.trycloudflare.com."; never "trycloudflare.com" itself, "evil-trycloudflare.com",
 # "trycloudflare.com.evil.com", "a..trycloudflare.com", "abc_x.trycloudflare.com" or a
 # name with a Cyrillic look-alike letter.
-# same_origin: origin is "http://" or "https://" followed by an allowed name (allows_name)
+# allows_host: for a suffix entry the Host must name no port or a default one
+# (SUFFIX_PORTS; "abc.trycloudflare.com:8080" is refused). A tunnel's requests never name
+# another; a page under the suffix whose name a hostile resolver points at 127.0.0.1
+# (DNS rebinding) would name the local port. An exact entry ignores the port, as before.
+# same_origin: origin is "http://" or "https://" followed by an allowed host (allows_host)
 # and the same host as the request's Host value (lower case, a trailing dot on the name
 # dropped on both sides, the same port or none on both). "null", a path (even "/"), user
 # information, another scheme, another port and another name under the same suffix
-# entry (someone else's tunnel) are not the same origin.
+# entry (someone else's tunnel) are not the same origin. With https_only (the gate is
+# on), an "http://" origin is the same origin only for a loopback host.
 
 # The access code file (MOMMY_ACCESS_CODE_FILE; config.code_from_file decides when):
 CODE_FILE_MAX_BYTES = 1024; CODE_FILE_MODE = 0o600; CODE_FILE_SETTLE_S = 1.0
@@ -864,7 +885,11 @@ def parse_hostname(body: bytes) -> str
 def wait_for_tunnel(metrics_url=DEFAULT_METRICS_URL, *, wait_s=60.0, interval_s=1.0,
                     request_timeout_s=3.0, clock=time.monotonic, sleep=time.sleep,
                     on_wait=None) -> Tunnel
-def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTERVAL_S) -> int
+METRICS_PATH = "/metrics"; MAX_METRICS_BYTES = 1 << 20; OLD_TUNNEL_MONTHS = 9
+def tunnel_version(metrics_text: str) -> tuple[str, int, int] | None   # (version, year, month) of build_info
+def old_tunnel_note(metrics_text: str, today: datetime.date) -> str | None
+def read_metrics(metrics_url: str, *, request_timeout_s=3.0) -> str     # "" unless 200
+def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTERVAL_S, today=None) -> int
 ```
 
 - The code: as the app reads it (`config.access_code_from(env, create=False)`):
@@ -891,10 +916,21 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   `/quicktunnel` with `{"hostname":"fancy-words-here-test.trycloudflare.com"}`, `/ready`
   with `503 {"status":503,"readyConnections":0,...}` while it had no edge connection,
   and any other path with `404 page not found`; the fake server of the tests answers the
-  same way.
+  same way. The metrics server also answers `/metrics`, `/healthcheck`, `/config` (the
+  ingress rules), `/diag/*` (tunnel and connector ids, every flag) and Go's `/debug/vars`
+  and `/debug/pprof/` (profiles on demand); no tunnel secret was among them. Its port is
+  not published, so other devices cannot reach it; the app's container can, and on a
+  Linux host so can local programs (Docker's bridge, even an `internal` network's, has
+  an address on the host: checked on Engine 29.9, where the host reached a container on
+  an internal network). With Docker Engine 28 or later (SELF_HOST.md's Linux note),
+  devices of the local network cannot route to it.
 - Output: standard output gets the link `https://<name>/#code=<code>` and `REMINDER` on
   the next line (`--link-only`: the link alone); waiting notes, warnings and errors go to
-  standard error. When `MOMMY_ALLOWED_HOSTS` would refuse the name (the app would answer
+  standard error. Once the tunnel has a name, `GET /metrics` gives cloudflared's
+  `build_info` (`version="2026.10.7"`: its release's year and month); when that is more
+  than `OLD_TUNNEL_MONTHS` (9) months before today, a note on standard error says that
+  Cloudflare supports a release for about a year and to take the latest Mommy files (the
+  pin moves with `scripts/refresh_pins.py`). No answer or no `build_info`: no note. When `MOMMY_ALLOWED_HOSTS` would refuse the name (the app would answer
   `400 bad_host`), a warning says to add `.trycloudflare.com`. Exit 0 with a link, 1
   without a usable code, 2 for a wrong option, 3 when the tunnel gave no name. Nothing is
   logged; the code appears only in the link's fragment.
@@ -941,16 +977,23 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   `bad_origin`. Both decisions are `access.HostMatcher`'s (`HostOriginMiddleware`): an
   exact entry decides as before; a suffix entry (extra, a leading dot, such as
   `.trycloudflare.com` in `compose.yaml`) lets in any name under it, never the domain
-  itself, and the `Origin` of a write must still be the request's own `Host` (another
-  quick tunnel under the same suffix is another site). An entry the matcher refuses stops
-  the app at its start. Every response has `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  itself, and only with no port or a default one in `Host` (DNS rebinding to the local
+  port is refused), and the `Origin` of a write must still be the request's own `Host`
+  (another quick tunnel under the same suffix is another site). With the access gate on,
+  an `http://` `Origin` is accepted only for a loopback host (online every page is
+  HTTPS), and a request for a suffix-entry name that the proxy received over plain http
+  (`X-Forwarded-Proto: http`, which cloudflared passes on from Cloudflare's edge) is not
+  served: a `GET`/`HEAD` that is not `/api/*` gets `308` to `https://<name><path>` (the
+  name as matched, no port), anything else `400 https_required`. Exact entries are not
+  redirected (Caddy redirects its own port 80; a Space is HTTPS). An entry the matcher
+  refuses stops the app at its start. Every response has `X-Content-Type-Options: nosniff`, `Referrer-Policy:
   no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors
   'none'`; every `/api/*` response has `Cache-Control: no-store`.
 - **Access gate (extra, online only; `access.py`).** With no access code (`MOMMY_ACCESS_CODE`
   unset or blank, and `MOMMY_ACCESS_CODE_FILE` unset or blank) there is no gate, no
   `/api/access` (404) and nothing below applies. With a code (the variable, or else the
   code file, `config.access_code_from`):
-  - Every request needs the cookie `mommy_access` (`cookie_value(code)`), except `GET`
+  - Every request needs the cookie `mommy_access` for its `Host` (`cookie_value(code, host)`), except `GET`
     and `HEAD` of the gate's own files (`/access.html`, `/access.js`, `/styles.css`,
     exact paths) and `POST /api/access`.
   - Without it: an `/api/*` request gets `401 {"error": "access_required", "message"}`
@@ -1001,9 +1044,14 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
     visitor writes to its left neither gives it a fresh count nor uses up another
     visitor's. Never `'*'` by default: uvicorn would take the left-most entry, which the
     visitor writes. `compose.yaml` sets `MOMMY_FORWARDED_ALLOW_IPS=container-networks`
-    instead: `space_start.sh` trusts only the networks the container is attached to (the
-    project's own compose network, read from the routing table at start), whose other
-    members are the tunnel and Docker's forwarding of the published port. Behind a proxy
+    instead: `space_start.sh` runs `python -m mommy.proxies`, which trusts only the networks
+    the container is attached to (the project's own compose network, read from the
+    routing tables at start) without their gateways (the default route's gateway and each
+    network's first address, where Docker puts it): the network's other member is the
+    tunnel, while the gateway is the computer's side, from which Docker's forwarding of
+    the published port and any local program connect. Their `X-Forwarded-For` is not
+    believed, so a local program can neither pick a fresh failure count nor use up a
+    visitor's. Behind a proxy
     whose address is not trusted, every visitor is the proxy (one shared failure limit):
     the first wrong or right code from a private or unknown address, for a host that is
     not a loopback one, logs one warning that says so (no address). The limit is defence in depth; the protection is the code (12

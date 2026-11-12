@@ -10,6 +10,7 @@ metrics server on 127.0.0.1 that answers as cloudflared 2026.10.7 does
 
 from __future__ import annotations
 
+import datetime
 import errno
 import io
 import json
@@ -131,8 +132,8 @@ class TestSuffixMatcher:
             "a-1.trycloudflare.com",
             "xn--80ak6aa92e.trycloudflare.com",  # an IDNA (punycode) label is an ordinary label
             "ABC.TryCloudflare.COM",  # case
-            "abc.trycloudflare.com:443",  # port
-            "abc.trycloudflare.com:8080",
+            "abc.trycloudflare.com:443",  # a default port, spelled out
+            "abc.trycloudflare.com:80",
             "abc.trycloudflare.com.",  # trailing dot
             "abc.trycloudflare.com.:443",
             " abc.trycloudflare.com ",
@@ -177,10 +178,28 @@ class TestSuffixMatcher:
             "K.trycloudflare.com",  # the Kelvin sign, which lower() turns into "k"
             "",
             "localhost.trycloudflare",
+            # Another port: a tunnel's requests never name one, a DNS-rebinding page under
+            # the suffix pointed at 127.0.0.1 names the local port (SEC-6).
+            "abc.trycloudflare.com:8080",
+            "abc.trycloudflare.com.:8080",
+            "abc.trycloudflare.com:7860",
+            "abc.trycloudflare.com:",
+            "abc.trycloudflare.com:0443",
+            "abc.trycloudflare.com:/@evil.example",
         ],
     )
     def test_other_names_do_not_match(self, host: str) -> None:
         assert not self.MATCHER.allows_host(host), host
+
+    def test_only_suffix_names_are_tied_to_the_default_ports(self) -> None:
+        """Exact entries ignore the port as before; allows_name (no port) is unchanged."""
+        assert self.MATCHER.allows_name("abc.trycloudflare.com")
+        assert self.MATCHER.allows_host("localhost:8080") and self.MATCHER.allows_host("127.0.0.1:1234")
+        matcher = HostMatcher(["abc.trycloudflare.com", ".trycloudflare.com"])
+        assert matcher.allows_host("abc.trycloudflare.com:8080")  # the exact entry
+        assert not matcher.allows_host("xyz.trycloudflare.com:8080")
+        assert not matcher.matches_suffix("abc.trycloudflare.com") and matcher.matches_suffix("xyz.trycloudflare.com")
+        assert not matcher.matches_suffix("xyz.trycloudflare.com:8080")
 
     def test_unicode_case_folding_cannot_forge_a_name(self) -> None:
         matcher = HostMatcher([".kids.example.org", "kids.example.net"])
@@ -264,7 +283,7 @@ class TestOrigin:
             ("https://abc.trycloudflare.com", "ABC.trycloudflare.com"),
             ("https://abc.trycloudflare.com.", HOST),  # a trailing dot on either side
             ("https://abc.trycloudflare.com", HOST + "."),
-            ("https://abc.trycloudflare.com:8443", HOST + ":8443"),
+            ("https://abc.trycloudflare.com:443", HOST + ":443"),
             ("http://localhost:8080", "localhost:8080"),
             ("http://127.0.0.1:8080", "127.0.0.1:8080"),
             ("http://[::1]:8080", "[::1]:8080"),
@@ -282,6 +301,7 @@ class TestOrigin:
             ("https://evil-trycloudflare.com", HOST),
             ("https://abc.trycloudflare.com:8443", HOST),  # another port
             ("https://abc.trycloudflare.com", HOST + ":8443"),
+            ("https://abc.trycloudflare.com:8443", HOST + ":8443"),  # a suffix name on another port
             ("https://abc.trycloudflare.com/", HOST),  # an origin has no path
             ("https://abc.trycloudflare.com/x", HOST),
             ("https://user@abc.trycloudflare.com", HOST),
@@ -299,6 +319,20 @@ class TestOrigin:
     )
     def test_not_same_origin(self, origin: str, host: str) -> None:
         assert not self.MATCHER.same_origin(origin, host)
+        assert not self.MATCHER.same_origin(origin, host, https_only=True)
+
+    def test_https_only(self) -> None:
+        """SEC-5: with the gate on, a page loaded over plain http may post only on a
+        loopback host (the local port); online every page is https."""
+        assert self.MATCHER.same_origin("https://abc.trycloudflare.com", self.HOST, https_only=True)
+        assert not self.MATCHER.same_origin("http://abc.trycloudflare.com", self.HOST, https_only=True)
+        assert self.MATCHER.same_origin("http://abc.trycloudflare.com", self.HOST)  # the default: as before
+        for origin, host in (("http://localhost:8080", "localhost:8080"), ("http://127.0.0.1:8080", "127.0.0.1:8080"),
+                             ("http://[::1]:8080", "[::1]:8080")):
+            assert self.MATCHER.same_origin(origin, host, https_only=True), origin
+        exact = HostMatcher(["someone-mommy.hf.space"])
+        assert exact.same_origin("https://someone-mommy.hf.space", "someone-mommy.hf.space", https_only=True)
+        assert not exact.same_origin("http://someone-mommy.hf.space", "someone-mommy.hf.space", https_only=True)
 
 
 # ---------------------------------------------------------------------------
@@ -371,10 +405,51 @@ class TestSuffixThroughTheApp:
         r = client.post("/api/access", json={"code": CODE}, headers=headers)
         assert r.status_code == 204
         cookie = r.headers["set-cookie"]
-        assert cookie.startswith(f"mommy_access={cookie_value(CODE)};") and "Secure" in cookie
+        assert cookie.startswith(f"mommy_access={cookie_value(CODE, TUNNEL_HOST)};") and "Secure" in cookie
         assert r.headers["strict-transport-security"]
         # The browser sends the (Secure) cookie back over https.
-        assert client.get("/api/health", headers={"cookie": f"mommy_access={cookie_value(CODE)}"}).status_code == 200
+        tag = cookie_value(CODE, TUNNEL_HOST)
+        assert client.get("/api/health", headers={"cookie": f"mommy_access={tag}"}).status_code == 200
+        # A cookie given for localhost (which every local port receives) opens no tunnel (SEC-4).
+        local = cookie_value(CODE, "localhost")
+        assert_error(client.get("/api/health", headers={"cookie": f"mommy_access={local}"}), 401, "access_required")
+
+    def test_plain_http_through_the_tunnel_is_sent_to_https(self) -> None:
+        """SEC-5: a visit the tunnel received over http never shows the code page there:
+        a navigation goes to the same URL in https, anything else gets https_required."""
+        client = self.tunnel_client()
+        http = {"x-forwarded-proto": "http", "x-forwarded-for": "203.0.113.7"}
+        r = client.get("/some/page?x=1&y=%2F", headers={**NAV, **http}, follow_redirects=False)
+        assert r.status_code == 308 and r.headers["location"] == f"https://{TUNNEL_HOST}/some/page?x=1&y=%2F"
+        assert r.headers["cache-control"] == "no-store"
+        r = client.get("/", headers={**NAV, **http, "host": "Fancy-Words-Here-Test.TryCloudflare.com.:80"},
+                       follow_redirects=False)
+        assert r.status_code == 308 and r.headers["location"] == f"https://{TUNNEL_HOST}/"
+        r = client.post("/api/access", json={"code": CODE}, headers={**http, "origin": f"http://{TUNNEL_HOST}"})
+        assert_error(r, 400, "https_required")
+        assert "set-cookie" not in r.headers
+        assert_error(client.get("/api/health", headers=http), 400, "https_required")
+        # A page loaded over http (no header): its Origin is refused as another site.
+        r = client.post("/api/access", json={"code": CODE}, headers={"origin": f"http://{TUNNEL_HOST}"})
+        assert_error(r, 403, "bad_origin")
+        # https, or no header (the default of a direct client): served.
+        for headers in ({"x-forwarded-proto": "https"}, {}):
+            assert client.get("/", headers={**NAV, **headers}, follow_redirects=False).status_code == 200
+        # The local port and exact entries are not touched by the header.
+        local = TestClient(ProxyHeadersMiddleware(self.app(), trusted_hosts=self.TRUSTED),
+                           base_url="http://localhost:8080", client=("172.18.0.1", 50000))
+        assert local.get("/", headers={**NAV, **http}, follow_redirects=False).status_code == 200
+        r = local.post("/api/access", json={"code": CODE}, headers={**http, "origin": "http://localhost:8080"})
+        assert r.status_code == 204
+
+    def test_a_rebinding_page_on_the_local_port_gets_bad_host(self) -> None:
+        """SEC-6: a page under .trycloudflare.com whose name a hostile resolver points at
+        127.0.0.1 sends Host: <name>:8080 to the local port: refused before the gate."""
+        local = TestClient(self.app(), base_url="http://localhost:8080", client=("172.18.0.1", 50000))
+        rebound = "attacker-words.trycloudflare.com:8080"
+        headers = {"host": rebound, "origin": f"http://{rebound}"}
+        assert_error(local.post("/api/access", json={"code": OTHER_CODE}, headers=headers), 400, "bad_host")
+        assert_error(local.get("/", headers={**NAV, "host": rebound}), 400, "bad_host")
 
     @pytest.mark.parametrize(
         "origin",
@@ -878,7 +953,33 @@ class TestShareLink:
         assert status == 0 and err == ""
         assert out.splitlines() == [f"https://{TUNNEL_HOST}/#code={CODE}", REMINDER]
         assert "reboot" in REMINDER and "code stays the same" in REMINDER and "\n" not in REMINDER
-        assert metrics.requests == ["/quicktunnel", "/ready"]
+        assert metrics.requests == ["/quicktunnel", "/ready", "/metrics"]
+
+    #: cloudflared 2026.10.7's build_info line, as its /metrics serves it.
+    BUILD_INFO = (b'# HELP build_info Build and version information\n# TYPE build_info gauge\n'
+                  b'build_info{goversion="go1.27.3",revision="2026-10-30-17:17 UTC",type="",version="2026.10.7"} 1\n')
+
+    @pytest.mark.parametrize(
+        "today,noted",
+        [(datetime.date(2026, 11, 12), False), (datetime.date(2027, 7, 31), False), (datetime.date(2027, 8, 1), True),
+         (datetime.date(2028, 1, 1), True)],
+    )
+    def test_an_old_cloudflared_gets_a_note(self, code_file: Path, today: datetime.date, noted: bool) -> None:
+        """SEC-10: the pinned cloudflared is frozen; once it is more than 9 months old the
+        owner is told to update (the link is still printed)."""
+        with FakeMetrics({"/metrics": [(200, b"# other metrics\nfoo 1\n" + self.BUILD_INFO)]}) as metrics:
+            out, err = io.StringIO(), io.StringIO()
+            status = main([], env=self.env(metrics, code_file), stdout=out, stderr=err, interval_s=0.05, today=today)
+        assert status == 0 and out.getvalue().splitlines()[0] == f"https://{TUNNEL_HOST}/#code={CODE}"
+        assert ("cloudflared 2026.10.7, from 2026-10" in err.getvalue()) is noted
+        assert ("To update Mommy" in err.getvalue()) is noted
+
+    def test_tunnel_version(self) -> None:
+        assert share_mod.tunnel_version(self.BUILD_INFO.decode()) == ("2026.10.7", 2026, 10)
+        for text in ("", "build_info 1", 'build_info{version="dev"} 1', 'build_info{version="2026.13.1"} 1',
+                     'xbuild_info{version="2020.1.1"} 1'):
+            assert share_mod.tunnel_version(text) is None, text
+        assert share_mod.old_tunnel_note("", datetime.date(2030, 1, 1)) is None
 
     def test_link_only(self, code_file: Path) -> None:
         with FakeMetrics() as metrics:

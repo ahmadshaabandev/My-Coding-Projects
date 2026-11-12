@@ -114,6 +114,7 @@ from .access import (
     AccessGateMiddleware,
     HostMatcher,
     client_key,
+    host_key,
     is_public_client,
 )
 from .align import UNREADABLE, CheckResult, has_unreadable, recitation_key, result_summary, tokenize_written
@@ -397,13 +398,21 @@ class HostOriginMiddleware:
       another site. A form or ``fetch`` from another site's page is a simple
       request that browsers send without asking first; this refuses it. Clients that
       send no ``Origin`` (curl, tests) are not browsers acting for a third party.
+    * With ``https_only`` (the access gate is on), an ``http://`` origin is this server
+      only for a loopback host; and a request for a quick-tunnel name (a suffix entry)
+      that the tunnel received over plain http (``X-Forwarded-Proto: http``) is not
+      served: a page navigation gets a 308 to the same URL in ``https``, anything else
+      400 ``https_required``, so the gate page never takes a code over plain http.
+      (Caddy redirects its port 80 itself; the header only comes from the proxy, and a
+      client that writes it itself only redirects itself.)
 
     Raises ValueError for an entry the matcher refuses (a suffix such as ``.com``).
     """
 
-    def __init__(self, app: ASGIApp, allowed_hosts: tuple[str, ...]) -> None:
+    def __init__(self, app: ASGIApp, allowed_hosts: tuple[str, ...], https_only: bool = False) -> None:
         self.app = app
         self.hosts = HostMatcher(allowed_hosts)
+        self.https_only = https_only
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -417,12 +426,28 @@ class HostOriginMiddleware:
             log.info("refused a request for an unknown host %r", _host_name(host)[:80])
             await error_response(400, "bad_host", "This server does not answer to that host name.")(scope, receive, send)
             return
+        if (
+            self.https_only
+            and headers.get("x-forwarded-proto", "").strip().lower() == "http"
+            and self.hosts.matches_suffix(host)
+        ):
+            if scope.get("method") in ("GET", "HEAD") and not _is_api(scope["path"]):
+                # The name as matched (no port: https's default), the path as received.
+                raw_path = scope.get("raw_path") or scope["path"].encode("utf-8")
+                query = scope.get("query_string") or b""
+                location = "https://" + host_key(host) + raw_path.decode("latin-1")
+                if query:
+                    location += "?" + query.decode("latin-1")
+                await Response(status_code=308, headers={"Location": location, "Cache-Control": "no-store"})(scope, receive, send)
+            else:
+                await error_response(400, "https_required", "Use the https:// address of this server.")(scope, receive, send)
+            return
         origin = headers.get("origin")
         if (
             origin is not None
             and _is_api(scope["path"])
             and scope.get("method") not in ("GET", "HEAD", "OPTIONS")
-            and not self.hosts.same_origin(origin, host)
+            and not self.hosts.same_origin(origin, host, https_only=self.https_only)
         ):
             log.info("refused a cross-origin %s on %s", scope.get("method"), scope["path"])
             await error_response(403, "bad_origin", "Requests from another site are not accepted.")(scope, receive, send)
@@ -790,7 +815,11 @@ def create_app(
     app.add_middleware(RequestGuardMiddleware)
     if gate is not None:
         app.add_middleware(AccessGateMiddleware, gate=gate)
-    app.add_middleware(HostOriginMiddleware, allowed_hosts=tuple(getattr(settings, "allowed_hosts", DEFAULT_ALLOWED_HOSTS)))
+    app.add_middleware(
+        HostOriginMiddleware,
+        allowed_hosts=tuple(getattr(settings, "allowed_hosts", DEFAULT_ALLOWED_HOSTS)),
+        https_only=gate is not None,
+    )
     app.add_middleware(ResponseHeadersMiddleware, hsts=gate is not None)
     decode_slots = threading.BoundedSemaphore(MAX_CONCURRENT_DECODES)
 
@@ -1400,7 +1429,7 @@ def create_app(
             response = Response(status_code=204)
             response.set_cookie(
                 ACCESS_COOKIE,
-                gate.cookie,
+                gate.cookie_for(request.headers.get("host", "")),
                 max_age=ACCESS_COOKIE_MAX_AGE,
                 path="/",
                 secure=request.url.scheme == "https" or not loopback,

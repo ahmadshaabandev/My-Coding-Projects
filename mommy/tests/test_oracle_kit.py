@@ -176,6 +176,319 @@ def test_rules_other_shapes() -> None:
     assert out[2] == ACCEPT_80 and out[6:9] == [ACCEPT_80, ACCEPT_443, REJECT]
 
 
+def test_rules_without_ports_undoes_rules_with_ports() -> None:
+    """SEC-13: --tunnel takes the two rules out of rules.v4 again, and nothing else."""
+    opened = _rules(ORACLE_RULES)
+    r = _bash("rules_without_ports", stdin=opened)
+    assert r.returncode == 0 and r.stdout == ORACLE_RULES
+    # A rule of the same text in another table is not ours.
+    nat = f"*nat\n{ACCEPT_80}\nCOMMIT\n*filter\n{ACCEPT_80}\n{REJECT}\nCOMMIT\n"
+    r = _bash("rules_without_ports", stdin=nat)
+    assert r.stdout == f"*nat\n{ACCEPT_80}\nCOMMIT\n*filter\n{REJECT}\nCOMMIT\n"
+
+
+def _stub(bin_dir: Path, name: str, body: str) -> None:
+    path = bin_dir / name
+    path.write_text("#!/bin/bash\n" + body + "\n", "utf-8")
+    path.chmod(0o755)
+
+
+# ---------------------------------------------------------------------------
+# setup.sh: updates are shown and asked for (SEC-1)
+# ---------------------------------------------------------------------------
+
+
+def _git(cwd: Path, *args: str) -> str:
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+    r = subprocess.run(["git", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", *args], cwd=cwd,
+                       env=env, capture_output=True, text=True, timeout=60, check=True)
+    return r.stdout.strip()
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> dict[str, Path]:
+    """An "upstream" repository with the branch, and the VM's clone of it (ORACLE.md,
+    step 4)."""
+    if shutil.which("git") is None:
+        pytest.skip("no git")
+    upstream = tmp_path / "upstream"
+    (upstream / "mommy" / "deploy" / "oracle").mkdir(parents=True)
+    _git(tmp_path, "init", "-q", str(upstream))
+    _git(upstream, "checkout", "-q", "-b", "the-branch")
+    (upstream / "mommy" / "compose.yaml").write_text("services: {}\n", "utf-8")
+    (upstream / "mommy" / "deploy" / "oracle" / "setup.sh").write_text("# v1\n", "utf-8")
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "first version")
+    app = tmp_path / "mommy-app"
+    _git(tmp_path, "clone", "-q", "--branch", "the-branch", str(upstream), str(app))
+    return {"upstream": upstream, "app": app}
+
+
+def _push(upstream: Path, text: str, message: str, *, rewrite: bool = False) -> str:
+    if rewrite:  # the fixture's branch has one commit: replaced by another one
+        _git(upstream, "commit", "-q", "--amend", "-m", "rewritten first version")
+    (upstream / "mommy" / "deploy" / "oracle" / "setup.sh").write_text(text, "utf-8")
+    _git(upstream, "commit", "-q", "-am", message)
+    return _git(upstream, "rev-parse", "HEAD")
+
+
+def _update(repo: dict[str, Path], *, yes: bool = False, ref: str = "", stdin: Any = subprocess.DEVNULL,
+            ) -> subprocess.CompletedProcess[str]:
+    code = (f'APP_DIR="{repo["app"]}"; COMPOSE_DIR="$APP_DIR/mommy"; REPO_URL="{repo["upstream"]}"; '
+            f'BRANCH=the-branch; REF="{ref}"; DRY_RUN=0; ASSUME_YES={int(yes)}; update_code; echo "UPDATED=$UPDATED"')
+    script = f'source "{SETUP}"; set +eE; trap - ERR\n{code}'
+    return subprocess.run(["bash", "-c", script], stdin=stdin, capture_output=True, text=True, timeout=60,
+                          check=False)
+
+
+def test_an_update_is_not_installed_without_asking(repo: dict[str, Path]) -> None:
+    before = _git(repo["app"], "rev-parse", "HEAD")
+    r = _update(repo)
+    assert r.returncode == 0 and "Up to date: " in r.stdout and "UPDATED=0" in r.stdout
+    new = _push(repo["upstream"], "# v2\nsudo something\n", "a new version")
+    r = _update(repo)  # no terminal, no --yes
+    assert r.returncode == 0, r.stderr
+    assert "An update is available:" in r.stdout and '"a new version"' in r.stdout
+    assert "among them some that run with full rights on this VM: deploy/oracle/setup.sh" in r.stdout
+    assert "no terminal to ask in" in r.stdout and "UPDATED=0" in r.stdout
+    assert _git(repo["app"], "rev-parse", "HEAD") == before
+    r = _update(repo, yes=True)
+    assert "Install this update? [y/N] yes (--yes)" in r.stdout and "UPDATED=1" in r.stdout
+    assert _git(repo["app"], "rev-parse", "HEAD") == new
+    assert _git(repo["app"], "rev-parse", "--abbrev-ref", "HEAD") == "the-branch"
+
+
+def test_an_update_asks_in_a_terminal(repo: dict[str, Path]) -> None:
+    import pty
+
+    before = _git(repo["app"], "rev-parse", "HEAD")
+    new = _push(repo["upstream"], "# v2\n", "a new version")
+    for answer, installed in (("n\n", False), ("y\n", True)):
+        master, slave = pty.openpty()
+        try:
+            os.write(master, answer.encode())
+            r = _update(repo, stdin=slave)
+        finally:
+            os.close(slave)
+            os.close(master)
+        assert r.returncode == 0, r.stderr
+        assert ("UPDATED=1" in r.stdout) is installed
+        assert _git(repo["app"], "rev-parse", "HEAD") == (new if installed else before)
+
+
+def test_a_rewritten_history_needs_the_word_yes(repo: dict[str, Path]) -> None:
+    import pty
+
+    before = _git(repo["app"], "rev-parse", "HEAD")
+    new = _push(repo["upstream"], "# replaced\n", "replaced history", rewrite=True)
+    r = _update(repo, yes=True)  # --yes does not answer this one
+    assert "the branch's history was rewritten (a force-push)" in r.stderr
+    assert "UPDATED=0" in r.stdout and _git(repo["app"], "rev-parse", "HEAD") == before
+    master, slave = pty.openpty()
+    try:
+        os.write(master, b"y\n")  # not "yes"
+        r = _update(repo, stdin=slave)
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert "UPDATED=0" in r.stdout and _git(repo["app"], "rev-parse", "HEAD") == before
+    master, slave = pty.openpty()
+    try:
+        os.write(master, b"yes\n")
+        r = _update(repo, stdin=slave)
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert "UPDATED=1" in r.stdout and _git(repo["app"], "rev-parse", "HEAD") == new
+
+
+def test_a_pinned_commit_is_used_exactly(repo: dict[str, Path]) -> None:
+    first = _git(repo["app"], "rev-parse", "HEAD")
+    _push(repo["upstream"], "# v2\n", "a new version")
+    r = _update(repo, yes=True, ref=first)
+    assert "Up to date" in r.stdout and _git(repo["app"], "rev-parse", "HEAD") == first
+    _git(repo["upstream"], "tag", "v-test")
+    tagged = _git(repo["upstream"], "rev-parse", "HEAD")
+    r = _update(repo, yes=True, ref="v-test")
+    assert "UPDATED=1" in r.stdout and _git(repo["app"], "rev-parse", "HEAD") == tagged
+
+
+def test_the_new_script_runs_only_after_an_installed_update() -> None:
+    text = SETUP.read_text("utf-8")
+    assert "(( DRY_RUN || NO_UPDATE || ! UPDATED )) && return 0" in text
+    # The update is fetched into FETCH_HEAD, never forced over a branch.
+    assert "+refs/heads/" not in text
+
+
+# ---------------------------------------------------------------------------
+# setup.sh: the permanent link's host (SEC-3, SEC-11)
+# ---------------------------------------------------------------------------
+
+
+def _with_curl(tmp_path: Path, answers: dict[str, str]) -> dict[str, str]:
+    """PATH with a curl that answers the echo services from ``answers`` (others fail)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    cases = "".join(f'    *"{url}"*) echo "{ip}"; exit 0 ;;\n' for url, ip in answers.items())
+    _stub(bin_dir, "curl", f'case "$*" in\n{cases}    *) exit 7 ;;\nesac')
+    return {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize(("answers", "expected"), [
+    ({"checkip.amazonaws.com": "129.146.10.20", "api.ipify.org": "129.146.10.20"}, "129.146.10.20"),
+    ({"checkip.amazonaws.com": "198.51.100.77", "api.ipify.org": "129.146.10.20",
+      "ipv4.icanhazip.com": "129.146.10.20"}, "129.146.10.20"),
+    ({"checkip.amazonaws.com": "129.146.10.20"}, None),  # one answer is not enough
+    ({"checkip.amazonaws.com": "129.146.10.20", "api.ipify.org": "129.146.10.21"}, None),
+    ({}, None),
+])
+def test_the_public_address_needs_two_sources(tmp_path: Path, answers: dict[str, str], expected: str | None) -> None:
+    env = _with_curl(tmp_path, {f"https://{k}": v for k, v in answers.items()})
+    r = _bash('unset MOMMY_PUBLIC_IP; find_public_ip; echo "IP=$PUBLIC_IP FROM=$PUBLIC_IP_SOURCE"', env=env)
+    if expected is None:
+        assert r.returncode == 1 and "IP=" not in r.stdout
+        assert "MOMMY_PUBLIC_IP=203.0.113.10" in r.stderr
+        if len(answers) > 1:
+            assert "did not agree" in r.stderr
+        if len(answers) == 1:
+            assert "Only one of the services" in r.stderr and "did not agree" not in r.stderr
+    else:
+        assert r.returncode == 0 and f"IP={expected} FROM=" in r.stdout and " and " in r.stdout
+
+
+def _configure(tmp_path: Path, env_lines: str, host: str) -> subprocess.CompletedProcess[str]:
+    compose_dir = tmp_path / "mommy"
+    compose_dir.mkdir(exist_ok=True)
+    (compose_dir / ".env").write_text(env_lines, "utf-8")
+    code = (f'COMPOSE_DIR="{compose_dir}"; ENV_FILE="$COMPOSE_DIR/.env"; DRY_RUN=0; OPT_MODE=stable; '
+            'open_web_ports() { :; }; close_web_ports() { :; }; configure; echo "ROTATE_CODE=$ROTATE_CODE"')
+    return _bash(code, env={"MOMMY_PUBLIC_HOST": host, "MOMMY_COMPOSE_EXTRA": ""})
+
+
+def test_a_new_permanent_host_changes_the_code(tmp_path: Path) -> None:
+    """SEC-3: the old link holds the code and leads to an address Oracle may give to
+    someone else: the code changes with the host."""
+    r = _configure(tmp_path, "", HOST)
+    assert "ROTATE_CODE=0" in r.stdout  # the first --stable
+    r = _configure(tmp_path, (tmp_path / "mommy" / ".env").read_text("utf-8"), HOST)
+    assert "ROTATE_CODE=0" in r.stdout  # the same host again
+    r = _configure(tmp_path, (tmp_path / "mommy" / ".env").read_text("utf-8"), "129-146-10-21.sslip.io")
+    assert "ROTATE_CODE=1" in r.stdout and "the access code changes too" in r.stderr
+    # Through the tunnel mode in between: the last permanent host is remembered.
+    tunnel = _write_env(tmp_path / "mommy", "tunnel")
+    assert "MOMMY_LAST_PUBLIC_HOST=129-146-10-21.sslip.io" in tunnel and "MOMMY_PUBLIC_HOST=" not in tunnel
+    r = _configure(tmp_path, tunnel, "129-146-10-22.sslip.io")
+    assert "ROTATE_CODE=1" in r.stdout
+    assert "do_setup" in SETUP.read_text("utf-8") and "if (( ROTATE_CODE )); then" in SETUP.read_text("utf-8")
+
+
+def test_the_link_is_held_back_without_https(tmp_path: Path) -> None:
+    """SEC-11: the code is printed in a permanent link only once that address answers
+    HTTPS from this VM with a valid certificate."""
+    def link(https_ok: int, answers: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return _bash(f'DRY_RUN=0; MODE=stable; PUBLIC_HOST={HOST}; HTTPS_OK={https_ok}; '
+                     'dc() { echo "DC $*"; }; print_link; echo "STATUS=$?"', env=_with_curl(tmp_path, answers))
+
+    for https_ok in (0, 1):
+        r = link(https_ok, {})
+        assert "STATUS=4" in r.stdout and "The link is not shown yet" in r.stdout
+        assert "DC " not in r.stdout and "#code=" not in r.stdout
+    works = {f"https://{HOST}/access.html": ""}  # the check from the VM succeeds
+    r = link(0, works)  # but the setup's own check failed a moment ago: still held back
+    assert "STATUS=4" in r.stdout and "DC " not in r.stdout
+    r = link(1, works)
+    assert "STATUS=0" in r.stdout and "Your link to share" in r.stdout and "DC exec -T mommy python -c" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# setup.sh: the swap file (SEC-12) and apt's locks (R5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def swap_env(tmp_path: Path) -> dict[str, str]:
+    """Stand-ins for swapon, mkswap and blkid: a file is a swap area when it starts with
+    SWAP; everything they are asked is written to tmp_path/called."""
+    if os.geteuid() != 0:
+        pytest.skip("runs as root (as_root without sudo)")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "called"
+    _stub(bin_dir, "swapon", f'echo "swapon $*" >> "{log}"; [[ "$1" == --show* ]] && exit 0; '
+                             '[[ "$(head -c 4 "$1")" == SWAP ]]')
+    _stub(bin_dir, "mkswap", f'echo "mkswap $*" >> "{log}"; printf SWAP > "$1"')
+    _stub(bin_dir, "blkid", f'echo "blkid $*" >> "{log}"; f="${{@: -1}}"; [[ "$(head -c 4 "$f")" == SWAP ]] && echo swap')
+    _stub(bin_dir, "fallocate", f'echo "fallocate $*" >> "{log}"')
+    return {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+
+def _swap(tmp_path: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    code = (f'SWAP_FILE="{tmp_path}/swapfile"; STATE_DIR="{tmp_path}/state"; SUDO=""; DRY_RUN=0; SWAP_GB=0; '
+            f'MIN_FREE_GB=0; grep() {{ [[ "$*" == *fstab* ]] && return 0; command grep "$@"; }}; ensure_swap')
+    return _bash(code, env=env)
+
+
+def test_a_swap_file_that_is_not_ours_is_left_alone(tmp_path: Path, swap_env: dict[str, str]) -> None:
+    data = tmp_path / "swapfile"
+    data.write_text("someone's data\n", "utf-8")
+    data.chmod(0o644)
+    r = _swap(tmp_path, swap_env)
+    assert r.returncode == 0 and "this setup did not make it: left as it is" in r.stderr
+    assert data.read_text("utf-8") == "someone's data\n" and stat.S_IMODE(data.stat().st_mode) == 0o644
+    called = (tmp_path / "called").read_text("utf-8")
+    assert "mkswap" not in called and "swapon " + str(data) not in called
+    # A symbolic link is never followed.
+    data.unlink()
+    target = tmp_path / "elsewhere"
+    target.write_text("x", "utf-8")
+    data.symlink_to(target)
+    r = _swap(tmp_path, swap_env)
+    assert "is not a plain file" in r.stderr and target.read_text("utf-8") == "x"
+
+
+def test_an_existing_swap_area_or_our_own_file_is_used(tmp_path: Path, swap_env: dict[str, str]) -> None:
+    swap = tmp_path / "swapfile"
+    swap.write_text("SWAP-ready", "utf-8")
+    swap.chmod(0o666)
+    r = _swap(tmp_path, swap_env)
+    assert r.returncode == 0 and "Turning on the existing" in r.stdout
+    assert stat.S_IMODE(swap.stat().st_mode) == 0o600 and swap.stat().st_uid == 0
+    assert "mkswap" not in (tmp_path / "called").read_text("utf-8")
+    # One this setup made and could not finish (its marker is there): finished.
+    swap.write_text("half made", "utf-8")
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "swapfile-made").touch()
+    r = _swap(tmp_path, swap_env)
+    assert r.returncode == 0 and "Finishing the swap file" in r.stdout and swap.read_text("utf-8") == "SWAP"
+    # A new one: made, with the marker first.
+    swap.unlink()
+    (tmp_path / "state" / "swapfile-made").unlink()
+    r = _swap(tmp_path, swap_env)
+    assert r.returncode == 0 and "Making a 0 GB swap file" in r.stdout
+    assert (tmp_path / "state" / "swapfile-made").exists() and swap.read_text("utf-8") == "SWAP"
+
+
+def test_apt_waits_for_the_package_lists_lock(tmp_path: Path) -> None:
+    """R5: apt-get update fails at once while another apt holds the lists' lock
+    (DPkg::Lock::Timeout covers dpkg's locks only): setup.sh waits and tries again."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    count = tmp_path / "count"
+    _stub(bin_dir, "apt-get", f'n=$(cat "{count}" 2>/dev/null || echo 0); echo $((n + 1)) > "{count}"; '
+                              'if (( n < 2 )); then echo "E: Could not get lock /var/lib/apt/lists/lock. It is held by '
+                              'process 7 (python3)" >&2; exit 100; fi; echo "Reading package lists..."')
+    env = {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    r = _bash('SUDO=""; DRY_RUN=0; APT_LOCK_SLEEP=0; apt_get update; echo "STATUS=$?"', env=env)
+    assert "STATUS=0" in r.stdout and count.read_text("utf-8").strip() == "3", r.stdout + r.stderr
+    assert r.stdout.count("Ubuntu is updating its package lists") == 1
+    # Another failure is not waited for.
+    count.write_text("5", "utf-8")
+    _stub(bin_dir, "apt-get", 'echo "E: Unable to locate package nothing" >&2; exit 100')
+    r = _bash('SUDO=""; DRY_RUN=0; APT_LOCK_SLEEP=0; apt_get install nothing; echo "STATUS=$?"', env=env)
+    assert r.returncode == 1 and "Unable to locate package" in r.stderr and "updating its package lists" not in r.stdout
+
+
 # ---------------------------------------------------------------------------
 # setup.sh: a dry run changes nothing
 # ---------------------------------------------------------------------------
@@ -360,10 +673,10 @@ def test_tunnel_mode_on_oracle_differs_only_by_threads() -> None:
 
 
 def test_stable_mode_services(stable: dict[str, Any]) -> None:
-    assert set(stable["services"]) == {"mommy", "caddy"}  # no quick tunnel
+    assert set(stable["services"]) == {"mommy", "caddy", "caddy-volumes"}  # no quick tunnel
     with_tunnel = _compose(COMPOSE, COMPOSE_ORACLE, COMPOSE_STABLE, env={"MOMMY_PUBLIC_HOST": HOST},
                            profiles=("quick-tunnel",))
-    assert set(with_tunnel["services"]) == {"mommy", "caddy", "tunnel"}
+    assert set(with_tunnel["services"]) == {"mommy", "caddy", "caddy-volumes", "tunnel"}
 
 
 def test_stable_mode_trusts_caddy_alone(stable: dict[str, Any]) -> None:
@@ -398,6 +711,17 @@ def test_caddy_service(stable: dict[str, Any]) -> None:
     assert caddy["restart"] == "unless-stopped" and caddy["read_only"] is True
     assert caddy["cap_drop"] == ["ALL"] and "no-new-privileges:true" in caddy["security_opt"]
     assert caddy["logging"]["options"]["max-size"] == "10m"
+    # Not root (SEC-9); its volumes are given to that user first, by a one-shot service.
+    assert caddy["user"] == "65532:65532"
+    assert caddy["depends_on"]["caddy-volumes"]["condition"] == "service_completed_successfully"
+    init = stable["services"]["caddy-volumes"]
+    assert init["image"] == caddy["image"] and init["user"] == "0:0" and init["network_mode"] == "none"
+    assert init["cap_drop"] == ["ALL"] and init["cap_add"] == ["CHOWN"] and init["read_only"] is True
+    assert init["restart"] == "no" and "no-new-privileges:true" in init["security_opt"]
+    assert {m["target"]: m["source"] for m in init["volumes"]} == {"/data": "caddy-data", "/config": "caddy-config"}
+    script = init["command"][-1].replace("$$", "$")
+    assert init["command"][:2] == ["sh", "-c"] and "chown -R -h 65532:65532" in script
+    assert '[ "$(stat -c %u:%g "$d")" = 65532:65532 ] ||' in script  # nothing to do the second time
 
 
 def test_env_file_selects_the_files(tmp_path: Path) -> None:
@@ -405,7 +729,7 @@ def test_env_file_selects_the_files(tmp_path: Path) -> None:
     shutil.copy(COMPOSE, tmp_path / "compose.yaml")
     shutil.copytree(ORACLE, tmp_path / "deploy" / "oracle")
     _write_env(tmp_path, "stable", HOST)
-    assert set(_compose(cwd=tmp_path)["services"]) == {"mommy", "caddy"}
+    assert set(_compose(cwd=tmp_path)["services"]) == {"mommy", "caddy", "caddy-volumes"}
     _write_env(tmp_path, "tunnel")
     assert set(_compose(cwd=tmp_path)["services"]) == {"mommy", "tunnel"}
 
@@ -420,6 +744,7 @@ def test_caddyfile() -> None:
     body = "\n".join(line.split("#", 1)[0].rstrip() for line in text.splitlines())
     assert "\n{$MOMMY_PUBLIC_HOST} {\n" in body and "reverse_proxy mommy:7860 {" in body
     assert "protocols h1 h2" in body  # no HTTP/3: UDP 443 is not opened
+    assert re.search(r"^\tadmin off$", body, re.M)  # no admin API (SEC-9)
     # Caddy closes an idle connection to the app before uvicorn's --timeout-keep-alive does.
     keepalive = int(re.search(r"keepalive (\d+)s", body).group(1))
     uvicorn = int(re.search(r"--timeout-keep-alive (\d+)", START.read_text("utf-8")).group(1))

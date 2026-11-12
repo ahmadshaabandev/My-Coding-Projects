@@ -8,6 +8,11 @@
 # mommy/.env (COMPOSE_FILE), with MOMMY_PUBLIC_HOST, the host name of the link. To go
 # back to the tunnel: bash deploy/oracle/setup.sh --tunnel.
 
+# Caddy 2.11.9, pinned by the digest of its multi-platform index (linux/amd64 and
+# linux/arm64, among others), for both services below. To take a newer one:
+# python scripts/refresh_pins.py (it checks both platforms and rewrites the digest).
+x-caddy-image: &caddy-image caddy:2.11.9@sha256:e40b94d0a43b5ff69cb20568d73f10c70703df7b0ffc2298eb3d723cdc9d0bd1
+
 services:
   mommy:
     environment:
@@ -26,11 +31,34 @@ services:
   tunnel:
     profiles: ["quick-tunnel"]
 
+  # Gives Caddy's two volumes to Caddy's user (below) before it starts, then exits: a new
+  # volume, or one an older setup made, belongs to root. Nothing is changed when they are
+  # already Caddy's. It has no network and no privilege but changing a file's owner.
+  caddy-volumes:
+    image: *caddy-image
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - 'for d in /data /config; do [ "$$(stat -c %u:%g "$$d")" = 65532:65532 ] || chown -R -h 65532:65532 "$$d"; done'
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
   caddy:
-    # Caddy 2.11.9, pinned by the digest of its multi-platform index (linux/amd64 and
-    # linux/arm64, among others). To take a newer one: docker buildx imagetools inspect
-    # caddy:<version>, then replace the tag and the digest.
-    image: caddy:2.11.9@sha256:e40b94d0a43b5ff69cb20568d73f10c70703df7b0ffc2298eb3d723cdc9d0bd1
+    image: *caddy-image
+    # Not root: Caddy is the one program here that reads what the internet sends. Ports 80
+    # and 443 open all the same (Docker lets a container's programs use any port).
+    user: "65532:65532"
     environment:
       # The site name in the Caddyfile.
       MOMMY_PUBLIC_HOST: "${MOMMY_PUBLIC_HOST:?MOMMY_PUBLIC_HOST is not set: run bash deploy/oracle/setup.sh --stable}"
@@ -52,6 +80,8 @@ services:
     depends_on:
       mommy:
         condition: service_healthy
+      caddy-volumes:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp

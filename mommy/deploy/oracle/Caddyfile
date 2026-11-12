@@ -7,6 +7,9 @@
 # to HTTPS. Every request goes to the app, which sets its own security headers and runs
 # the access gate.
 {
+	# No admin API: this setup never changes Caddy's configuration while it runs (a
+	# restart reads this file again), so nothing needs to listen on its port 2019.
+	admin off
 	servers {
 		# HTTP/1.1 and HTTP/2. No HTTP/3: it would also need UDP port 443 open.
 		protocols h1 h2

@@ -26,8 +26,12 @@ if [ -n "${SPACE_HOST:-}" ]; then
 fi
 
 python -c '
+import logging
 import sys
 from mommy.config import load_settings
+# Shows "made a new access code in <path>" (the path, never the code) when this check is
+# the one that makes the code file, as on a first compose start.
+logging.basicConfig(level=logging.INFO, format="space_start.sh: %(message)s")
 try:
     settings = load_settings()
 except ValueError as exc:
@@ -52,41 +56,18 @@ TRUSTED_PROXIES='10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,127.0.0.0
 
 # MOMMY_FORWARDED_ALLOW_IPS=container-networks (compose.yaml): trust only the networks
 # this container is attached to, read from its routing table at start (the directly
-# connected IPv4 and IPv6 networks, link-local and loopback left out). With Docker
-# Compose that is the project's own network, whose subnet Docker chooses: its only other
-# members are the tunnel, which forwards the visitors, and Docker's forwarding of the
-# port published on the computer's 127.0.0.1. Without such a network, the list above.
+# connected IPv4 and IPv6 networks, link-local and loopback left out), WITHOUT their
+# gateways (backend/mommy/proxies.py). With Docker Compose that is the project's own network,
+# whose subnet Docker chooses: its only other member is the tunnel, which forwards the
+# visitors. The gateway is the computer's side of the network: Docker's forwarding of
+# the port published on the computer's 127.0.0.1 arrives from it, so a program on the
+# computer could otherwise write its own X-Forwarded-For. Without such a network, the
+# list above.
 if [ "${MOMMY_FORWARDED_ALLOW_IPS:-}" = "container-networks" ]; then
-  MOMMY_FORWARDED_ALLOW_IPS=$(python -c '
-import ipaddress, sys
-nets = []
-try:
-    with open("/proc/net/route", encoding="ascii") as f:
-        for row in f.read().splitlines()[1:]:
-            col = row.split()
-            if len(col) < 8 or col[0] == "lo" or int(col[2], 16) != 0 or int(col[1], 16) == 0:
-                continue  # loopback, a route through a router, or the default route
-            prefix = bin(int(col[7], 16)).count("1")
-            nets.append(ipaddress.IPv4Network((int(col[1], 16).to_bytes(4, sys.byteorder), prefix)))
-except (OSError, ValueError):
-    pass
-try:
-    with open("/proc/net/ipv6_route", encoding="ascii") as f:
-        for row in f.read().splitlines():
-            col = row.split()
-            if len(col) < 10 or col[9] == "lo" or int(col[4], 16) != 0 or int(col[1], 16) == 0:
-                continue
-            net = ipaddress.IPv6Network((bytes.fromhex(col[0]), int(col[1], 16)), strict=False)
-            if not (net.is_link_local or net.is_multicast or net.is_loopback):
-                nets.append(net)
-except (OSError, ValueError):
-    pass
-nets = list(dict.fromkeys(str(n) for n in nets))
-if not nets:
-    sys.exit("space_start.sh: no network found for MOMMY_FORWARDED_ALLOW_IPS=container-networks")
-print(",".join(nets))
-') || MOMMY_FORWARDED_ALLOW_IPS=$TRUSTED_PROXIES
-  echo "space_start.sh: X-Forwarded-For is taken from $MOMMY_FORWARDED_ALLOW_IPS" >&2
+  MOMMY_FORWARDED_ALLOW_IPS=$(python -m mommy.proxies container-networks) || {
+    MOMMY_FORWARDED_ALLOW_IPS=$TRUSTED_PROXIES
+    echo "space_start.sh: X-Forwarded-For is taken from $MOMMY_FORWARDED_ALLOW_IPS" >&2
+  }
 fi
 
 # --timeout-keep-alive 75: longer than a reverse proxy keeps an idle connection, so the

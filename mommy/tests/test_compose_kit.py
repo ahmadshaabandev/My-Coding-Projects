@@ -24,9 +24,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from uvicorn.middleware.proxy_headers import _TrustedHosts
 
 from mommy.access import CODE_ALPHABET, CODE_LENGTH, GATE_ASSETS, HostMatcher
 from mommy.config import parse_allowed_hosts
+from mommy.proxies import container_networks, read_routes, trusted_networks
+from mommy.proxies import main as proxies_main
 from mommy.share_link import DEFAULT_METRICS_URL, QUICKTUNNEL_PATH, REMINDER, RESTART_COMMAND, SHARE_COMMAND
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -270,7 +273,8 @@ def test_start_refuses_a_code_file_it_cannot_make(start_env: dict[str, str], tmp
 
 def test_start_trusts_only_its_own_networks(start_env: dict[str, str]) -> None:
     """container-networks: the directly connected networks of the container (the compose
-    network), never '*' or a default route; without any, the private-network list."""
+    network) without their gateways, never '*' or a default route; without any, the
+    private-network list."""
     r = _run(START, start_env)
     assert r.returncode == 0, r.stderr
     trusted = _trusted(r.stdout)
@@ -278,7 +282,77 @@ def test_start_trusts_only_its_own_networks(start_env: dict[str, str]) -> None:
     for entry in trusted:
         net = ipaddress.ip_network(entry, strict=False)
         assert net.prefixlen > 0, entry
-    assert f"X-Forwarded-For is taken from {','.join(trusted)}" in r.stderr
+    nets, gateways = read_routes(_read_text("/proc/net/route"), _read_text("/proc/net/ipv6_route"))
+    if nets:
+        assert trusted == trusted_networks(nets, gateways)[0]
+        assert "X-Forwarded-For is taken from the container's networks " in r.stderr
+        for gateway in gateways:
+            assert not any(gateway in ipaddress.ip_network(t) for t in trusted), gateway
+    else:
+        assert f"X-Forwarded-For is taken from {','.join(trusted)}" in r.stderr
+
+
+def _read_text(path: str) -> str | None:
+    try:
+        return Path(path).read_text("ascii")
+    except OSError:
+        return None
+
+
+def _le(address: str) -> str:
+    """An IPv4 address as /proc/net/route writes it (hex, in this machine's byte order)."""
+    return int.from_bytes(ipaddress.IPv4Address(address).packed, sys.byteorder).to_bytes(4, "big").hex().upper()
+
+
+#: /proc/net/route and /proc/net/ipv6_route of a compose container (eth0 172.20.0.3/16,
+#: default route through the gateway 172.20.0.1; IPv6 fd00:dead::3/64 through fd00:dead::1).
+FAKE_ROUTE = (
+    "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+    f"eth0\t00000000\t{_le('172.20.0.1')}\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
+    f"eth0\t{_le('172.20.0.0')}\t00000000\t0001\t0\t0\t0\t{_le('255.255.0.0')}\t0\t0\t0\n"
+    f"lo\t{_le('127.0.0.0')}\t00000000\t0001\t0\t0\t0\t{_le('255.0.0.0')}\t0\t0\t0\n"
+)
+FAKE_IPV6_ROUTE = (
+    "fd00dead000000000000000000000000 40 00000000000000000000000000000000 00 "
+    "00000000000000000000000000000000 00000100 00000001 00000000 00000001     eth0\n"
+    "00000000000000000000000000000000 00 00000000000000000000000000000000 00 "
+    "fd00dead000000000000000000000001 00000400 00000001 00000000 00000003     eth0\n"
+    "fe800000000000000000000000000000 40 00000000000000000000000000000000 00 "
+    "00000000000000000000000000000000 00000100 00000001 00000000 00000001     eth0\n"
+    "00000000000000000000000000000001 80 00000000000000000000000000000000 00 "
+    "00000000000000000000000000000000 00000000 00000002 00000000 80200001       lo\n"
+)
+
+
+def test_the_gateway_is_never_trusted() -> None:
+    """SEC-2: Docker's forwarding of the published port (127.0.0.1:8080) reaches the app
+    from the network's gateway, as does any program on the computer: its X-Forwarded-For
+    is not believed. The tunnel (another address of the network) still is."""
+    nets, gateways = read_routes(FAKE_ROUTE, FAKE_IPV6_ROUTE)
+    assert [str(n) for n in nets] == ["172.20.0.0/16", "fd00:dead::/64"]
+    assert [str(g) for g in gateways] == ["172.20.0.1", "fd00:dead::1"]
+    blocks, left_out = container_networks(FAKE_ROUTE, FAKE_IPV6_ROUTE)
+    assert left_out == ["172.20.0.1", "fd00:dead::1"]
+    trusted = _TrustedHosts(",".join(blocks))  # uvicorn's own check
+    for address in ("172.20.0.1", "fd00:dead::1", "127.0.0.1", "10.0.0.1", "203.0.113.7", "fe80::1"):
+        assert address not in trusted, address
+    for address in ("172.20.0.3", "172.20.0.2", "172.20.255.254", "fd00:dead::3"):
+        assert address in trusted, address
+    # Without a default route, the first address of each network is still left out
+    # (where Docker puts a network's gateway).
+    only_nets = "".join(FAKE_ROUTE.splitlines(keepends=True)[i] for i in (0, 2))
+    blocks, left_out = container_networks(only_nets, None)
+    assert left_out == ["172.20.0.1"] and "172.20.0.1" not in _TrustedHosts(",".join(blocks))
+    assert container_networks(None, None) == ([], [])
+    assert container_networks("garbage\nnot a route table at all\n", "x y z") == ([], [])
+
+
+def test_start_uses_the_routing_tables(start_env: dict[str, str], tmp_path: Path) -> None:
+    """space_start.sh runs python -m mommy.proxies; it falls back to the private networks
+    when that finds none (exit 1)."""
+    text = START.read_text("utf-8")
+    assert "python -m mommy.proxies container-networks" in text
+    assert proxies_main(["bogus"]) == 2
 
 
 def test_a_crlf_start_script_runs_once_stripped(start_env: dict[str, str], tmp_path: Path) -> None:
@@ -306,6 +380,8 @@ def test_self_host_guide_has_the_exact_commands() -> None:
         "docker compose up -d\n",
         SHARE_COMMAND,
         f"{SHARE_COMMAND} --new-code",
+        # From any folder: the container's name is the fixed project name, the service, 1.
+        "docker exec mommy-mommy-1 python -m mommy.share_link",
         RESTART_COMMAND,
         "docker compose down\n",
         "docker compose logs mommy",
@@ -333,6 +409,7 @@ _FAMILIES = [name[::-1] for name in ("supo", "tennos", "ukiah", "elbaf", "sohtym
 
 
 @pytest.mark.parametrize("path", [COMPOSE, COMPOSE_TEST, SELF_HOST, DOCKERFILE, START, ROOT / ".gitattributes",
+                                  ROOT / "scripts" / "refresh_pins.py", ROOT / "backend" / "mommy" / "proxies.py",
                                   Path(__file__)], ids=lambda p: p.name)
 def test_no_model_identifiers(path: Path) -> None:
     # The branch name (claude/... and, in the ZIP's folder name, claude-...) is no model.
@@ -341,3 +418,62 @@ def test_no_model_identifiers(path: Path) -> None:
     assert not re.search(r"claude-[a-z]", text)
     for family in _FAMILIES:
         assert family not in text
+
+
+# ---------------------------------------------------------------------------
+# scripts/refresh_pins.py: the image pins can move (SEC-10)
+# ---------------------------------------------------------------------------
+
+
+def _refresh_pins() -> Any:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("refresh_pins", ROOT / "scripts" / "refresh_pins.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules["refresh_pins"] = module  # dataclasses look their module up there
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_image_is_pinned_once_by_digest() -> None:
+    pins = _refresh_pins()
+    seen = {}
+    for pin in pins.PINS:
+        match = pins.find_pin((ROOT / pin.file).read_text("utf-8"), pin)
+        seen[pin.key] = match.group("tag")
+    assert seen == {"cloudflared": "2026.10.7", "caddy": "2.11.9", "python": "3.13-slim"}
+    # Both Caddy services use the one pin (a YAML anchor), so they never drift apart.
+    stable = (ROOT / "deploy" / "oracle" / "compose.stable.yaml").read_text("utf-8")
+    assert stable.count("image: *caddy-image") == 2 and stable.count("@sha256:") == 1
+
+
+def test_refresh_pins_moves_a_pin_and_checks_both_platforms(tmp_path: Path) -> None:
+    pins = _refresh_pins()
+    for pin in pins.PINS:
+        target = tmp_path / pin.file
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / pin.file, target)
+    new = "a" * 64
+    both = {"linux/amd64", "linux/arm64", "linux/arm/v7"}
+    answers = {
+        "cloudflare/cloudflared:2026.12.1": (new, both),
+        "caddy:2.11.9": (pins.find_pin((ROOT / "deploy/oracle/compose.stable.yaml").read_text("utf-8"),
+                                       pins.PINS[1]).group("digest"), both),
+        "python:3.13-slim": ("b" * 64, {"linux/amd64"}),  # no arm64: refused
+    }
+    lines: list[str] = []
+    status = pins.refresh(tmp_path, {"cloudflared": "2026.12.1"}, write=True, inspector=answers.__getitem__,
+                          out=lines.append)
+    assert status == 1
+    compose = (tmp_path / "compose.yaml").read_text("utf-8")
+    assert f"cloudflare/cloudflared:2026.12.1@sha256:{new}" in compose and "2026.10.7" not in compose
+    assert (tmp_path / "Dockerfile").read_text("utf-8") == DOCKERFILE.read_text("utf-8")  # not moved
+    assert any("lacks linux/arm64" in line for line in lines) and any("caddy" in l and "current" in l for l in lines)
+    # Without --write nothing changes.
+    before = (tmp_path / "compose.yaml").read_text("utf-8")
+    pins.refresh(tmp_path, {"cloudflared": "2026.12.2"}, write=False,
+                 inspector=lambda ref: ("c" * 64, both), out=lines.append)
+    assert (tmp_path / "compose.yaml").read_text("utf-8") == before
+    assert pins.platforms_of({"manifests": [{"platform": {"os": "linux", "architecture": "amd64"}},
+                                            {"platform": {"os": "unknown", "architecture": "unknown"}}]}) == {"linux/amd64"}

@@ -59,6 +59,8 @@ from mommy.tts import FakeTTS
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 BASE_URL = "http://127.0.0.1:8080"
+#: The Host of BASE_URL: the host the cookies of client_for are given for.
+LOCAL = "127.0.0.1:8080"
 #: A code as the deploy script makes them (12 characters of CODE_ALPHABET).
 CODE = "k7m2p9q4r8s3"
 OTHER_CODE = "x4h8n2w6t9b3"
@@ -279,7 +281,7 @@ class TestSettings:
         settings = load_settings()
         assert settings.access_code == CODE
         app = create_app(settings, FakeTranscriber("hello"), FakeTTS(), OfflineBrain(), None)
-        assert app.state.access_gate is not None and app.state.access_gate.cookie == cookie_value(CODE)
+        assert app.state.access_gate is not None and app.state.access_gate.cookie_for(LOCAL) == cookie_value(CODE, LOCAL)
         monkeypatch.setenv("MOMMY_REQUIRE_ACCESS_CODE", "   ")  # blank: not required
         monkeypatch.delenv("MOMMY_ACCESS_CODE")
         assert load_settings().access_code is None
@@ -450,7 +452,7 @@ class TestCodeAndCookie:
         assert r.headers["cache-control"] == "no-store"
         name, value, attrs = cookie_attributes(r.headers["set-cookie"])
         assert name == ACCESS_COOKIE
-        assert value == cookie_value(CODE) and CODE not in value
+        assert value == cookie_value(CODE, LOCAL) and CODE not in value
         assert attrs.keys() == {"httponly", "max-age", "path", "samesite"}  # no Secure over http
         assert attrs["max-age"] == str(ACCESS_COOKIE_MAX_AGE) == str(180 * 24 * 3600)
         assert attrs["path"] == "/" and attrs["samesite"].lower() == "lax"
@@ -474,12 +476,36 @@ class TestCodeAndCookie:
         assert r.status_code == 404
 
     def test_cookie_value(self) -> None:
-        value = cookie_value(CODE)
+        value = cookie_value(CODE, LOCAL)
         assert re.fullmatch(r"[A-Za-z0-9_-]{43}", value)
         assert base64.urlsafe_b64decode(value + "=") and len(base64.urlsafe_b64decode(value + "=")) == 32
-        assert cookie_value(CODE) == value  # the same code, the same cookie (a restart keeps people in)
-        assert cookie_value(OTHER_CODE) != value
-        assert cookie_value(" k٧m٢p٩q٤r٨s٣ ") == value
+        assert cookie_value(CODE, LOCAL) == value  # the same code, the same cookie (a restart keeps people in)
+        assert cookie_value(OTHER_CODE, LOCAL) != value
+        assert cookie_value(" k٧m٢p٩q٤r٨s٣ ", LOCAL) == value
+        # Bound to the host name (case, port and a trailing dot aside): a cookie given for
+        # one host opens no other (SEC-4).
+        for same in ("127.0.0.1", "127.0.0.1:9000", " 127.0.0.1. "):
+            assert cookie_value(CODE, same) == value, same
+        for other in ("localhost", "localhost:8080", "abc.trycloudflare.com", "someone-mommy.hf.space", ""):
+            assert cookie_value(CODE, other) != value, other
+        assert cookie_value(CODE, "Abc.TryCloudflare.com.:443") == cookie_value(CODE, "abc.trycloudflare.com")
+        assert cookie_value(CODE, "[::1]:8080") == cookie_value(CODE, "::1")
+
+    def test_a_cookie_opens_only_the_host_it_was_given_for(self) -> None:
+        """SEC-4: browsers send a cookie of http://localhost to every port of localhost
+        (a local dev server sees it): it must not open the app under its public name."""
+        app = make_app(allowed_hosts=("localhost", "127.0.0.1", "someone-mommy.hf.space"))
+        local = TestClient(app, base_url="http://localhost:8080")
+        assert login(local, origin="http://localhost:8080").status_code == 204
+        leaked = local.cookies.get(ACCESS_COOKIE)
+        assert leaked == cookie_value(CODE, "localhost")
+        assert local.get("/api/health").status_code == 200
+        public = TestClient(app, base_url="http://someone-mommy.hf.space")
+        assert_access_required(public.get("/api/health", headers={"cookie": f"{ACCESS_COOKIE}={leaked}"}))
+        loopback_ip = TestClient(app, base_url="http://127.0.0.1:8080")
+        assert_access_required(loopback_ip.get("/api/health", headers={"cookie": f"{ACCESS_COOKIE}={leaked}"}))
+        good = cookie_value(CODE, "someone-mommy.hf.space")
+        assert public.get("/api/health", headers={"cookie": f"{ACCESS_COOKIE}={good}"}).status_code == 200
 
     @pytest.mark.parametrize(
         "typed",
@@ -495,7 +521,7 @@ class TestCodeAndCookie:
         client = client_for(make_app())
         r = login(client, typed)
         assert r.status_code == 204
-        assert cookie_attributes(r.headers["set-cookie"])[1] == cookie_value(CODE)
+        assert cookie_attributes(r.headers["set-cookie"])[1] == cookie_value(CODE, LOCAL)
         assert client.get("/api/health").status_code == 200
 
     def test_configured_code_with_arabic_digits(self) -> None:
@@ -556,7 +582,7 @@ class TestCodeAndCookie:
         old = client_for(make_app(CODE))
         assert login(old).status_code == 204
         cookie = old.cookies.get(ACCESS_COOKIE)
-        assert cookie == cookie_value(CODE)
+        assert cookie == cookie_value(CODE, LOCAL)
         # The same code after a restart: still in.
         again = client_for(make_app(CODE), cookies={ACCESS_COOKIE: cookie})
         assert again.get("/api/health").status_code == 200
@@ -571,11 +597,11 @@ class TestCodeAndCookie:
 
     def test_forged_or_truncated_cookie_is_refused(self) -> None:
         app = make_app()
-        good = cookie_value(CODE)
+        good = cookie_value(CODE, LOCAL)
         flipped = good[:10] + ("A" if good[10] != "A" else "B") + good[11:]
         forged = [
             good[:-1], good[:20], good[:1], good + "A", good + "=", good.swapcase(), flipped, " " + good + "x",
-            "", CODE, cookie_value(OTHER_CODE), base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode(),
+            "", CODE, cookie_value(OTHER_CODE, LOCAL), base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode(),
             '"' + good[:-1] + '"', good.encode().hex(),
         ]
         for value in forged:
@@ -621,7 +647,7 @@ class TestBehindProxy:
         r = client.post("/api/access", json={"code": CODE}, headers=headers)
         assert r.status_code == 204
         _, value, attrs = cookie_attributes(r.headers["set-cookie"])
-        assert value == cookie_value(CODE)
+        assert value == cookie_value(CODE, self.HOST)
         assert "secure" in attrs and "httponly" in attrs and attrs["samesite"].lower() == "lax"
         assert r.headers["strict-transport-security"] == HSTS_VALUE
 
@@ -778,7 +804,7 @@ class TestCookieHeaders:
     def test_split_cookie_headers(self) -> None:
         """SEC-8: an HTTP/2 client may send its cookies in several Cookie fields."""
         client = client_for(make_app())
-        good = cookie_value(CODE)
+        good = cookie_value(CODE, LOCAL)
         r = client.get("/api/health", headers=[("cookie", "a=1"), ("cookie", f"{ACCESS_COOKIE}={good}")])
         assert r.status_code == 200
         r = client.get("/api/health", headers=[("cookie", f"{ACCESS_COOKIE}={good}"), ("cookie", "b=2")])
@@ -786,7 +812,7 @@ class TestCookieHeaders:
 
     def test_a_cookie_of_the_same_name_does_not_hide_the_right_one(self) -> None:
         client = client_for(make_app())
-        good = cookie_value(CODE)
+        good = cookie_value(CODE, LOCAL)
         for header in (f"{ACCESS_COOKIE}={good}; {ACCESS_COOKIE}=AAAA", f"{ACCESS_COOKIE}=AAAA; {ACCESS_COOKIE}={good}"):
             assert client.get("/api/health", headers={"cookie": header}).status_code == 200, header
         r = client.get("/api/health", headers=[("cookie", f"{ACCESS_COOKIE}=AAAA"), ("cookie", f"{ACCESS_COOKIE}={good}")])
@@ -928,7 +954,7 @@ class TestFailureLimiter:
 
 
 def test_no_log_record_contains_the_code(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    secrets = [CODE, "k٧m٢p٩q٤r٨s٣", OTHER_CODE, cookie_value(CODE), cookie_value(OTHER_CODE)]
+    secrets = [CODE, "k٧m٢p٩q٤r٨s٣", OTHER_CODE, cookie_value(CODE, LOCAL), cookie_value(OTHER_CODE, LOCAL)]
     logger = logging.getLogger("mommy")
     logger.addHandler(caplog.handler)  # also when another test turned propagation off
     try:
@@ -940,7 +966,7 @@ def test_no_log_record_contains_the_code(caplog: pytest.LogCaptureFixture, monke
             client = client_for(app)
             client.get("/", headers=NAV)
             client.get("/api/health")
-            client.get("/api/health", headers={"cookie": f"{ACCESS_COOKIE}={cookie_value(OTHER_CODE)}"})
+            client.get("/api/health", headers={"cookie": f"{ACCESS_COOKIE}={cookie_value(OTHER_CODE, LOCAL)}"})
             for _ in range(MAX_FAILURES + 1):
                 login(client, OTHER_CODE)
             login(client, "k٧m٢p٩q٤r٨s٣")

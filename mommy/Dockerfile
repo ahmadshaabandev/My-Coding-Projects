@@ -29,8 +29,8 @@
 # has everything the wheels link to (the C++ runtime, zlib); nothing else is installed
 # in the runtime image. Pinned by digest (the multi-platform index of python:3.13-slim
 # that was built and tested), so every build starts from the same bytes; to take a newer
-# base, replace the digest with the one `docker buildx imagetools inspect
-# python:3.13-slim` prints, then build and test again.
+# base, run python3 scripts/refresh_pins.py --write (it checks the index still lists
+# linux/amd64 and linux/arm64), then build and test again.
 ARG PYTHON_IMAGE=python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 # --- Stage 1: the speech models ------------------------------------------------------

@@ -11,16 +11,26 @@
 #   bash setup.sh --link      only print the current link
 #   bash setup.sh --new-code  make a new access code, restart the app, print the new link
 #   bash setup.sh --dry-run   (with any of the above) show what it would do, change nothing
+#   bash setup.sh --yes       install an update of Mommy's files without asking (shown first)
 #
 # What it does: checks that this is Ubuntu 22.04 or 24.04 (aarch64 or x86_64); installs
 # Docker Engine and the Compose plugin from Docker's own apt repository; adds a 4 GB
 # swap file if there is no swap; clones or updates the branch below into ~/mommy-app;
 # writes mommy/.env (the mode and the compose files; no secrets); for --stable, opens
-# ports 80 and 443 in the VM's firewall; runs "docker compose up -d --build" in
-# ~/mommy-app/mommy; waits until the app is healthy; prints the link with the code.
-# Docker starts at boot and the containers restart by themselves, so everything comes
-# back after a reboot. A second run updates the code and restarts cleanly; the access
-# code (in the Docker volume mommy-data) is kept. The chosen mode is remembered.
+# ports 80 and 443 in the VM's firewall (and --tunnel closes them again); runs "docker
+# compose up -d --build" in ~/mommy-app/mommy; waits until the app is healthy; prints
+# the link with the code. Docker starts at boot and the containers restart by
+# themselves, so everything comes back after a reboot. A second run updates the code
+# and restarts cleanly; the access code (in the Docker volume mommy-data) is kept. The
+# chosen mode is remembered.
+#
+# Updates: what runs on this VM with full rights (this script, the compose files, the
+# Dockerfile) comes from the branch below. A run never installs a new version silently:
+# it shows the update (from which commit to which, its date and title, and whether it
+# changes those files) and asks first; without a terminal to ask in, it only installs it
+# with --yes. An update that rewrites the history you have (a force-push) is never
+# installed without typing "yes" at that question. MOMMY_REF installs one given commit
+# or tag instead of the branch's latest commit.
 #
 # The access code is never printed except inside the link, the last thing printed, and
 # is never written to a log or a file by this script.
@@ -29,6 +39,8 @@
 #   MOMMY_APP_DIR        where the code goes (default ~/mommy-app)
 #   MOMMY_REPO_URL       the git repository (default below)
 #   MOMMY_BRANCH         its branch (default below)
+#   MOMMY_REF            a tag or a full commit id to use instead of the branch's latest
+#                        commit (for that run: without it, the latest is offered again)
 #   MOMMY_PUBLIC_HOST    --stable: this host name instead of <IP>.sslip.io (a domain of
 #                        your own whose DNS A record points to the VM)
 #   MOMMY_PUBLIC_IP      --stable: this public IPv4 address instead of looking it up
@@ -46,10 +58,15 @@ readonly DOCKER_KEY_FPR="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 readonly DOCKER_PACKAGES="docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
 # Ubuntu's own packages that conflict with Docker's (Docker's install page lists them).
 readonly DOCKER_CONFLICTS="docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc"
-# The oldest Docker that runs compose.yaml as written (healthcheck start_interval).
-readonly MIN_ENGINE="25.0"
+# The oldest Docker kept as it is: compose.yaml needs Engine 25 (healthcheck
+# start_interval), and Engine 28 is the first to keep a container's ports from other
+# machines of the network that route to Docker's own addresses.
+readonly MIN_ENGINE="28.0"
 readonly MIN_COMPOSE="2.20"
-readonly SWAP_FILE="/swapfile"
+SWAP_FILE="/swapfile"
+# What this script made, so that it only ever undoes or reuses its own changes: the swap
+# file, the firewall rules of --stable (plain marker files, no secrets).
+STATE_DIR="/var/lib/mommy-setup"
 SWAP_GB="${MOMMY_SWAP_GB:-4}"
 readonly MIN_MEM_KB=4718592      # 4.5 GiB: below it, Mommy cannot run (about 5 GB at most)
 readonly LOW_MEM_KB=7340032      # 7 GiB: below it, warn
@@ -61,6 +78,10 @@ DRY_RUN=0
 ACTION="setup"     # setup | link | new-code
 OPT_MODE=""        # "" (remembered, else tunnel) | tunnel | stable
 NO_UPDATE=0        # internal: set when the updated copy of this script is re-run
+ASSUME_YES=0       # --yes: install an update without asking
+ROTATE_CODE=0      # set when the permanent link's host changed: the code changes too
+HTTPS_OK=1         # stable mode: 0 when the HTTPS check failed (the link is held back)
+PORTS_OPENED=0     # set when this run opened port 80 or 443 somewhere
 STEP=0
 STEPS=9
 SUDO=""
@@ -68,6 +89,7 @@ ORIG_ARGS=()
 
 REPO_URL="${MOMMY_REPO_URL:-$DEFAULT_REPO_URL}"
 BRANCH="${MOMMY_BRANCH:-$DEFAULT_BRANCH}"
+REF="${MOMMY_REF:-}"
 APP_DIR="${MOMMY_APP_DIR:-$HOME/mommy-app}"
 COMPOSE_DIR="$APP_DIR/mommy"
 ENV_FILE="$COMPOSE_DIR/.env"
@@ -157,17 +179,31 @@ write_root_file() {
 }
 
 # apt_get ARGS...: apt-get, non-interactive, waiting for another apt (cloud-init or the
-# automatic updates, often busy right after the VM starts) instead of failing. Its
-# output is shown only when it fails.
+# automatic updates, often busy right after the VM starts) instead of failing: up to 15
+# minutes for dpkg's locks (DPkg::Lock::Timeout) and for the package lists' lock, which
+# "apt-get update" takes and DPkg::Lock::Timeout does not cover. Its output is shown
+# only when it fails.
+APT_LOCK_TRIES=90      # 90 x 10 s: 15 minutes
+APT_LOCK_SLEEP=10
 apt_get() {
-  local log status=0
+  local log status tries=0
   if (( DRY_RUN )); then
     printf '    would run: %sapt-get %s\n' "${SUDO:+sudo }" "$*"
     return 0
   fi
   log=$(mktemp)
-  root_read env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
-    apt-get -y -q -o DPkg::Lock::Timeout=900 "$@" >"$log" 2>&1 || status=$?
+  while :; do
+    status=0
+    root_read env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
+      apt-get -y -q -o DPkg::Lock::Timeout=900 "$@" </dev/null >"$log" 2>&1 || status=$?
+    if (( status != 0 && tries < APT_LOCK_TRIES )) && grep -q 'Could not get lock /var/lib/apt/lists/lock' "$log"; then
+      (( tries == 0 )) && info "Ubuntu is updating its package lists (usual just after the VM starts): waiting for it, up to 15 minutes..."
+      tries=$((tries + 1))
+      sleep "$APT_LOCK_SLEEP"
+      continue
+    fi
+    break
+  done
   if (( status != 0 )); then
     tail -n 25 "$log" >&2
     rm -f "$log"
@@ -316,6 +352,13 @@ print(f"{shape}|{ocpus:g}|{memory:g}|{region}|{int(over)}")
 
 install_base_packages() {
   step "System packages (git, curl, certificates)"
+  # Right after the VM is made, cloud-init is still setting it up (and running apt).
+  if ! (( DRY_RUN )) && command -v cloud-init >/dev/null 2>&1; then
+    if ! cloud-init status 2>/dev/null | grep -q 'status: done'; then
+      info "Waiting for the VM's first-boot setup (cloud-init) to finish..."
+      root_read cloud-init status --wait >/dev/null 2>&1 || true
+    fi
+  fi
   apt_get update
   apt_get install --no-install-recommends ca-certificates curl gnupg git python3
   (( DRY_RUN )) || info "Up to date."
@@ -437,13 +480,25 @@ ensure_swap() {
     info "Swap is already on: $active"
     return 0
   fi
-  if [[ -e "$SWAP_FILE" ]]; then
-    info "Turning on the existing $SWAP_FILE."
-    as_root chmod 600 "$SWAP_FILE"
-    if ! (( DRY_RUN )) && ! root_read swapon "$SWAP_FILE" 2>/dev/null; then
-      root_read mkswap "$SWAP_FILE" >/dev/null
-      root_read swapon "$SWAP_FILE"
+  if [[ -e "$SWAP_FILE" || -L "$SWAP_FILE" ]]; then
+    # Only a plain file that is a swap area already, or the one this script made (an
+    # earlier run that stopped half-way): anything else may be someone's data.
+    if [[ -L "$SWAP_FILE" || ! -f "$SWAP_FILE" ]]; then
+      warn "$SWAP_FILE is not a plain file: left as it is, and no swap file is used."
+      return 0
     fi
+    if [[ "$(root_read blkid -p -s TYPE -o value "$SWAP_FILE" 2>/dev/null || true)" == swap ]]; then
+      info "Turning on the existing $SWAP_FILE (readable by root only)."
+    elif root_read test -f "$STATE_DIR/swapfile-made" 2>/dev/null; then
+      info "Finishing the swap file an earlier run started ($SWAP_FILE)."
+      as_root mkswap "$SWAP_FILE"
+    else
+      warn "$SWAP_FILE exists but is not a swap area, and this setup did not make it: left as it is, and no swap file is used (move it away and run this again to get one)."
+      return 0
+    fi
+    as_root chown root:root "$SWAP_FILE"
+    as_root chmod 600 "$SWAP_FILE"
+    as_root swapon "$SWAP_FILE"
   else
     avail_gb=$(( $(df -Pk / | awk 'NR == 2 { print $4 }') / 1048576 ))
     if (( avail_gb < SWAP_GB + MIN_FREE_GB )); then
@@ -451,7 +506,9 @@ ensure_swap() {
       return 0
     fi
     info "Making a $SWAP_GB GB swap file, $SWAP_FILE (readable by root only)."
-    as_root install -m 600 /dev/null "$SWAP_FILE"
+    as_root install -m 600 -o root -g root /dev/null "$SWAP_FILE"
+    as_root install -d -m 755 "$STATE_DIR"
+    as_root touch "$STATE_DIR/swapfile-made"
     if (( DRY_RUN )); then
       as_root fallocate -l "${SWAP_GB}G" "$SWAP_FILE"
     elif ! root_read fallocate -l "${SWAP_GB}G" "$SWAP_FILE" 2>/dev/null; then
@@ -475,21 +532,107 @@ ensure_swap() {
 
 # --- step 5: the code -----------------------------------------------------------------
 
+# The files whose change matters most: they run with full rights on this VM.
+readonly POWERFUL_FILES="mommy/deploy/oracle/setup.sh mommy/compose.yaml mommy/deploy/oracle/compose.oracle.yaml mommy/deploy/oracle/compose.stable.yaml mommy/deploy/oracle/Caddyfile mommy/Dockerfile mommy/scripts/space_start.sh"
+UPDATED=0
+
+# confirm QUESTION: true when the owner answers yes. A question that matters more (a
+# rewritten history) needs the word "yes" itself, and --yes does not answer it.
+confirm() {
+  local question=$1 strict=${2:-} answer=""
+  if [[ -z "$strict" ]] && (( ASSUME_YES )); then
+    info "$question yes (--yes)"
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    return 1
+  fi
+  printf '    %s ' "$question"
+  read -r answer || answer=""
+  if [[ -n "$strict" ]]; then
+    [[ "$answer" == yes ]]
+  else
+    [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]
+  fi
+}
+
+# describe_commit REV: "<short id> of <date>, \"<title>\"".
+describe_commit() {
+  git -C "$APP_DIR" log -1 --format='%h of %cd, "%s"' --date=short "$1"
+}
+
+# fetch_target: the commit to run (FETCH_HEAD): the branch's latest commit, or MOMMY_REF.
+fetch_target() {
+  if [[ -z "$REF" ]]; then
+    git -C "$APP_DIR" fetch --quiet --no-tags "$REPO_URL" "refs/heads/$BRANCH"
+  elif [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+    git -C "$APP_DIR" fetch --quiet --no-tags "$REPO_URL" "$REF"
+  else
+    git -C "$APP_DIR" fetch --quiet --no-tags "$REPO_URL" "refs/tags/$REF"
+  fi
+}
+
 update_code() {
-  step "Mommy's files ($APP_DIR, branch $BRANCH)"
+  local target="branch $BRANCH" new old changed powerful
+  [[ -n "$REF" ]] && target="version $REF"
+  step "Mommy's files ($APP_DIR, $target)"
   if [[ -d "$APP_DIR/.git" ]]; then
-    if [[ -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no)" ]]; then
-      warn "Some files in $APP_DIR were changed by hand: they are put aside (git -C $APP_DIR stash list shows them) so that the update can go on."
-      run git -C "$APP_DIR" stash push --quiet -m "put aside by setup.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    info "Looking for an update at $REPO_URL"
+    if (( DRY_RUN )); then
+      info "would run: git -C $APP_DIR fetch $REPO_URL, then show any update and ask before installing it"
+      return 0
     fi
-    info "Updating from $REPO_URL"
-    run git -C "$APP_DIR" fetch --quiet "$REPO_URL" "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
-    run git -C "$APP_DIR" checkout --quiet -B "$BRANCH" "refs/remotes/origin/$BRANCH"
+    fetch_target || die "Could not get Mommy's files from $REPO_URL ($target). Check the VM's internet access, then run this again."
+    new=$(git -C "$APP_DIR" rev-parse --verify --quiet 'FETCH_HEAD^{commit}') || die "No commit at $target."
+    if [[ "$REF" =~ ^[0-9a-f]{40}$ && "$new" != "$REF" ]]; then
+      die "The repository gave commit $new for $REF."
+    fi
+    old=$(git -C "$APP_DIR" rev-parse --verify --quiet 'HEAD^{commit}' || true)
+    if [[ "$new" == "$old" ]]; then
+      info "Up to date: $(describe_commit "$new")."
+    else
+      info "An update is available:"
+      info "  now:  ${old:+$(describe_commit "$old")}"
+      info "  new:  $(describe_commit "$new")"
+      changed=$(git -C "$APP_DIR" diff --name-only "${old:-$new}" "$new" -- 2>/dev/null | wc -l | tr -d ' ')
+      # shellcheck disable=SC2086  # a list of paths
+      powerful=$(git -C "$APP_DIR" diff --name-only "${old:-$new}" "$new" -- $POWERFUL_FILES 2>/dev/null | sed 's|^mommy/||' | paste -sd ' ' -)
+      info "  it changes $changed file(s)${powerful:+, among them some that run with full rights on this VM: $powerful}"
+      if [[ -n "$old" ]] && ! git -C "$APP_DIR" merge-base --is-ancestor "$old" "$new"; then
+        warn "This update does not continue the version you have: the branch's history was rewritten (a force-push). Install it only if you expected that."
+        if ! confirm 'Install it anyway? Type "yes" to install it:' strict; then
+          info "Not updated: going on with the version you have. (To install it, run this again in a terminal and type yes.)"
+          return 0
+        fi
+      elif ! confirm "Install this update? [y/N]"; then
+        if [[ -t 0 ]]; then
+          info "Not updated: going on with the version you have."
+        else
+          info "Not updated: no terminal to ask in. Run this again in a terminal, or with --yes to install updates without asking."
+        fi
+        return 0
+      fi
+      if [[ -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no)" ]]; then
+        warn "Some files in $APP_DIR were changed by hand: they are put aside (git -C $APP_DIR stash list shows them) so that the update can go on."
+        git -C "$APP_DIR" stash push --quiet -m "put aside by setup.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      fi
+      if [[ -z "$REF" ]]; then
+        git -C "$APP_DIR" checkout --quiet -B "$BRANCH" "$new"
+      else
+        git -C "$APP_DIR" checkout --quiet --detach "$new"
+      fi
+      UPDATED=1
+    fi
   elif [[ -e "$APP_DIR" && -n "$(ls -A "$APP_DIR" 2>/dev/null)" ]]; then
     die "$APP_DIR exists but is not a git checkout: move it away (mv $APP_DIR $APP_DIR.old), then run this again."
   else
     info "Downloading from $REPO_URL"
     run git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$APP_DIR"
+    (( DRY_RUN )) && return 0
+    if [[ -n "$REF" ]]; then
+      fetch_target || die "Could not get $target from $REPO_URL."
+      git -C "$APP_DIR" checkout --quiet --detach FETCH_HEAD
+    fi
   fi
   (( DRY_RUN )) && return 0
   [[ -f "$COMPOSE_DIR/compose.yaml" ]] || die "$COMPOSE_DIR/compose.yaml is missing: is $BRANCH the right branch?"
@@ -500,10 +643,11 @@ update_code() {
   info "Now at $(git -C "$APP_DIR" log -1 --format='commit %h of %cd' --date=short)."
 }
 
-# The updated copy of this script runs the rest, when the update changed it.
+# The updated copy of this script runs the rest, when the update (that the owner just
+# agreed to) changed it.
 rerun_if_updated() {
   local new="$COMPOSE_DIR/deploy/oracle/setup.sh"
-  (( DRY_RUN || NO_UPDATE )) && return 0
+  (( DRY_RUN || NO_UPDATE || ! UPDATED )) && return 0
   [[ -f "$new" ]] || return 0
   if [[ "$(sha256sum <"$new")" != "$SELF_SUM" ]]; then
     info "This script itself was updated: going on with the new version."
@@ -532,6 +676,11 @@ MOMMY_MODE=$MODE
 MOMMY_ASR_THREADS=$threads"
   [[ "$MODE" == stable ]] && block="$block
 MOMMY_PUBLIC_HOST=$PUBLIC_HOST"
+  # The last permanent link's host, also in the tunnel mode: a later --stable on another
+  # address then knows that the old link (with the code) exists.
+  local last=${PUBLIC_HOST:-$(env_value MOMMY_LAST_PUBLIC_HOST)}
+  [[ -n "$last" ]] && block="$block
+MOMMY_LAST_PUBLIC_HOST=$last"
   block="$block
 # --- written by deploy/oracle/setup.sh: end ---"
   if (( DRY_RUN )); then
@@ -546,7 +695,7 @@ MOMMY_PUBLIC_HOST=$PUBLIC_HOST"
         /^# --- written by deploy\/oracle\/setup.sh: begin/ { skip = 1; next }
         /^# --- written by deploy\/oracle\/setup.sh: end/ { skip = 0; next }
         skip { next }
-        /^(COMPOSE_FILE|MOMMY_MODE|MOMMY_ASR_THREADS|MOMMY_PUBLIC_HOST)=/ { next }
+        /^(COMPOSE_FILE|MOMMY_MODE|MOMMY_ASR_THREADS|MOMMY_PUBLIC_HOST|MOMMY_LAST_PUBLIC_HOST)=/ { next }
         { print }
       ' "$ENV_FILE"
     fi
@@ -557,8 +706,13 @@ MOMMY_PUBLIC_HOST=$PUBLIC_HOST"
   info "Settings saved in $ENV_FILE: mode $MODE, $threads recognition thread(s)."
 }
 
+# The public "what is my address" services asked (over HTTPS) when Oracle's metadata
+# does not say. Two of them must give the same address: one wrong answer must not decide
+# the host of the link that carries the code.
+ECHO_SERVICES="https://checkip.amazonaws.com https://api.ipify.org https://ipv4.icanhazip.com"
+
 find_public_ip() {
-  local ip="" source="" service
+  local ip="" source="" service answer answers=() sources=() i j
   if [[ -n "${MOMMY_PUBLIC_IP:-}" ]]; then
     ip=$MOMMY_PUBLIC_IP
     source="MOMMY_PUBLIC_IP"
@@ -578,14 +732,28 @@ except (ValueError, StopIteration, TypeError, KeyError):
       source="Oracle's instance metadata"
     else
       ip=""
-      for service in https://checkip.amazonaws.com https://api.ipify.org https://ipv4.icanhazip.com; do
-        ip=$(curl -4 -fsS --proto '=https' -m 10 "$service" 2>/dev/null | tr -d '[:space:]' || true)
-        if [[ -n "$ip" ]] && is_public_ipv4 "$ip"; then
-          source=${service#https://}
-          break
+      for service in $ECHO_SERVICES; do
+        answer=$(curl -4 -fsS --proto '=https' -m 10 "$service" 2>/dev/null | tr -d '[:space:]' || true)
+        if [[ -n "$answer" ]] && is_public_ipv4 "$answer"; then
+          answers+=("$answer")
+          sources+=("${service#https://}")
         fi
-        ip=""
       done
+      for (( i = 0; i < ${#answers[@]}; i++ )); do
+        for (( j = i + 1; j < ${#answers[@]}; j++ )); do
+          if [[ "${answers[i]}" == "${answers[j]}" ]]; then
+            ip=${answers[i]}
+            source="${sources[i]} and ${sources[j]}"
+            break 2
+          fi
+        done
+      done
+      if [[ -z "$ip" && ${#answers[@]} -eq 1 ]]; then
+        die "Only one of the services that tell an address answered (${sources[0]}: ${answers[0]}), and two must agree. In the Oracle console, the instance's page shows the address under \"Public IP address\": run again with it, for example: MOMMY_PUBLIC_IP=203.0.113.10 $SCRIPT_CMD --stable"
+      fi
+      if [[ -z "$ip" && ${#answers[@]} -gt 1 ]]; then
+        die "The services that tell an address did not agree on this VM's public IPv4 address (${answers[*]}). In the Oracle console, the instance's page shows it under \"Public IP address\": run again with it, for example: MOMMY_PUBLIC_IP=203.0.113.10 $SCRIPT_CMD --stable"
+      fi
     fi
   fi
   if [[ -z "$ip" ]] || ! is_public_ipv4 "$ip"; then
@@ -617,12 +785,15 @@ configure() {
     fi
     local old_host
     old_host=$(env_value MOMMY_PUBLIC_HOST)
+    [[ -n "$old_host" ]] || old_host=$(env_value MOMMY_LAST_PUBLIC_HOST)
     if [[ -n "$old_host" && "$old_host" != "$PUBLIC_HOST" ]]; then
-      warn "The permanent link's host changes from $old_host to $PUBLIC_HOST (the VM's address changed): send the new link."
+      warn "The permanent link's host changes from $old_host to $PUBLIC_HOST (the VM's address changed). The old link leads to an address Oracle may give to someone else, and it holds the code: so the access code changes too, and the old link and code stop working. Send the new link."
+      ROTATE_CODE=1
     fi
     open_web_ports
   else
     info "Link mode: Cloudflare quick tunnel (no port to open; the link changes when the tunnel restarts)."
+    close_web_ports
   fi
   write_env
 }
@@ -644,7 +815,7 @@ open_port() {
   spec=$(accept_rule "$port")
   rules=$(root_read iptables -S INPUT 2>/dev/null) || {
     if (( DRY_RUN )); then
-      info "Port $port: not checked (reading the firewall needs sudo, which --dry-run does not ask for)."
+      info "Port $port: not checked (sudo iptables -S INPUT did not answer; with --dry-run, sudo is never asked for a password)."
     else
       warn "Port $port: cannot read the VM's firewall (sudo iptables -S INPUT failed), so it is not opened there."
     fi
@@ -669,10 +840,12 @@ open_port() {
     info "Port $port: opening it in the VM's firewall (before its REJECT rule)."
     # shellcheck disable=SC2086
     as_root iptables -I INPUT "$reject" $spec
+    PORTS_OPENED=1
   elif [[ "$policy" == DROP || "$policy" == REJECT ]]; then
     info "Port $port: opening it in the VM's firewall."
     # shellcheck disable=SC2086
     as_root iptables -A INPUT $spec
+    PORTS_OPENED=1
   else
     info "Port $port: the VM's firewall does not block it."
   fi
@@ -704,6 +877,64 @@ rules_with_ports() {
   '
 }
 
+# rules_without_ports: rules.v4 (standard input) without the two ACCEPT rules of
+# rules_with_ports in the filter table (standard output); the rest as it is.
+rules_without_ports() {
+  awk -v r80="-A INPUT $(accept_rule 80)" -v r443="-A INPUT $(accept_rule 443)" '
+    /^\*/ { table = substr($0, 2) }
+    table == "filter" && ($0 == r80 || $0 == r443) { next }
+    { print }
+  '
+}
+
+# close_web_ports: undoes open_web_ports, when this script opened the ports (its marker,
+# or the copy of rules.v4 it made first): the live rules, rules.v4 and ufw's rules.
+close_web_ports() {
+  local marker="$STATE_DIR/ports-opened" port spec current updated used_ufw=0 left=0
+  if ! root_read test -e "$marker" 2>/dev/null; then
+    # No marker: an older setup.sh may still have opened them (it kept a copy of rules.v4
+    # first); then only rules of exactly this script's text are taken out.
+    [[ -e "$RULES_V4.before-mommy" ]] || return 0
+    for port in 80 443; do
+      # shellcheck disable=SC2046  # the rule's words
+      root_read iptables -C INPUT $(accept_rule "$port") 2>/dev/null && left=1
+      root_read grep -qxF -- "-A INPUT $(accept_rule "$port")" "$RULES_V4" 2>/dev/null && left=1
+    done
+    (( left )) || return 0
+  fi
+  info "Closing ports 80 and 443 again in the VM's firewall (the permanent link opened them; nothing uses them now)."
+  root_read grep -qsx ufw "$marker" 2>/dev/null && used_ufw=1
+  if command -v iptables >/dev/null 2>&1; then
+    for port in 80 443; do
+      spec=$(accept_rule "$port")
+      # shellcheck disable=SC2086  # the rule's words
+      while root_read iptables -C INPUT $spec 2>/dev/null; do
+        as_root iptables -D INPUT $spec
+        (( DRY_RUN )) && break
+      done
+    done
+    if [[ -f "$RULES_V4" ]] && current=$(root_read cat "$RULES_V4" 2>/dev/null); then
+      updated=$(rules_without_ports <<<"$current")
+      if [[ "$updated" != "$current" ]]; then
+        info "Removing the two rules from $RULES_V4 (loaded at boot)."
+        if (( DRY_RUN )); then
+          diff <(printf '%s\n' "$current") <(printf '%s\n' "$updated") | sed 's/^/        | /' || true
+        else
+          printf '%s\n' "$updated" | root_read iptables-restore --test \
+            || die "The updated $RULES_V4 would not load: left unchanged."
+          printf '%s\n' "$updated" | root_read tee "$RULES_V4" >/dev/null
+        fi
+      fi
+    fi
+  fi
+  if (( used_ufw )) && command -v ufw >/dev/null 2>&1; then
+    as_root ufw delete allow 80/tcp
+    as_root ufw delete allow 443/tcp
+  fi
+  as_root rm -f "$marker"
+  info "In Oracle's console you can also delete the two ingress rules for ports 80 and 443 (ORACLE.md, step 6, part A)."
+}
+
 persist_ports() {
   local current updated backup="$RULES_V4.before-mommy"
   if [[ ! -f "$RULES_V4" ]]; then
@@ -712,7 +943,7 @@ persist_ports() {
   fi
   current=$(root_read cat "$RULES_V4" 2>/dev/null) || {
     if (( DRY_RUN )); then
-      info "$RULES_V4: not checked (reading it needs sudo, which --dry-run does not ask for)."
+      info "$RULES_V4: not checked (sudo cat $RULES_V4 did not answer; with --dry-run, sudo is never asked for a password)."
     else
       warn "Cannot read $RULES_V4: ports 80 and 443 are not saved for the next boot."
     fi
@@ -731,6 +962,7 @@ persist_ports() {
         || die "The updated $RULES_V4 would not load: left unchanged."
       printf '%s\n' "$updated" | root_read tee "$RULES_V4" >/dev/null
     fi
+    PORTS_OPENED=1
   fi
   if command -v systemctl >/dev/null 2>&1 && systemctl cat netfilter-persistent.service >/dev/null 2>&1; then
     if [[ "$(systemctl is-enabled netfilter-persistent.service 2>/dev/null || true)" != enabled ]]; then
@@ -740,6 +972,7 @@ persist_ports() {
 }
 
 open_web_ports() {
+  local marks="iptables"
   info "Opening ports 80 and 443 (HTTP, HTTPS) in the VM's firewall."
   if command -v iptables >/dev/null 2>&1; then
     open_port 80
@@ -752,6 +985,14 @@ open_web_ports() {
     info "ufw is on: allowing 80/tcp and 443/tcp."
     as_root ufw allow 80/tcp
     as_root ufw allow 443/tcp
+    marks="$marks
+ufw"
+    PORTS_OPENED=1
+  fi
+  # What --tunnel undoes later (close_web_ports): only what this script opened.
+  if (( PORTS_OPENED )); then
+    as_root install -d -m 755 "$STATE_DIR"
+    printf '%s\n' "$marks" | write_root_file "$STATE_DIR/ports-opened" 0644
   fi
   info "They must also be open in Oracle's VCN security list (ORACLE.md, step 6), outside this VM."
 }
@@ -874,6 +1115,16 @@ replace_code_file(Path(path), generate_code())
 print(f"    A new access code is saved in {path}: the old link and the browsers that used it are shut out.")
 '
 
+# hold_back_link: in the permanent mode, the link is printed only once its address
+# answers HTTPS from this VM with a valid certificate: Let's Encrypt gave it, so the name
+# leads here. Otherwise the code would be sent to an address that may be someone else's.
+hold_back_link() {
+  say ""
+  say "The link is not shown yet: https://$PUBLIC_HOST/ does not answer from this VM with a valid certificate, so"
+  say "that address may not lead here (or the certificate is not there yet). Fix what the warning above says,"
+  say "then get the link with: $SCRIPT_CMD --link"
+}
+
 print_link() {
   local status=0
   if (( DRY_RUN )); then
@@ -883,6 +1134,10 @@ print_link() {
       info "would print the link: docker compose exec mommy python -m mommy.share_link"
     fi
     return 0
+  fi
+  if [[ "$MODE" == stable ]] && { (( ! HTTPS_OK )) || ! https_ok; }; then
+    hold_back_link
+    return 4
   fi
   say ""
   say "Your link to share (it contains the access code: send it in a private message):"
@@ -925,19 +1180,25 @@ do_link() {
   load_mode
   require_running
   step "Your link"
-  print_link
+  print_link || exit $?
+}
+
+# new_code: a new code in the code file (the app's container, not running it), then the
+# app restarted with it.
+new_code() {
+  dc run --rm --no-deps -T mommy python -c "$NEW_CODE_PY"
+  info "Restarting Mommy with the new code."
+  dc restart mommy
+  wait_healthy
 }
 
 do_new_code() {
-  STEPS=3
+  STEPS=2
   load_mode
   step "A new access code"
-  dc run --rm --no-deps -T mommy python -c "$NEW_CODE_PY"
-  step "Restarting Mommy with the new code"
-  dc restart mommy
-  wait_healthy
+  new_code
   step "Your new link"
-  print_link
+  print_link || exit $?
 }
 
 do_setup() {
@@ -956,9 +1217,13 @@ do_setup() {
   start_app
   step "Waiting for Mommy"
   wait_healthy
-  [[ "$MODE" == stable ]] && { wait_https || true; }
+  if (( ROTATE_CODE )); then
+    info "A new access code, since the permanent link's address changed (see the warning above)."
+    new_code
+  fi
+  if [[ "$MODE" == stable ]] && ! wait_https; then HTTPS_OK=0; fi
   step "Your link"
-  print_link
+  print_link || exit $?
 }
 
 parse_args() {
@@ -971,6 +1236,7 @@ parse_args() {
       --link) [[ "$ACTION" == setup || "$ACTION" == link ]] || die "Choose one of --link and --new-code."; ACTION="link" ;;
       --new-code) [[ "$ACTION" == setup || "$ACTION" == new-code ]] || die "Choose one of --link and --new-code."; ACTION="new-code" ;;
       --dry-run) DRY_RUN=1 ;;
+      --yes) ASSUME_YES=1 ;;
       --no-update) NO_UPDATE=1 ;;
       -h | --help) usage; exit 0 ;;
       *) usage >&2; die "Unknown option: $arg" ;;

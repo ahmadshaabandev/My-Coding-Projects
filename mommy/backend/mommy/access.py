@@ -13,10 +13,13 @@ child's audio or photos to it or use its resources:
   an HTML navigation gets the gate page (``web/access.html``, status 200 at the URL
   asked for, so its ``#code=...`` fragment stays in the browser), an ``/api/*`` request
   gets ``401 {"error": "access_required", "message"}``, and any other file gets 401.
-* The cookie value is an HMAC-SHA256 tag derived from the code alone
-  (:func:`cookie_value`), so a new code invalidates every cookie given for the old one;
-  the server keeps no session list. The code itself is not kept by the gate (only the
-  tag), never logged and never written anywhere.
+* The cookie value is an HMAC-SHA256 tag derived from the code and the host name the
+  request is for (:func:`cookie_value`, :func:`host_key`), so a new code invalidates
+  every cookie given for the old one, and a cookie given for one host opens no other
+  (browsers send a ``localhost`` cookie to every port of ``localhost``, over plain http:
+  it must not also open the tunnel's or a Space's host). The server keeps no session
+  list. The code itself is not kept by the gate (only a key derived from it), never
+  logged and never written anywhere.
 * Wrong codes are limited per client (``request.client.host``, after uvicorn's proxy
   headers, reduced by :func:`client_key`): at most :data:`MAX_FAILURES` in
   :data:`FAILURE_WINDOW_S` seconds, then ``429 too_many_attempts`` with ``Retry-After``.
@@ -96,8 +99,10 @@ ACCESS_REQUIRED_MESSAGE = "This is a private test of Mommy: an access code is ne
 BAD_CODE_MESSAGE = "This access code is not right."
 TOO_MANY_MESSAGE = "Too many wrong access codes. Try again later."
 
-#: A fixed label: the cookie key is SHA-256(label + code), the cookie HMAC(key, name).
-_KEY_LABEL = b"mommy access cookie v1\x00"
+#: A fixed label: the cookie key is SHA-256(label + code), the cookie
+#: HMAC(key, name + NUL + host); v2 since the tag names the host (v1 cookies, which named
+#: no host, open nothing).
+_KEY_LABEL = b"mommy access cookie v2\x00"
 #: Arabic-Indic (U+0660-0669) and Eastern Arabic-Indic (U+06F0-06F9) digits -> ASCII.
 _DIGITS = str.maketrans({**{chr(0x0660 + i): str(i) for i in range(10)}, **{chr(0x06F0 + i): str(i) for i in range(10)}})
 
@@ -108,13 +113,33 @@ def normalize_code(code: str) -> str:
     return code.strip().translate(_DIGITS)
 
 
-def cookie_value(code: str) -> str:
-    """The ``mommy_access`` cookie value for ``code``: an HMAC-SHA256 tag, base64url
-    without padding (43 characters). The same code always gives the same value; any other
-    code gives another one, so changing the code invalidates every cookie."""
-    key = hashlib.sha256(_KEY_LABEL + normalize_code(code).encode("utf-8", "surrogatepass")).digest()
-    tag = hmac.new(key, ACCESS_COOKIE.encode("ascii"), hashlib.sha256).digest()
+def cookie_key(code: str) -> bytes:
+    """The key the cookie tags of ``code`` are made with: SHA-256 of a fixed label and the
+    code (after :func:`normalize_code`)."""
+    return hashlib.sha256(_KEY_LABEL + normalize_code(code).encode("utf-8", "surrogatepass")).digest()
+
+
+def host_key(host: str) -> str:
+    """The host name a cookie is bound to, from a ``Host`` header value: lower case,
+    without the port, IPv6 brackets or one trailing dot (``Abc.Example.:443`` ->
+    ``abc.example``), as :class:`HostMatcher` compares names."""
+    return _without_dot(split_host(host)[0].strip().lower())
+
+
+def _tag(key: bytes, host: str) -> str:
+    message = ACCESS_COOKIE.encode("ascii") + b"\x00" + host_key(host).encode("utf-8", "surrogatepass")
+    tag = hmac.new(key, message, hashlib.sha256).digest()
     return base64.urlsafe_b64encode(tag).rstrip(b"=").decode("ascii")
+
+
+def cookie_value(code: str, host: str) -> str:
+    """The ``mommy_access`` cookie value for ``code`` on ``host`` (a ``Host`` header
+    value, see :func:`host_key`): an HMAC-SHA256 tag, base64url without padding (43
+    characters). The same code and host always give the same value (a restart keeps
+    people in); another code, or another host, gives another one, so changing the code
+    invalidates every cookie, and a cookie leaked from one host (``http://localhost``,
+    whose cookies every local port receives) opens no other."""
+    return _tag(cookie_key(code), host)
 
 
 def client_key(host: str | None) -> str:
@@ -237,13 +262,13 @@ class FailureLimiter:
 
 
 class AccessGate:
-    """The state of the gate for one code: the expected cookie value, the failure limiter
-    and the gate page. The code itself is not kept, only its cookie tag."""
+    """The state of the gate for one code: the key of its cookie tags, the failure limiter
+    and the gate page. The code itself is not kept, only that key (:func:`cookie_key`)."""
 
     def __init__(self, code: str, web_dir: Path | None, *, limiter: FailureLimiter | None = None) -> None:
         if not normalize_code(code):
             raise ValueError("the access code is empty")
-        self.cookie = cookie_value(code)
+        self._key = cookie_key(code)
         self.limiter = limiter if limiter is not None else FailureLimiter()
         page = Path(web_dir) / GATE_PAGE if web_dir is not None else None
         #: The gate page (bytes), or None when ``web/access.html`` is missing.
@@ -251,17 +276,21 @@ class AccessGate:
 
     def code_matches(self, candidate: str) -> bool:
         """True when ``candidate`` is the code (after :func:`normalize_code`); constant time
-        (two 43-character tags are compared, whatever the lengths of the codes)."""
-        return hmac.compare_digest(cookie_value(candidate), self.cookie)
+        (two 32-byte keys are compared, whatever the lengths of the codes)."""
+        return hmac.compare_digest(cookie_key(candidate), self._key)
+
+    def cookie_for(self, host: str) -> str:
+        """The cookie value that opens the app on ``host`` (the request's ``Host``)."""
+        return _tag(self._key, host)
 
     def has_access(self, headers: Headers) -> bool:
-        """True when the request carries the right ``mommy_access`` cookie.
+        """True when the request carries the right ``mommy_access`` cookie for its ``Host``.
 
         Every ``Cookie`` header is read (an HTTP/2 client may split its cookies over
         several, and a proxy may pass them on unjoined), and every ``mommy_access`` value
         in them is a candidate: another cookie of the same name (from a path or an older
         visit) does not hide the right one. Each is compared in constant time."""
-        tag = self.cookie.encode("ascii")
+        tag = self.cookie_for(headers.get("host", "")).encode("ascii")
         found = False
         for value in access_cookie_values(headers):
             if hmac.compare_digest(value.encode("utf-8", "surrogatepass"), tag):
@@ -415,6 +444,18 @@ def _authority_key(value: str) -> str:
     return _without_dot(name) + (f":{port}" if port is not None else "")
 
 
+def _is_loopback_name(name: str) -> bool:
+    """``localhost`` (or ``*.localhost``) or a loopback address; ``name`` is lower case,
+    without the port and brackets (the same test as ``mommy.app.is_loopback_host``)."""
+    name = _without_dot(name)
+    if name == "localhost" or name.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
 def is_dns_name(name: str) -> bool:
     """True for a lower-case ASCII host name of valid labels (no empty label, no
     trailing dot), at most :data:`MAX_HOST_NAME_CHARS` characters."""
@@ -482,16 +523,25 @@ def split_host(value: str) -> tuple[str, str | None]:
     return text, None
 
 
+#: The ports a ``Host`` header may name for a suffix entry (:class:`HostMatcher`): none,
+#: or a default one spelled out. A quick tunnel's requests never carry another one.
+SUFFIX_PORTS: frozenset[str | None] = frozenset({None, "80", "443"})
+
+
 class HostMatcher:
     """Decides whether a host name is one of ``MOMMY_ALLOWED_HOSTS`` (see :func:`host_entry`).
 
     * An exact entry matches the name itself: lower case, without the port (as before).
     * A suffix entry (``.trycloudflare.com``) matches a name that ends with it and has at
       least one more label (``abc.trycloudflare.com``, ``a.b.trycloudflare.com``), whatever
-      its case, port or trailing dot; never the bare domain (``trycloudflare.com``), a
-      longer label (``evil-trycloudflare.com``) or a name that only contains it
+      its case or trailing dot; never the bare domain (``trycloudflare.com``), a longer
+      label (``evil-trycloudflare.com``) or a name that only contains it
       (``trycloudflare.com.evil.com``). Every label must be letters, digits and inner
       hyphens: an empty label, ``_``, ``%`` or a non-ASCII character never matches.
+      In a ``Host`` header (:meth:`allows_host`, :meth:`same_origin`) the name must come
+      with no port or a default one (:data:`SUFFIX_PORTS`): requests through a tunnel
+      never name another, while a page under the suffix whose name an attacker's DNS
+      points at 127.0.0.1 (DNS rebinding) would name the local port (``:8080``).
     * A name that is not ASCII never matches, so no Unicode case folding can turn a
       look-alike (the Kelvin sign, a fullwidth dot) into an allowed name.
 
@@ -513,31 +563,43 @@ class HostMatcher:
         #: The suffix entries, each with its leading dot.
         self.suffixes: tuple[str, ...] = tuple(suffixes)
 
-    def allows_name(self, name: str) -> bool:
-        """True when ``name`` (a host name without the port) is allowed."""
-        if not name or not name.isascii():
+    def _exact_name(self, name: str) -> bool:
+        return bool(name) and name.isascii() and name.lower() in self.exact
+
+    def _suffix_name(self, name: str) -> bool:
+        if not self.suffixes or not name or not name.isascii():
             return False
-        name = name.lower()
-        if name in self.exact:
-            return True
-        if not self.suffixes:
-            return False
-        name = _without_dot(name)
+        name = _without_dot(name.lower())
         if not is_dns_name(name):
             return False
         return any(name.endswith(suffix) and len(name) > len(suffix) for suffix in self.suffixes)
 
-    def allows_host(self, host: str) -> bool:
-        """True when the ``Host`` header value ``host`` names an allowed host (the port,
-        if any, is not looked at)."""
-        return self.allows_name(split_host(host)[0])
+    def allows_name(self, name: str) -> bool:
+        """True when ``name`` (a host name without the port) is allowed."""
+        return self._exact_name(name) or self._suffix_name(name)
 
-    def same_origin(self, origin: str, host: str) -> bool:
+    def allows_host(self, host: str) -> bool:
+        """True when the ``Host`` header value ``host`` names an allowed host: an exact
+        entry whatever the port, or a name under a suffix entry with no port or a default
+        one (:data:`SUFFIX_PORTS`)."""
+        name, port = split_host(host)
+        return self._exact_name(name) or (port in SUFFIX_PORTS and self._suffix_name(name))
+
+    def matches_suffix(self, host: str) -> bool:
+        """True when the ``Host`` header value ``host`` is allowed through a suffix entry
+        only (a quick tunnel's name), not through an exact one."""
+        name, port = split_host(host)
+        return not self._exact_name(name) and port in SUFFIX_PORTS and self._suffix_name(name)
+
+    def same_origin(self, origin: str, host: str, *, https_only: bool = False) -> bool:
         """True when ``origin`` (an ``Origin`` header) is this server itself: ``http`` or
         ``https`` followed by the request's ``Host`` header value (the same name, case and
         a trailing dot aside, and the same port or none on both), and an allowed host
-        (:meth:`allows_name`). ``null``, a path, user information, any other scheme or
-        another name under the same suffix entry is not."""
+        (:meth:`allows_host`). ``null``, a path, user information, any other scheme or
+        another name under the same suffix entry is not. With ``https_only`` (the access
+        gate is on: the app is online, where every page is HTTPS), an ``http`` origin is
+        this server only for a loopback host (``localhost``, ``127.0.0.1``, ``::1``): a
+        page loaded over plain http elsewhere may not post."""
         text = origin.strip()
         if not text.isascii():
             return False
@@ -546,7 +608,9 @@ class HostMatcher:
             return False
         if any(c in authority for c in "/?#@\\ \t"):
             return False
-        if not self.allows_name(split_host(authority)[0]):
+        if not self.allows_host(authority):
+            return False
+        if https_only and scheme == "http" and not _is_loopback_name(split_host(authority)[0].lower()):
             return False
         return _authority_key(authority) == _authority_key(host)
 
@@ -708,6 +772,7 @@ __all__ = [
     "MAX_TRACKED_CLIENTS",
     "MIN_SUFFIX_LABELS",
     "OTHER_CLIENT",
+    "SUFFIX_PORTS",
     "TOO_MANY_MESSAGE",
     "UNKNOWN_CLIENT",
     "AccessGate",
@@ -716,10 +781,12 @@ __all__ = [
     "HostMatcher",
     "access_cookie_values",
     "client_key",
+    "cookie_key",
     "cookie_value",
     "create_code_file",
     "generate_code",
     "host_entry",
+    "host_key",
     "is_dns_name",
     "is_navigation",
     "is_public_client",

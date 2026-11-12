@@ -13,14 +13,26 @@ How it works, in short:
   do not touch your router: nothing on your home network is opened.
 - **An access code** protects it. Only people who have your link (it contains the code)
   can use Mommy. Anyone else sees a page that asks for a code.
+- **Good to know:** the children, tasks, stars and rewards are saved in each person's
+  own browser, for one address. The tunnel's address changes each time it restarts
+  (when your computer or Docker Desktop restarts), and with a new address Mommy starts
+  empty again in your friend's browser (what was saved stays tied to the old address,
+  which no longer works). So avoid restarts while your friend uses Mommy. For a link
+  that never changes, see [deploy/oracle/ORACLE.md](deploy/oracle/ORACLE.md), step 6.
 
 What you need:
 
-- Windows 10 or 11 (64-bit), or a Mac (Intel or Apple Silicon: M1, M2, M3 and later).
-  Linux works too (see the note at the end).
+- **Windows 11** (version 23H2 or later) or **Windows 10 version 22H2**, 64-bit (Settings
+  > System > About shows yours). Docker supports a Windows version only while Microsoft
+  does, so Windows 10 may stop working with new versions of Docker Desktop. Or **a Mac**
+  with one of the three newest macOS versions (Apple menu > About This Mac shows yours),
+  Intel or Apple Silicon (M1, M2, M3 and later). Linux works too (see the note at the
+  end).
 - **8 GB of RAM or more.** Mommy uses 4 to 5 GB while it runs.
-- **About 6 GB of free disk space.**
-- About 1 GB to download the first time, and 10 to 20 minutes.
+- **About 10 GB of free disk space**: Docker Desktop takes about 3 GB, and Mommy about
+  5 GB (the app with its speech models, and what Docker keeps from building it).
+- The first start downloads about 1 GB (plus about 0.5 GB for Docker Desktop) and takes
+  10 to 30 minutes, depending on your internet connection.
 
 The computer must stay on (and awake) while your friend uses Mommy. If it cannot,
 [deploy/oracle/ORACLE.md](deploy/oracle/ORACLE.md) runs the same Mommy for free on a
@@ -38,21 +50,31 @@ small computer in Oracle's cloud, which stays on day and night.
      "Download for Mac – Intel Chip" for an Intel Mac. To check which one you have:
      Apple menu > About This Mac: the line "Chip" (Apple) or "Processor" (Intel).
 2. Install it:
-   - **Windows:** run `Docker Desktop Installer.exe`. Keep **"Use WSL 2 instead of
-     Hyper-V (recommended)"** ticked: the installer turns WSL 2 on for you (WSL 2 is the
-     part of Windows that runs Linux programs such as Mommy). Restart the computer if it
-     asks. If Docker Desktop later says that WSL needs an update, open PowerShell and
-     run `wsl --update`.
+   - **Windows:** first turn on WSL 2, the part of Windows that runs Linux programs such
+     as Mommy (once per computer). Start menu, type `PowerShell`, right-click **Windows
+     PowerShell** > **Run as administrator** > **Yes**, then run:
+
+     ```powershell
+     wsl --install --no-distribution
+     ```
+
+     Restart the computer when it is done. (If it says that WSL is already installed,
+     run `wsl --update` instead. If it does not know `--no-distribution`, run
+     `wsl --install`: it also installs Ubuntu, which Mommy does not need; if an Ubuntu
+     window opens after the restart and asks for a user name, you can close it.) Then
+     run `Docker Desktop Installer.exe` and keep what it proposes: a **per-user**
+     installation and the **WSL 2** backend. Restart the computer if it asks.
    - **Mac:** open the downloaded `Docker.dmg` and drag Docker into Applications.
-3. Open Docker Desktop (Windows: Start menu; Mac: Applications). Accept the terms when it
-   asks. Signing in to a Docker account is not needed: you can skip it. Wait until the
+3. Open Docker Desktop (Windows: Start menu; Mac: Applications). Mac: if macOS asks
+   whether to open an app downloaded from the internet, click **Open**; if Docker offers
+   **Use recommended settings**, keep it and type your Mac password. Accept the terms when
+   it asks. Signing in to a Docker account is not needed: you can skip it. Wait until the
    bottom-left corner of its window says **Engine running**.
 4. **Give it enough memory.** Mommy needs at least 6 GB inside Docker.
 
    - **Mac:** in Docker Desktop, click the gear icon (Settings) > **Resources** >
      **Advanced**. Set **Memory limit** to **6 GB or more** (8 GB if your Mac has 16 GB of
-     RAM or more), check that **Disk usage limit** leaves about 6 GB free, then click
-     **Apply & restart**.
+     RAM or more), then click **Apply & restart**.
    - **Windows:** with WSL 2, Docker Desktop's Settings > Resources page has no memory
      slider (it says that Windows manages the resources). WSL 2 gets half of the PC's
      memory by default, so:
@@ -66,8 +88,9 @@ small computer in Oracle's cloud, which stays on day and night.
 
        (If Notepad opens instead, you already had that file: make sure it has a line
        `[wsl2]` and, under it, a line `memory=6GB`, then save and close Notepad.)
-       Then run `wsl --shutdown`, and quit and reopen Docker Desktop (right-click the
-       whale icon near the clock > Quit Docker Desktop).
+       Then quit Docker Desktop (right-click the whale icon near the clock > **Quit
+       Docker Desktop**), run `wsl --shutdown`, wait 10 seconds, and open Docker Desktop
+       again.
 
    **Check it**, on Windows or Mac: open PowerShell (Windows) or Terminal (Mac,
    Applications > Utilities > Terminal) and run:
@@ -108,8 +131,9 @@ small computer in Oracle's cloud, which stays on day and night.
      cd ~/Downloads/My-Coding-Projects-claude-laughing-goodall-h48bdw/mommy
      ```
 
-     If this says "No such file or directory", type `cd` and a space, drag the `mommy`
-     folder from Finder onto the Terminal window, and press Enter.
+     If macOS asks whether Terminal may access files in your Downloads folder, click
+     **Allow**. If this says "No such file or directory", type `cd` and a space, drag the
+     `mommy` folder from Finder onto the Terminal window, and press Enter.
 
 **Option B, with Git** (if you use Git):
 
@@ -128,8 +152,8 @@ Either way, check that you are in the right folder: `ls` (Mac, or PowerShell) li
 docker compose up -d --build
 ```
 
-The first time takes **10 to 20 minutes** and downloads about **1 GB** (mostly the
-speech models, about 730 MB). You see many lines of progress. It is done when the last
+The first time takes **10 to 30 minutes** (depending on your internet connection) and
+downloads about **1 GB** (mostly the speech models, about 730 MB). You see many lines of progress. It is done when the last
 lines say something like:
 
 ```text
@@ -164,14 +188,17 @@ Reminder: this link changes when the tunnel restarts (after a reboot, for exampl
 2. **Send the full link to your friend in a private message.** The part after `#` is
    the code; it never reaches any server's logs (browsers do not send it), and Mommy
    removes it from the address bar at once. A note to send with it:
-   - en: "Open this link in Safari or Chrome (not inside a messaging app)."
+   - en: "Open this link in Safari or Chrome (not inside a messaging app). If it stops
+     working one day, ask me for the new link."
    - fr: « Ouvrez ce lien dans Safari ou Chrome (pas dans une application de
-     messagerie). »
-   - ar: «يُرجى فتح هذا الرابط في Safari أو Chrome (لا داخل تطبيق مراسلة).»
+     messagerie). S'il ne fonctionne plus un jour, demandez-moi le nouveau lien. »
+   - ar: «يُرجى فتح هذا الرابط في Safari أو Chrome، وليس داخل تطبيق مراسلة. إذا توقّف
+     الرابط عن العمل يومًا ما، يُرجى طلب الرابط الجديد منّي.»
 
    A messaging app's own browser keeps its cookies apart and may not allow the
    microphone. Your friend's browser then remembers the code for 180 days, for this
-   address (a new link has a new address: send the full new link each time).
+   address (a new link has a new address: send the full new link each time, and Mommy
+   starts empty there, see "Good to know" at the top).
 
 **On your own computer** you can also use <http://localhost:8080>: it asks for the same
 code. Open the link above with its beginning replaced by `http://localhost:8080`, that is
@@ -179,24 +206,36 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
 
 ## 5. Every day
 
-- **Keep the computer on and awake, with Docker Desktop running.** When the computer
-  sleeps, Mommy and the link stop answering.
-  - Windows: Settings > System > Power & sleep (Windows 10) or Power & battery
-    (Windows 11): set the sleep time "when plugged in" to **Never** while your friend
-    uses Mommy.
+- **Keep the computer on and awake, with Docker Desktop running.** While it sleeps,
+  Mommy and the link do not answer; when it wakes up they come back by themselves, with
+  the same link.
+  - Windows: Settings > System > Power & battery (Windows 11) or Power & sleep
+    (Windows 10): set the sleep time when plugged in to **Never**. On a laptop, also
+    Control Panel > Hardware and Sound > Power Options > **Choose what closing the lid
+    does** > When I close the lid, Plugged in: **Do nothing**. Windows Update may restart
+    the computer at night, which makes a new link: set your usual hours in Settings >
+    Windows Update > Advanced options > **Active hours**.
   - Mac: run `caffeinate -i` in a Terminal window and leave it open while your friend
     uses Mommy (Ctrl+C stops it). A MacBook still sleeps when its lid is closed.
   - Docker Desktop > Settings > General > **Start Docker Desktop when you sign in to
     your computer**: tick it, so Mommy comes back by itself after a restart.
-- **After a restart of the computer** (or of Docker Desktop), in the `mommy` folder:
+- **After a restart of the computer** (or of Docker Desktop): wait until Docker Desktop
+  says **Engine running**, then run this in any PowerShell or Terminal window (no need
+  to go to the `mommy` folder):
 
   ```sh
-  docker compose up -d
-  docker compose exec mommy python -m mommy.share_link
+  docker exec mommy-mommy-1 python -m mommy.share_link
   ```
 
   **The link changes** (a new `trycloudflare.com` address) and **the code stays the
-  same**: send the new link to your friend.
+  same**: send the new link to your friend. With a new link, Mommy starts empty for your
+  friend: the children and tasks have to be added again. If it says `No such
+  container`, Mommy was stopped: start it in the `mommy` folder, then run the command
+  above again:
+
+  ```sh
+  docker compose up -d
+  ```
 - **To stop Mommy:**
 
   ```sh
@@ -204,16 +243,24 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
   ```
 
   The code is kept. `docker compose up -d` starts it again (with a new link).
-- **To update Mommy** after new code is available: get the new files (download the ZIP
-  again and unzip it in place of the old folder, or `git pull` in the Git folder), open
-  the terminal in the `mommy` folder again, and run:
+- **To update Mommy** when there is new code:
+  1. ZIP: in Downloads, delete the old folder
+     `My-Coding-Projects-claude-laughing-goodall-h48bdw` and the old ZIP (your code is
+     kept in Docker, not there). Then do step 2 again: download, Extract All, open the
+     terminal in the new `mommy` folder. Git: run `git pull` in the `mommy` folder.
+  2. Run:
 
-  ```sh
-  docker compose up -d --build
-  ```
+     ```sh
+     docker compose up -d --build
+     ```
 
-  The code is kept (it is stored in Docker, not in the folder). Run the `share_link`
-  command again afterwards: the link may have changed.
+     Only Mommy is rebuilt and restarted: the code stays the same, and usually so does
+     the link. Run the `share_link` command to check. Afterwards, `docker image prune -f`
+     frees the space of the old version.
+
+  If `share_link` says that the tunnel program is many months old, an update brings a
+  newer one (when the new files have one): Cloudflare supports each version for about a
+  year.
 - **To make a new code** (a lost link, or to shut out everyone who had the old one):
 
   ```sh
@@ -224,15 +271,22 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
   The first command saves a new code and prints the new link; the second makes Mommy
   use it. From then on, the old link and every browser that used it get the code page.
   Send the new link.
-- **To remove Mommy completely** (the code too): `docker compose down --volumes --rmi all`.
-  You can then uninstall Docker Desktop.
+- **To remove Mommy completely** (the code too): `docker compose down --volumes --rmi all`,
+  then `docker builder prune -a -f` (frees what Docker kept from building it, about
+  1.5 GB). You can then uninstall Docker Desktop.
 
 ## 6. Troubleshooting
 
 - **"Cannot connect to the Docker daemon"** (Mac), **"error during connect"** or
-  **"open //./pipe/dockerDesktopLinuxEngine"** (Windows), or **"docker: command not
-  found"**: Docker Desktop is not running (or not installed yet). Open it and wait until
-  it says **Engine running**, then run the command again.
+  **"open //./pipe/dockerDesktopLinuxEngine"** (Windows), **"docker: command not
+  found"**, or in PowerShell **"The term 'docker' is not recognized"**: Docker Desktop is
+  not running (or not installed yet). Open it and wait until it says **Engine running**,
+  then run the command again. If Docker Desktop is running, close PowerShell and open a
+  new window (a window opened before the installation does not know the new command).
+- **"Virtualization support not detected"** (Windows) or **"Incompatible CPU
+  detected"** (Mac): hardware virtualization is turned off in the computer's firmware
+  (BIOS/UEFI) settings, often under the name "Intel Virtualization Technology" or "SVM
+  Mode". The computer maker's help pages say how to turn it on.
 - **"no configuration file provided: not found"**: the terminal is not in the `mommy`
   folder (step 2, point 3).
 - **Not enough memory.** `docker compose ps` shows `mommy` as **Restarting (137)**,
@@ -260,6 +314,8 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
   - `failed to request quick Tunnel`: Cloudflare's quick-tunnel service did not answer,
     or this network blocks it (some work or school networks do). The tunnel tries again
     by itself; wait a few minutes, or try another network, then run `share_link` again.
+  - Still "not connected" after five minutes: `docker compose restart tunnel` (this
+    makes a new link), then run `share_link` again.
 - **Your friend sees the code page** instead of Mommy: the link arrived without its end
   (some apps cut it at `#`), it is an old link (after `--new-code`), or it was opened in
   another browser or a private window. Send the full link again, or send the code (the
@@ -267,11 +323,15 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
   After 10 wrong codes in 10 minutes, that connection must wait up to 10 minutes.
 - **Your friend sees a Cloudflare error page or "This site can't be reached":** the
   link is old (your computer or Docker restarted, so the tunnel has a new address), or
-  your computer is asleep or off. Run `share_link` and send the new link.
-- **"port is already allocated"** when starting: another program on your computer uses
-  port 8080 (for example Mommy started with `./run.sh`). Stop it, or open `compose.yaml`
-  in a text editor and change `"127.0.0.1:8080:7860"` to `"127.0.0.1:8081:7860"`
-  (Mommy is then at <http://localhost:8081>).
+  your computer is asleep or off. Wake it up and run `share_link`: if it prints the same
+  link, it works again within a minute; if it prints another one, send that one.
+- **"address already in use"**, **"port is already allocated"** or **"ports are not
+  available"**, with `8080` in the message, when starting: another program on this
+  computer already uses port 8080 (for example Mommy started with `./run.sh`), and Mommy
+  does not start at all, nor does the link. Stop that program, or open `compose.yaml` in
+  Notepad (Windows) or TextEdit (Mac), find the line `- "127.0.0.1:8080:7860"`, change
+  only `8080` to `8081`, save, and run `docker compose up -d` again. On this computer
+  Mommy is then at <http://localhost:8081>; the link does not change.
 - **Limits of a free quick tunnel.** Cloudflare offers quick tunnels for testing, with
   no guarantee that they are always available: a tunnel may occasionally stop
   answering (`docker compose restart tunnel` makes a new one, with a new link). It
@@ -285,8 +345,9 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
   (also encrypted) to your computer. Cloudflare's servers end the HTTPS connection, as
   any such service does. On your computer, Mommy checks them **in memory and keeps
   none of them**: nothing is written to disk.
-- **The logs** (`docker compose logs`) hold only sizes and timings, never recordings,
-  photos, texts, the code or your friend's address. Docker keeps them on your computer
+- **The logs** (`docker compose logs`) hold sizes and timings, the language and kind of
+  each check and the ayat numbers of a Quran check, never recordings, photos, texts,
+  the age group, the code or your friend's address. Docker keeps them on your computer
   (at most 30 MB for each of the two containers) and deletes them with the containers
   (`docker compose down`).
 - **The family data** (the children, tasks, stars, rewards and the parent PIN) stays in
@@ -295,7 +356,9 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
 - **This setup runs Mommy without Claude**: page photos and handwriting are not read
   automatically (the parent types the text), and nothing is sent to the Claude API.
 - **Your home network stays closed:** the tunnel only connects out to Cloudflare. The
-  app's port answers only on this computer (`localhost`), not to other devices at home.
+  app's port answers only on this computer (`localhost`), not to other devices at home
+  (on Linux, with Docker Engine 28 or later: see the Linux note). Even so, it asks for
+  the code.
 - **The code** is kept in a Docker volume on your computer (file mode 0600, readable by
   Mommy only). It is never written in a log, an image or in this folder.
 
@@ -303,8 +366,13 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
 
 Install Docker Engine and its Compose plugin from Docker's instructions for your
 distribution (<https://docs.docker.com/engine/install/>), so that `docker compose
-version` works. Then follow steps 2 to 7 in a terminal: the commands are the same (put
-`sudo` in front of them unless your user is in the `docker` group). Docker on Linux has
+version` works. Use **Docker Engine 28 or later** (`docker version --format
+'{{.Server.Version}}'` shows it): older versions let another device of your network
+that routes to Docker's addresses reach the app's port, which only the code then
+protects. Some distributions' own packages are older (Ubuntu 24.04's first `docker.io`
+is 24.0, Debian 12's is 20.10): Docker's own packages are current. Then follow steps 2
+to 7 in a terminal: the commands are the same (put `sudo` in front of them unless your
+user is in the `docker` group). Docker on Linux has
 no memory limit of its own: the computer needs 8 GB of RAM or more. To start Mommy at
 boot, enable Docker (`sudo systemctl enable --now docker`); the containers then come
 back by themselves (run `share_link` for the new link).
