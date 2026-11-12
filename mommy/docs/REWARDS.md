@@ -85,7 +85,7 @@ Key `mommy.data.v2`, one JSON document. Every id is a random string from
     failedAttempts: 0, lockedUntil: null | iso,
     consentAt: null | iso,          // parent consent (existing consent box), moved here
     aiConsentAt: null | iso,        // existing Claude consent, moved here
-    aiConsentVersion: null | 1,     // (2026-11-12) the AI consent counts only with it: see the last section
+    aiConsentVersion: null | int,   // (2026-11-12) the text of the Claude notice it was given to; counts from 2: see the last two sections
     uiLang: 'ar' | 'en' | 'fr',     // the parent area language
   },
   children: [{
@@ -679,3 +679,60 @@ the owner set it up (P1). Its three smaller findings were about wording (P3, P4,
   Claude set up and no AI consent, Recite and the dictation check stay off rather than
   falling back to the offline templates (that would need a change to `app.py`, which
   this step did not own).
+
+## Decisions recorded at the second check of the AI consent (2026-11-12)
+
+The independent check of the separate AI consent found the gate itself sound, and six
+problems in what the texts say (V1 to V5) and in where the gate is enforced (V6).
+
+- **V1, the Claude notice names everything Claude gets.** The notice the parent agrees to
+  left out the language and the child's age group, which `llm.py` sends with each
+  meaning check and each feedback ("Language: ... Age band: ..."), and the score that
+  comes with the words the child got wrong. It now ends: "...and the words your child
+  got wrong, with the score, so that it can word the feedback. The language is sent
+  with each of them, and your child's age group with the meaning check and the
+  feedback. The recordings themselves are not sent." (the same in French and Arabic).
+  `AI_CONSENT_VERSION` is now 2: a consent of version 1 was given to the shorter text,
+  so it no longer counts and the family is asked again (read without a repair, so no
+  notice; the AI box gives a new time and version 2). Two checks keep it so:
+  `tests/web/smoke.cjs` reads every value that `ClaudeBrain` puts into a request and
+  fails on one the notice does not name, and it keeps a fingerprint of the notice (en,
+  fr, ar, with the box's label) for the current version, so a change to the notice
+  fails until the version is raised.
+- **V2 and V3, the family data line.** "Each check sends the text or the ayat ..., the
+  language and the child's age group to the Mommy server, which does not keep them" was
+  not true: a Quran check sends only the surah and ayat numbers (and the recording), and
+  the server's log notes the language of each check and the ayat numbers of a Quran
+  check (a `docker compose` install keeps up to 30 MB of it). The line is now: "Your
+  family's list (children, tasks, stars, rewards and the PIN) is saved only in this
+  browser, on this device. To check a text or read it out, the Mommy server gets the
+  text and its language, and for a recitation or dictation check also the child's age
+  group; a Quran check sends the surah and ayat numbers instead. The server does not
+  keep the texts or the age group; its log notes the language, the kind of check and
+  the ayat numbers." `tests/web/access.cjs` checks the log claim against the real app
+  (a text check and a typed dictation check: the language and the kind of check are in
+  the log, the words of the text and the age group are not). The log itself was left as
+  it is (`app.py` is the self-hosting kit's).
+- **V4, the cards for the grown-up.** Prepare and the check stage of a dictation are
+  headed "For the grown-up", yet showed the child's line. A `[data-why]` line in a part
+  of a screen headed by a `.tag-parent` (`forGrownUp` in `app.js`) now says "This uses
+  Claude: please give your OK for Claude in the parent area (Settings) first."
+  (`consent_needed_ai_grownup`); the child's screens (Recite) keep the child's line, and
+  the parent area its own.
+- **V5, the photo note with Claude.** The photo buttons work only with Claude, so the
+  note under them now says where the photos go: "Photos are made smaller on this
+  device, then sent to Claude to be read. Mommy does not keep them." locally, and
+  "...then sent over a secure connection to the Mommy server, which does not keep them
+  and passes them on to Claude to be read." online. Nothing is said about what Claude
+  keeps; without Claude the notes are as before.
+- **V6, not done: the gate is the web client's only.** Three gaps remain, all of which
+  need the server to take part: a server started again with Claude between the client's
+  quiet `/api/health` check and its request; a tab still running an older `app.js`
+  after an update; and any client other than this page. The fix that would close the
+  first two is an opt-in field on `/api/page/read`, `/api/recite/check` and
+  `/api/dictation/check` (for example `ai_consent=1`, sent by the client only with a
+  consent that counts), without which the server uses the offline brain for that one
+  request; it would also let Recite and the dictation check fall back to the offline
+  templates instead of staying off. It changes the HTTP API and the server's tests, and
+  `app.py` belonged to the self-hosting kit while this was done, so it is left for a
+  step that owns the server. The third gap is the access code's to close.

@@ -67,7 +67,9 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
    - A parent must tick a consent box before the camera or microphone is used.
    - (extra) Nothing goes to Claude before the parent ticks the AI consent box, which is
      shown under the notice of what goes to Claude only while Claude is configured; a
-     consent given without that notice never covers Claude (see "Start screen").
+     consent given without that notice, or to an earlier text of it, never covers Claude
+     (see "Start screen"). This is enforced by the web client: the server cannot yet be
+     told to leave Claude out of one request.
    - (extra) Every sentence of the UI about where the data goes is true in each way the
      app runs: local or online (`/api/health` `online`), with or without Claude. Online,
      the consent box says that the child's voice recordings, the photos and the texts go
@@ -1333,14 +1335,23 @@ each language is still loaded on first use.
     also withdraws the AI consent;
   - (extra) while `/api/health` says `"brain": "claude"`, the AI consent: a box of its own
     (`consent_ai_label`, "I agree that these things are sent to Claude.") right under the
-    Claude notice (`consent_claude`), which can be ticked only with the first box. Stored
-    as `parent.aiConsentAt` with `parent.aiConsentVersion` (`rewards.js`
-    `hasAiConsent`; a consent saved before the version existed never counts, see
-    `docs/REWARDS.md`). Until it is given, every call whose server path can use Claude
-    (`/api/page/read`, `/api/recite/check`, `/api/dictation/check`) is gated: the child's
-    screens say `consent_needed_ai` ("Let's ask a grown-up to open the parent area and
-    give their OK first."), the parent area `consent_needed_ai_parent`, and the parent
-    area shows a prompt behind the PIN (the Claude notice, the box, "Save", "Not now").
+    Claude notice (`consent_claude`), which can be ticked only with the first box. The
+    notice names every value `llm.py` puts into a Claude request: the photos, the page
+    text and a transcript (meaning mode), the words the child got wrong with the score,
+    and with them the language and the child's age group (checked against `llm.py` by
+    `tests/web/smoke.cjs`). Stored as `parent.aiConsentAt` with `parent.aiConsentVersion`
+    (`rewards.js` `hasAiConsent`): the consent counts only with `AI_CONSENT_VERSION` (2,
+    the notice with the score, the language and the age group) or later, so a change to
+    the notice raises the version and every family is asked again; a consent saved before
+    the version existed never counts (see `docs/REWARDS.md`). Until it is given, every
+    call whose server path can use Claude (`/api/page/read`, `/api/recite/check`,
+    `/api/dictation/check`) is gated: the child's screens say `consent_needed_ai` ("Let's
+    ask a grown-up to open the parent area and give their OK first."), a card for the
+    grown-up elsewhere (Prepare, the check stage of a dictation: headed "For the
+    grown-up") says `consent_needed_ai_grownup` ("This uses Claude: please give your OK
+    for Claude in the parent area (Settings) first."), the parent area
+    `consent_needed_ai_parent`, and the parent area shows a prompt behind the PIN (the
+    Claude notice, the box, "Save", "Not now").
     Without that consent the client asks `/api/health` again before such a call (the
     server may have been started again with Claude) and sends nothing if Claude is now
     set up ("Nothing was sent."). The Quran section, the dictation's voice and
@@ -1360,16 +1371,25 @@ each language is still loaded on first use.
     yourself.": the server's own recogniser is not an outside service). The page counts
     as online when `/api/health` says `online`, and also when it was not loaded from a
     loopback host (a tunnel that rewrites the `Host` header, or the server not reached
-    yet). The photo note of Prepare and of the task form is `photo_privacy` locally
-    ("Photos are made smaller on this device, and Mommy does not keep them.") and
-    `photo_privacy_online` online (sent to the Mommy server, which does not keep them);
+    yet). The photo note of Prepare and of the task form is, without Claude (the photo
+    buttons are then off), `photo_privacy` locally ("Photos are made smaller on this
+    device, and Mommy does not keep them.") and `photo_privacy_online` online (sent to the
+    Mommy server, which does not keep them); with Claude it names where the photos go:
+    `photo_privacy_claude` locally ("Photos are made smaller on this device, then sent to
+    Claude to be read. Mommy does not keep them.") and `photo_privacy_online_claude`
+    online (to the Mommy server, "which does not keep them and passes them on to Claude to
+    be read"), never a word about what Claude keeps;
     the label of an approximate meaning check is `approximate_online` online ("without
     the online AI", never "offline");
   - the family data line, in the setup and in Settings, the same in every mode
     (`fam_privacy_line`: "Your family's list (children, tasks, stars, rewards and the
-    PIN) is saved only in this browser, on this device. Each check sends the text or the
-    ayat to practise, the language and the child's age group to the Mommy server, which
-    does not keep them.");
+    PIN) is saved only in this browser, on this device. To check a text or read it out,
+    the Mommy server gets the text and its language, and for a recitation or dictation
+    check also the child's age group; a Quran check sends the surah and ayat numbers
+    instead. The server does not keep the texts or the age group; its log notes the
+    language, the kind of check and the ayat numbers."), true of the fields the client
+    sends and of what `app.py` logs (`tests/web/access.cjs` reads the real server's
+    log);
   - the parent PIN (a child lock) and the children (nickname, age band, language,
     avatar), in one family document kept in `localStorage` (`mommy.data.v2`) on this
     device only.

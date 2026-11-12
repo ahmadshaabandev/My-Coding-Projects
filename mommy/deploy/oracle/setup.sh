@@ -130,8 +130,9 @@ as_root() {
   if [[ -n "$SUDO" ]]; then run sudo "$@"; else run "$@"; fi
 }
 
-# root_read CMD...: a command that only reads, run as root even with --dry-run (where
-# sudo must not ask for a password: it fails instead).
+# root_read CMD...: CMD as root now, even with --dry-run (where sudo must not ask for a
+# password: it fails instead). With --dry-run it is used for reads only; the writes that
+# go through it are all in branches that --dry-run never takes.
 root_read() {
   if [[ -z "$SUDO" ]]; then
     "$@"

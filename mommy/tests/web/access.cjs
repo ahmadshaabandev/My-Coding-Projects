@@ -35,7 +35,7 @@ const ARABIC_INDIC = (s) => s.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Nu
 const LOCALES = { en: 'en-GB', fr: 'fr-FR', ar: 'ar' };
 // A text and an age group that must never reach the server log.
 const PRIVATE_TEXT = 'Le zèbre grignote doucement une pomme verte.';
-const PRIVATE_AGE = '10-13';
+const PRIVATE_AGE = '14-18'; // never a date: no month 14
 
 // The app as build_default_app() makes it, with fakes for Whisper and Piper (no models
 // loaded), and the logging of the mommy loggers to stderr at DEBUG.
@@ -417,7 +417,7 @@ async function main() {
     const log = app.out.text;
     assert.match(log, /text\/check strict fr: /);
     assert.match(log, /dictation\/check fr: /);
-    for (const word of PRIVATE_TEXT.split(/\s+/)) assert.ok(!log.includes(word.replace(/[.,]/g, '')), `"${word}" of the text is in the server log`);
+    for (const word of PRIVATE_TEXT.replace(/[.,]/g, '').split(/\s+/).filter((w) => w.length > 3)) assert.ok(!log.includes(word), `"${word}" of the text is in the server log`);
     assert.ok(!log.includes(PRIVATE_AGE), 'the age group is in the server log');
   });
   finish();

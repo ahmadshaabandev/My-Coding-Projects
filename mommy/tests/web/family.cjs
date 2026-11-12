@@ -2422,7 +2422,8 @@ async function aiConsentFlow(browser, base) {
     v1 = await R.setPin(v1, PIN, now);
     const r = R.addChild(v1, { nickname: 'Sami', lang: 'en', avatar: '🦉' }, now);
     v1 = R.createTask(r.doc, { childId: r.child.id, kind: 'recite', text: SUN_TEXT, lang: 'en', title: 'Sun' }, now).doc;
-    v1 = R.createTask(v1, { childId: r.child.id, kind: 'dictation', text: SUN_TEXT, lang: 'en', title: 'Sun dictation' }, now).doc;
+    const CAT = 'The cat sat on the mat.';
+    v1 = R.createTask(v1, { childId: r.child.id, kind: 'dictation', text: CAT, lang: 'en', title: 'Writing' }, now).doc;
     v1.parent.aiConsentAt = now;
     v1.parent.aiConsentVersion = 1;
     assert.deepEqual(R.validateDoc(v1).repaired, []);
@@ -2436,14 +2437,14 @@ async function aiConsentFlow(browser, base) {
       assert.ok(await page.isDisabled('#recite-rec'));
       assert.equal(await text(page, '#why-recite-rec'), S.consent_needed_ai, "the child's line on the child's screen");
       await page.click('#task-leave');
-      await startTask(page, 'Sun dictation', 'dictation');
+      await startTask(page, 'Writing', 'dictation');
       await page.click('#btn-dict-start');
       for (let i = 0; i < 2; i++) {
         await page.waitForSelector('#dict-next:not([disabled])');
         await page.click('#dict-next');
       }
       await page.waitForSelector('[data-stage="check"]:not([hidden])');
-      await page.fill('#dict-written', SUN_TEXT);
+      await page.fill('#dict-written', CAT);
       assert.ok(await page.isDisabled('#btn-dict-check'));
       assert.ok(await page.isDisabled('#dict-take'));
       assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-photo"]'));
@@ -2464,14 +2465,14 @@ async function aiConsentFlow(browser, base) {
       assert.ok(R.AI_CONSENT_VERSION > 1);
       assert.notEqual(d.parent.aiConsentAt, now, 'a new time for the new text');
       await H.closeParent(page);
-      await startTask(page, 'Sun dictation', 'dictation');
+      await startTask(page, 'Writing', 'dictation');
       await page.click('#btn-dict-start');
       for (let i = 0; i < 2; i++) {
         await page.waitForSelector('#dict-next:not([disabled])');
         await page.click('#dict-next');
       }
       await page.waitForSelector('[data-stage="check"]:not([hidden])');
-      await page.fill('#dict-written', SUN_TEXT);
+      await page.fill('#dict-written', CAT);
       await page.click('#btn-dict-check');
       await H.waitForCall(fake, '/api/dictation/check', 1);
       assert.equal(fake.callsTo('/api/recite/check').length, 0);

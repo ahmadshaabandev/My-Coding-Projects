@@ -33,7 +33,7 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
 - **Audio and photos stay in memory.** Uploads are never written to disk: request bodies
   are size-limited before they are parsed, and the upload parser's spill-to-disk
   threshold is raised above that limit (checked by `tests/test_api.py`). They are never
-  logged; logs carry only sizes, durations and timings.
+  logged; of an upload, the logs carry only its size, duration and timings.
 - **Photos are cleaned.** The browser resizes them (long edge at most 2000 px) and
   re-encodes them as JPEG, which drops EXIF data such as a GPS position. The server
   decodes and re-encodes every image again, in memory, as a new JPEG of at most 2000 px
@@ -48,9 +48,12 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
 - **Claude is optional.** Only when it is configured are page photos, handwriting photos
   and texts sent to the Claude API, and only after the parent ticks the AI consent box: a
   box of its own under the notice of what goes to Claude, shown only while Claude is
-  configured. A consent given while Claude was not configured never covers it; until
-  that box is ticked, every feature that would use Claude stays off. The Batch and Files
-  APIs are never used.
+  configured. The notice names everything Claude gets (the photos, the page text and a
+  transcript in meaning mode, the words the child got wrong with the score, the
+  language and the child's age band); when it changes, every family is asked again. A
+  consent given while Claude was not configured never covers it; until that box is
+  ticked, every feature that would use Claude stays off. The Batch and Files APIs are
+  never used.
 - **Consent first.** A parent must tick a consent box before the camera or microphone is
   used. The family document (the children's nicknames, age bands and languages, their
   tasks, stars and rewards, the consent and the hashed parent PIN) is kept in the
@@ -136,11 +139,15 @@ while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
   Anyone who can open the browser's developer tools can read or change the data.
 - **The family data stays in this browser on this device.** Everything is one document
   in `localStorage`, and the server stores none of it. What a check needs travels with
-  it: the text to practise (or the surah and ayat), its language and the child's age
-  band go to the Mommy server, which checks them in memory and keeps none of them (with
-  Claude configured and the AI consent given, the text and the age band also go to
-  Claude). Another browser,
-  another device or a private window has its own (empty) data. **Clearing the browser's
+  it: to check a text or read it out, the Mommy server gets the text and its language,
+  and for a recitation or dictation check also the child's age band; a Quran check sends
+  the surah and ayat numbers instead. The server checks them in memory and keeps neither
+  the texts nor the age band, but its log notes the language, the kind of check and the
+  ayat numbers (the log of a `docker compose` install is kept, up to 30 MB). With Claude
+  configured and the AI consent given, Claude also gets the language and the age band
+  with the text or with the words the child got wrong (the Claude notice lists it all).
+  Another browser, another device or a private window has its own (empty) data.
+  **Clearing the browser's
   data for this site deletes it** (the children, tasks, stars and rewards), and so does
   "Delete all data on this device" in the parent area's Settings.
 
@@ -349,7 +356,9 @@ deleting the Space removes it.
   checked. Hugging Face's servers carry this traffic and end the HTTPS connection; the
   app then processes the audio and photos in memory and never stores them (the same
   rules as locally: nothing is written to disk, and the logs, which the Space's owner
-  can read in the "Logs" tab, hold only sizes and timings). Uvicorn's access log is off,
+  can read in the "Logs" tab, hold sizes and timings, the language and kind of each
+  check and the ayat numbers of a Quran check, never the audio, the photos or the
+  texts). Uvicorn's access log is off,
   so client addresses and paths are not logged either. The access cookie is always
   `Secure` online and the app sends `Strict-Transport-Security`, so browsers reach it
   over HTTPS only. A restart of the Space keeps nothing.
