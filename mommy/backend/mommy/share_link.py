@@ -165,6 +165,9 @@ def wait_for_tunnel(
     a malformed answer or an empty name (cloudflared runs without a quick tunnel). When
     the name came but the tunnel is not connected yet at the end, ``ready`` is False."""
     base = metrics_url.strip().rstrip("/")
+    parts = urllib.parse.urlsplit(base)
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.query or parts.fragment:
+        raise TunnelError(f"MOMMY_TUNNEL_METRICS_URL ({base}) is not a usable http:// address")
     opener = _no_proxy_opener()
     deadline = clock() + wait_s
     hostname: str | None = None

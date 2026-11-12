@@ -11,7 +11,10 @@
 #
 # Behind a TLS-intercepting proxy, point MOMMY_BUILD_CA at its CA bundle (read by pip
 # during the build only, as the Dockerfile's build_ca secret; never stored in a layer).
-# The build uses the host's network, so it can reach a proxy on the host's 127.0.0.1.
+# Compose builds through buildx bake, which refuses to read a file outside this folder
+# unless allowed: for a bundle elsewhere, also set BUILDX_BAKE_ENTITLEMENTS_FS=0, e.g.
+#   MOMMY_BUILD_CA=/path/to/ca.crt BUILDX_BAKE_ENTITLEMENTS_FS=0 \
+#     docker compose -f compose.yaml -f compose.test.yaml build
 
 services:
   mommy:
