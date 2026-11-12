@@ -94,7 +94,7 @@
       <form class="card" id="setup-form" novalidate hidden>
         <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
         <h2 class="card-title" data-i18n="fam_setup_title">Family setup</h2>
-        <p class="hint" data-i18n="profile_note">Saved only on this device.</p>
+        <p class="hint" data-i18n="fam_privacy_line">The family data (children, tasks, stars, rewards and the PIN) stays in this browser, on this device.</p>
         <div class="field">
           <label for="setup-lang" data-i18n="fam_parent_lang">Language for the grown-ups</label>
           <select id="setup-lang">
@@ -110,7 +110,9 @@
             <input type="checkbox" id="consent" name="consent">
             <label for="consent" data-i18n="consent_label">I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.</label>
           </div>
-          <p class="hint" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
+          <!-- Where the recordings, photos and texts go, and what goes to Claude: set by app.js
+               (updatePrivacyTexts) from /api/health ("online", "brain"). -->
+          <p class="hint consent-privacy" id="consent-privacy" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
           <p class="hint consent-extra" id="consent-extra"></p>
         </fieldset>
 
@@ -261,7 +263,7 @@
           </label>
         </div>
         <p class="why" id="why-prep-photo" data-why="prep-photo" hidden></p>
-        <p class="hint" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
+        <p class="hint photo-privacy" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
         <p class="status" id="prep-status" role="status" aria-live="polite"></p>
         <p class="status" id="prep-quran-note" role="status" aria-live="polite"></p>
 
@@ -721,7 +723,7 @@
               </label>
             </div>
             <p class="why" data-why="prep-photo" hidden></p>
-            <p class="hint" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
+            <p class="hint photo-privacy" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
             <p class="status" id="tf-photo-status" role="status" aria-live="polite"></p>
             <p class="status" id="tf-quran-note" role="status" aria-live="polite"></p>
             <div class="field">
@@ -991,14 +993,14 @@
       <!-- Settings: consent, the PIN, the parent's language, delete all data on this device. -->
       <section class="psec card" data-psec="settings" aria-labelledby="psec-settings-h" hidden>
         <h2 id="psec-settings-h" tabindex="-1" data-i18n="fam_sec_settings">Settings</h2>
-        <p class="hint" data-i18n="fam_privacy_line">Everything here stays on this device.</p>
+        <p class="hint" data-i18n="fam_privacy_line">The family data (children, tasks, stars, rewards and the PIN) stays in this browser, on this device.</p>
         <fieldset class="consent">
           <legend data-i18n="consent_title">For the parent</legend>
           <div class="check">
             <input type="checkbox" id="settings-consent">
             <label for="settings-consent" data-i18n="consent_label">I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.</label>
           </div>
-          <p class="hint" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
+          <p class="hint consent-privacy" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
           <p class="hint consent-extra"></p>
         </fieldset>
 
