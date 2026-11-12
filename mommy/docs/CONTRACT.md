@@ -72,11 +72,14 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
      none of them, and never says that nothing leaves this computer. The family data
      (children, tasks, stars, rewards, the PIN) stays in the browser on this device in
      every mode (see "Start screen" under Web client).
-   - Online (extra, `MOMMY_ACCESS_CODE` set): nothing answers without the access cookie,
-     so only people given the code can send audio or photos or use the server (see
-     "Access gate" under HTTP API). The code is never logged, never written to disk and
-     never put in a URL query: the link carries it in the fragment (`/#code=...`), which
-     browsers never send to a server, and the gate page POSTs it. Without the variable
+   - Online (extra, `MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE` for one's own
+     computer): nothing answers without the access cookie, so only people given the code
+     can send audio or photos or use the server (see "Access gate" under HTTP API). The
+     code is never logged and never put in the image, in git or in a URL query: the link
+     carries it in the fragment (`/#code=...`), which browsers never send to a server,
+     and the gate page POSTs it. It is written to disk in one place only: the code file
+     of a self-hosted deployment (`MOMMY_ACCESS_CODE_FILE`, mode 0600, in the data volume
+     of `compose.yaml`), so that the code survives restarts. Without either variable
      there is no gate at all and local use is unchanged.
 6. No Claude model identifiers or Claude model version names appear anywhere in the
    repository: no code strings, comments, docs or tests. Claude models are configured only
@@ -121,6 +124,8 @@ mommy/
                             each archive checked against its pinned sha256 before it is unpacked
   scripts/lock_requirements.py  regenerates both lock files (development only: the one script that uses the network)
   Dockerfile .dockerignore scripts/space_start.sh deploy/huggingface/   the online deployment (extra; README.md, "Run it online")
+  compose.yaml compose.test.yaml .gitattributes   self-hosting on one's own computer behind a Cloudflare quick tunnel
+                            (extra; SELF_HOST.md; compose.test.yaml is for testing the kit only)
   docs/CONTRACT.md          this file
   data/quran/quran-uthmani.txt, quran-simple-clean.txt   verbatim Tanzil text (txt-2: sura|aya|text; licence block at end)
   data/quran/quran-data.js  verbatim Tanzil metadata (surah names, ayah counts; CC BY 3.0)
@@ -129,7 +134,8 @@ mommy/
     __init__.py
     config.py   textnorm.py   align.py   phrases.py   feedback.py
     quran.py    guard.py      asr.py     tts.py       llm.py       app.py
-    access.py   the access gate of an online deployment (extra; MOMMY_ACCESS_CODE)
+    access.py   the access gate of an online deployment (extra; MOMMY_ACCESS_CODE), allowed host names, the code file
+    share_link.py  python -m mommy.share_link: the link to share a self-hosted Mommy (extra)
   web/
     index.html  app.js  recorder.js  styles.css
     rewards.js  family.js     the tasks and rewards (docs/REWARDS.md): pure logic, and the family UI
@@ -143,6 +149,8 @@ mommy/
                 access.cjs (extra: the access gate in Chromium against the real app under uvicorn,
                 with MOMMY_ACCESS_CODE set and fake speech components)
   tests/test_access.py                the access gate (extra)
+  tests/test_selfhost.py              suffix host entries, the code file and share_link against a fake
+                                      cloudflared metrics server (extra)
   tests/test_space_image.py           the image's start script, model checksums and Dockerfile (extra)
   tests/test_deploy.py                deploy/huggingface/deploy.py against a fake Hub (extra)
 ```
@@ -175,6 +183,7 @@ class Settings:
     effort: str                # env MOMMY_EFFORT, default "low"
     allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS   # extra; env MOMMY_ALLOWED_HOSTS (comma-separated)
     access_code: str | None = field(default=None, repr=False)   # extra; env MOMMY_ACCESS_CODE (None: no gate)
+    access_code_file: Path | None = None   # extra; env MOMMY_ACCESS_CODE_FILE, when the code came from it
     claude_configured: bool    # property (extra): key and both models set
 MIN_ACCESS_CODE_CHARS = 8      # extra
 def load_settings(root: Path | None = None) -> Settings
@@ -185,6 +194,26 @@ def load_settings(root: Path | None = None) -> Settings
 # container image sets it, run.sh does not). "Blank" is str.strip()'s: any Unicode white
 # space, so a no-break space is no code; this is the only place that decides it.
 # The access code is stripped; it is kept out of repr(Settings), so it cannot reach a log.
+def parse_allowed_hosts(value: str) -> tuple[str, ...]   # extra
+# The entries of MOMMY_ALLOWED_HOSTS, each normalized by access.host_entry, without
+# repeats, in order. An entry that starts with a dot is a suffix entry (".trycloudflare.com",
+# see access.HostMatcher). ValueError for no entry and for a suffix host_entry refuses
+# (".com", ".", ".co.uk", "*.example.com"...): the app does not start.
+def access_code_from(env: Mapping[str, str], *, create: bool = True) -> tuple[str | None, Path | None]   # extra
+# (code, file): MOMMY_ACCESS_CODE when set (file None; it wins, and the file is then
+# neither read nor made); else the code of MOMMY_ACCESS_CODE_FILE (code_from_file); else
+# (None, None).
+def code_from_file(path: Path, *, create: bool = True) -> str   # extra
+# The code in the file (access.read_code_file). A missing file, with create, first gets a
+# new code (access.create_code_file: 12 characters of CODE_ALPHABET from secrets, written
+# atomically, mode 0600; when two processes make it at once, both end with the code that
+# won, the one in the file); without create, FileNotFoundError. ValueError (naming the
+# file, never the code) for a file that cannot be read or made (a directory, no
+# permission, a missing directory, not UTF-8, more than one line, over 1024 bytes) or that
+# holds fewer than MIN_ACCESS_CODE_CHARS characters, an empty file included: a bad file is
+# never replaced behind the owner's back. Logs "made a new access code in <path>" (the
+# path, never the code). Leading and trailing white space, a UTF-8 byte-order mark and a
+# CRLF are dropped (a file edited on Windows).
 ```
 
 Whisper turbo is the default: on the 4-core test machine it has the same warm latency as
@@ -743,7 +772,137 @@ def access_cookie_values(headers) -> list[str]
 class AccessGateMiddleware(app, gate: AccessGate)    # pure ASGI, see "Access gate" below
 def is_navigation(headers) -> bool
 # Sec-Fetch-Mode: navigate; for a client without fetch metadata, an Accept with text/html.
+
+# Allowed host names (MOMMY_ALLOWED_HOSTS), used by app.HostOriginMiddleware:
+MIN_SUFFIX_LABELS = 2; MAX_HOST_NAME_CHARS = 253
+def host_entry(entry: str) -> str
+# One entry, normalized. An exact entry: trimmed, lower case, IPv6 brackets removed
+# ("[::1]" -> "::1"), as before suffix entries existed. A suffix entry starts with a dot
+# and keeps it (" .TryCloudflare.com. " -> ".trycloudflare.com": lower case, no trailing
+# dot). ValueError for a suffix of fewer than MIN_SUFFIX_LABELS labels (".com", ".", ".."),
+# a country's public second level (".co.uk", ".com.au": two labels, a two-letter last
+# one, a first one of ac co com edu go gob gov gv ne net or org), one that is not a host
+# name (an empty label, "_", a hyphen at a label's edge), non-ASCII (write the xn-- form),
+# one that ends in a number (".0.1"), and for a "*" wildcard anywhere.
+def split_host(value: str) -> tuple[str, str | None]
+# (name, port or None) of a Host value or an origin's host part; "[::1]:8080" ->
+# ("::1", "8080"); more than one colon without brackets is a bare IPv6 address.
+def is_dns_name(name: str) -> bool   # lower-case ASCII labels [a-z0-9-], 1-63 each, no edge hyphen, at most 253
+class HostMatcher(entries: Iterable[str])     # ValueError for an entry host_entry refuses
+    exact: frozenset[str]; suffixes: tuple[str, ...]
+    def allows_name(self, name: str) -> bool  # a name without the port
+    def allows_host(self, host: str) -> bool  # a Host header value; the port is ignored
+    def same_origin(self, origin: str, host: str) -> bool
+# allows_name: a name that is not ASCII never matches (so no Unicode case folding, such
+# as the Kelvin sign or a fullwidth dot, can make an allowed name). An exact entry
+# matches the name in lower case, exactly as before (no trailing-dot folding: the
+# decisions for exact entries are those of the old check, tests/test_selfhost.py). A
+# suffix entry matches a name, in any case and with one trailing dot dropped, whose labels
+# are all valid (is_dns_name) and that ends with the entry and has at least one more
+# label: "abc.trycloudflare.com", "a.b.trycloudflare.com", "ABC.TryCloudflare.COM:443",
+# "abc.trycloudflare.com."; never "trycloudflare.com" itself, "evil-trycloudflare.com",
+# "trycloudflare.com.evil.com", "a..trycloudflare.com", "abc_x.trycloudflare.com" or a
+# name with a Cyrillic look-alike letter.
+# same_origin: origin is "http://" or "https://" followed by an allowed name (allows_name)
+# and the same host as the request's Host value (lower case, a trailing dot on the name
+# dropped on both sides, the same port or none on both). "null", a path (even "/"), user
+# information, another scheme, another port and another name under the same suffix
+# entry (someone else's tunnel) are not the same origin.
+
+# The access code file (MOMMY_ACCESS_CODE_FILE; config.code_from_file decides when):
+CODE_FILE_MAX_BYTES = 1024; CODE_FILE_MODE = 0o600; CODE_FILE_SETTLE_S = 1.0
+def generate_code() -> str
+# CODE_LENGTH (12) characters of CODE_ALPHABET, each from secrets.choice (about 59 bits).
+def read_code_file(path: Path, *, settle_s: float | None = None) -> str
+# The file's text, trimmed (str.strip; a UTF-8 BOM dropped); may be short or empty: the
+# caller checks. FileNotFoundError when missing; ValueError (naming the file, never its
+# content) for a file that cannot be read, is over CODE_FILE_MAX_BYTES, is not UTF-8 or
+# holds more than one line. An empty file is read again for up to settle_s seconds
+# (default CODE_FILE_SETTLE_S): a writer without hard links creates it, then writes it.
+def create_code_file(path: Path) -> str | None
+# A new code in path unless it exists; returns it, or None when the file already existed
+# (another process made it first: read that one). The code is written to a temporary
+# file of mode 0600 in the same directory (fsync'ed), then hard-linked to path (a link
+# never replaces a file), so no reader sees a partial file and two processes that start
+# together end with one code; the temporary file is always removed. Without hard links
+# (some FUSE or network file systems), O_CREAT | O_EXCL with mode 0600, then the write.
+# OSError when the directory is missing or not writable.
+def replace_code_file(path: Path, code: str) -> None
+# The code (mode 0600) put in place of the file's, atomically (a temporary file renamed
+# over it: a reader sees the old code or the new one). share_link --new-code uses it.
 ```
+
+### share_link.py (extra: the link to share a self-hosted Mommy)
+
+Run inside the app's container, from the `mommy/` directory:
+`docker compose exec mommy python -m mommy.share_link` (`--new-code` for a new code).
+
+```python
+DEFAULT_METRICS_URL = "http://tunnel:2000"   # env MOMMY_TUNNEL_METRICS_URL replaces it
+QUICKTUNNEL_PATH = "/quicktunnel"; READY_PATH = "/ready"
+DEFAULT_WAIT_S = 60.0; POLL_INTERVAL_S = 1.0; REQUEST_TIMEOUT_S = 3.0; MAX_ANSWER_BYTES = 4096
+SHARE_COMMAND = "docker compose exec mommy python -m mommy.share_link"
+RESTART_COMMAND = "docker compose restart mommy"
+REPAIR_COMMAND = "docker compose run --rm mommy python -m mommy.share_link --new-code"
+REMINDER = "Reminder: this link changes when the tunnel restarts (after a reboot, for example), but the code stays the same: run this command again to get the new link."
+EXIT_OK = 0; EXIT_NO_CODE = 1; EXIT_USAGE = 2; EXIT_NO_TUNNEL = 3
+class TunnelError(Exception)              # the message says why, for the owner
+@dataclass(frozen=True)
+class Tunnel:
+    hostname: str        # lower case
+    ready: bool | None   # connected to Cloudflare; False: not when the wait ended; None: no /ready
+def share_link(hostname: str, code: str) -> str   # "https://<hostname>/#code=<code>", the code percent-encoded
+def parse_hostname(body: bytes) -> str
+# The name in a /quicktunnel answer ({"hostname": "..."}), lower case, without an
+# "https://" prefix or a trailing dot; "" for an empty name. ValueError for anything else
+# (not JSON or UTF-8, no "hostname" string, not a host name with a dot in it).
+def wait_for_tunnel(metrics_url=DEFAULT_METRICS_URL, *, wait_s=60.0, interval_s=1.0,
+                    request_timeout_s=3.0, clock=time.monotonic, sleep=time.sleep,
+                    on_wait=None) -> Tunnel
+def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTERVAL_S) -> int
+```
+
+- The code: as the app reads it (`config.access_code_from(env, create=False)`):
+  `MOMMY_ACCESS_CODE` if set, else the file `MOMMY_ACCESS_CODE_FILE`. This command never
+  makes the file (a code the running app does not have would open nothing): when it is
+  missing it says the app makes it at its start (exit 1); a bad file is reported with
+  `REPAIR_COMMAND` (exit 1), or, when the code comes from `MOMMY_ACCESS_CODE`, with
+  "Change MOMMY_ACCESS_CODE where it is set"; with neither variable it says so (exit 1).
+  The tunnel is asked only once the code is good.
+- The tunnel: cloudflared's metrics server (`compose.yaml`: `--metrics 0.0.0.0:2000`, the
+  port not published). `GET /quicktunnel` answers `{"hostname":"<name>.trycloudflare.com"}`
+  (as `text/plain`); then `GET /ready` answers 200 once the tunnel is connected to
+  Cloudflare and 503 before. No answer (refused, unknown name, timeout, a dropped
+  connection) and an HTTP status other than 200 and 404 are retried every second for up
+  to 60 s (`--wait SECONDS` changes it; one "Waiting for the tunnel to start" line on
+  standard error the first time). A 404 for `/quicktunnel` (not cloudflared, or a version
+  without it), a malformed answer or an empty name (cloudflared runs without a quick
+  tunnel) stop at once. No name in time: exit 3. A name but `/ready` still 503 at the end:
+  the link is printed with a warning that the tunnel is not connected yet; a `/ready`
+  that answers anything else (404) is not waited for. The requests ignore `HTTP_PROXY`
+  and the like (the metrics server is on the compose network).
+  Checked on cloudflared 2026.10.7, the version `compose.yaml` pins: the binary started
+  against a fake quick-tunnel service (its hidden `--quick-service` flag) answered
+  `/quicktunnel` with `{"hostname":"fancy-words-here-test.trycloudflare.com"}`, `/ready`
+  with `503 {"status":503,"readyConnections":0,...}` while it had no edge connection,
+  and any other path with `404 page not found`; the fake server of the tests answers the
+  same way.
+- Output: standard output gets the link `https://<name>/#code=<code>` and `REMINDER` on
+  the next line (`--link-only`: the link alone); waiting notes, warnings and errors go to
+  standard error. When `MOMMY_ALLOWED_HOSTS` would refuse the name (the app would answer
+  `400 bad_host`), a warning says to add `.trycloudflare.com`. Exit 0 with a link, 1
+  without a usable code, 2 for a wrong option, 3 when the tunnel gave no name. Nothing is
+  logged; the code appears only in the link's fragment.
+- `--new-code`: writes a new code (`generate_code`, `replace_code_file`: atomic, mode
+  0600) to `MOMMY_ACCESS_CODE_FILE` (made if missing), prints "A new access code is saved
+  in <file>.", "Restart the app so that it uses the new code (the old link then stops
+  working):", `    docker compose restart mommy`, "Then share the new link:", then the new
+  link and `REMINDER` as above. The app reads the code at its start, so the old code and
+  every cookie given for it stop working at the restart; the tunnel, and so its name,
+  keeps running. Refused (exit 1, the file untouched) when `MOMMY_ACCESS_CODE` is set (it
+  would win over the file), when `MOMMY_ACCESS_CODE_FILE` is not set, and when the file
+  cannot be written. When the tunnel does not answer, the new code is still saved and the
+  error says to run the command again (without `--new-code`) for the link.
 
 ## HTTP API (FastAPI, `app.py`: `create_app(settings, transcriber, tts, brain, quran) -> FastAPI`)
 
@@ -774,11 +933,18 @@ def is_navigation(headers) -> bool
   once (503 `busy` after 30 s).
 - The server answers only to `Settings.allowed_hosts` (400 `bad_host` otherwise), and a
   non-GET `/api/*` request with an `Origin` header other than the server itself gets 403
-  `bad_origin`. Every response has `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  `bad_origin`. Both decisions are `access.HostMatcher`'s (`HostOriginMiddleware`): an
+  exact entry decides as before; a suffix entry (extra, a leading dot, such as
+  `.trycloudflare.com` in `compose.yaml`) lets in any name under it, never the domain
+  itself, and the `Origin` of a write must still be the request's own `Host` (another
+  quick tunnel under the same suffix is another site). An entry the matcher refuses stops
+  the app at its start. Every response has `X-Content-Type-Options: nosniff`, `Referrer-Policy:
   no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors
   'none'`; every `/api/*` response has `Cache-Control: no-store`.
-- **Access gate (extra, online only; `access.py`).** With `MOMMY_ACCESS_CODE` unset or
-  blank there is no gate, no `/api/access` (404) and nothing below applies. With it set:
+- **Access gate (extra, online only; `access.py`).** With no access code (`MOMMY_ACCESS_CODE`
+  unset or blank, and `MOMMY_ACCESS_CODE_FILE` unset or blank) there is no gate, no
+  `/api/access` (404) and nothing below applies. With a code (the variable, or else the
+  code file, `config.access_code_from`):
   - Every request needs the cookie `mommy_access` (`cookie_value(code)`), except `GET`
     and `HEAD` of the gate's own files (`/access.html`, `/access.js`, `/styles.css`,
     exact paths) and `POST /api/access`.
@@ -813,6 +979,14 @@ def is_navigation(headers) -> bool
     gate works on a loopback host only (the local test of the image). Online, every
     response for a host that is not a loopback one also has `Strict-Transport-Security:
     max-age=31536000` (`ResponseHeadersMiddleware(hsts=True)`; never without the gate).
+  - Self-hosted (`compose.yaml`): the code comes from `MOMMY_ACCESS_CODE_FILE`
+    (`/data/access-code`, made at the first start, kept in the volume), and the link is
+    printed by `python -m mommy.share_link` (see share_link.py). Requests from the
+    computer itself (`http://localhost:8080`, published on 127.0.0.1 only) get no
+    exemption: they pass the gate like any other, with the same code (the share link
+    opened on that computer, or the same `#code=...` fragment after
+    `http://localhost:8080/`); there the cookie is not `Secure` and there is no HSTS,
+    since the host is a loopback one.
   - The client is `client_key(request.client.host)`, as uvicorn's `--proxy-headers` set
     it from `X-Forwarded-For` for a trusted proxy (`--forwarded-allow-ips`). The image
     (`scripts/space_start.sh`) trusts the private and shared networks (10/8, 172.16/12,
@@ -821,10 +995,13 @@ def is_navigation(headers) -> bool
     right-most address that is not one of them, the one the proxy appended, so what a
     visitor writes to its left neither gives it a fresh count nor uses up another
     visitor's. Never `'*'` by default: uvicorn would take the left-most entry, which the
-    visitor writes. Behind a proxy whose address is not trusted, every visitor is the
-    proxy (one shared failure limit): the first wrong or right code from a private or
-    unknown address, for a host that is not a loopback one, logs one warning that says
-    so (no address). The limit is defence in depth; the protection is the code (12
+    visitor writes. `compose.yaml` sets `MOMMY_FORWARDED_ALLOW_IPS=container-networks`
+    instead: `space_start.sh` trusts only the networks the container is attached to (the
+    project's own compose network, read from the routing table at start), whose other
+    members are the tunnel and Docker's forwarding of the published port. Behind a proxy
+    whose address is not trusted, every visitor is the proxy (one shared failure limit):
+    the first wrong or right code from a private or unknown address, for a host that is
+    not a loopback one, logs one warning that says so (no address). The limit is defence in depth; the protection is the code (12
     characters out of 31, about 59 bits).
   - Logs: "access code accepted", "refused a wrong access code (n of 10 in the window)",
     "access code attempts paused for a client", and once the private-address warning;
@@ -1009,7 +1186,7 @@ def is_navigation(headers) -> bool
 | Method & path | Request | Response |
 |---|---|---|
 | POST `/api/access` (extra, online only) | JSON `{"code": str}` | `204` with the `mommy_access` cookie; `403 bad_access_code`; `429 too_many_attempts` with `Retry-After`; see "Access gate". Absent (404) when no code is set. |
-| GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
+| GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE`) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
 | POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
 | POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`) | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again`; strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
 | POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str], "readers": ["voice"\|"grown_up"], "read_text": [null\|str], "parts": [null\|int], "quran_parts": [part]}` (extra: all but `phrases`; the four lists have one entry per phrase). The voice reads a `voice` phrase (`/api/tts`, slow). A `grown_up` phrase is a chunk of a Quran part (at most 6 display words, never across an ayah): `read_text` is its fully vowelled Uthmani text (verbatim Tanzil) for a grown-up to read aloud, `phrase` the same words in Simple-Clean spelling (what the child writes; never sent to `/api/tts`), `parts` the index of its part in `quran_parts`. A text with no Arabic or no Quran part gives `split_phrases` with every reader `voice`. Q1 gives `422 quran_text` with no scope (and `quran_range` when one range). The `"scope": "phrase"` refusal is gone. A text of punctuation only gives `{"phrases": [], ...}` with empty lists. Example: `"الصبر مفتاح الفرج. قال تعالى: " + 2:153 + " ثم شرح المعلم الآية."` -> phrases `["الصبر مفتاح الفرج.", "قال تعالى:", <2:153 display words 1-5, in Simple-Clean words (6 words: يا أيها is one Uthmani word)>, <display words 6-10>, "ثم شرح المعلم الآية."]`, readers `["voice", "voice", "grown_up", "grown_up", "voice"]`, read_text `[null, null, <Uthmani display words 1-5>, <Uthmani display words 6-10>, null]`, parts `[null, null, 0, 0, null]`. |

@@ -72,6 +72,10 @@ services:
     depends_on:
       mommy:
         condition: service_healthy
+    # A quick tunnel keeps nothing on disk and needs no privileges either.
+    read_only: true
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped

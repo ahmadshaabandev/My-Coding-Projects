@@ -329,7 +329,12 @@ def main(
             )
             return EXIT_NO_CODE
         except ValueError as exc:
-            say(f"The access code cannot be used: {exc}.", f"Make a new one with: {REPAIR_COMMAND}", to=err)
+            # --new-code writes the file, which a set MOMMY_ACCESS_CODE overrides: no use then.
+            if _get(env, "MOMMY_ACCESS_CODE") is not None:
+                hint = "Change MOMMY_ACCESS_CODE where it is set (or remove it to use the code file)."
+            else:
+                hint = f"Make a new one with: {REPAIR_COMMAND}"
+            say(f"The access code cannot be used: {exc}.", hint, to=err)
             return EXIT_NO_CODE
         if code is None:
             say(

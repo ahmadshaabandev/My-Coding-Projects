@@ -1040,6 +1040,15 @@ class TestShareLink:
         assert "at least 8 characters" in err and share_mod.REPAIR_COMMAND in err
         assert "x7q" not in err.replace(str(path), "")
 
+    def test_short_code_in_the_variable(self, code_file: Path) -> None:
+        """A too-short MOMMY_ACCESS_CODE: --new-code would not help (the variable wins), so
+        it is not suggested."""
+        with FakeMetrics() as metrics:
+            status, out, err = run([], self.env(metrics, code_file, MOMMY_ACCESS_CODE="x7q2"))
+        assert status == 1 and out == "" and metrics.requests == []
+        assert "MOMMY_ACCESS_CODE must have at least 8 characters" in err and "x7q2" not in err
+        assert "Change MOMMY_ACCESS_CODE where it is set" in err and "--new-code" not in err
+
     def test_new_code(self, code_file: Path) -> None:
         with FakeMetrics() as metrics:
             status, out, err = run(["--new-code"], self.env(metrics, code_file))
