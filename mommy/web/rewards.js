@@ -28,6 +28,10 @@
  *     never goes below 0 and every change of it has a ledger entry.
  *   - The PIN is a child lock, not security: PBKDF2-SHA-256 through SubtleCrypto, with a
  *     backoff whose state lives in the document (a reload does not reset it).
+ *   - A copy of the family list (a file the parent saves and loads at a new address:
+ *     makeFamilyCopy, readFamilyCopy, useFamilyCopy) never holds the parent's part of the
+ *     document (the PIN record, its backoff, the consents), and a loaded copy goes
+ *     through validateDoc like stored data.
  */
 (function (factory) {
   'use strict';
@@ -2119,6 +2123,193 @@
   }
 
   // ===========================================================================
+  // A copy of the family list: "Save a copy" and "Load a copy" (docs/REWARDS.md)
+  // ===========================================================================
+  //
+  // The document lives in one browser, for one address (origin): a quick tunnel's new
+  // address starts empty. A copy is a JSON file the parent saves, then loads at the new
+  // address. It holds the family (children, tasks, jar, surprises, the active child) and
+  // never the parent's part of the document: no PIN record (a 4-digit PIN's PBKDF2 hash
+  // in a file is trivial to brute-force), no PIN backoff or reset, no consent (a consent
+  // belongs to the address and the mode where it was given) and no parent's language.
+  // `parent` is left out as a whole, so a field added to it later is left out too.
+
+  const COPY_APP = 'mommy';
+  const COPY_KIND = 'family-copy';
+  const COPY_VERSION = 1;
+  const COPY_MAX_BYTES = 2 * 1024 * 1024; // bytes of UTF-8, the file as saved
+  const COPY_KEYS = ['app', 'kind', 'version', 'savedAt', 'family'];
+  const COPY_FAMILY_KEYS = ['version', 'createdAt', 'updatedAt', 'children', 'activeChildId', 'tasks', 'jar', 'surprises'];
+  // A copy made here starts like this (JSON.stringify keeps the key order of
+  // makeFamilyCopy): a file that does, but is not JSON, was cut short or changed.
+  const COPY_START_RE = /^\s*\{\s*"app"\s*:\s*"mommy"/;
+
+  /** The length of a string in UTF-8 bytes (a lone surrogate counts as U+FFFD, 3 bytes). */
+  function utf8Bytes(s) {
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c < 0x80) n += 1;
+      else if (c < 0x800) n += 2;
+      else if (c >= 0xd800 && c <= 0xdbff && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+        n += 4;
+        i++;
+      } else n += 3;
+    }
+    return n;
+  }
+
+  /** An own property only: a "__proto__" or "constructor" of the file is plain data. */
+  function ownValue(o, k) {
+    return hasOwn(o, k) ? o[k] : undefined;
+  }
+
+  /** The family part of a valid document (a new object: no parent). */
+  function familyOf(d) {
+    const family = {};
+    for (const k of COPY_FAMILY_KEYS) family[k] = d[k];
+    return family;
+  }
+
+  /**
+   * The copy of a document, to be saved as a file (JSON.stringify):
+   * {app: 'mommy', kind: 'family-copy', version: 1, savedAt: now, family}, where `family`
+   * is the document (validated) without `parent`.
+   */
+  function makeFamilyCopy(doc, now) {
+    assertDoc(doc);
+    checkNow(now);
+    const v = validateDoc(doc);
+    if (!v.ok) fail('bad_input', 'not a version 2 document', 'doc');
+    return { app: COPY_APP, kind: COPY_KIND, version: COPY_VERSION, savedAt: now, family: familyOf(v.doc) };
+  }
+
+  /** The size in UTF-8 bytes of the file that makeFamilyCopy would make of `family`. */
+  function copyBytes(family) {
+    return utf8Bytes(JSON.stringify({ app: COPY_APP, kind: COPY_KIND, version: COPY_VERSION, savedAt: EPOCH, family }));
+  }
+
+  /**
+   * Reads the text of a copy; never throws. Returns {ok: true, error: null, family,
+   * savedAt, repairs} or {ok: false, error, family: null, savedAt: null, repairs: []},
+   * with error:
+   *   'not_copy'       not a JSON object (a photo chosen by mistake, whatever its size),
+   *                    not JSON (and not the start of a copy), or no app 'mommy' and kind
+   *                    'family-copy';
+   *   'too_big'        more than COPY_MAX_BYTES bytes of UTF-8;
+   *   'newer_version'  a copy, or a family document in it, of a later version;
+   *   'damaged'        a copy cut short or changed: not JSON, another version, no family,
+   *                    a family without the lists that makeFamilyCopy always writes
+   *                    (children, tasks and surprises arrays, a jar object), children that
+   *                    all had to be dropped, a family that validateDoc rejects, or one
+   *                    that would not fit in a copy again once checked (validateDoc fills
+   *                    in what a changed file leaves out, while a copy made here never
+   *                    grows: so a loaded copy can always be saved again, and the size of
+   *                    what it stores is bounded; the file itself is not too big, so it
+   *                    is not called so);
+   *   'empty'          a copy of a family with no child: there is nothing in it to use
+   *                    (in Settings it would only empty the list).
+   * The family is checked by validateDoc exactly like stored data (with this module's
+   * empty parent); `repairs` lists what it repaired ("path: what") and what a copy is
+   * never read for (a `parent` in the family, unknown fields). savedAt is null when it is
+   * not a valid time. Every value is read as an own property and validateDoc builds new
+   * objects, so keys such as "__proto__" and "constructor" stay plain data.
+   */
+  function readFamilyCopy(text) {
+    const no = (error) => ({ ok: false, error, family: null, savedAt: null, repairs: [] });
+    try {
+      if (typeof text !== 'string') return no('not_copy');
+      const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+      // Before the size: a binary file read as text has a U+FFFD (3 bytes) for each
+      // invalid byte, so a 1.5 MB photo would otherwise be called "more than 2 MB".
+      if (!/^\s*\{/.test(body)) return no('not_copy');
+      // A UTF-16 unit is at least one byte, so the first test spares a long count.
+      if (text.length > COPY_MAX_BYTES || utf8Bytes(text) > COPY_MAX_BYTES) return no('too_big');
+      let raw;
+      try {
+        raw = JSON.parse(body);
+      } catch (e) {
+        return no(COPY_START_RE.test(body) ? 'damaged' : 'not_copy');
+      }
+      if (!isPlainObject(raw) || ownValue(raw, 'app') !== COPY_APP || ownValue(raw, 'kind') !== COPY_KIND) return no('not_copy');
+      const version = ownValue(raw, 'version');
+      if (Number.isInteger(version) && version > COPY_VERSION) return no('newer_version');
+      if (version !== COPY_VERSION) return no('damaged');
+      const fam = ownValue(raw, 'family');
+      if (!isPlainObject(fam)) return no('damaged');
+      const famVersion = ownValue(fam, 'version');
+      if (Number.isInteger(famVersion) && famVersion > VERSION) return no('newer_version');
+      // makeFamilyCopy always writes these: a family without them was not made by Mommy
+      // (validateDoc would read each as empty, and the copy as a family with no child).
+      for (const k of ['children', 'tasks', 'surprises']) if (!Array.isArray(ownValue(fam, k))) return no('damaged');
+      if (!isPlainObject(ownValue(fam, 'jar'))) return no('damaged');
+      const repairs = [];
+      for (const k of Object.keys(raw)) if (!COPY_KEYS.includes(k)) repairs.push(`copy.${k}: unknown field, dropped`);
+      let savedAt = ownValue(raw, 'savedAt');
+      if (!isIso(savedAt)) {
+        if (savedAt !== undefined) repairs.push('copy.savedAt: invalid time, cleared');
+        savedAt = null;
+      }
+      const candidate = { parent: emptyDoc(EPOCH).parent };
+      for (const k of Object.keys(fam)) {
+        if (COPY_FAMILY_KEYS.includes(k)) candidate[k] = fam[k];
+        else repairs.push(`family.${k}: ${k === 'parent' ? 'never read from a copy, dropped' : 'unknown field, dropped'}`);
+      }
+      const v = validateDoc(candidate);
+      if (!v.ok) return no('damaged');
+      if (!v.doc.children.length) return no(ownValue(fam, 'children').length ? 'damaged' : 'empty');
+      const family = familyOf(v.doc);
+      if (copyBytes(family) > COPY_MAX_BYTES) return no('damaged');
+      return { ok: true, error: null, family, savedAt, repairs: repairs.concat(v.repaired) };
+    } catch (e) {
+      return no('damaged');
+    }
+  }
+
+  /**
+   * This device's document with the family of a copy (readFamilyCopy's `family`): the
+   * children, tasks, jar, surprises and active child of the copy, and this device's
+   * parent unchanged (its PIN, backoff, PIN reset, consents and language). The family is
+   * checked by validateDoc again. Throws 'bad_input' (field 'family') for what is not one.
+   */
+  function useFamilyCopy(doc, family, now) {
+    const d = begin(doc, now);
+    if (!isPlainObject(family)) fail('bad_input', 'not the family of a copy', 'family');
+    const candidate = { parent: d.parent };
+    for (const k of COPY_FAMILY_KEYS) if (hasOwn(family, k)) candidate[k] = family[k];
+    const v = validateDoc(candidate);
+    if (!v.ok) fail('bad_input', 'not the family of a copy', 'family');
+    v.doc.updatedAt = now;
+    return v.doc;
+  }
+
+  /**
+   * What a family holds (the family of a copy, or a document), for the parent to see
+   * before using it: {children: [{id, nickname, avatar, tasks, stars}], tasks, stars};
+   * tasks are those not archived, stars the balance of the jar.
+   */
+  function familySummary(family) {
+    const f = isPlainObject(family) ? family : {};
+    const tasks = Array.isArray(f.tasks) ? f.tasks : [];
+    const jar = isPlainObject(f.jar) ? f.jar : {};
+    const children = (Array.isArray(f.children) ? f.children : []).filter(isPlainObject).map((c) => {
+      const j = hasOwn(jar, c.id) && isPlainObject(jar[c.id]) ? jar[c.id] : null;
+      return {
+        id: c.id,
+        nickname: c.nickname,
+        avatar: c.avatar,
+        tasks: tasks.filter((t) => isPlainObject(t) && t.childId === c.id && t.status !== 'archived').length,
+        stars: j && Number.isInteger(j.balance) ? j.balance : 0,
+      };
+    });
+    return {
+      children,
+      tasks: children.reduce((s, c) => s + c.tasks, 0),
+      stars: children.reduce((s, c) => s + c.stars, 0),
+    };
+  }
+
+  // ===========================================================================
   // Public API
   // ===========================================================================
 
@@ -2142,6 +2333,7 @@
     LIMITS,
     CHILD_QURAN_DEFAULT,
     AI_CONSENT_VERSION,
+    FAMILY_COPY: Object.freeze({ app: COPY_APP, kind: COPY_KIND, version: COPY_VERSION, maxBytes: COPY_MAX_BYTES }),
     RewardsError,
     // document
     emptyDoc,
@@ -2149,6 +2341,11 @@
     validateDoc,
     updateParent,
     hasAiConsent,
+    // a copy of the family list (a file)
+    makeFamilyCopy,
+    readFamilyCopy,
+    useFamilyCopy,
+    familySummary,
     // children
     addChild,
     updateChild,

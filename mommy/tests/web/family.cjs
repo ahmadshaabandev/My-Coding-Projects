@@ -46,6 +46,11 @@
  *   - the privacy texts of the parent area in the four ways the app runs (local or
  *     online, with or without Claude): Settings' family data line and consent box, the
  *     task form's photo note, in en, fr and ar; online, no local-only sentence;
+ *   - a copy of the family list: "Save a copy" downloads mommy-family-YYYY-MM-DD.json
+ *     (a Blob URL under the page's CSP, no request) without the PIN or the consents;
+ *     "Load a copy" in Settings (the summary, Cancel, "Replace" keeping this device's PIN,
+ *     consents and language, another tab following) and at the setup of a second address
+ *     (another port: the consent and a new PIN given there); the refusals in en, fr, ar;
  *   - the Arabic UI at 360 px (the setup, the child's home, every parent section): RTL,
  *     Arabic-Indic digits, no overflow, touch targets of at least 44 px; dark mode; the
  *     app.js/family.js handshake in either script order;
@@ -2350,22 +2355,18 @@ async function aiConsentFlow(browser, base) {
     const claude = mode.brain === 'claude';
     const old = await oldConsentDoc('en', 'en');
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) }, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(old) } });
-    await check(`AI consent, ${mode.name}, a document saved before the AI box: ${claude ? 'its consent does not cover Claude (the recite task waits for a grown-up, the Quran task works) and the parent is asked' : 'nothing changes (the tasks work; no prompt and no AI box)'}`, async () => {
+    await check(`AI consent, ${mode.name}, a document saved before the AI box: ${claude ? 'its consent does not cover Claude (the recite task is sent without it, the server answers offline; the Quran task works) and the parent is asked' : 'nothing changes (the tasks work; no prompt and no AI box)'}`, async () => {
       await page.goto(base + '/');
       await page.waitForSelector('#screen-who:not([hidden])');
       await healthKnown(page);
       assert.ok(await page.isHidden('#data-notice'), 'read as it is: no repair notice');
       await startTask(page, 'Sun', 'recite');
-      assert.equal(await page.isDisabled('#recite-rec'), claude);
-      if (claude) {
-        assert.ok(await page.isVisible('#why-recite-rec'));
-        assert.equal(await text(page, '#why-recite-rec'), S.consent_needed_ai);
-        assert.ok(await page.isVisible('#task-banner'), 'the task runner goes on');
-      } else {
-        await H.record(page, '#recite-rec', 300);
-        await H.waitForCall(fake, '/api/recite/check', 1);
-        await page.waitForSelector('#task-outcome-recite:not([hidden])');
-      }
+      // Recite never waits for the AI consent: without one that counts, no ai_consent field (V6).
+      assert.ok(await page.isEnabled('#recite-rec'));
+      assert.ok(await page.isHidden('#why-recite-rec'));
+      await H.record(page, '#recite-rec', 300);
+      assert.deepEqual((await H.waitForCall(fake, '/api/recite/check', 1)).aiConsent, [], 'the old consent never counts');
+      await page.waitForSelector('#task-outcome-recite:not([hidden])');
       await page.click('#task-leave');
       // The Quran task never uses Claude: it works in every mode.
       await startTask(page, 'Al-Ikhlaas', 'quran');
@@ -2384,7 +2385,7 @@ async function aiConsentFlow(browser, base) {
       assert.equal(await page.isVisible('#settings-ai-consent'), claude);
       assert.ok(!(await page.isChecked('#settings-ai-consent')), 'the old consent is not shown as given');
       assert.deepEqual(parentShows(await H.storedDoc(page)), [old.parent.consentAt, old.parent.aiConsentAt, null], 'kept as it was, never counted');
-      assert.equal(fake.callsTo('/api/recite/check').length, claude ? 0 : 1);
+      assert.equal(fake.callsTo('/api/recite/check').length, 1);
       assert.deepEqual(problems, []);
     });
     if (claude) {
@@ -2398,7 +2399,7 @@ async function aiConsentFlow(browser, base) {
         await startTask(page, 'Sun', 'recite');
         await page.waitForSelector('#recite-rec:not([disabled])');
         await H.record(page, '#recite-rec', 300);
-        await H.waitForCall(fake, '/api/recite/check', 1);
+        assert.deepEqual((await H.waitForCall(fake, '/api/recite/check', 2)).aiConsent, ['1']);
         await page.waitForSelector('#task-outcome-recite:not([hidden])');
         await page.click('#task-leave');
         await page.waitForSelector('#screen-home:not([hidden])');
@@ -2413,7 +2414,7 @@ async function aiConsentFlow(browser, base) {
 
   // A consent of version 1: given to the Claude notice before it named the score, the
   // language and the age group (audit V1). With Claude set up it no longer counts: the
-  // child is asked to fetch a grown-up, the dictation's check (a card for the grown-up)
+  // checks go without ai_consent (V6), the dictation's photo (a card for the grown-up)
   // says what needs the OK and where, and the parent is asked again under the full notice.
   for (const mode of H.PRIVACY_MODES.filter((m) => m.brain === 'claude')) {
     const now = '2026-11-11T10:00:00.000Z';
@@ -2434,8 +2435,8 @@ async function aiConsentFlow(browser, base) {
       await healthKnown(page);
       assert.ok(await page.isHidden('#data-notice'), 'an older version is no repair');
       await startTask(page, 'Sun', 'recite');
-      assert.ok(await page.isDisabled('#recite-rec'));
-      assert.equal(await text(page, '#why-recite-rec'), S.consent_needed_ai, "the child's line on the child's screen");
+      assert.ok(await page.isEnabled('#recite-rec'), 'Recite never waits for the AI consent (V6)');
+      assert.ok(await page.isHidden('#why-recite-rec'));
       await page.click('#task-leave');
       await startTask(page, 'Writing', 'dictation');
       await page.click('#btn-dict-start');
@@ -2445,11 +2446,11 @@ async function aiConsentFlow(browser, base) {
       }
       await page.waitForSelector('[data-stage="check"]:not([hidden])');
       await page.fill('#dict-written', CAT);
-      assert.ok(await page.isDisabled('#btn-dict-check'));
+      assert.ok(await page.isEnabled('#btn-dict-check'), 'the typed check is sent without the AI consent (V6)');
+      assert.ok(await page.isHidden('[data-stage="check"] [data-why="dict-check"]'));
       assert.ok(await page.isDisabled('#dict-take'));
       assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-photo"]'));
       assert.equal(await text(page, '[data-stage="check"] [data-why="dict-photo"]'), S.consent_needed_ai_grownup, 'a card for the grown-up: Claude, and where the OK is given');
-      assert.equal(await text(page, '[data-stage="check"] [data-why="dict-check"]'), S.consent_needed_ai_grownup);
       await H.shot(page, 'ai-consent-v1-dict-check-en-360-' + (mode.online ? 'online' : 'local'));
       await page.click('#task-leave');
       await page.waitForSelector('#screen-home:not([hidden])');
@@ -2474,7 +2475,7 @@ async function aiConsentFlow(browser, base) {
       await page.waitForSelector('[data-stage="check"]:not([hidden])');
       await page.fill('#dict-written', CAT);
       await page.click('#btn-dict-check');
-      await H.waitForCall(fake, '/api/dictation/check', 1);
+      assert.deepEqual((await H.waitForCall(fake, '/api/dictation/check', 1)).aiConsent, ['1'], 'the new consent counts');
       assert.equal(fake.callsTo('/api/recite/check').length, 0);
       if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
       assert.deepEqual(problems, []);
@@ -2538,11 +2539,49 @@ async function aiConsentFlow(browser, base) {
     await context.close();
   }
 
+  // RA-1: with Claude set up and no AI consent that counts, a recite task by meaning is
+  // checked by the server's offline heuristic (no ai_consent field): the task form says
+  // it is approximate, as without Claude, and the note follows the consent at once.
+  for (const mode of H.PRIVACY_MODES.filter((m) => m.brain === 'claude')) {
+    const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) });
+    await check(`AI consent, ${mode.name}: without it the task form says a check by meaning is approximate; the prompt's OK hides the note at once, withdrawing it in Settings shows it again`, async () => {
+      await page.goto(base + '/');
+      await H.setupFamily(page, { consent: true, aiConsent: false, nickname: 'Sami' });
+      await H.openParent(page);
+      await newTask(page, 'Sami', 'recite');
+      assert.ok(await page.isVisible('#ai-prompt'));
+      await page.check('input[name="tf-mode"][value="contextual"]');
+      assert.ok(await page.isVisible('#tf-mode-offline-note'), 'no AI consent: the meaning check will be approximate');
+      assert.equal(await text(page, '#tf-mode-offline-note'), S.mode_contextual_offline);
+      await page.check('input[name="tf-mode"][value="strict"]');
+      assert.ok(await page.isVisible('#tf-mode-offline-note'), 'shown while "The meaning" can be chosen, as on Prepare');
+      await page.check('input[name="tf-mode"][value="contextual"]');
+      // The prompt's OK, with the form still open: the check by meaning goes to Claude now.
+      await page.check('#ai-prompt-check');
+      await page.click('#ai-prompt-save');
+      await page.waitForSelector('#ai-prompt', { state: 'hidden' });
+      assert.ok(await page.isVisible('#tf'), 'the task form stays open');
+      assert.ok(await page.isHidden('#tf-mode-offline-note'), 'with the AI consent, no "approximate" note');
+      await page.click('#tf-cancel');
+      // Withdrawn in Settings: the note is back on the next task form.
+      await H.parentSection(page, 'settings');
+      await page.uncheck('#settings-ai-consent');
+      assert.equal((await H.storedDoc(page)).parent.aiConsentAt, null);
+      await newTask(page, 'Sami', 'recite');
+      await page.check('input[name="tf-mode"][value="contextual"]');
+      assert.ok(await page.isVisible('#tf-mode-offline-note'));
+      await page.click('#tf-cancel');
+      assert.equal(fake.callsTo('/api/page/read').length, 0);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+
   // Claude added later: the family was set up without it; the owner sets it up and the
   // page is loaded again. The general consent given then does not cover Claude.
   for (const mode of H.PRIVACY_MODES.filter((m) => m.brain !== 'claude')) {
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) });
-    await check(`AI consent, Claude added later (${mode.name} at first): the recite task waits for a grown-up, the parent's prompt opens it, and the attempt counts`, async () => {
+    await check(`AI consent, Claude added later (${mode.name} at first): the recite task goes without the AI consent, the parent's prompt gives it, and the attempt counts`, async () => {
       await page.goto(base + '/');
       await H.setupFamily(page, { consent: true });
       assert.ok(await page.isHidden('#ai-consent'));
@@ -2563,8 +2602,8 @@ async function aiConsentFlow(browser, base) {
       await page.waitForSelector('#screen-who:not([hidden])');
       await healthKnown(page);
       await startTask(page, 'Sun', 'recite');
-      assert.ok(await page.isDisabled('#recite-rec'));
-      assert.equal(await text(page, '#why-recite-rec'), S.consent_needed_ai);
+      assert.ok(await page.isEnabled('#recite-rec'), 'sent without the AI consent, the server answers offline (V6)');
+      assert.ok(await page.isHidden('#why-recite-rec'));
       assert.ok(await page.isVisible('#task-banner'));
       await page.click('#task-leave');
       await page.waitForSelector('#screen-home:not([hidden])');
@@ -2580,7 +2619,7 @@ async function aiConsentFlow(browser, base) {
       await page.waitForSelector('#recite-rec:not([disabled])');
       fake.queueRecite(H.strictResult(SUN_TEXT, []));
       await H.record(page, '#recite-rec', 300);
-      await H.waitForCall(fake, '/api/recite/check', 1);
+      assert.deepEqual((await H.waitForCall(fake, '/api/recite/check', 1)).aiConsent, ['1']);
       await page.waitForSelector('#task-outcome-recite .celebrate');
       d = await H.storedDoc(page);
       assert.equal(d.tasks[0].status, 'ready');
@@ -2591,7 +2630,7 @@ async function aiConsentFlow(browser, base) {
   }
 
   // The prompt in English and in Arabic at 360 px (screenshots with MOMMY_SHOTS_DIR), and
-  // the child's line in the child's language.
+  // Recite in the child's language, which does not wait for the AI consent (V6).
   for (const lang of ['en', 'ar']) {
     const L = H.allStrings(lang);
     const now = '2026-11-10T10:00:00.000Z';
@@ -2601,12 +2640,14 @@ async function aiConsentFlow(browser, base) {
     const r = R.addChild(d, { nickname: lang === 'ar' ? 'سلمى' : 'Salma', lang, avatar: '🦊' }, now);
     d = R.createTask(r.doc, { childId: r.child.id, kind: 'recite', text: lang === 'ar' ? AR_TEXT : SUN_TEXT, lang, title: lang === 'ar' ? 'قراءة' : 'Sun' }, now).doc;
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(H.PRIVACY_MODES[3]) }, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(d) } });
-    await check(`AI consent prompt in ${lang} at 360 px: the Claude notice and a box of its own, behind the PIN; the child's neutral line`, async () => {
+    await check(`AI consent prompt in ${lang} at 360 px: the Claude notice and a box of its own, behind the PIN; Recite without it`, async () => {
       await page.goto(base + '/');
       await page.waitForSelector('#screen-who:not([hidden])');
       await healthKnown(page);
       await startTask(page, lang === 'ar' ? 'قراءة' : 'Sun', 'recite');
-      assert.equal(await text(page, '#why-recite-rec'), L.consent_needed_ai);
+      // Recite does not wait for the AI consent (V6): no child's line on it.
+      assert.ok(await page.isEnabled('#recite-rec'));
+      assert.ok(await page.isHidden('#why-recite-rec'));
       assert.equal(await page.getAttribute('html', 'dir'), lang === 'ar' ? 'rtl' : 'ltr');
       await H.shot(page, `ai-consent-child-${lang}-360`);
       await page.click('#task-leave');
@@ -2639,6 +2680,503 @@ async function aiConsentFlow(browser, base) {
     });
     await context.close();
   }
+}
+
+// ---------------------------------------------------------------------------
+// A copy of the family list: "Save a copy" and "Load a copy" (Settings, the setup)
+// ---------------------------------------------------------------------------
+
+const COPY_NAME_RE = /^mommy-family-\d{4}-\d{2}-\d{2}\.json$/;
+const COPY_ERROR_KEYS = { not_copy: 'fam_copy_err_not_copy', damaged: 'fam_copy_err_damaged', too_big: 'fam_copy_err_too_big', newer_version: 'fam_copy_err_newer', empty: 'fam_copy_err_empty' };
+
+/** 1.5 MB of JPEG-like bytes: read as text, each invalid byte is a U+FFFD of 3 bytes. */
+function photoBytes() {
+  const b = Buffer.alloc(1536 * 1024);
+  for (let i = 0; i < b.length; i++) b[i] = (i * 7919 + 13) & 0xff;
+  b[0] = 0xff;
+  b[1] = 0xd8;
+  return b;
+}
+
+/** A file for setInputFiles. */
+function copyFile(text, name) {
+  return { name: name || 'mommy-family-2026-11-12.json', mimeType: 'application/json', buffer: Buffer.isBuffer(text) ? text : Buffer.from(text, 'utf8') };
+}
+
+/** One file of each kind the copy readers refuse, with the error it gets. */
+function badCopies(goodText) {
+  const good = JSON.parse(goodText);
+  return [
+    ['not_copy', copyFile(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]), 'photo.png')],
+    ['not_copy', copyFile(JSON.stringify({ app: 'other', kind: 'family-copy', version: 1, family: good.family }), 'other.json')],
+    ['damaged', copyFile(goodText.slice(0, Math.floor(goodText.length / 2)))],
+    ['damaged', copyFile(JSON.stringify(Object.assign({}, good, { family: 'nothing' })))],
+    ['too_big', copyFile(goodText + ' '.repeat(R.FAMILY_COPY.maxBytes - Buffer.byteLength(goodText) + 1))],
+    ['newer_version', copyFile(JSON.stringify(Object.assign({}, good, { version: 2 })))],
+    // B-R4: a photo of 1.5 MB chosen by mistake is not a copy (never "more than 2 MB").
+    ['not_copy', copyFile(photoBytes(), 'IMG_0001.jpg')],
+    // B-R3: a family without the lists of a copy, or whose children were all invalid.
+    ['damaged', copyFile(JSON.stringify(Object.assign({}, good, { family: { version: 2, children: 'oops', tasks: {}, jar: [] } })))],
+    ['damaged', copyFile(JSON.stringify(Object.assign({}, good, { family: Object.assign({}, good.family, { children: [[[1]]] }) })))],
+    // A family with no child: nothing to use (in Settings it would empty the list).
+    ['empty', copyFile(JSON.stringify(Object.assign({}, good, { family: Object.assign({}, good.family, { children: [], tasks: [], jar: {}, surprises: [], activeChildId: null }) })))],
+    // B-R2: 12,000 minimal children (600 KB) that would be over 2 MB once checked.
+    ['damaged', copyFile(JSON.stringify(Object.assign({}, good, { family: Object.assign({}, good.family, { children: Array.from({ length: 12000 }, (_, i) => ({ id: 'k' + i, nickname: 'K' + i, avatar: '🦊' })) }) })))],
+  ];
+}
+
+/** The lines of a copy's summary as the page should show them (rewards.js familySummary). */
+function summaryLines(family, lang) {
+  const S = H.allStrings(lang);
+  const num = (n) => (lang === 'ar' ? String(n).replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[d]) : String(n));
+  const s = R.familySummary(family);
+  return {
+    count: S.fam_copy_children.replace('{n}', num(s.children.length)),
+    children: s.children.map((c) => c.avatar + ' ' + S.fam_copy_child_line.replace('{name}', c.nickname).replace('{tasks}', num(c.tasks)).replace('{stars}', num(c.stars))),
+  };
+}
+
+async function copySummaryOk(page, prefix, family, lang) {
+  const want = summaryLines(family, lang);
+  assert.equal(await text(page, `#${prefix}-count`), want.count, lang);
+  assert.deepEqual(await page.$$eval(`#${prefix}-children li`, (li) => li.map((n) => n.textContent.trim())), want.children, lang);
+  assert.match(await text(page, `#${prefix}-title`), lang === 'ar' ? /^في هذه النسخة، المحفوظة في .*[٠-٩].*:$/ : lang === 'fr' ? /^Dans cette copie, enregistrée le .*\d.* :$/ : /^In this copy, saved on .*\d.*:$/);
+}
+
+/** The family part of a document (what a copy holds). */
+function familyOfDoc(d) {
+  const f = Object.assign({}, d);
+  delete f.parent;
+  return f;
+}
+
+/** Requests of a page other than blob: URLs, while fn runs (a copy is made and read in the browser). */
+async function requestsDuring(page, fn) {
+  const urls = [];
+  const on = (req) => {
+    if (!req.url().startsWith('blob:')) urls.push(req.url());
+  };
+  page.on('request', on);
+  try {
+    await fn();
+  } finally {
+    page.off('request', on);
+  }
+  return urls;
+}
+
+async function familyCopyFlow(browser, base) {
+  const serverB = await H.startServer(); // a second address: another port is another origin
+  const baseB = `http://127.0.0.1:${serverB.address().port}`;
+  const home = await rewardsDoc(); // Maya and Adam, with a PIN and both consents (this device)
+  const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, null, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(home) } });
+  const settings = '#screen-parent .psec[data-psec="settings"]';
+  let savedText = null; // the file saved by "Save a copy"
+  const otherDoc = await arabicDoc(); // another family (an Arabic child) for "Load a copy"
+  const otherText = JSON.stringify(R.makeFamilyCopy(otherDoc, '2026-11-11T09:30:00.000Z'));
+
+  await check('family copy: "Save a copy" in Settings downloads mommy-family-YYYY-MM-DD.json (a Blob URL under the page\'s CSP): the family, without the PIN or the consents', async () => {
+    await page.goto(base + '/');
+    await page.waitForSelector('#screen-who:not([hidden])');
+    await H.openParent(page);
+    await H.parentSection(page, 'settings');
+    const S = H.allStrings('en');
+    assert.equal(await text(page, '#ps-copy-h'), S.fam_copy_h);
+    assert.equal(await text(page, `${settings} .copy-note`), 'The file holds the children’s names and age groups, their tasks, stars and rewards, but not the PIN. It is not encrypted: please keep it private.');
+    assert.match(await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', 'content'), /^default-src 'self'; script-src 'self' blob:;/);
+    let download;
+    const requests = await requestsDuring(page, async () => {
+      [download] = await Promise.all([page.waitForEvent('download'), page.click('#ps-copy-save')]);
+    });
+    assert.deepEqual(requests, [], 'the copy is made in the browser: no request');
+    assert.match(download.url(), /^blob:http:\/\/127\.0\.0\.1:\d+\//, 'a Blob URL of the page\'s own origin');
+    const name = download.suggestedFilename();
+    assert.match(name, COPY_NAME_RE);
+    const today = await page.evaluate(() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    });
+    assert.equal(name, `mommy-family-${today}.json`, 'the day on this device');
+    assert.equal(await download.failure(), null);
+    savedText = require('node:fs').readFileSync(await download.path(), 'utf8');
+    const file = JSON.parse(savedText);
+    assert.deepEqual(Object.keys(file), ['app', 'kind', 'version', 'savedAt', 'family']);
+    assert.deepEqual([file.app, file.kind, file.version], ['mommy', 'family-copy', 1]);
+    assert.ok(Math.abs(Date.parse(file.savedAt) - Date.now()) < 60000, 'saved now');
+    const stored = await H.storedDoc(page);
+    assert.deepEqual(file.family, familyOfDoc(stored));
+    for (const secret of [stored.parent.pin.salt, stored.parent.pin.hash]) assert.ok(!savedText.includes(secret), 'no PIN salt or hash');
+    for (const word of ['"parent"', '"pin"', 'consent', 'Consent', 'failedAttempts', 'lockedUntil', 'pinResetAt', 'uiLang']) assert.ok(!savedText.includes(word), word);
+    assert.equal(await text(page, '#ps-copy-status'), `The browser saves the copy as ${name}, usually in the Downloads folder.`);
+    assert.equal(await page.textContent('#ps-copy-status bdi'), name, 'the file name keeps its own direction');
+    // Nothing on the device changed, and the anchor is gone.
+    assert.deepEqual(await H.storedDoc(page), stored);
+    assert.equal(await page.locator('a[download]').count(), 0);
+    assert.deepEqual(R.readFamilyCopy(savedText).repairs, []);
+  });
+
+  await check('family copy: "Load a copy" in Settings shows what it holds; Cancel keeps the list; "Replace" uses it, and the PIN, the consents and the language stay', async () => {
+    const before = await H.storedDoc(page);
+    // A second tab of the same browser and address, on "Who is learning?".
+    const other = await context.newPage();
+    const otherProblems = [];
+    H.watchPage(other, base, otherProblems);
+    await other.route('**/api/**', fake.handler);
+    await other.goto(base + '/');
+    await other.waitForSelector('#screen-who:not([hidden])');
+    assert.deepEqual(await other.$$eval('#who-list .who-name', (n) => n.map((x) => x.textContent)), ['Maya', 'Adam']);
+    const otherFamily = R.readFamilyCopy(otherText).family;
+    let requests = await requestsDuring(page, async () => {
+      await page.setInputFiles('#ps-copy-file', copyFile(otherText));
+      await page.waitForSelector('#ps-copy-confirm:not([hidden])');
+    });
+    assert.deepEqual(requests, [], 'the copy is read in the browser: no request');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'ps-copy-confirm');
+    await copySummaryOk(page, 'ps-copy', otherFamily, 'en');
+    assert.match(await text(page, '#ps-copy-title'), /Nov(ember)? 11/);
+    assert.equal(await text(page, '#ps-copy-children li'), '🦊 سلمى — tasks: 2, stars: 5');
+    assert.equal(await page.getAttribute('#ps-copy-children li bdi', 'dir'), null);
+    assert.ok(await page.isHidden('#ps-copy-repaired'), 'nothing was repaired');
+    assert.ok(await page.isVisible(`#ps-copy-confirm >> text=${H.allStrings('en').fam_copy_replace_q}`));
+    assert.ok(await page.isVisible(`#ps-copy-confirm >> text=${H.allStrings('en').fam_copy_save_first}`));
+    await H.shot(page, 'family-copy-settings-en-360');
+    await H.shotEl(page, '#ps-copy-confirm', 'family-copy-confirm-en-360');
+    // Cancel: nothing changes.
+    await page.click('#ps-copy-no');
+    assert.ok(await page.isHidden('#ps-copy-confirm'));
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'ps-copy-file');
+    assert.deepEqual(await H.storedDoc(page), before);
+    // A copy with damaged parts: repaired as stored data is, and the summary says so.
+    const damaged = JSON.parse(otherText);
+    damaged.family.children[0].nickname = 'سلمى'.repeat(10);
+    damaged.family.children[0].shoeSize = 31;
+    await page.setInputFiles('#ps-copy-file', copyFile(JSON.stringify(damaged)));
+    await page.waitForSelector('#ps-copy-repaired:not([hidden])');
+    assert.equal(await text(page, '#ps-copy-repaired'), H.allStrings('en').fam_copy_repaired);
+    // The right file again, then "Replace".
+    await page.setInputFiles('#ps-copy-file', copyFile(otherText));
+    await page.waitForSelector('#ps-copy-repaired', { state: 'hidden' });
+    requests = await requestsDuring(page, () => page.click('#ps-copy-yes'));
+    assert.deepEqual(requests, []);
+    assert.equal(await text(page, '#ps-copy-status'), H.allStrings('en').fam_copy_loaded);
+    assert.ok(await page.isHidden('#ps-copy-confirm'));
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'ps-copy-h');
+    const after = await H.storedDoc(page);
+    assert.deepEqual(after.parent, before.parent, 'the PIN, its backoff, the consents and the language of this device stay');
+    assert.ok(R.hasAiConsent(after));
+    assert.deepEqual(Object.assign(familyOfDoc(after), { updatedAt: null }), Object.assign(familyOfDoc(otherDoc), { updatedAt: null }));
+    assert.deepEqual(R.validateDoc(after).repaired, []);
+    // The other tab follows (the storage event): the copy's child.
+    await other.waitForFunction(() => [...document.querySelectorAll('#who-list .who-name')].map((n) => n.textContent).join() === 'سلمى');
+    assert.deepEqual(otherProblems, []);
+    await other.close();
+    // The same PIN still opens the parent area, now with the copy's child.
+    await H.closeParent(page);
+    await page.waitForSelector('#screen-who:not([hidden])');
+    assert.deepEqual(await page.$$eval('#who-list .who-name', (n) => n.map((x) => x.textContent)), ['سلمى']);
+    await H.openParent(page);
+    await H.parentSection(page, 'children');
+    assert.match(await text(page, '#pc-list'), /سلمى/);
+    // Back to the family of this device (the copy saved before), for the next checks.
+    await H.parentSection(page, 'settings');
+    await page.setInputFiles('#ps-copy-file', copyFile(savedText));
+    await page.waitForSelector('#ps-copy-confirm:not([hidden])');
+    await copySummaryOk(page, 'ps-copy', JSON.parse(savedText).family, 'en');
+    await page.click('#ps-copy-yes');
+    await page.waitForSelector('#ps-copy-confirm', { state: 'hidden' });
+    const back = await H.storedDoc(page);
+    assert.deepEqual(familyOfDoc(back).children, home.children);
+    assert.deepEqual(back.parent, before.parent);
+  });
+
+  await check('family copy: Settings says why a file is refused (not a copy, damaged, too big, a newer version) in en, fr and ar, and changes nothing', async () => {
+    const before = await H.storedDoc(page);
+    for (const lang of ['en', 'fr', 'ar']) {
+      const S = H.allStrings(lang);
+      if ((await page.inputValue('#ps-lang')) !== lang) {
+        await page.selectOption('#ps-lang', lang);
+        await page.waitForSelector(`html[lang="${lang}"]`);
+      }
+      for (const [error, file] of badCopies(savedText)) {
+        const requests = await requestsDuring(page, async () => {
+          await page.setInputFiles('#ps-copy-file', file);
+          await page.waitForFunction((want) => document.querySelector('#ps-copy-status').textContent.trim() === want, S[COPY_ERROR_KEYS[error]]);
+        });
+        assert.deepEqual(requests, [], `${lang} ${error}: no request`);
+        assert.ok(await page.$eval('#ps-copy-status', (n) => n.classList.contains('is-error')), `${lang} ${error}`);
+        assert.ok(await page.isHidden('#ps-copy-confirm'));
+        // The next file starts from a clean status.
+        await page.evaluate(() => {
+          const n = document.querySelector('#ps-copy-status');
+          n.textContent = '';
+        });
+      }
+      if (lang === 'ar') {
+        assert.equal(S.fam_copy_err_too_big, 'هذا الملف أكبر من أن يكون نسخة من قائمة عائلة في Mommy (أكثر من ٢ ميغابايت).');
+        await page.setInputFiles('#ps-copy-file', copyFile(otherText));
+        await page.waitForSelector('#ps-copy-confirm:not([hidden])');
+        await copySummaryOk(page, 'ps-copy', R.readFamilyCopy(otherText).family, 'ar');
+        await arabicScreenOk(page);
+        await H.shot(page, 'family-copy-settings-ar-360');
+        await H.shotEl(page, '#ps-copy-confirm', 'family-copy-confirm-ar-360');
+        await page.click('#ps-copy-no');
+        await page.setInputFiles('#ps-copy-file', badCopies(savedText)[5][1]);
+        await page.waitForFunction((want) => document.querySelector('#ps-copy-status').textContent.trim() === want, S.fam_copy_err_newer);
+        await H.shotEl(page, `${settings} .rw-block:has(#ps-copy-h)`, 'family-copy-error-ar-360');
+        const [download] = await Promise.all([page.waitForEvent('download'), page.click('#ps-copy-save')]);
+        assert.match(download.suggestedFilename(), COPY_NAME_RE);
+        assert.match(await text(page, '#ps-copy-status'), /^يحفظ المتصفح النسخة باسم mommy-family-.*، في مجلد التنزيلات عادةً\.$/);
+        await arabicScreenOk(page);
+      }
+    }
+    assert.deepEqual(await H.storedDoc(page).then((d) => familyOfDoc(d).children), before.children);
+    await page.selectOption('#ps-lang', 'en');
+    await H.closeParent(page);
+  });
+
+  await check('family copy: the file picker of "Load a copy" does not lock the parent area (a phone hides the page for it); any other hiding does', async () => {
+    const hide = () => page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    });
+    await H.openParent(page);
+    await H.parentSection(page, 'settings');
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('label.copy-file:has(#ps-copy-file)')]);
+    await hide(); // the picker, as another app
+    assert.ok(await page.isVisible('#screen-parent'), 'still open while the file is chosen');
+    await chooser.setFiles(copyFile(otherText));
+    await page.waitForSelector('#ps-copy-confirm:not([hidden])');
+    await page.click('#ps-copy-no');
+    await hide(); // the app is left
+    await page.waitForSelector('#screen-who:not([hidden])');
+    assert.ok(await page.isHidden('#screen-parent'));
+    assert.deepEqual(familyOfDoc(await H.storedDoc(page)).children, home.children, 'nothing replaced');
+    // B-R1: a picker that does not hide the page (a computer, an iPhone's sheet). Once the
+    // file is chosen, the next hiding, a second later, is the app being left: it locks.
+    await H.openParent(page);
+    await H.parentSection(page, 'settings');
+    const [chooser2] = await Promise.all([page.waitForEvent('filechooser'), page.click('label.copy-file:has(#ps-copy-file)')]);
+    await chooser2.setFiles(copyFile(otherText)); // no hiding meanwhile
+    await page.waitForSelector('#ps-copy-confirm:not([hidden])');
+    await page.click('#ps-copy-no');
+    await page.waitForTimeout(1000);
+    await hide();
+    await page.waitForSelector('#screen-who:not([hidden])');
+    assert.ok(await page.isHidden('#screen-parent'), 'a file chosen without hiding the page ends the exemption');
+    // The picker closed without a file ('cancel'), and the window back in front ('focus'):
+    // the same, for the task form's photo inputs too.
+    for (const [input, end] of [['#ps-copy-file', 'cancel'], ['#tf-choose', 'cancel'], ['#ps-copy-file', 'focus']]) {
+      await H.openParent(page);
+      if (input === '#tf-choose') {
+        await newTask(page, home.children[0].nickname, 'recite');
+      } else {
+        await H.parentSection(page, 'settings');
+      }
+      // The tap arms the exemption (the photo input is behind the AI consent, so the
+      // tap is made on the element itself, as a phone's picker would see it).
+      await page.$eval(input, (el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+      if (end === 'cancel') await page.$eval(input, (el) => el.dispatchEvent(new Event('cancel', { bubbles: true })));
+      else await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await hide();
+      await page.waitForSelector('#screen-who:not([hidden])');
+      assert.ok(await page.isHidden('#screen-parent'), `${input} ${end}: the next hiding locks`);
+    }
+  });
+
+  await check('family copy: with a full storage, "Replace" says the copy was not used, keeps the question open and the list as stored (B-R2)', async () => {
+    const S = H.allStrings('en');
+    await H.openParent(page);
+    await H.parentSection(page, 'settings');
+    const before = await H.storedDoc(page);
+    await page.setInputFiles('#ps-copy-file', copyFile(otherText));
+    await page.waitForSelector('#ps-copy-confirm:not([hidden])');
+    await page.evaluate(() => {
+      window.__setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function () {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      };
+    });
+    await page.click('#ps-copy-yes');
+    await page.waitForFunction((want) => document.querySelector('#ps-copy-status').textContent.trim() === want, S.fam_copy_err_full);
+    assert.notEqual(await text(page, '#ps-copy-status'), S.fam_copy_loaded);
+    assert.ok(await page.isVisible('#ps-copy-confirm'), 'the question stays open');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'ps-copy-confirm');
+    assert.ok(await page.isVisible('#data-notice'), 'the storage notice too');
+    assert.deepEqual(await H.storedDoc(page), before, 'nothing stored');
+    // This tab kept the stored list (nothing that the next load would lose is shown).
+    await H.parentSection(page, 'children');
+    assert.doesNotMatch(await text(page, '#pc-list'), /سلمى/);
+    assert.match(await text(page, '#pc-list'), /Maya/);
+    await page.evaluate(() => {
+      Storage.prototype.setItem = window.__setItem;
+    });
+    await page.click('#data-notice-close');
+    assert.deepEqual(await H.storedDoc(page), before);
+    await H.closeParent(page);
+    // A family with no child has nothing to save: "Save a copy" says so (such a copy
+    // could not be loaded).
+    const emptyFamily = await R.setPin(R.updateParent(R.emptyDoc('2026-11-10T10:00:00.000Z', { uiLang: 'fr' }), { consent: true }, '2026-11-10T10:00:00.000Z'), PIN, '2026-11-10T10:00:00.000Z');
+    const e = await H.newPage(browser, base, VIEW, null, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(emptyFamily) } });
+    await e.page.goto(base + '/');
+    await e.page.waitForSelector('#screen-who:not([hidden])');
+    await H.openParent(e.page);
+    await H.parentSection(e.page, 'settings');
+    for (const lang of ['fr', 'ar', 'en']) {
+      if ((await e.page.inputValue('#ps-lang')) !== lang) {
+        await e.page.selectOption('#ps-lang', lang);
+        await e.page.waitForSelector(`html[lang="${lang}"]`);
+      }
+      const requests = await requestsDuring(e.page, () => e.page.click('#ps-copy-save'));
+      assert.deepEqual(requests, []);
+      await e.page.waitForFunction((want) => document.querySelector('#ps-copy-status').textContent.trim() === want, H.allStrings(lang).fam_copy_err_save_empty);
+      assert.equal(await e.page.locator('a[download]').count(), 0);
+    }
+    assert.deepEqual(e.problems, []);
+    await e.context.close();
+  });
+
+  await check('family copy: at a new address, the setup\'s "Load a copy" uses the copy\'s children, tasks, stars and rewards; the consent and a new PIN are given there', async () => {
+    // The same browser at another address (another port): its own, empty storage.
+    const fresh = await context.newPage();
+    H.watchPage(fresh, baseB, problems);
+    await fresh.route('**/api/**', fake.handler);
+    await fresh.goto(baseB + '/');
+    await fresh.waitForSelector('#setup-form:not([hidden])');
+    await fresh.waitForFunction(() => !document.querySelector('#consent-extra').hidden);
+    assert.equal(await fresh.evaluate(() => localStorage.getItem('mommy.data.v2')), null, 'a new address starts empty');
+    assert.equal(await text(fresh, '#setup-copy .hint'), H.allStrings('en').fam_copy_setup_hint);
+    assert.ok(await fresh.isVisible('#setup-first-child'));
+    assert.ok(await fresh.isHidden('#setup-copy-box'));
+    // The errors first, in en, fr and ar.
+    for (const lang of ['en', 'fr', 'ar']) {
+      const S = H.allStrings(lang);
+      await fresh.selectOption('#setup-lang', lang);
+      for (const [error, file] of badCopies(savedText)) {
+        await fresh.setInputFiles('#setup-copy-file', file);
+        await fresh.waitForFunction((want) => document.querySelector('#setup-copy-status').textContent.trim() === want, S[COPY_ERROR_KEYS[error]]);
+        assert.ok(await fresh.isHidden('#setup-copy-box'), `${lang} ${error}`);
+        assert.ok(await fresh.isVisible('#setup-first-child'));
+        await fresh.evaluate(() => {
+          document.querySelector('#setup-copy-status').textContent = '';
+        });
+      }
+    }
+    // The copy, in Arabic first (the summary follows the language), then in English.
+    const family = JSON.parse(savedText).family;
+    const requests = await requestsDuring(fresh, async () => {
+      await fresh.setInputFiles('#setup-copy-file', copyFile(savedText));
+      await fresh.waitForSelector('#setup-copy-box:not([hidden])');
+    });
+    assert.deepEqual(requests, [], 'read in the browser: no request');
+    assert.ok(await fresh.isHidden('#setup-first-child'), 'the copy replaces the first child');
+    assert.equal(await fresh.evaluate(() => document.activeElement.id), 'setup-copy-box');
+    await copySummaryOk(fresh, 'setup-copy', family, 'ar');
+    assert.equal(await fresh.getAttribute('html', 'dir'), 'rtl');
+    assert.doesNotMatch(await fresh.evaluate(ownText, '#setup-copy'), /[0-9]/, 'no Western digit in the Arabic UI');
+    await H.noHorizontalScroll(fresh);
+    assert.deepEqual(await H.overflowing(fresh), []);
+    await H.shot(fresh, 'family-copy-setup-ar-360');
+    await fresh.selectOption('#setup-lang', 'en');
+    await copySummaryOk(fresh, 'setup-copy', family, 'en');
+    assert.equal(await text(fresh, '#setup-copy-children'), '🐰 Maya — tasks: 2, stars: 13🐻 Adam — tasks: 1, stars: 0');
+    assert.deepEqual(await H.smallTargets(fresh), [], 'touch targets of at least 44 px');
+    await H.shot(fresh, 'family-copy-setup-en-360');
+    // "Do not use this copy" brings the first child back; the copy can be loaded again.
+    await fresh.click('#setup-copy-drop');
+    assert.ok(await fresh.isVisible('#setup-first-child'));
+    assert.ok(await fresh.isHidden('#setup-copy-box'));
+    await fresh.setInputFiles('#setup-copy-file', copyFile(savedText));
+    await fresh.waitForSelector('#setup-copy-box:not([hidden])');
+    // The PIN is still needed (a copy holds none); no nickname is.
+    await fresh.click('#btn-start');
+    assert.equal(await text(fresh, '#setup-pin-err'), 'A PIN has 4 to 6 digits.');
+    assert.equal(await fresh.evaluate(() => localStorage.getItem('mommy.data.v2')), null);
+    // The general consent ticked, the AI one not: only what is ticked here counts.
+    await fresh.check('#consent');
+    await fresh.fill('#setup-pin', '1357');
+    await fresh.fill('#setup-pin2', '1357');
+    // B-R2: a full storage refuses the family: nothing is set up, the setup says why and
+    // keeps the copy and the fields; once there is room, the same press works.
+    await fresh.evaluate(() => {
+      window.__setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function () {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      };
+    });
+    await fresh.click('#btn-start');
+    await fresh.waitForFunction((want) => document.querySelector('#setup-status').textContent.trim() === want, H.allStrings('en').fam_copy_err_full);
+    assert.ok(await fresh.isVisible('#setup-form'), 'still the setup');
+    assert.ok(await fresh.isVisible('#setup-copy-box'), 'the copy is kept');
+    assert.equal(await fresh.inputValue('#setup-pin'), '1357');
+    assert.equal(await fresh.evaluate(() => localStorage.getItem('mommy.data.v2')), null);
+    await fresh.evaluate(() => {
+      Storage.prototype.setItem = window.__setItem;
+    });
+    await fresh.click('#data-notice-close');
+    await fresh.click('#btn-start');
+    await fresh.waitForSelector('#screen-who:not([hidden])');
+    assert.deepEqual(await fresh.$$eval('#who-list .who-name', (n) => n.map((x) => x.textContent)), ['Maya', 'Adam']);
+    const doc = await H.storedDoc(fresh);
+    assert.deepEqual(Object.assign(familyOfDoc(doc), { updatedAt: null }), Object.assign({}, family, { updatedAt: null }));
+    assert.ok(doc.parent.consentAt, 'the consent given here');
+    assert.equal(doc.parent.aiConsentAt, null, 'the AI box was not ticked here');
+    assert.equal(R.hasAiConsent(doc), false);
+    assert.equal(doc.parent.uiLang, 'en');
+    assert.notEqual(doc.parent.pin.hash, home.parent.pin.hash, 'a PIN of its own');
+    assert.equal((await R.verifyPin(doc, '1357', new Date().toISOString())).ok, true);
+    assert.equal((await R.verifyPin(doc, PIN, new Date().toISOString())).ok, false, 'the old address\'s PIN is not in the copy');
+    assert.deepEqual(R.validateDoc(doc).repaired, []);
+    // The parent area opens with the new PIN, the child's home has the stars of the copy.
+    await H.openParent(fresh, '1357');
+    await H.closeParent(fresh);
+    await fresh.click('#who-list .who-btn >> nth=0');
+    await fresh.waitForSelector('#screen-home:not([hidden])');
+    assert.equal(await text(fresh, '#home-jar'), 'Stars in the jar: 13');
+    // The first address keeps its own list.
+    assert.deepEqual(familyOfDoc(await H.storedDoc(page)).children, home.children);
+    await fresh.close();
+  });
+
+  await check('family copy: Settings and the setup in dark mode, and the copy note in the four ways the app runs', async () => {
+    const dark = await H.newPage(browser, baseB, VIEW, null, { colorScheme: 'dark' });
+    await dark.page.goto(baseB + '/');
+    await dark.page.waitForSelector('#setup-form:not([hidden])');
+    await dark.page.setInputFiles('#setup-copy-file', copyFile(savedText));
+    await dark.page.waitForSelector('#setup-copy-box:not([hidden])');
+    const bg = await dark.page.$eval('#setup-copy-box', (n) => getComputedStyle(n).backgroundColor);
+    const fg = await dark.page.$eval('#setup-copy-box', (n) => getComputedStyle(n).color);
+    assert.notEqual(bg, fg);
+    await H.shotEl(dark.page, '#setup-copy', 'family-copy-setup-dark-360');
+    assert.deepEqual(dark.problems, []);
+    await dark.context.close();
+    for (const mode of H.PRIVACY_MODES) {
+      const m = await H.newPage(browser, baseB, VIEW, { health: H.privacyHealth(mode) });
+      await m.page.goto(baseB + '/');
+      await H.setupFamily(m.page, { nickname: 'Sami' });
+      await H.openParent(m.page);
+      await H.parentSection(m.page, 'settings');
+      for (const lang of ['en', 'fr', 'ar']) {
+        if ((await m.page.inputValue('#ps-lang')) !== lang) {
+          await m.page.selectOption('#ps-lang', lang);
+          await m.page.waitForSelector(`html[lang="${lang}"]`);
+        }
+        const S = H.allStrings(lang);
+        assert.equal(await text(m.page, `${settings} .copy-note`), S.fam_copy_note, `${mode.name} ${lang}`);
+        assert.equal(await text(m.page, `${settings} .rw-block:has(#ps-copy-h) > .hint`), S.fam_copy_about, `${mode.name} ${lang}`);
+      }
+      const [download] = await Promise.all([m.page.waitForEvent('download'), m.page.click('#ps-copy-save')]);
+      assert.equal(await download.failure(), null, mode.name);
+      assert.deepEqual(m.problems, [], mode.name);
+      await m.context.close();
+    }
+  });
+
+  await check('family copy flow: no console errors, page errors or external requests', async () => {
+    assert.deepEqual(problems, []);
+  });
+  await context.close();
+  serverB.close();
 }
 
 /** app.js and family.js find each other whatever the order of the script tags. */
@@ -2695,6 +3233,8 @@ async function main() {
     await privacySettingsFlow(browser, base);
     console.log('# browser: the AI consent (old documents, Settings, Claude added later, the prompt in en and ar)');
     await aiConsentFlow(browser, base);
+    console.log('# browser: a copy of the family list (save, load in Settings, load at the setup of a new address)');
+    await familyCopyFlow(browser, base);
     console.log('# browser: script order');
     await handshakeFlow(browser, base);
   } finally {

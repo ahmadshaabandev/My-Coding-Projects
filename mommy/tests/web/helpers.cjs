@@ -90,6 +90,9 @@ function parseMultipart(buf, contentType) {
   assert.ok(m, 'multipart boundary missing: ' + contentType);
   const boundary = Buffer.from('--' + (m[1] || m[2]).trim());
   const parts = {};
+  // Every part in order, also a name sent twice (parts keeps the last one): not enumerable.
+  const all = [];
+  Object.defineProperty(parts, 'all', { value: all });
   let pos = buf.indexOf(boundary);
   while (pos !== -1) {
     pos += boundary.length;
@@ -103,6 +106,7 @@ function parseMultipart(buf, contentType) {
     const filename = (/filename="([^"]*)"/.exec(head) || [])[1];
     const type = (/content-type:\s*([^\r\n]+)/i.exec(head) || [])[1];
     parts[name] = { filename, type, data, text: data.toString('utf8') };
+    all.push(Object.assign({ name }, parts[name]));
     pos = next;
   }
   return parts;
@@ -794,6 +798,12 @@ function makeFakeApi(opts) {
         call.raw = body;
       }
     }
+    // The AI consent as the server reads it (app.ai_consent_given): the form field
+    // ai_consent, every copy exactly "1"; never the query string. call.aiConsent: the
+    // values sent. Without it the server's offline brain answers ("brain": "offline").
+    call.aiConsent = call.form ? call.form.all.filter((x) => x.name === 'ai_consent').map((x) => (x.filename === undefined ? x.text : { file: x.filename })) : [];
+    const consent = call.aiConsent.length > 0 && call.aiConsent.every((v) => v === '1');
+    const brain = consent && o.health.brain === 'claude' ? 'claude' : 'offline';
     calls.push(call);
     if (unreachable.has(p)) return route.abort('connectionrefused');
     const json = (data, status) => route.fulfill({ status: status || 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(data) });
@@ -805,7 +815,9 @@ function makeFakeApi(opts) {
     }
     const quranRefusal = () => json({ error: 'quran_text', message: QURAN_MESSAGE }, 422);
     if (p === '/api/page/read' && method === 'POST') {
-      const page = pageRead || { text: PAGE_TEXT, lang: 'en', notes: '', source: 'claude', needs_manual: false, contains_quran: false };
+      // Without Claude (or without the AI consent) the offline brain reads nothing.
+      const offlinePage = { text: '', lang: call.form && call.form.lang ? call.form.lang.text : null, notes: '', source: 'offline', needs_manual: true, contains_quran: false };
+      const page = Object.assign({}, brain === 'claude' ? pageRead || { text: PAGE_TEXT, lang: 'en', notes: '', source: 'claude', needs_manual: false, contains_quran: false } : offlinePage, { brain });
       const text = typeof page.text === 'string' ? page.text : '';
       // The server decides from the text read when it has Arabic: a page that is Quran
       // (Q1) keeps contains_quran; a school page that includes Quran is read as usual.
@@ -846,7 +858,9 @@ function makeFakeApi(opts) {
       if (refused.has(p)) return quranRefusal();
       if (an.refused) return json(Object.assign({ error: 'quran_text', message: QURAN_MESSAGE }, an.range ? { quran_range: an.range } : {}), 422);
       if (mode === 'contextual' && an.parts.length) return json({ error: 'quran_text', message: QURAN_MEANING_MESSAGE }, 422);
-      const next = reciteQueue.length ? reciteQueue.shift() : mode === 'contextual' ? CONTEXTUAL_RESULT : STRICT_RESULT;
+      // By default, Claude judges the meaning; the offline brain only approximately.
+      const contextual = brain === 'claude' ? Object.assign({}, CONTEXTUAL_RESULT, { judgement: Object.assign({}, CONTEXTUAL_RESULT.judgement, { approximate: undefined }) }) : CONTEXTUAL_RESULT;
+      const next = Object.assign({}, reciteQueue.length ? reciteQueue.shift() : mode === 'contextual' ? contextual : STRICT_RESULT, { brain });
       // Strict answers always carry feedback_is_quran and the Quran parts of the text.
       if (next.mode === 'strict') return json(Object.assign({ feedback_is_quran: false, quran_parts: an.parts }, next));
       return json(next);
@@ -875,9 +889,11 @@ function makeFakeApi(opts) {
       const an = analyse(expected.trim(), call.form.lang ? call.form.lang.text : 'en');
       if (refused.has(p)) return quranRefusal();
       if (an.refused) return json(Object.assign({ error: 'quran_text', message: QURAN_MESSAGE }, an.range ? { quran_range: an.range } : {}), 422);
+      // A photo needs Claude: without it (or without the AI consent) the parent types the writing.
+      if (call.form.image && brain !== 'claude') return json({ error: 'needs_manual', message: 'Reading handwriting needs Claude. Please type what the child wrote.' }, 501);
       const queued = dictationQueue.length ? dictationQueue.shift() : DICTATION_RESULT;
       const next = typeof queued === 'function' ? queued(call) : queued;
-      return json(Object.assign({ feedback_is_quran: false, quran_parts: an.parts }, next));
+      return json(Object.assign({ feedback_is_quran: false, quran_parts: an.parts }, next, { brain }));
     }
     if (p === '/api/quran/surahs') {
       return json({ surahs: TANZIL.surahs.map((s) => ({ number: s.number, name_ar: s.name_ar, ayah_count: s.ayah_count, name_translit: s.name_translit, name_en: s.name_en })), riwaya: 'hafs', attribution: ATTRIBUTION, source_url: 'https://tanzil.net' });
@@ -1109,7 +1125,9 @@ function allStrings(lang) {
  */
 const PRIVACY_MODES = [
   { name: 'local, no Claude', online: false, brain: 'offline', privacy: 'consent_privacy', extra: 'consent_offline', photo: 'photo_privacy', approx: 'approximate' },
-  { name: 'local, Claude', online: false, brain: 'claude', privacy: 'consent_privacy', extra: 'consent_claude', photo: 'photo_privacy_claude', approx: 'approximate' },
+  // approx: the label of a meaning check that Claude did not judge (RA-2: "(offline)" only
+  // where nothing is set up to go online).
+  { name: 'local, Claude', online: false, brain: 'claude', privacy: 'consent_privacy', extra: 'consent_claude', photo: 'photo_privacy_claude', approx: 'approximate_online' },
   { name: 'online, no Claude', online: true, brain: 'offline', privacy: 'consent_online_no_photos', extra: 'consent_online_no_ai', photo: 'photo_privacy_online', approx: 'approximate_online' },
   { name: 'online, Claude', online: true, brain: 'claude', privacy: 'consent_online', extra: 'consent_claude', photo: 'photo_privacy_online_claude', approx: 'approximate_online' },
 ];

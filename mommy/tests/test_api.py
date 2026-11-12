@@ -326,6 +326,12 @@ def make_client(quran: Quran) -> Callable[..., TestClient]:
     return make
 
 
+#: The parent's AI consent as the web client sends it with a consent that counts. The
+#: helpers below send it by default, so that the fake Claude brain answers; None leaves
+#: the field out (TestAiConsent: the offline brain answers then).
+CONSENT = "1"
+
+
 def recite(
     client: TestClient,
     *,
@@ -334,8 +340,10 @@ def recite(
     lang: str | None = "en",
     mode: str | None = "strict",
     age: str | None = "6-9",
+    ai_consent: str | None = CONSENT,
 ) -> Any:
-    data = {k: v for k, v in dict(expected_text=expected_text, lang=lang, mode=mode, age=age).items() if v is not None}
+    fields = dict(expected_text=expected_text, lang=lang, mode=mode, age=age, ai_consent=ai_consent)
+    data = {k: v for k, v in fields.items() if v is not None}
     files = {"audio": ("child.wav", audio if audio is not None else wav(), "audio/wav")} if audio != b"-" else None
     return client.post("/api/recite/check", data=data, files=files)
 
@@ -477,6 +485,20 @@ class TestHeadersAndStatic:
         assert r.headers["x-content-type-options"] == "nosniff"
         for name in ("app.js", "recorder.js", "styles.css"):
             assert client.get("/" + name).content == (ROOT / "web" / name).read_bytes()
+
+    def test_the_web_client_is_asked_again_before_reuse(self, make_client: Callable[..., TestClient]) -> None:
+        """RA-6: the files of the web client say "no-cache", so a browser revalidates them
+        (a 304 with the ETag) and an updated app.js is used at the next load; an older one,
+        which sends no ai_consent, does not keep running across reloads."""
+        client = make_client()
+        for path in ("/", "/index.html", "/app.js", "/family.js", "/rewards.js", "/recorder.js", "/styles.css", "/access.html", "/nope.js"):
+            r = client.get(path)
+            assert r.headers["cache-control"] == "no-cache", path
+        r = client.get("/app.js")
+        assert r.headers.get("etag") and r.headers.get("last-modified")
+        again = client.get("/app.js", headers={"If-None-Match": r.headers["etag"]})
+        assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
+        assert client.get("/api/health").headers["cache-control"] == "no-store"  # the API keeps its own
 
     def test_unknown_api_path_and_wrong_method(self, make_client: Callable[..., TestClient]) -> None:
         client = make_client()
@@ -627,7 +649,7 @@ class TestLimitsAndMemory:
         assert args[0].size == pytest.approx(55.0 * 16_000, abs=2)
 
         image = jpeg() + b"\x00" * (MAX_IMAGE_BYTES - 50_000)  # 7.95 MB
-        r = client.post("/api/page/read", files={"image": ("p.jpg", image, "image/jpeg")})
+        r = client.post("/api/page/read", files={"image": ("p.jpg", image, "image/jpeg")}, data={"ai_consent": CONSENT})
         assert r.status_code == 200, r.text
         (sent, _), _ = brain.called("read_page")[0]
         # The whole upload was read (in memory) and re-encoded: the bytes after the
@@ -668,9 +690,11 @@ class TestLimitsAndMemory:
 
 
 class TestPageRead:
-    def post(self, client: TestClient, image: bytes | None, lang: str | None = "fr") -> Any:
+    def post(
+        self, client: TestClient, image: bytes | None, lang: str | None = "fr", ai_consent: str | None = CONSENT
+    ) -> Any:
         files = {"image": ("page.jpg", image, "image/jpeg")} if image is not None else None
-        data = {"lang": lang} if lang is not None else {}
+        data = {k: v for k, v in {"lang": lang, "ai_consent": ai_consent}.items() if v is not None}
         return client.post("/api/page/read", files=files, data=data)
 
     def test_claude_reads_the_page(self, make_client: Callable[..., TestClient]) -> None:
@@ -681,7 +705,7 @@ class TestPageRead:
         assert r.json() == {
             "text": FR_TEXT, "lang": "fr", "notes": "", "source": "claude", "needs_manual": False,
             "contains_quran": False, "unreadable_marks": 0,
-            "quran_parts": [], "mushaf_text": FR_TEXT, "quran_range": None,
+            "quran_parts": [], "mushaf_text": FR_TEXT, "quran_range": None, "brain": "claude",
         }
         assert brain.called("read_page") == [((clean_image(image), "fr"), {})]
 
@@ -803,8 +827,9 @@ class TestReciteStrict:
         body = r.json()
         assert set(body) == {
             "mode", "heard_text", "result", "feedback", "quality", "say_again", "feedback_is_quran", "quran_parts",
+            "brain",
         }
-        assert body["feedback_is_quran"] is False and body["quran_parts"] == []
+        assert body["feedback_is_quran"] is False and body["quran_parts"] == [] and body["brain"] == "claude"
         assert body["mode"] == "strict" and body["heard_text"] == "the cat sat on mat"
         assert body["result"] == json.loads(json.dumps(dataclasses.asdict(check_recitation(EN_TEXT, "the cat sat on mat", "en"))))
         assert set(body["result"]) == RESULT_KEYS and all(set(op) == OP_KEYS for op in body["result"]["ops"])
@@ -927,8 +952,8 @@ class TestReciteContextual:
         transcriber = RecordingTranscriber("a cat was sitting")
         r = recite(make_client(transcriber=transcriber, brain=brain), mode="contextual", age="10-13")
         body = r.json()
-        assert set(body) == {"mode", "heard_text", "judgement", "feedback", "quality", "say_again"}
-        assert body["mode"] == "contextual" and body["heard_text"] == "a cat was sitting"
+        assert set(body) == {"mode", "heard_text", "judgement", "feedback", "quality", "say_again", "brain"}
+        assert body["mode"] == "contextual" and body["heard_text"] == "a cat was sitting" and body["brain"] == "claude"
         assert body["judgement"] == {"verdict": "partly", "missing_ideas": ["mat"], "wrong_ideas": [], "say_again": False}
         assert body["feedback"] == "Good! Where did the cat sit?"
         assert brain.called("judge_meaning") == [((EN_TEXT, "a cat was sitting", "en", "10-13"), {})]
@@ -1065,8 +1090,8 @@ class TestTTS:
 
 
 def check_dictation(client: TestClient, *, image: bytes | None = None, **fields: Any) -> Any:
-    """POST /api/dictation/check (French defaults; a None field is left out)."""
-    data = {"expected_text": FR_TEXT, "lang": "fr", "age": "10-13", **fields}
+    """POST /api/dictation/check (French defaults, with the AI consent; a None field is left out)."""
+    data = {"expected_text": FR_TEXT, "lang": "fr", "age": "10-13", "ai_consent": CONSENT, **fields}
     data = {k: v for k, v in data.items() if v is not None}
     files = {"image": ("writing.jpg", image, "image/jpeg")} if image is not None else None
     return client.post("/api/dictation/check", data=data, files=files)
@@ -1084,8 +1109,9 @@ class TestDictationCheck:
         body = r.json()
         assert set(body) == {
             "read_text", "source", "uncertain_words", "legible", "result", "feedback", "needs_parent_confirmation",
-            "feedback_is_quran", "quran_parts",
+            "feedback_is_quran", "quran_parts", "brain",
         }
+        assert body["brain"] == "claude"
         assert body["feedback_is_quran"] is False and body["quran_parts"] == []
         assert body["read_text"] == written and body["source"] == "typed"
         assert body["needs_parent_confirmation"] is True and body["uncertain_words"] == []
@@ -1159,7 +1185,9 @@ class TestDictationCheck:
         brain = FakeBrain(handwriting={"text": "Le chat\r\ndort.", "uncertain_words": [], "legible": True})
         assert self.post(make_client(brain=brain), image=jpeg()).json()["read_text"] == "Le chat\ndort."
         brain = FakeBrain(page={"text": "Le chat\r\ndort.", "lang": "fr", "notes": "a\rb"})
-        page = make_client(brain=brain).post("/api/page/read", files={"image": ("p.jpg", jpeg(), "image/jpeg")}).json()
+        page = make_client(brain=brain).post(
+            "/api/page/read", files={"image": ("p.jpg", jpeg(), "image/jpeg")}, data={"ai_consent": CONSENT}
+        ).json()
         assert (page["text"], page["notes"]) == ("Le chat\ndort.", "a\nb")
 
     def test_strict_tashkeel(self, make_client: Callable[..., TestClient]) -> None:
@@ -1412,6 +1440,190 @@ class TestHandwritingIsReadBlind:
         assert seen == []
 
 
+# ---------------------------------------------------------------------------
+# The AI consent (hard rule 5; docs/REWARDS.md, V6): the server takes part
+# ---------------------------------------------------------------------------
+
+#: Every endpoint whose handling can reach the Claude brain: (path, form fields, uploads, the
+#: brain methods it calls with the consent).
+CLAUDE_REQUESTS: dict[str, tuple[str, dict[str, str], Callable[[], dict], set[str]]] = {
+    "recite strict": (
+        "/api/recite/check",
+        {"expected_text": EN_TEXT, "lang": "en", "mode": "strict", "age": "6-9"},
+        lambda: {"audio": ("child.wav", wav(), "audio/wav")},
+        {"word_feedback"},
+    ),
+    "recite by meaning": (
+        "/api/recite/check",
+        {"expected_text": EN_TEXT, "lang": "en", "mode": "contextual", "age": "10-13"},
+        lambda: {"audio": ("child.wav", wav(), "audio/wav")},
+        {"judge_meaning"},
+    ),
+    "dictation typed": (
+        "/api/dictation/check",
+        {"expected_text": FR_TEXT, "lang": "fr", "age": "10-13", "written_text": "Le chat dor sur le tapis."},
+        lambda: {},
+        {"word_feedback"},
+    ),
+    "dictation photo": (
+        "/api/dictation/check",
+        {"expected_text": FR_TEXT, "lang": "fr", "age": "10-13"},
+        lambda: {"image": ("writing.jpg", jpeg(), "image/jpeg")},
+        {"read_handwriting", "word_feedback"},
+    ),
+    "page photo": ("/api/page/read", {"lang": "fr"}, lambda: {"image": ("page.jpg", jpeg(), "image/jpeg")}, {"read_page"}),
+}
+
+#: Requests that do not carry the consent: (extra form fields, extra uploads, query string).
+#: Only a form field ai_consent whose every copy is exactly "1" is the consent.
+NO_CONSENT: dict[str, tuple[dict[str, Any], dict[str, Any], str]] = {
+    "no field (an older client)": ({}, {}, ""),
+    "0": ({"ai_consent": "0"}, {}, ""),
+    "true": ({"ai_consent": "true"}, {}, ""),
+    "empty": ({"ai_consent": ""}, {}, ""),
+    "1 with spaces": ({"ai_consent": " 1 "}, {}, ""),
+    "query string only": ({}, {}, "?ai_consent=1"),
+    "1 then 0": ({"ai_consent": ["1", "0"]}, {}, ""),
+    "0 then 1": ({"ai_consent": ["0", "1"]}, {}, ""),
+    "1 then empty": ({"ai_consent": ["1", ""]}, {}, ""),
+    "a file part": ({}, {"ai_consent": ("consent.txt", b"1", "text/plain")}, ""),
+}
+
+
+def claude_request(
+    client: TestClient, kind: str, data: dict[str, Any] | None = None, files: dict[str, Any] | None = None, query: str = ""
+) -> Any:
+    """One of :data:`CLAUDE_REQUESTS`, with extra form fields, uploads or a query string."""
+    path, fields, uploads, _ = CLAUDE_REQUESTS[kind]
+    all_files = {**uploads(), **(files or {})}
+    return client.post(path + query, data={**fields, **(data or {})}, files=all_files or None)
+
+
+class TestAiConsent:
+    """Claude is used for a request only when the request says that the parent agreed:
+    the form field ``ai_consent=1`` (``app.ai_consent_given``). Without it the request is
+    answered exactly as by a server without Claude, and the Claude brain is never called,
+    whatever the web client did (a server started again with Claude after the page's last
+    /api/health, a tab with an older app.js, any other client)."""
+
+    @staticmethod
+    def offline_answer(make_client: Callable[..., TestClient], kind: str) -> tuple[int, Any]:
+        client = make_client(transcriber=RecordingTranscriber("the cat sat on mat"), brain=OfflineBrain())
+        r = claude_request(client, kind)
+        return r.status_code, r.json()
+
+    @pytest.mark.parametrize("how", list(NO_CONSENT))
+    @pytest.mark.parametrize("kind", list(CLAUDE_REQUESTS))
+    def test_without_the_consent_claude_is_never_called(
+        self, make_client: Callable[..., TestClient], kind: str, how: str
+    ) -> None:
+        brain = FakeBrain()
+        client = make_client(transcriber=RecordingTranscriber("the cat sat on mat"), brain=brain)
+        data, files, query = NO_CONSENT[how]
+        r = claude_request(client, kind, data, files, query)
+        assert brain.calls == []
+        assert (r.status_code, r.json()) == self.offline_answer(make_client, kind)
+        if r.status_code == 200:
+            assert r.json()["brain"] == "offline"
+        assert client.get("/api/health").json()["brain"] == "claude"  # the server has Claude all the same
+
+    @pytest.mark.parametrize("consent", ["1", ["1", "1"]], ids=["1", "1 twice"])
+    @pytest.mark.parametrize("kind", list(CLAUDE_REQUESTS))
+    def test_the_consent_lets_claude_answer(self, make_client: Callable[..., TestClient], kind: str, consent: Any) -> None:
+        brain = FakeBrain()
+        client = make_client(transcriber=RecordingTranscriber("the cat sat on mat"), brain=brain)
+        r = claude_request(client, kind, {"ai_consent": consent})
+        assert r.status_code == 200, r.text
+        assert r.json()["brain"] == "claude"
+        assert {m for m, _, _ in brain.calls} == CLAUDE_REQUESTS[kind][3]
+        assert (r.status_code, r.json()) != self.offline_answer(make_client, kind)
+
+    def test_what_claude_answered_and_what_the_offline_brain_did(self, make_client: Callable[..., TestClient]) -> None:
+        client = make_client(transcriber=RecordingTranscriber("the cat sat on mat"), brain=FakeBrain())
+        strict = claude_request(client, "recite strict", {"ai_consent": "1"}).json()
+        assert strict["feedback"] == "Lovely effort, keep going!"
+        offline = claude_request(client, "recite strict").json()
+        assert offline["result"] == strict["result"]  # the words are decided by code (hard rule 2)
+        assert offline["feedback"] == feedback.for_result(CheckResult(**{
+            **offline["result"], "ops": [Op(**op) for op in offline["result"]["ops"]],
+        }), "en", "6-9", activity="recitation")
+        # By meaning without Claude: the offline heuristic, marked approximate for the "approximate" note.
+        meaning = claude_request(client, "recite by meaning").json()
+        assert meaning["brain"] == "offline" and meaning["judgement"]["approximate"] is True
+        assert "approximate" not in claude_request(client, "recite by meaning", {"ai_consent": "1"}).json()["judgement"]
+        page = claude_request(client, "page photo").json()
+        assert (page["source"], page["needs_manual"], page["text"], page["brain"]) == ("offline", True, "", "offline")
+        assert_error(claude_request(client, "dictation photo"), 501, "needs_manual")
+
+    @pytest.mark.parametrize("kind", list(CLAUDE_REQUESTS))
+    def test_a_server_without_claude_ignores_the_field(self, make_client: Callable[..., TestClient], kind: str) -> None:
+        client = make_client(transcriber=RecordingTranscriber("the cat sat on mat"), brain=OfflineBrain())
+        r = claude_request(client, kind, {"ai_consent": "1"})
+        assert (r.status_code, r.json()) == self.offline_answer(make_client, kind)
+
+    def test_multipart_and_urlencoded_bodies(self, make_client: Callable[..., TestClient]) -> None:
+        brain = FakeBrain()
+        client = make_client(brain=brain)
+        _, fields, _, _ = CLAUDE_REQUESTS["dictation typed"]
+        for consent, want in (("1", "claude"), ("0", "offline")):
+            sent = {**fields, "ai_consent": consent}
+            for body in ({"data": sent}, {"files": {k: (None, v) for k, v in sent.items()}}):  # urlencoded, multipart
+                assert client.post("/api/dictation/check", **body).json()["brain"] == want
+        assert len(brain.called("word_feedback")) == 2
+
+    def test_the_log_names_the_brain_never_the_text_or_the_age_group(
+        self, make_client: Callable[..., TestClient], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = make_client(transcriber=RecordingTranscriber("the cat sat on mat"), brain=FakeBrain())
+        with caplog.at_level(logging.DEBUG):
+            for kind in CLAUDE_REQUESTS:
+                for consent in ("1", None):
+                    claude_request(client, kind, {"ai_consent": consent, "age": "14-18"} if consent else {"age": "14-18"})
+        for line in ("recite/check strict en: brain claude", "recite/check contextual en: brain offline",
+                     "dictation/check fr: brain claude", "dictation/check fr: brain offline",
+                     "page/read: image", "brain claude, source claude", "brain offline, source offline"):
+            assert line in caplog.text, line
+        for secret in ("14-18", "cat", "chat", "tapis", "Lovely effort"):
+            assert secret not in caplog.text, secret
+
+    def test_the_published_schema_lists_the_field_and_the_brain(self, make_client: Callable[..., TestClient]) -> None:
+        """RA-5: a client built from /api/openapi.json learns of the opt-in field and of
+        the answer's "brain", on exactly the endpoints that can reach Claude, and the
+        field is optional there (the schema only describes it: requests are read as
+        before, by ai_consent_given)."""
+        brain = FakeBrain()
+        client = make_client(brain=brain)
+        spec = client.get("/api/openapi.json").json()
+        schemas = spec["components"]["schemas"]
+        with_field, with_brain = set(), set()
+        for path, operations in spec["paths"].items():
+            for method, operation in operations.items():
+                for media in operation.get("requestBody", {}).get("content", {}).values():
+                    body = media["schema"]
+                    if "$ref" in body:
+                        body = schemas[body["$ref"].rsplit("/", 1)[1]]
+                    field = body.get("properties", {}).get("ai_consent")
+                    if field is not None:
+                        with_field.add(path)
+                        assert field["type"] == "string"
+                        assert '"1"' in field["description"] and "query string" in field["description"]
+                        assert "ai_consent" not in body.get("required", [])
+                for media in operation.get("responses", {}).get("200", {}).get("content", {}).values():
+                    answer = media["schema"].get("properties", {}).get("brain")
+                    if answer is not None:
+                        with_brain.add(path)
+                        assert answer["enum"] == ["claude", "offline"]
+                        assert "brain" in media["schema"]["required"]
+        claude_paths = {path for path, _, _, _ in CLAUDE_REQUESTS.values()}
+        assert with_field == with_brain == claude_paths == {"/api/page/read", "/api/recite/check", "/api/dictation/check"}
+        # Asking twice gives the same schema (it is made once), and the requests still read
+        # the field as before: "1" twice is the consent, "1" beside "0" is not.
+        assert client.get("/api/openapi.json").json() == spec
+        assert claude_request(client, "dictation typed", {"ai_consent": ["1", "1"]}).json()["brain"] == "claude"
+        assert claude_request(client, "dictation typed", {"ai_consent": ["1", "0"]}).json()["brain"] == "offline"
+        assert len(brain.called("word_feedback")) == 1
+
+
 class TestQuranPathsUseNoBrainAndNoVoice:
     """Hard rule 4: no LLM and no synthetic speech on any Quran path."""
 
@@ -1444,8 +1656,8 @@ class TestQuranPathsUseNoBrainAndNoVoice:
             assert_error(recite(client, expected_text=text, lang="ar", mode="contextual"), 422, "quran_text")
             assert_error(client.post("/api/tts", json={"text": text, "lang": "ar"}), 422, "quran_text")
             assert_error(client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}), 422, "quran_text")
-            r = client.post("/api/dictation/check", data={"expected_text": text, "lang": "ar", "age": "6-9", "written_text": text})
-            assert_error(r, 422, "quran_text")
+            fields = {"expected_text": text, "lang": "ar", "age": "6-9", "written_text": text, "ai_consent": CONSENT}
+            assert_error(client.post("/api/dictation/check", data=fields), 422, "quran_text")
         assert transcriber.calls == [] and brain.calls == [] and tts.calls == []
 
     def test_looks_like_quran(self, quran: Quran) -> None:
@@ -1476,13 +1688,13 @@ class TestNothingSensitiveIsLogged:
         with caplog.at_level(logging.DEBUG):
             for mode in ("strict", "contextual"):
                 assert recite(client, expected_text="Quixotic zebras zigzag wildly", mode=mode).status_code == 200
-            r = client.post(
-                "/api/dictation/check",
-                data={"expected_text": "Quixotic zebras", "lang": "en", "age": "6-9", "written_text": written},
-            )
-            assert r.status_code == 200
+            fields = {"expected_text": "Quixotic zebras", "lang": "en", "age": "6-9", "written_text": written}
+            for consent in (CONSENT, None):  # the fake Claude brain, then the offline one
+                data = {**fields, "ai_consent": consent} if consent else fields
+                assert client.post("/api/dictation/check", data=data).status_code == 200
             assert client.post("/api/tts", json={"text": "Quixotic zebras", "lang": "en", "slow": True}).status_code == 200
-            assert client.post("/api/page/read", files={"image": ("p.jpg", jpeg())}).status_code == 200
+            page = {"image": ("p.jpg", jpeg())}
+            assert client.post("/api/page/read", files=page, data={"ai_consent": CONSENT}).status_code == 200
         assert "recite/check" in caplog.text  # something was logged...
         for word in ("Quixotic", "Quixotik", "zebras", "zigzag", "wildly", FR_TEXT):
             assert word not in caplog.text  # ...but no content
@@ -1631,7 +1843,7 @@ class TestUnreadableWords:
 
     def test_page_read_counts_the_marks(self, make_client: Callable[..., TestClient]) -> None:
         brain = FakeBrain(page={"text": "Le chat [?] sur le [ ? ].", "lang": "fr", "notes": "", "contains_quran": False})
-        r = make_client(brain=brain).post("/api/page/read", files={"image": ("p.jpg", jpeg())})
+        r = make_client(brain=brain).post("/api/page/read", files={"image": ("p.jpg", jpeg())}, data={"ai_consent": CONSENT})
         assert r.json()["unreadable_marks"] == 2 and r.json()["text"] == "Le chat [?] sur le [ ? ]."
 
 
@@ -1658,7 +1870,7 @@ class TestTextLimits:
 
     def test_model_output_with_a_surrogate_does_not_fail(self, make_client: Callable[..., TestClient]) -> None:
         brain = FakeBrain(page={"text": "Le chat \ud83d dort.", "lang": "fr", "notes": "", "contains_quran": False})
-        r = make_client(brain=brain).post("/api/page/read", files={"image": ("p.jpg", jpeg())})
+        r = make_client(brain=brain).post("/api/page/read", files={"image": ("p.jpg", jpeg())}, data={"ai_consent": CONSENT})
         assert r.status_code == 200 and r.json()["text"] == "Le chat � dort."
 
     def test_concurrent_decodes_are_bounded(

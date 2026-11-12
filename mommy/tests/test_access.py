@@ -203,12 +203,14 @@ class TestWithoutCode:
         r = client.get("/", headers=NAV)
         responses.append(r)
         assert r.status_code == 200 and r.content == INDEX_BYTES
-        assert "cache-control" not in r.headers
+        # The web client's files are revalidated (RA-6: an updated app.js is used at the
+        # next load), but not "private": that is the gate's own value.
+        assert r.headers["cache-control"] == "no-cache"
         for name in ("app.js", "recorder.js", "rewards.js", "family.js", "styles.css"):
             r = client.get("/" + name, headers=SUBRESOURCE)
             responses.append(r)
             assert r.status_code == 200 and r.content == (WEB / name).read_bytes()
-            assert "cache-control" not in r.headers
+            assert r.headers["cache-control"] == "no-cache"
         r = client.get("/api/health")
         responses.append(r)
         assert r.status_code == 200 and r.json()["asr"] is True

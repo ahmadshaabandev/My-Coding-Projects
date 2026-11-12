@@ -94,7 +94,7 @@
       <form class="card" id="setup-form" novalidate hidden>
         <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
         <h2 class="card-title" data-i18n="fam_setup_title">Family setup</h2>
-        <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
+        <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device, unless a copy is saved with “Save a copy”: the copy is a file, without the PIN, where the browser saves downloads. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
         <div class="field">
           <label for="setup-lang" data-i18n="fam_parent_lang">Language for the grown-ups</label>
           <select id="setup-lang">
@@ -102,6 +102,26 @@
             <option value="fr" lang="fr">Français</option>
             <option value="ar" lang="ar">العربية</option>
           </select>
+        </div>
+
+        <!-- A copy of the family list saved at another address or on another device
+             (family.js): its children, tasks, stars and rewards are used instead of a first
+             child; the consents and the PIN are still given here. -->
+        <div class="copy-pick" id="setup-copy">
+          <p class="hint" data-i18n="fam_copy_setup_hint">Do you have a copy of your family list from another address or device? Load it here: its children, tasks, stars and rewards are then used instead of a first child.</p>
+          <label class="btn btn-small btn-ghost file-btn copy-file">
+            <input type="file" id="setup-copy-file" accept=".json,application/json">
+            <span data-i18n="fam_copy_load">Load a copy</span>
+          </label>
+          <p class="status" id="setup-copy-status" role="status" aria-live="polite"></p>
+          <div class="copy-box" id="setup-copy-box" tabindex="-1" role="group" aria-labelledby="setup-copy-title" hidden>
+            <p class="copy-title" id="setup-copy-title"></p>
+            <p class="copy-count" id="setup-copy-count"></p>
+            <ul class="copy-children" id="setup-copy-children"></ul>
+            <p class="hint" id="setup-copy-repaired" data-i18n="fam_copy_repaired" hidden>Part of this copy was damaged: it has been repaired as far as possible.</p>
+            <p data-i18n="fam_copy_setup_using">The children, tasks, stars and rewards of this copy will be used. The consents and the PIN are not in the copy: they are asked here, as for a new family.</p>
+            <button type="button" class="btn btn-small" id="setup-copy-drop" data-i18n="fam_copy_drop">Do not use this copy</button>
+          </div>
         </div>
 
         <fieldset class="consent">
@@ -137,7 +157,7 @@
           </div>
         </fieldset>
 
-        <fieldset>
+        <fieldset id="setup-first-child">
           <legend data-i18n="fam_first_child">The first child</legend>
           <div class="field">
             <label for="nickname" data-i18n="nickname">Nickname</label>
@@ -653,7 +673,7 @@
            the Claude notice and a box of its own. Not shown on Settings, which has the box. -->
       <section class="card card-notice ai-prompt" id="ai-prompt" aria-labelledby="ai-prompt-h" hidden>
         <h2 id="ai-prompt-h" tabindex="-1" data-i18n="fam_ai_title">Your OK for Claude</h2>
-        <p data-i18n="fam_ai_lead">Mommy is set up to use Claude. Until you agree, reading photos and checking recitations and dictations stay off; the Quran section works without it.</p>
+        <p data-i18n="fam_ai_lead">Mommy is set up to use Claude. Until you agree, reading photos stays off, and recitations and dictations are checked without Claude (by meaning, only approximately); the Quran section works without it.</p>
         <p class="hint" id="ai-prompt-claude" data-i18n="consent_claude"></p>
         <div class="check">
           <input type="checkbox" id="ai-prompt-check" aria-describedby="ai-prompt-claude">
@@ -1015,10 +1035,11 @@
         </form>
       </section>
 
-      <!-- Settings: consent, the PIN, the parent's language, delete all data on this device. -->
+      <!-- Settings: consent, the PIN, the parent's language, a copy of the family list (save,
+           load), delete all data on this device. -->
       <section class="psec card" data-psec="settings" aria-labelledby="psec-settings-h" hidden>
         <h2 id="psec-settings-h" tabindex="-1" data-i18n="fam_sec_settings">Settings</h2>
-        <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
+        <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device, unless a copy is saved with “Save a copy”: the copy is a file, without the PIN, where the browser saves downloads. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
         <fieldset class="consent">
           <legend data-i18n="consent_title">For the parent</legend>
           <div class="check">
@@ -1054,9 +1075,37 @@
           <p class="status" id="ps-lang-status" role="status" aria-live="polite"></p>
         </section>
 
+        <!-- A copy of the family list as a file (family.js): made and read in this browser,
+             never sent to the server; it holds no PIN record and no consent (rewards.js). -->
+        <section class="rw-block" aria-labelledby="ps-copy-h">
+          <h3 id="ps-copy-h" tabindex="-1" data-i18n="fam_copy_h">A copy of the family list</h3>
+          <p class="hint" data-i18n="fam_copy_about">The family list is saved in this browser, for this web address only. If Mommy moves to a new address (a new link), the list is empty there: please save a copy here beforehand, then load it at the new address. A copy can also move the list to another device.</p>
+          <div class="btn-row copy-row">
+            <button type="button" class="btn" id="ps-copy-save" data-i18n="fam_copy_save">Save a copy</button>
+            <label class="btn file-btn copy-file">
+              <input type="file" id="ps-copy-file" accept=".json,application/json">
+              <span data-i18n="fam_copy_load">Load a copy</span>
+            </label>
+          </div>
+          <p class="hint copy-note" data-i18n="fam_copy_note">The file holds the children’s names and age groups, their tasks, stars and rewards, but not the PIN. It is not encrypted: please keep it private.</p>
+          <p class="status" id="ps-copy-status" role="status" aria-live="polite"></p>
+          <div class="confirm-box copy-box" id="ps-copy-confirm" tabindex="-1" role="group" aria-labelledby="ps-copy-title" hidden>
+            <p class="copy-title" id="ps-copy-title"></p>
+            <p class="copy-count" id="ps-copy-count"></p>
+            <ul class="copy-children" id="ps-copy-children"></ul>
+            <p class="hint" id="ps-copy-repaired" data-i18n="fam_copy_repaired" hidden>Part of this copy was damaged: it has been repaired as far as possible.</p>
+            <p data-i18n="fam_copy_replace_q">Replace this device’s family list with the copy? The children, tasks, stars and rewards here are replaced; the PIN and the consents of this device stay as they are.</p>
+            <p class="hint" data-i18n="fam_copy_save_first">To keep the current list too, please press “Save a copy” first.</p>
+            <div class="btn-row">
+              <button type="button" class="btn btn-danger" id="ps-copy-yes" data-i18n="fam_copy_replace">Replace</button>
+              <button type="button" class="btn" id="ps-copy-no" data-i18n="fam_cancel">Cancel</button>
+            </div>
+          </div>
+        </section>
+
         <section class="rw-block danger-zone" aria-labelledby="ps-delete-h">
           <h3 id="ps-delete-h" data-i18n="fam_set_delete_h">Delete all data on this device</h3>
-          <p class="hint" data-i18n="fam_set_delete_about">Deletes every child, task, star and reward, the PIN and the settings, on this device only.</p>
+          <p class="hint" data-i18n="fam_set_delete_about">Deletes every child, task, star and reward, the PIN and the settings, on this device only (not a copy saved as a file). The app then starts again as on the first day.</p>
           <p class="status" id="ps-delete-status" role="status" aria-live="polite"></p>
           <button type="button" class="btn btn-danger-ghost" id="ps-delete" data-i18n="fam_delete">Delete all data</button>
           <div class="confirm-box" id="ps-delete-1" tabindex="-1" hidden>

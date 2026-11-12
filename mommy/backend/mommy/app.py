@@ -56,11 +56,19 @@ Privacy (hard rule 5)
   timings and error class names only. Unexpected errors on ``/api/*`` are answered with a
   JSON 500 and logged as a class name and code location, because exception messages and
   tracebacks can quote content.
-* Every ``/api/*`` response has ``Cache-Control: no-store``.
+* Every ``/api/*`` response has ``Cache-Control: no-store``; every other one that sets
+  none has ``Cache-Control: no-cache``, so a browser asks again before it reuses a file
+  of the web client (an updated ``app.js`` is used at the next load).
 * Online, with ``MOMMY_ACCESS_CODE`` set, nothing answers without the access cookie
   (:mod:`mommy.access`): ``POST /api/access`` trades the code for it, an HTML
   navigation without it gets the gate page, and every other request a 401. Without the
   variable there is no gate at all.
+* The Claude brain is used for a request only with the parent's AI consent, which the
+  request carries in its form body as ``ai_consent=1`` (:func:`ai_consent_given`; the
+  web client sends it only with a consent that counts). Without it, ``/api/page/read``,
+  ``/api/recite/check`` and ``/api/dictation/check`` use the offline brain for that one
+  request and Claude is not called at all; each of their answers says which brain
+  answered (``"brain"``). The log may name that brain, never a text or the age group.
 
 Errors are ``{"error": <code>, "message": <text>}`` with status 400 (bad input, or an
 unknown host name), 401 (no access cookie, online only), 403 (a cross-origin write, a
@@ -90,9 +98,10 @@ from http import HTTPStatus
 from typing import Annotated, Any, Literal
 
 import numpy as np
-from fastapi import FastAPI, File, Form, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Query, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pydantic import BaseModel
@@ -314,8 +323,17 @@ def body_limit(path: str) -> int:
 HSTS_VALUE = "max-age=31536000"
 
 
+#: ``Cache-Control`` of a response outside ``/api/*`` that sets none (the web client's
+#: files): a browser asks again before it reuses its copy (a cheap 304 with the ETag), so
+#: after an update no older ``app.js`` keeps running across reloads (an older client sends
+#: no ``ai_consent`` and gets offline answers, RA-6). The access gate sets its own,
+#: ``private, no-cache``, which is kept.
+STATIC_CACHE_CONTROL = "no-cache"
+
+
 class ResponseHeadersMiddleware:
-    """``Cache-Control: no-store`` on every ``/api/*`` response; ``nosniff``,
+    """``Cache-Control: no-store`` on every ``/api/*`` response, and
+    :data:`STATIC_CACHE_CONTROL` on any other response that sets none; ``nosniff``,
     ``Referrer-Policy: no-referrer``, ``X-Frame-Options: DENY`` and
     ``Content-Security-Policy: frame-ancestors 'none'`` on every response (a page in
     another site's frame could otherwise drive the app; a CSP meta tag cannot set
@@ -339,6 +357,8 @@ class ResponseHeadersMiddleware:
                 headers = MutableHeaders(scope=message)
                 if api:
                     headers["Cache-Control"] = "no-store"
+                else:
+                    headers.setdefault("Cache-Control", STATIC_CACHE_CONTROL)
                 if hsts:
                     headers.setdefault("Strict-Transport-Security", HSTS_VALUE)
                 headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -762,6 +782,99 @@ def _quality_unclear(quality: dict) -> bool:
     return bool(quality.get("too_quiet") or quality.get("too_short"))
 
 
+#: The form field by which a request carries the parent's AI consent (hard rule 5).
+AI_CONSENT_FIELD = "ai_consent"
+#: The only value of :data:`AI_CONSENT_FIELD` that counts as the consent.
+AI_CONSENT_VALUE = "1"
+
+
+async def ai_consent_given(request: Request) -> bool:
+    """True only when the request's form body has :data:`AI_CONSENT_FIELD`, and every
+    copy of it is exactly ``"1"``.
+
+    The field is opt-in, so anything else means no consent and the request is answered
+    without Claude: no field (a client that does not know it, such as a tab still running
+    an older ``app.js``), an empty value, ``"0"``, ``"true"``, ``" 1"``, a file part, and a
+    field sent twice with any other value beside ``"1"``. The query string is never read:
+    a field there does not count. The form is the one FastAPI has already parsed for the
+    endpoint's other fields (Starlette keeps it), so nothing is read twice.
+    """
+    form = await request.form()
+    values = form.getlist(AI_CONSENT_FIELD)
+    return bool(values) and all(isinstance(v, str) and v == AI_CONSENT_VALUE for v in values)
+
+
+#: The dependency of every endpoint whose handling can reach the Claude brain.
+AiConsent = Annotated[bool, Depends(ai_consent_given)]
+
+#: How /api/openapi.json describes :data:`AI_CONSENT_FIELD` (:func:`document_ai_consent`).
+AI_CONSENT_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "title": "Ai Consent",
+    "description": (
+        "Optional, opt-in: the parent's AI consent. Only the exact value \"1\" in the form body "
+        "counts, and a field sent more than once counts only when every copy is \"1\". No field, "
+        "any other value, a file part, and the field in the query string mean no consent: the "
+        "request is then answered by the offline brain and Claude is not called for it."
+    ),
+}
+#: How /api/openapi.json describes the ``brain`` of an answer (:func:`document_ai_consent`).
+BRAIN_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "enum": ["claude", "offline"],
+    "title": "Brain",
+    "description": (
+        "The brain that had the request: \"offline\" means that nothing of it went to Claude "
+        "(no AI consent, or no Claude on the server); \"claude\" means the Claude brain had it "
+        "(it may still have fallen back to the offline answer after an error)."
+    ),
+}
+
+
+def _uses_ai_consent(dependant: Any) -> bool:
+    """True when :func:`ai_consent_given` is one of the dependencies, at any depth."""
+    return any(dep.call is ai_consent_given or _uses_ai_consent(dep) for dep in dependant.dependencies)
+
+
+def document_ai_consent(schema: dict[str, Any], routes: Any) -> dict[str, Any]:
+    """Adds the AI consent to an OpenAPI ``schema`` (in place, and returns it): the form
+    field :data:`AI_CONSENT_FIELD` to the request body, and ``brain`` to the success
+    answer, of every route that depends on :func:`ai_consent_given`.
+
+    :func:`ai_consent_given` reads the field from the parsed form itself (so that a field
+    sent twice counts only when every copy is ``"1"``, and a file part or any other value
+    is no consent rather than a 422), so the field is no parameter of the endpoints and
+    FastAPI would not list it. Only the published description changes here; how a request
+    is read does not.
+    """
+    components = schema.get("components", {}).get("schemas", {})
+    for route in routes:
+        if not isinstance(route, APIRoute) or not _uses_ai_consent(route.dependant):
+            continue
+        for method in route.methods:
+            operation = schema.get("paths", {}).get(route.path_format, {}).get(method.lower())
+            if operation is None:
+                continue
+            for media in operation.get("requestBody", {}).get("content", {}).values():
+                body = media.setdefault("schema", {})
+                ref = body.get("$ref", "")
+                if ref.startswith("#/components/schemas/"):
+                    body = components[ref.rsplit("/", 1)[1]]
+                body.setdefault("properties", {})[AI_CONSENT_FIELD] = dict(AI_CONSENT_SCHEMA)
+            for media in operation.get("responses", {}).get("200", {}).get("content", {}).values():
+                answer = media.setdefault("schema", {})
+                answer.setdefault("properties", {})["brain"] = dict(BRAIN_SCHEMA)
+                required = answer.setdefault("required", [])
+                if "brain" not in required:
+                    required.append("brain")
+    return schema
+
+
+def brain_name(brain: Any) -> Literal["claude", "offline"]:
+    """``"claude"`` for the Claude brain, ``"offline"`` for anything else."""
+    return "claude" if getattr(brain, "name", None) == "claude" else "offline"
+
+
 # ---------------------------------------------------------------------------
 # The application
 # ---------------------------------------------------------------------------
@@ -784,6 +897,12 @@ def create_app(
     """
     keep_uploads_in_memory(MAX_BODY_BYTES)
     offline = OfflineBrain()
+
+    def brain_for(consent: bool) -> Brain:
+        """The brain of one request: ``brain`` when it is the Claude brain and the request
+        carries the parent's AI consent (:func:`ai_consent_given`), else the offline
+        brain, so that Claude is not called at all for it."""
+        return brain if consent and brain_name(brain) == "claude" else offline
 
     app = FastAPI(
         title="Mommy",
@@ -898,13 +1017,19 @@ def create_app(
         return heard, quality, timings
 
     def word_feedback(
-        result: CheckResult, lang: Lang, age: AgeBand, activity: str, expected: ExpectedWords | None = None
+        used: Brain,
+        result: CheckResult,
+        lang: Lang,
+        age: AgeBand,
+        activity: str,
+        expected: ExpectedWords | None = None,
     ) -> tuple[str, bool]:
-        """``(feedback, is_quran)``: the brain's wording, or the template when it fails or says
-        nothing. When a mistake lies in a Quran part (``expected.quran``), the brain is not
-        called at all, so it never receives a Quran word: a first mistake there gets the
-        fixed Quran-part template quoting the mushaf word (``is_quran`` True: shown, never
-        spoken), any other first mistake the ordinary template."""
+        """``(feedback, is_quran)``: the wording of ``used`` (the request's brain,
+        :func:`brain_for`), or the template when it fails or says nothing. When a mistake
+        lies in a Quran part (``expected.quran``), the brain is not called at all, so it
+        never receives a Quran word: a first mistake there gets the fixed Quran-part
+        template quoting the mushaf word (``is_quran`` True: shown, never spoken), any
+        other first mistake the ordinary template."""
         template = feedback.for_result(result, lang, age, activity=activity)
         if result.n_unreadable and result.n_errors == result.n_unreadable:
             return template, False  # only words the reader could not read: not the child's mistakes
@@ -945,17 +1070,18 @@ def create_app(
                 for e in summary["errors"]
             ]
         try:
-            text = brain.word_feedback(summary, lang, age)
+            text = used.word_feedback(summary, lang, age)
         except Exception as exc:
             log.warning("word_feedback failed (%s); using the template", type(exc).__name__)
             return template, False
         text = " ".join(text.split()) if isinstance(text, str) else ""
         return text or template, False
 
-    def judge(expected: str, heard: str, lang: Lang, age: AgeBand) -> dict:
-        """The brain's meaning judgement, or the offline heuristic when it fails."""
+    def judge(used: Brain, expected: str, heard: str, lang: Lang, age: AgeBand) -> dict:
+        """The meaning judgement of ``used`` (the request's brain), or the offline
+        heuristic when it fails."""
         try:
-            judged = brain.judge_meaning(expected, heard, lang, age)
+            judged = used.judge_meaning(expected, heard, lang, age)
             if not isinstance(judged, dict) or judged.get("verdict") not in VERDICTS:
                 raise ValueError("unusable judgement")
         except Exception as exc:
@@ -998,7 +1124,7 @@ def create_app(
         return {
             "asr": bool(getattr(transcriber, "available", False)),
             "tts": tts_ok,
-            "brain": "claude" if getattr(brain, "name", None) == "claude" else "offline",
+            "brain": brain_name(brain),
             "quran": quran is not None,
             "online": online,
             "languages": list(LANGUAGES),
@@ -1013,23 +1139,26 @@ def create_app(
     @app.post("/api/page/read")
     def page_read(
         image: Annotated[UploadFile, File()],
+        consent: AiConsent,
         lang: Annotated[LangField | None, Form()] = None,
     ) -> dict[str, Any]:
-        """Read a printed textbook page. Offline, the parent types the text instead."""
+        """Read a printed textbook page with Claude (with the AI consent, ``ai_consent=1``).
+        Offline, or without the consent, the parent types the text instead."""
         started = time.perf_counter()
+        used = brain_for(consent)
         data = _read_upload(image, MAX_IMAGE_BYTES, "image")
         if not data:
             raise ApiError(400, "bad_image", "The image file is empty.")
         with decoding():
             data = clean_image(data)
         try:
-            page = brain.read_page(data, lang)
+            page = used.read_page(data, lang)
         except Exception as exc:
             log.warning("read_page failed (%s); asking the parent to type the text", type(exc).__name__)
             page = {**offline.read_page(data, lang), "error": type(exc).__name__}
         text = _scrub(page.get("text")) if isinstance(page.get("text"), str) else ""
         read_lang = page.get("lang") if page.get("lang") in LANGUAGES else lang
-        failed = "error" in page or getattr(brain, "name", None) != "claude"
+        failed = "error" in page or brain_name(used) != "claude"
         written = tokenize_written(text, read_lang or "en")
         contains_quran = bool(page.get("contains_quran", False))
         quran_fields: dict[str, Any] = {"quran_parts": [], "mushaf_text": text, "quran_range": None}
@@ -1049,10 +1178,14 @@ def create_app(
             # [?] marks where the reader could not read a word; the parent types them.
             "unreadable_marks": sum(1 for t in written if t == UNREADABLE),
             **quran_fields,
+            "brain": brain_name(used),
         }
         if "error" in page:
             out["brain_error"] = str(page["error"])
-        log.info("page/read: image %d bytes, source %s, %.2f s", len(data), out["source"], time.perf_counter() - started)
+        log.info(
+            "page/read: image %d bytes, brain %s, source %s, %.2f s",
+            len(data), out["brain"], out["source"], time.perf_counter() - started,
+        )
         return out
 
     # -- recitation --------------------------------------------------------------
@@ -1064,9 +1197,13 @@ def create_app(
         lang: Annotated[LangField, Form()],
         mode: Annotated[Literal["strict", "contextual"], Form()],
         age: Annotated[AgeField, Form()],
+        consent: AiConsent,
     ) -> dict[str, Any]:
-        """Check a recitation: word by word (strict) or by meaning (contextual)."""
+        """Check a recitation: word by word (strict) or by meaning (contextual). Claude
+        words the feedback and judges the meaning only with the AI consent; without it the
+        offline templates and the offline meaning heuristic answer."""
         started = time.perf_counter()
+        used = brain_for(consent)
         expected_text = _lines(expected_text)
         expected = _clean_text(expected_text, "expected_text", lang)
         analysis = check_expected(expected, lang, "expected_text", mode)
@@ -1077,7 +1214,7 @@ def create_app(
             # A Quran part is compared with its mushaf words as the Quran check does; the
             # rest of the text keeps the speech tolerances (mommy.guard).
             result, words = analysis.check_recitation(heard)
-            text, is_quran = word_feedback(result, lang, age, "recitation", words)
+            text, is_quran = word_feedback(used, result, lang, age, "recitation", words)
             out: dict[str, Any] = {
                 "mode": "strict",
                 "heard_text": heard,
@@ -1095,7 +1232,7 @@ def create_app(
                 }
                 text = feedback.say_again(lang, age)
             else:
-                judged = judge(expected, heard, lang, age)
+                judged = judge(used, expected, heard, lang, age)
                 judgement = {
                     "verdict": judged["verdict"],
                     "missing_ideas": [str(x) for x in judged.get("missing_ideas") or []],
@@ -1116,9 +1253,10 @@ def create_app(
                 "quality": quality,
                 "say_again": judgement["say_again"],
             }
+        out["brain"] = brain_name(used)
         log.info(
-            "recite/check %s %s: audio %d bytes, %.1f s, decode %.2f s, asr %.2f s, total %.2f s",
-            mode, lang, timings["bytes"], quality["seconds"], timings["decode_s"], timings["asr_s"],
+            "recite/check %s %s: brain %s, audio %d bytes, %.1f s, decode %.2f s, asr %.2f s, total %.2f s",
+            mode, lang, out["brain"], timings["bytes"], quality["seconds"], timings["decode_s"], timings["asr_s"],
             time.perf_counter() - started,
         )
         return out
@@ -1232,12 +1370,16 @@ def create_app(
         expected_text: Annotated[str, Form()],
         lang: Annotated[LangField, Form()],
         age: Annotated[AgeField, Form()],
+        consent: AiConsent,
         image: Annotated[UploadFile | None, File()] = None,
         written_text: Annotated[str | None, Form()] = None,
         strict_tashkeel: Annotated[bool, Form()] = False,
     ) -> dict[str, Any]:
-        """Check what the child wrote, from a photo (read blind) or typed by the parent."""
+        """Check what the child wrote, from a photo (read blind by Claude, which needs the
+        AI consent) or typed by the parent (worded by Claude with the consent, else by the
+        offline templates)."""
         started = time.perf_counter()
+        used = brain_for(consent)
         expected_text = _lines(expected_text)
         written_text = _lines(written_text) if written_text is not None else None
         expected = _clean_text(expected_text, "expected_text", lang)
@@ -1253,13 +1395,14 @@ def create_app(
         if data:
             with decoding():
                 data = clean_image(data)
-            if getattr(brain, "name", None) != "claude":
+            if brain_name(used) != "claude":
+                # No Claude on this server, or no AI consent with this request.
                 raise ApiError(
                     501, "needs_manual", "Reading handwriting needs Claude. Please type what the child wrote."
                 )
             try:
                 # Blind: the image and the language only, never the expected text (hard rule 3).
-                written = brain.read_handwriting(data, lang)
+                written = used.read_handwriting(data, lang)
             except Exception as exc:
                 log.warning("read_handwriting failed (%s)", type(exc).__name__)
                 written = {"needs_manual": True}
@@ -1286,7 +1429,7 @@ def create_app(
 
         # A Quran word is accepted in its mushaf spellings only (mommy.guard).
         result, words = analysis.check_writing(read_text, strict_tashkeel=strict_tashkeel)
-        text, is_quran = word_feedback(result, lang, age, "dictation", words)
+        text, is_quran = word_feedback(used, result, lang, age, "dictation", words)
         out = {
             "read_text": read_text,
             "source": source,
@@ -1297,9 +1440,11 @@ def create_app(
             "needs_parent_confirmation": True,
             "feedback_is_quran": is_quran,
             "quran_parts": analysis.parts_json(expected_text, lead=_lead(expected_text)),
+            "brain": brain_name(used),
         }
         log.info(
-            "dictation/check %s: source %s, image %d bytes, %.2f s", lang, source, len(data), time.perf_counter() - started
+            "dictation/check %s: brain %s, source %s, image %d bytes, %.2f s",
+            lang, out["brain"], source, len(data), time.perf_counter() - started,
         )
         return out
 
@@ -1437,6 +1582,17 @@ def create_app(
                 samesite="lax",
             )
             return response
+
+    # The published schema (/api/openapi.json) lists the opt-in field of the AI consent and
+    # the answer's "brain" (document_ai_consent); the requests are read as before.
+    default_openapi = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        if app.openapi_schema is None:
+            app.openapi_schema = document_ai_consent(default_openapi(), app.routes)
+        return app.openapi_schema
+
+    app.openapi = openapi  # type: ignore[method-assign]
 
     if settings.web_dir.is_dir():
         app.router.routes.append(WebMount("/", app=StaticFiles(directory=settings.web_dir, html=True), name="web"))

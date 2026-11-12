@@ -68,15 +68,22 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
    - (extra) Nothing goes to Claude before the parent ticks the AI consent box, which is
      shown under the notice of what goes to Claude only while Claude is configured; a
      consent given without that notice, or to an earlier text of it, never covers Claude
-     (see "Start screen"). This is enforced by the web client: the server cannot yet be
-     told to leave Claude out of one request.
+     (see "Start screen"). The server decides it for each request: it uses the Claude
+     brain only for a request whose form body carries `ai_consent=1`, an opt-in field that
+     the web client sends only with a consent that counts (see "AI consent" under HTTP
+     API). Any other request is answered by the offline brain and Claude is not called
+     for it at all, so neither a server started again with Claude after the page last
+     asked `/api/health`, nor a tab still running an older `app.js`, nor any other client
+     reaches Claude without the consent.
    - (extra) Every sentence of the UI about where the data goes is true in each way the
      app runs: local or online (`/api/health` `online`), with or without Claude. Online,
      the consent box says that the child's voice recordings, the photos and the texts go
      over a secure connection to the Mommy server, which checks them in memory and keeps
      none of them, and never says that nothing leaves this computer. The family data
      (children, tasks, stars, rewards, the PIN) stays in the browser on this device in
-     every mode (see "Start screen" under Web client).
+     every mode, and leaves it only as a file the parent saves with "Save a copy" (made
+     in the browser, without the PIN or the consents, never sent to the server; see
+     "Start screen" under Web client).
    - Online (extra, `MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE` for one's own
      computer): nothing answers without the access cookie, so only people given the code
      can send audio or photos or use the server (see "Access gate" under HTTP API). The
@@ -158,7 +165,8 @@ mommy/
   tests/web/    Node.js tests of the web client (see tests/web/README.md): rewards.test.cjs (web/rewards.js in
                 Node), smoke.cjs and family.cjs (headless Chromium through Playwright, fake API),
                 access.cjs (extra: the access gate in Chromium against the real app under uvicorn,
-                with MOMMY_ACCESS_CODE set and fake speech components)
+                with MOMMY_ACCESS_CODE set and fake speech components; then the server's part in
+                the AI consent against the same app with a fake Claude brain)
   tests/test_access.py                the access gate (extra)
   tests/test_selfhost.py              suffix host entries, the code file and share_link against a fake
                                       cloudflared metrics server (extra)
@@ -988,7 +996,11 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   redirected (Caddy redirects its own port 80; a Space is HTTPS). An entry the matcher
   refuses stops the app at its start. Every response has `X-Content-Type-Options: nosniff`, `Referrer-Policy:
   no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors
-  'none'`; every `/api/*` response has `Cache-Control: no-store`.
+  'none'`; every `/api/*` response has `Cache-Control: no-store`, and every other
+  response that sets none (the web client's files) `Cache-Control: no-cache`
+  (`STATIC_CACHE_CONTROL`): a browser asks again (a 304 with the `ETag`) before it reuses
+  a file, so after an update an older `app.js`, which sends no `ai_consent`, does not keep
+  running across reloads (with the gate, its own `private, no-cache` is kept).
 - **Access gate (extra, online only; `access.py`).** With no access code (`MOMMY_ACCESS_CODE`
   unset or blank, and `MOMMY_ACCESS_CODE_FILE` unset or blank) there is no gate, no
   `/api/access` (404) and nothing below applies. With a code (the variable, or else the
@@ -1062,6 +1074,31 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
     `Host` is logged by HostOriginMiddleware with the name received, quoted and cut to
     80 characters: it tells the owner what `MOMMY_ALLOWED_HOSTS` lacks.) The code never appears in a URL the server sees, so
     uvicorn's access log cannot show it either (`tests/web/access.cjs` checks the log).
+- **AI consent (extra; hard rule 5).** The endpoints whose handling can reach the Claude
+  brain, `/api/page/read`, `/api/recite/check` and `/api/dictation/check` (every call of
+  `read_page`, `read_handwriting`, `judge_meaning` and `word_feedback`), take an optional
+  form field `ai_consent` (`app.ai_consent_given`, a dependency of the three). Only the
+  exact value `"1"` in the form body (multipart or urlencoded) counts; a field sent more
+  than once counts only when every copy is `"1"`. Everything else is no consent: no field
+  (a client that does not know it, such as a tab still running an older `app.js`), an
+  empty value, `"0"`, `"true"`, `" 1 "`, a file part, `"1"` beside any other value, and
+  `ai_consent=1` in the query string, which is never read. Without the consent the request
+  is answered by `OfflineBrain` exactly as by a server without Claude, and the Claude
+  brain is not called at all: a page photo comes back with `"source": "offline"`,
+  `"needs_manual": true` and no text; a photo of handwriting gets `501 needs_manual`; a
+  typed dictation check and a recitation word by word get the offline templates
+  (`feedback.for_result`); a recitation by meaning gets the offline heuristic, with
+  `judgement.approximate: true`. With the consent, on a server without Claude, nothing
+  changes either. Every answer of the three endpoints has `"brain": "claude" | "offline"`,
+  the brain that had the request: `"offline"` means that nothing of it went to Claude (no
+  consent, or no Claude on the server); `"claude"` means the Claude brain had it (it may
+  still fall back to the offline answer after an error, see `brain_error`, `source` and
+  `judgement.approximate`, and it is not called for a result that needs no wording from
+  it, such as a mistake in a Quran part or an unclear recording). Error answers have no
+  `brain`. `/api/health` `brain` still says what the server has. The log line of each of
+  these requests names its brain ("recite/check strict en: brain offline, ...",
+  "dictation/check fr: brain claude, ...", "page/read: image ... bytes, brain claude, source
+  claude, ..."), never a text, the age group or the code.
 - Text checks on the general endpoints (recite, dictation, phrases, TTS, text check), in
   this order: 400 `bad_text` (a lone UTF-16 surrogate), 400 `text_too_long` (over
   20,000 characters; checked before the words, so a text that is too long and has no
@@ -1240,12 +1277,12 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
 |---|---|---|
 | POST `/api/access` (extra, online only) | JSON `{"code": str}` | `204` with the `mommy_access` cookie; `403 bad_access_code`; `429 too_many_attempts` with `Retry-After`; see "Access gate". Absent (404) when no code is set. |
 | GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE`) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
-| POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
-| POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`) | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again`; strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
+| POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional); extra: `ai_consent` (optional, `"1"`: see "AI consent"; without it the offline brain answers) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `brain` (`"claude"`\|`"offline"`, see "AI consent"), `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
+| POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`); extra: `ai_consent` (optional, `"1"`: Claude words the feedback and judges the meaning; without it the offline templates and heuristic answer, see "AI consent") | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again` and `brain` (`"claude"`\|`"offline"`, see "AI consent"); strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
 | POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str], "readers": ["voice"\|"grown_up"], "read_text": [null\|str], "parts": [null\|int], "quran_parts": [part]}` (extra: all but `phrases`; the four lists have one entry per phrase). The voice reads a `voice` phrase (`/api/tts`, slow). A `grown_up` phrase is a chunk of a Quran part (at most 6 display words, never across an ayah): `read_text` is its fully vowelled Uthmani text (verbatim Tanzil) for a grown-up to read aloud, `phrase` the same words in Simple-Clean spelling (what the child writes; never sent to `/api/tts`), `parts` the index of its part in `quran_parts`. A text with no Arabic or no Quran part gives `split_phrases` with every reader `voice`. Q1 gives `422 quran_text` with no scope (and `quran_range` when one range). The `"scope": "phrase"` refusal is gone. A text of punctuation only gives `{"phrases": [], ...}` with empty lists. Example: `"الصبر مفتاح الفرج. قال تعالى: " + 2:153 + " ثم شرح المعلم الآية."` -> phrases `["الصبر مفتاح الفرج.", "قال تعالى:", <2:153 display words 1-5, in Simple-Clean words (6 words: يا أيها is one Uthmani word)>, <display words 6-10>, "ثم شرح المعلم الآية."]`, readers `["voice", "voice", "grown_up", "grown_up", "voice"]`, read_text `[null, null, <Uthmani display words 1-5>, <Uthmani display words 6-10>, null]`, parts `[null, null, 0, 0, null]`. |
 | POST `/api/text/check` (extra) | JSON `{"text", "lang": "ar"\|"en"\|"fr", "mode"?: "strict"\|"contextual"\|"dictation"}` (`mode` defaults to `strict`; any other field is ignored, the parts are never taken from the client) | `{"ok": true, "words": n, "dictation": bool, "contextual": bool, "quran_parts": [part], "mushaf_text": str}`. The checks of `/api/recite/check` in its order (`bad_text`, `text_too_long` by characters, `empty_text`, `text_too_long` by words, `unreadable_text`, `quran_text`, `lang_mismatch`, same bodies; a body that is not JSON gives `422 invalid_field` "The body is not valid JSON."). A text that is Quran (Q1) gives `422 quran_text` in every mode (with `quran_range` when one range of one surah); mode `contextual` also refuses a Q2 text and the by-meaning guard (`QURAN_MEANING_MESSAGE`); mode `dictation` refuses nothing more (no `scope` any more). `words`: the words of the cleaned text (`textnorm.tokenize`). `dictation`: true (a grown-up reads the Quran parts; false only from the never-seen safety net). `contextual`: false when the text has a Quran part or the by-meaning guard refuses it (true in its own mode). `quran_parts`: see below. `mushaf_text`: the submitted text with every Quran part that differs from the mushaf replaced by the mushaf words, in the script closest to what was typed; equal to the submitted text when nothing differs. No recogniser, voice or brain is used. `503 quran_unavailable` when the Tanzil text is missing and the text has Arabic letters. Body limit 256 KB, Host and Origin checks as everywhere. Examples: `{"text": "ذهب الولد إلى المدرسة", "lang": "ar"}` -> `{"ok": true, "words": 4, "dictation": true, "contextual": true, "quran_parts": [], "mushaf_text": "ذهب الولد إلى المدرسة"}`; the basmala on a line of its own followed by a sentence -> `dictation: true, contextual: false`, one part (1:1, rule `ayah`); 112:1-4 with or without قال تعالى / صدق الله العظيم -> `422 {"error": "quran_text", "message", "quran_range": {"surah": 112, "from": 1, "to": 4}}`; a lesson quoting 2:153 whose 7th word was typed with ض for ص -> one part with `differences: [{"op": "sub", "typed": <typed word>, "mushaf": <Uthmani word>, "mushaf_clean": <Simple-Clean word>, "index": 6, "token": <token index>}]`, `rule: "near"`, and a `mushaf_text` with the Simple-Clean word in its place. |
 | POST `/api/tts` | JSON `{"text","lang","slow":bool}` | `audio/wav`. 503 if TTS unavailable. 400 if text is empty or longer than 400 characters, or has nothing to pronounce. Extra: header `X-Speech-Check: passed\|failed\|skipped`: slow speech is transcribed back, unprompted, up to 2 takes, and must say exactly the phrase (`check_recitation`: numbers in digits match words, Arabic number words match by value). |
-| POST `/api/dictation/check` | multipart: `expected_text`, `lang`, `age`, and either `image` (photo of the child's paper) or `written_text` (parent typed it); extra: optional `strict_tashkeel` (bool) | `{"read_text","source":"claude"\|"typed","uncertain_words","result":CheckResult,"feedback","needs_parent_confirmation":true}`; extra: `legible`, `feedback_is_quran` and `quran_parts` (as for `/api/recite/check` strict); in a Q2 text a Quran part is checked against its mushaf words (not the typed ones), and a Quran word is accepted in its Simple-Clean or its Uthmani spelling (through the dictation key: diacritics only with `strict_tashkeel`) and in nothing else (a missing hamza is a mistake); every other word is checked as before; Q1 gives `422 quran_text`; `uncertain_words` includes `"[?]"` when a word could not be read. With an image and an offline brain, or when Claude reads nothing: 501 `needs_manual`. |
+| POST `/api/dictation/check` | multipart: `expected_text`, `lang`, `age`, and either `image` (photo of the child's paper) or `written_text` (parent typed it); extra: optional `strict_tashkeel` (bool), optional `ai_consent` (`"1"`: Claude reads the photo and words the feedback; see "AI consent") | `{"read_text","source":"claude"\|"typed","uncertain_words","result":CheckResult,"feedback","needs_parent_confirmation":true}`; extra: `brain` (`"claude"`\|`"offline"`, see "AI consent"), `legible`, `feedback_is_quran` and `quran_parts` (as for `/api/recite/check` strict); in a Q2 text a Quran part is checked against its mushaf words (not the typed ones), and a Quran word is accepted in its Simple-Clean or its Uthmani spelling (through the dictation key: diacritics only with `strict_tashkeel`) and in nothing else (a missing hamza is a mistake); every other word is checked as before; Q1 gives `422 quran_text`; `uncertain_words` includes `"[?]"` when a word could not be read. With an image and an offline brain (no Claude on the server, or no `ai_consent=1`), or when Claude reads nothing: 501 `needs_manual`. |
 | GET `/api/quran/surahs` | – | `{"surahs":[{number,name_ar,ayah_count, extra: name_translit, name_en}],"riwaya":"hafs","attribution","source_url":"https://tanzil.net"}`; extra: `licence` |
 | GET `/api/quran/ayat?surah=&from=&to=` | – | `{"ayat":[{surah,ayah,display,display_words}],"attribution"}`; extra: `riwaya`, `source_url`. At most 50 ayat per request. |
 | POST `/api/quran/check` | multipart: `audio`, `surah`, `from`, `to` | `{"heard_text","ops","verdict","say_again","first_error","feedback"}`; extra: the other keys of `Quran.check` (`words`, `tolerated`, `stopped_at`, `n_expected`, `n_errors`, `word_accuracy`), `quality`, `riwaya`, `attribution`, `source_url`. The feedback comes from `feedback.quran_feedback` only. |
@@ -1391,19 +1428,34 @@ each language is still loaded on first use.
     (`rewards.js` `hasAiConsent`): the consent counts only with `AI_CONSENT_VERSION` (2,
     the notice with the score, the language and the age group) or later, so a change to
     the notice raises the version and every family is asked again; a consent saved before
-    the version existed never counts (see `docs/REWARDS.md`). Until it is given, every
-    call whose server path can use Claude (`/api/page/read`, `/api/recite/check`,
-    `/api/dictation/check`) is gated: the child's screens say `consent_needed_ai` ("Let's
-    ask a grown-up to open the parent area and give their OK first."), a card for the
-    grown-up elsewhere (Prepare, the check stage of a dictation: headed "For the
-    grown-up") says `consent_needed_ai_grownup` ("This uses Claude: please give your OK
-    for Claude in the parent area (Settings) first."), the parent area
-    `consent_needed_ai_parent`, and the parent area shows a prompt behind the PIN (the
-    Claude notice, the box, "Save", "Not now").
-    Without that consent the client asks `/api/health` again before such a call (the
-    server may have been started again with Claude) and sends nothing if Claude is now
-    set up ("Nothing was sent."). The Quran section, the dictation's voice and
-    `/api/text/check` never need it;
+    the version existed never counts (see `docs/REWARDS.md`). The client adds
+    `ai_consent=1` to a call whose server path can use Claude (`/api/page/read`,
+    `/api/recite/check`, `/api/dictation/check`; `addAiConsent` in `app.js`) only when,
+    as the request is built, the consent counts (`state.aiConsent`, which `family.js`
+    sets from `hasAiConsent(doc)` after every change of the document) and `/api/health`
+    says `"brain": "claude"` (the page shows the Claude notice it was given to); without
+    the field the server answers with its offline brain (see "AI consent" under HTTP API),
+    so the server, not this page, keeps Claude out. Until the consent is given, only the
+    photos stay off (reading them needs Claude): a card for the grown-up (Prepare, the
+    check stage of a dictation: headed "For the grown-up") says
+    `consent_needed_ai_grownup` ("Reading photos uses Claude: please give your OK for
+    Claude in the parent area (Settings) first.": it names the photos, since on the check
+    stage it stands beside the typed check, which does not wait), the parent area
+    `consent_needed_ai_parent` ("Reading photos uses Claude: please give your OK for
+    Claude in Settings first."), and the
+    parent area shows a prompt behind the PIN (the Claude notice, the box, "Save", "Not
+    now"); `consent_needed_ai` ("Let's ask a grown-up to open the parent area and give
+    their OK first."), the line for a child's screen, is kept for a gate there (none has
+    one since Recite stopped waiting). Recite, word by word and by meaning, and the typed
+    dictation check work without it: the server answers them with the offline templates
+    and, by meaning, the approximate heuristic (the "approximate" label of the result and,
+    under the mode choice, `mode_contextual_offline`). Before a photo is sent the
+    consent is read again; if it no longer counts nothing is sent ("Nothing was sent.")
+    and `/api/health` is asked again for the gates. A check sent with the consent that the
+    offline brain answered (`"brain": "offline"`: the server was started again without
+    Claude) also makes the client ask `/api/health` again, so the gates and the texts
+    follow. The Quran section, the dictation's voice and `/api/text/check` never need
+    it;
   - under the box, in the setup and in Settings (extra, `updatePrivacyTexts` in
     `app.js`, from `/api/health`), where the data goes, true in each way the app runs.
     The first line: local, `consent_privacy` ("Mommy handles the recordings and photos
@@ -1427,11 +1479,16 @@ each language is still loaded on first use.
     Claude to be read. Mommy does not keep them.") and `photo_privacy_online_claude`
     online (to the Mommy server, "which does not keep them and passes them on to Claude to
     be read"), never a word about what Claude keeps;
-    the label of an approximate meaning check is `approximate_online` online ("without
-    the online AI", never "offline");
+    the label of an approximate meaning check is `approximate_online` ("without the
+    online AI", never "offline") online, and locally while Claude is set up (a check
+    sent without the AI consent, or after an error of Claude: the setup names Claude
+    there, so "offline" would mislead); `approximate` ("(offline)") only locally without
+    Claude;
   - the family data line, in the setup and in Settings, the same in every mode
     (`fam_privacy_line`: "Your family's list (children, tasks, stars, rewards and the
-    PIN) is saved only in this browser, on this device. To check a text or read it out,
+    PIN) is saved only in this browser, on this device, unless a copy is saved with “Save
+    a copy”: the copy is a file, without the PIN, where the browser saves downloads. To
+    check a text or read it out,
     the Mommy server gets the text and its language, and for a recitation or dictation
     check also the child's age group; a Quran check sends the surah and ayat numbers
     instead. The server does not keep the texts or the age group; its log notes the
@@ -1440,11 +1497,33 @@ each language is still loaded on first use.
     log);
   - the parent PIN (a child lock) and the children (nickname, age band, language,
     avatar), in one family document kept in `localStorage` (`mommy.data.v2`) on this
-    device only.
+    device only, and in a file only when the parent saves a copy (below).
 - **Parent area** (behind the PIN; locked again when left, when the page is hidden and
   after 3 minutes without use): To review (Confirm, and "Not yet" with a note), Tasks
   (with Details and "Confirm anyway"), Rewards, Children, and Settings (PIN change,
-  parent language, delete all data).
+  parent language, a copy of the family list, delete all data). One exception to the
+  lock when the page is hidden: a parent-area file input ("Load a copy", the task
+  form's two photo inputs) opens a picker that some phones show as another app, so the
+  first hiding within 10 s of a tap on one does not lock the area; the exemption ends
+  as soon as the picker is done without hiding the page (the input's `change` or
+  `cancel`, or the window's `focus`), and every other hiding locks
+  (`initAutoLock` in `family.js`).
+- **A copy of the family list** (Settings; `rewards.js` `makeFamilyCopy`,
+  `readFamilyCopy`, `useFamilyCopy`). "Save a copy" makes, in the browser, a JSON file
+  `mommy-family-YYYY-MM-DD.json` (`{"app": "mommy", "kind": "family-copy", "version": 1,
+  "savedAt", "family"}`, the document without its `parent` part: no PIN record, no
+  backoff or reset, no consent, no parent language) and hands it to the browser through
+  a Blob URL and `<a download>` (no request, no other origin); a family with no child has
+  nothing to save. "Load a copy" reads a chosen file in the browser (never sent), checks
+  it like stored data (`validateDoc`), and refuses a file that is not a JSON object or
+  not a copy, one over 2 MB as read, one of a newer version, a damaged one (cut short,
+  without the lists a copy always has, children all invalid, rejected by `validateDoc`,
+  or over 2 MB once checked, so a loaded copy can always be saved again) and a copy with
+  no child. It then shows a summary and asks before it replaces this device's family;
+  the PIN, consents and parent language of the device stay. A copy that the storage
+  refuses (full) is not used: the question stays open and says so. At the setup of a new
+  address, "Load a copy" takes the place of the first child; the consent boxes and a new
+  PIN are still given there.
 - **Parent: "Prepare a page".** Take a photo or upload one (resized in the browser to
   2000 px JPEG), then `/api/page/read`. The parent sees an editable textarea with the
   result, or an empty one in offline mode, and must press "Confirm text". Pasting or

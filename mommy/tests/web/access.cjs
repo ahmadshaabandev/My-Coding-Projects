@@ -17,6 +17,13 @@
  * server, never "nothing leaves this computer" (en, fr, ar); no console errors, no other
  * host; the server log never shows the code.
  *
+ * The server's part in the AI consent (docs/REWARDS.md, V6), against a second real app
+ * whose brain is a fake Claude brain (name "claude", no network; it logs the name of each
+ * method called): a request built by an older client (no ai_consent field) is answered by
+ * the offline brain and the fake is never called; so are ai_consent=0, a field in the query
+ * string only and "1" sent beside "0"; ai_consent=1 lets the fake answer. The log names the
+ * brain, never the text or the age group.
+ *
  *   node tests/web/access.cjs            (about 30 s; MOMMY_SHOTS_DIR=... for screenshots)
  */
 'use strict';
@@ -40,6 +47,7 @@ const PRIVATE_AGE = '14-18'; // never a date: no month 14
 // The app as build_default_app() makes it, with fakes for Whisper and Piper (no models
 // loaded), and the logging of the mommy loggers to stderr at DEBUG.
 const SERVER_PY = `
+import logging
 import sys
 sys.path.insert(0, "backend")
 import uvicorn
@@ -49,9 +57,38 @@ from mommy.config import load_settings
 from mommy.llm import OfflineBrain
 from mommy.quran import Quran
 from mommy.tts import FakeTTS
+
+
+class FakeClaude:
+    """Answers as ClaudeBrain does, with fixed texts and no network; logs only the name
+    of each method called, never what it was given."""
+
+    name = "claude"
+
+    def _called(self, method):
+        logging.getLogger("mommy.fake_claude").info("fake Claude brain called: %s", method)
+
+    def read_page(self, image_jpeg, lang_hint):
+        self._called("read_page")
+        return {"text": "Claude read this page.", "lang": "en", "notes": "", "contains_quran": False, "needs_manual": False}
+
+    def read_handwriting(self, image_jpeg, lang):
+        self._called("read_handwriting")
+        return {"text": "Claude read this writing.", "uncertain_words": [], "legible": True, "needs_manual": False}
+
+    def judge_meaning(self, expected_text, heard_text, lang, age):
+        self._called("judge_meaning")
+        return {"verdict": "same_meaning", "missing_ideas": [], "wrong_ideas": [], "feedback": "Claude judged the meaning."}
+
+    def word_feedback(self, result_summary, lang, age):
+        self._called("word_feedback")
+        return "Claude worded this feedback."
+
+
 _configure_logging()
 settings = load_settings()
-app = create_app(settings, FakeTranscriber("hello"), FakeTTS(), OfflineBrain(), Quran(settings.quran_dir))
+brain = FakeClaude() if sys.argv[2:] == ["claude"] else OfflineBrain()
+app = create_app(settings, FakeTranscriber("hello there"), FakeTTS(), brain, Quran(settings.quran_dir))
 uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]), proxy_headers=True, forwarded_allow_ips="127.0.0.1", log_level="info")
 `;
 
@@ -66,11 +103,13 @@ function freePort() {
   });
 }
 
-async function startApp() {
+/** The app under uvicorn; brain 'claude' gives it the fake Claude brain of SERVER_PY. */
+async function startApp(brain) {
   const port = await freePort();
   const env = Object.assign({}, process.env, { MOMMY_ACCESS_CODE: CODE, MOMMY_LOG_LEVEL: 'DEBUG', PYTHONUNBUFFERED: '1' });
   delete env.MOMMY_ALLOWED_HOSTS;
-  const proc = spawn(H.PYTHON, ['-c', SERVER_PY, String(port)], { cwd: H.ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const args = ['-c', SERVER_PY, String(port)].concat(brain === 'claude' ? ['claude'] : []);
+  const proc = spawn(H.PYTHON, args, { cwd: H.ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const out = { text: '' };
   proc.stdout.on('data', (d) => (out.text += d));
   proc.stderr.on('data', (d) => (out.text += d));
@@ -181,6 +220,109 @@ function stringChecks() {
   assert.equal(ar.submit, 'دخول');
 }
 
+/**
+ * In the page: the five requests whose handling can reach the brain (a typed dictation
+ * check, a dictation photo, a page photo, a recitation word by word and one by meaning),
+ * each with the extra form fields `fields` ([name, value] pairs) and the query string
+ * `query`. Returns their [{status, body}]. Without a field, this is how a tab still running
+ * an older app.js, or any other client, builds them.
+ */
+async function brainRequests({ text, age, fields, query }) {
+  const tone = () => {
+    // 1 s of a 440 Hz tone, 16 kHz mono PCM16: loud and long enough to be "heard".
+    const n = 16000;
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(0.3 * 32767 * Math.sin((2 * Math.PI * 440 * i) / 16000)), true);
+    return new Blob([buf], { type: 'audio/wav' });
+  };
+  const canvas = document.createElement('canvas');
+  canvas.width = 200;
+  canvas.height = 100;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, 200, 100);
+  const photo = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+  const send = async (path, parts) => {
+    const form = new FormData();
+    for (const [k, v, name] of parts) {
+      if (name) form.append(k, v, name);
+      else form.append(k, v);
+    }
+    for (const [k, v] of fields) form.append(k, v);
+    const r = await fetch(path + query, { method: 'POST', body: form });
+    return { status: r.status, body: await r.json() };
+  };
+  return [
+    await send('api/dictation/check', [['expected_text', text], ['lang', 'fr'], ['age', age], ['written_text', text]]),
+    await send('api/dictation/check', [['expected_text', text], ['lang', 'fr'], ['age', age], ['image', photo, 'paper.jpg']]),
+    await send('api/page/read', [['lang', 'fr'], ['image', photo, 'page.jpg']]),
+    await send('api/recite/check', [['expected_text', 'hello there'], ['lang', 'en'], ['mode', 'strict'], ['age', age], ['audio', tone(), 'child.wav']]),
+    await send('api/recite/check', [['expected_text', 'hello there my friend'], ['lang', 'en'], ['mode', 'contextual'], ['age', age], ['audio', tone(), 'child.wav']]),
+  ];
+}
+
+const FAKE_CLAUDE_CALLED = /fake Claude brain called/;
+
+/**
+ * The server's part in the AI consent (V6), against the real app with the fake Claude
+ * brain: what an older client sends (no field) and every other request without a consent
+ * that counts is answered by the offline brain, and the fake is never called; with
+ * ai_consent=1 it answers. Returns the app (stopped by the caller) for its log.
+ */
+async function serverConsent(browser) {
+  const app = await startApp('claude');
+  const { base } = app;
+  const ctx = await open(browser, base, 'en');
+  const ask = (fields, query) => ctx.page.evaluate(brainRequests, { text: PRIVATE_TEXT, age: PRIVATE_AGE, fields, query: query || '' });
+  try {
+    await check('AI consent (V6): a request built by an older client (no ai_consent) gets the offline brain from the real app; its Claude brain is never called', async () => {
+      await ctx.page.goto(base + '/#code=' + CODE);
+      await inApp(ctx.page);
+      const health = await ctx.page.evaluate(async () => (await fetch('/api/health')).json());
+      assert.equal(health.brain, 'claude', 'the server has (a fake) Claude');
+      const cases = { 'no field': [[], ''], '0': [[['ai_consent', '0']], ''], 'query string only': [[], '?ai_consent=1'], '1 beside 0': [[['ai_consent', '1'], ['ai_consent', '0']], ''] };
+      for (const [name, [fields, query]] of Object.entries(cases)) {
+        const [typed, paper, page, strict, meaning] = await ask(fields, query);
+        assert.deepEqual([typed.status, paper.status, page.status, strict.status, meaning.status], [200, 501, 200, 200, 200], name);
+        assert.deepEqual([typed.body.brain, page.body.brain, strict.body.brain, meaning.body.brain], ['offline', 'offline', 'offline', 'offline'], name);
+        assert.equal(paper.body.error, 'needs_manual', name);
+        assert.ok(!/Claude/.test(typed.body.feedback) && !/Claude/.test(strict.body.feedback) && !/Claude/.test(meaning.body.feedback), name);
+        assert.deepEqual([page.body.source, page.body.needs_manual, page.body.text], ['offline', true, ''], name);
+        assert.equal(meaning.body.judgement.approximate, true, name + ': the offline meaning check is approximate');
+      }
+      assert.doesNotMatch(app.out.text, FAKE_CLAUDE_CALLED, 'the Claude brain was called without the consent');
+      assert.deepEqual(refusedNeedsManual(ctx.problems), []);
+    });
+    await check('AI consent (V6): with ai_consent=1 the real app lets its Claude brain answer', async () => {
+      const [typed, paper, page, strict, meaning] = await ask([['ai_consent', '1']]);
+      assert.deepEqual([typed.status, paper.status, page.status, strict.status, meaning.status], [200, 200, 200, 200, 200]);
+      assert.deepEqual([typed.body.brain, paper.body.brain, page.body.brain, strict.body.brain, meaning.body.brain], ['claude', 'claude', 'claude', 'claude', 'claude']);
+      assert.equal(typed.body.feedback, 'Claude worded this feedback.');
+      assert.equal(paper.body.read_text, 'Claude read this writing.');
+      assert.deepEqual([page.body.text, page.body.source], ['Claude read this page.', 'claude']);
+      assert.equal(strict.body.feedback, 'Claude worded this feedback.');
+      assert.deepEqual([meaning.body.judgement.verdict, meaning.body.feedback], ['same_meaning', 'Claude judged the meaning.']);
+      assert.equal(meaning.body.judgement.approximate, undefined);
+      for (const method of ['word_feedback', 'read_handwriting', 'read_page', 'judge_meaning']) assert.match(app.out.text, new RegExp('fake Claude brain called: ' + method));
+      assert.deepEqual(refusedNeedsManual(ctx.problems), []);
+    });
+  } finally {
+    await ctx.context.close();
+    app.proc.kill('SIGTERM');
+    await new Promise((resolve) => (app.proc.exitCode !== null ? resolve() : app.proc.on('exit', resolve)));
+  }
+  return app;
+}
+
+/** Chromium logs the 501 of a photo the offline brain cannot read as a console error. */
+const refusedNeedsManual = (problems) => problems.filter((p) => !/Failed to load resource: the server responded with a status of 501/.test(p));
+
 async function main() {
   console.log('# strings (Node)');
   await check('access.js: the same strings in en, fr and ar; French spaces; gender-neutral Arabic', stringChecks);
@@ -188,6 +330,7 @@ async function main() {
   const app = await startApp();
   const { base } = app;
   const browser = await chromium.launch();
+  let claudeApp = null;
   try {
     console.log('# the link');
     const en = await open(browser, base, 'en');
@@ -397,6 +540,9 @@ async function main() {
       assert.deepEqual(statuses, { '/api/health': 401, '/app.js': 401, '/index.html': 401, '/access.js': 200, '/styles.css': 200 });
     });
     await bare.context.close();
+
+    console.log('# the AI consent, decided by the server (an app with a fake Claude brain)');
+    claudeApp = await serverConsent(browser);
   } finally {
     await browser.close();
     app.proc.kill('SIGTERM');
@@ -419,6 +565,14 @@ async function main() {
     assert.match(log, /dictation\/check fr: /);
     for (const word of PRIVATE_TEXT.replace(/[.,]/g, '').split(/\s+/).filter((w) => w.length > 3)) assert.ok(!log.includes(word), `"${word}" of the text is in the server log`);
     assert.ok(!log.includes(PRIVATE_AGE), 'the age group is in the server log');
+  });
+  await check('the log of the app with the fake Claude brain names which brain answered, never the text, the age group or the code', async () => {
+    assert.ok(claudeApp, 'the app with the fake Claude brain ran');
+    const log = claudeApp.out.text;
+    for (const line of [/dictation\/check fr: brain offline/, /dictation\/check fr: brain claude/, /recite\/check strict en: brain offline/, /recite\/check contextual en: brain claude/, /page\/read: image \d+ bytes, brain claude, source claude/]) assert.match(log, line);
+    for (const word of PRIVATE_TEXT.replace(/[.,]/g, '').split(/\s+/).filter((w) => w.length > 3)) assert.ok(!log.includes(word), `"${word}" of the text is in the server log`);
+    assert.ok(!log.includes(PRIVATE_AGE), 'the age group is in the server log');
+    assert.ok(!log.includes(CODE), 'the code is in the server log');
   });
   finish();
 }

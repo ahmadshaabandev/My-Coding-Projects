@@ -51,14 +51,22 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
   configured. The notice names everything Claude gets (the photos, the page text and a
   transcript in meaning mode, the words the child got wrong with the score, the
   language and the child's age band); when it changes, every family is asked again. A
-  consent given while Claude was not configured never covers it; until that box is
-  ticked, every feature that would use Claude stays off. The Batch and Files APIs are
-  never used.
+  consent given while Claude was not configured never covers it. The server decides it
+  for each request: it calls Claude only for a request that carries `ai_consent=1`, which
+  the web client sends only with a consent that counts; any other request (no consent,
+  an older tab, another client) is answered without Claude. Until that box is ticked,
+  reading photos stays off, and recitations and dictations are checked without Claude
+  (fixed feedback templates; by meaning, only an approximate check). The Batch and
+  Files APIs are never used.
 - **Consent first.** A parent must tick a consent box before the camera or microphone is
   used. The family document (the children's nicknames, age bands and languages, their
   tasks, stars and rewards, the consent and the hashed parent PIN) is kept in the
   browser's `localStorage` (`mommy.data.v2`) on this device only; there are no accounts.
-  It holds scores, never recordings, photos or what the child said.
+  It holds scores, never recordings, photos or what the child said. "Save a copy" (parent
+  area, Settings) writes the family part of it to a file, made in the browser and never
+  sent to the server, without the PIN record or any consent, where the browser saves
+  downloads (usually the Downloads folder; on an iPhone the Files app, which may be
+  iCloud Drive). The family data line of the app says so too (`fam_privacy_line`).
 - **Quran.** Text comes only from the verbatim Tanzil files in `data/quran/`. No AI
   model and no synthetic voice is used on any Quran path, and feedback uses fixed
   templates. A text that *is* Quran (whole ayat, framing formulas and labels left out)
@@ -150,6 +158,19 @@ while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
   **Clearing the browser's
   data for this site deletes it** (the children, tasks, stars and rewards), and so does
   "Delete all data on this device" in the parent area's Settings.
+- **A copy of the family list.** The list belongs to one browser and one address (a
+  quick tunnel's new address after a restart starts empty), so Settings has "Save a
+  copy": a file `mommy-family-YYYY-MM-DD.json`, made in the browser (nothing is sent),
+  with the children, tasks, stars and rewards, without the PIN's hash and salt and
+  without any consent (a 4-digit PIN's hash is easy to break from a file, and a consent
+  belongs to the address and the mode where it was given). It is not encrypted. Save a
+  copy before a restart or an update, then load it at the new link: "Load a copy" on
+  the first-run setup (the consents and a PIN are given there, as for a new family), or
+  in Settings, which replaces this browser's list after showing what the copy holds
+  (the PIN and the consents of this browser stay). A file that is not a copy, a damaged
+  copy, one over 2 MB, one from a newer version or a copy with no child is refused with
+  the reason; a loaded copy is checked like stored data. When the browser's storage is
+  full, the copy is not used and the page says so.
 
 ## Offline mode
 
@@ -213,7 +234,9 @@ is made at the first start and kept in a Docker volume; `MOMMY_ALLOWED_HOSTS` wi
 suffix entry `.trycloudflare.com`; its port only on `127.0.0.1:8080`, which asks for the
 same code) and `cloudflared`, pinned by digest, whose metrics server tells `share_link`
 the tunnel's address (it changes when the tunnel restarts; the code does not, but the
-family data a friend's browser keeps is per address, so a new address starts empty).
+family data a friend's browser keeps is per address, so a new address starts empty
+until the friend loads a copy of the family list saved before: save a copy before a
+restart or an update, then load it at the new link).
 `compose.test.yaml` is only for testing the kit without downloading the models (see its
 header). Local use with `./run.sh` does not change.
 
@@ -350,7 +373,8 @@ deleting the Space removes it.
 - **One user at a time.** It is the same single-process prototype: one recognition runs
   at a time, so recordings sent together queue (about 3.5 s more for each one ahead).
 - **Each browser has its own family data.** Children, tasks, stars and rewards stay in
-  the friend's browser (`localStorage`), as locally; nothing of it is on the Space.
+  the friend's browser (`localStorage`), as locally; nothing of it is on the Space. To
+  move it to another browser or address, "Save a copy" and "Load a copy" in Settings.
 
 ### What leaves the device
 
@@ -366,7 +390,8 @@ deleting the Space removes it.
   over HTTPS only. A restart of the Space keeps nothing.
 - **With Claude configured,** page photos, handwriting photos and texts also go from
   the Space to the Claude API, as they do from a local server, and only after the
-  parent's AI consent (its own box, under the notice of what goes to Claude).
+  parent's AI consent (its own box, under the notice of what goes to Claude): the
+  server calls Claude only for a request that carries it (`ai_consent=1`).
 - **The consent text adapts:** online (`/api/health` `"online": true`) it says that the
   recordings, photos and texts go to the Mommy server, never "nothing leaves this
   computer".
@@ -571,13 +596,14 @@ tests of its own: `tests/test_access.py` (the access gate), `tests/test_space_im
 (the start script, the model checksums, the Dockerfile) and `tests/test_deploy.py`
 (`deploy.py` against a fake Hub). The web client has four test files, which need
 Node.js (the browser ones also Playwright with Chromium); the first three start no
-backend, `access.cjs` starts the real app with fake speech components (see
+backend, `access.cjs` starts the real app with fake speech components, and once more
+with a fake Claude brain for the server's part in the AI consent (see
 `tests/web/README.md`):
 
 ```sh
-node tests/web/rewards.test.cjs   # web/rewards.js in Node: tasks, stars, goals, PIN, validation
+node tests/web/rewards.test.cjs   # web/rewards.js in Node: tasks, stars, goals, PIN, validation, family copies
 node tests/web/smoke.cjs          # the screens through a fake API, Quran in school texts, wording checks
-node tests/web/family.cjs         # the family UI: setup, parent area, tasks, rewards, PIN, storage
+node tests/web/family.cjs         # the family UI: setup, parent area, tasks, rewards, PIN, storage, copies
 node tests/web/access.cjs         # the access gate of an online deployment, in en, fr and ar
 ```
 

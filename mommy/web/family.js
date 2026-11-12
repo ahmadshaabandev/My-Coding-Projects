@@ -12,7 +12,16 @@
  * "Not yet: try again" with a note for the child), Tasks (create, edit, archive, and the
  * details of a task with "Confirm anyway"), Rewards (per child: the jar and its history,
  * task rewards to give, goals, surprises, corrections), Children, and Settings (consent,
- * change the PIN, the parent's language, delete all data on this device).
+ * change the PIN, the parent's language, a copy of the family list, delete all data on
+ * this device).
+ *
+ * A copy of the family list: the document is per browser and per address, so a new
+ * address (a quick tunnel after a restart) starts empty. Settings saves a copy as a file
+ * (a Blob URL and <a download>: no new origin, nothing sent to the server) and loads one
+ * ("Replace", the PIN and the consents of this device stay); the first-run setup loads
+ * one instead of a first child (the consents and a PIN are still given there). The file
+ * never holds the PIN record or a consent (rewards.js makeFamilyCopy), and a loaded copy
+ * goes through validateDoc like stored data (readFamilyCopy).
  *
  * Consent: the general box (microphone and camera) and, while Claude is set up, a box of
  * its own under the Claude notice (the AI consent, R.hasAiConsent). A consent given
@@ -177,9 +186,9 @@
       // What of the family's data reaches the server, true in every mode: the fields that
       // web/app.js sends (api/recite/check, api/dictation/check, api/text/check, api/tts;
       // api/quran/check sends numbers) and what backend/mommy/app.py logs.
-      fam_privacy_line: 'Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.',
+      fam_privacy_line: 'Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device, unless a copy is saved with “Save a copy”: the copy is a file, without the PIN, where the browser saves downloads. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.',
       fam_ai_title: 'Your OK for Claude',
-      fam_ai_lead: 'Mommy is set up to use Claude. Until you agree, reading photos and checking recitations and dictations stay off; the Quran section works without it.',
+      fam_ai_lead: 'Mommy is set up to use Claude. Until you agree, reading photos stays off, and recitations and dictations are checked without Claude (by meaning, only approximately); the Quran section works without it.',
       fam_ai_later: 'Not now',
       fam_ai_tick_first: 'Please tick the box first, or choose “Not now”.',
       fam_ai_saved: 'Thank you: Claude can now be used. This can be changed in Settings.',
@@ -330,13 +339,41 @@
       fam_set_lang_hint: 'For the parent area and the PIN. Each child keeps their own language (in “Children”).',
       fam_set_lang_saved: 'Saved.',
       fam_set_delete_h: 'Delete all data on this device',
-      fam_set_delete_about: 'Deletes every child, task, star and reward, the PIN and the settings, on this device only. The app then starts again as on the first day.',
+      fam_set_delete_about: 'Deletes every child, task, star and reward, the PIN and the settings, on this device only (not a copy saved as a file). The app then starts again as on the first day.',
       fam_delete: 'Delete all data',
       fam_delete_q1: 'Delete all the family data on this device? This cannot be undone.',
       fam_delete_q2: 'Last check: every child, task, star and reward, and the PIN, will be deleted.',
       fam_delete_final: 'Delete everything',
       fam_delete_failed: 'The data could not be deleted: this browser does not allow it right now.',
       fam_notice_deleted: 'All the family data on this device was deleted.',
+      fam_copy_h: 'A copy of the family list',
+      fam_copy_about: 'The family list is saved in this browser, for this web address only. If Mommy moves to a new address (a new link), the list is empty there: please save a copy here beforehand, then load it at the new address. A copy can also move the list to another device.',
+      fam_copy_save: 'Save a copy',
+      fam_copy_load: 'Load a copy',
+      fam_copy_note: 'The file holds the children’s names and age groups, their tasks, stars and rewards, but not the PIN. It is not encrypted: please keep it private.',
+      fam_copy_saved: 'The browser saves the copy as {name}, usually in the Downloads folder.',
+      fam_copy_summary_title: 'In this copy, saved on {date}:',
+      fam_copy_summary_title_nodate: 'In this copy:',
+      fam_copy_children: 'Children: {n}',
+      fam_copy_child_line: '{name} — tasks: {tasks}, stars: {stars}',
+      fam_copy_repaired: 'Part of this copy was damaged: it has been repaired as far as possible.',
+      fam_copy_replace_q: 'Replace this device’s family list with the copy? The children, tasks, stars and rewards here are replaced; the PIN and the consents of this device stay as they are.',
+      fam_copy_save_first: 'To keep the current list too, please press “Save a copy” first.',
+      fam_copy_replace: 'Replace',
+      fam_copy_loaded: 'Done: this device now uses the family list of the copy.',
+      fam_copy_setup_hint: 'Do you have a copy of your family list from another address or device? Load it here: its children, tasks, stars and rewards are then used instead of a first child.',
+      fam_copy_setup_using: 'The children, tasks, stars and rewards of this copy will be used. The consents and the PIN are not in the copy: they are asked here, as for a new family.',
+      fam_copy_drop: 'Do not use this copy',
+      fam_copy_err_not_copy: 'This file is not a copy of a Mommy family list.',
+      fam_copy_err_damaged: 'This copy is damaged and cannot be used.',
+      fam_copy_err_too_big: 'This file is too big to be a copy of a Mommy family list (more than 2 MB).',
+      fam_copy_err_newer: 'This copy was saved by a newer version of Mommy, which this version cannot read.',
+      fam_copy_err_read: 'The file could not be read. Please try again.',
+      fam_copy_err_save_big: 'The family list is too big to be saved as a copy (more than 2 MB).',
+      fam_copy_err_save: 'The copy could not be saved in this browser.',
+      fam_copy_err_empty: 'This copy holds no children, so there is nothing in it to use.',
+      fam_copy_err_save_empty: 'There is no child in the family list yet, so there is nothing to save.',
+      fam_copy_err_full: 'The storage of this browser is full, so the copy could not be used. Please free some space (for example old site data), then try again.',
     },
 
     fr: {
@@ -464,9 +501,9 @@
       fam_sec_children: 'Enfants',
       fam_sec_settings: 'Réglages',
       fam_parent_close: 'Fermer l’espace parents',
-      fam_privacy_line: 'La liste de votre famille (enfants, tâches, étoiles, récompenses et code parent) est enregistrée uniquement dans ce navigateur, sur cet appareil. Pour vérifier un texte ou le lire à voix haute, le serveur Mommy reçoit le texte et sa langue, et pour vérifier une récitation ou une dictée, aussi la tranche d’âge de l’enfant ; une vérification du Coran envoie à la place le numéro de la sourate et ceux des versets. Le serveur ne conserve ni les textes ni la tranche d’âge ; son journal note la langue, le type de vérification et les numéros des versets.',
+      fam_privacy_line: 'La liste de votre famille (enfants, tâches, étoiles, récompenses et code parent) est enregistrée uniquement dans ce navigateur, sur cet appareil, sauf si une copie est enregistrée avec « Enregistrer une copie » : la copie est alors un fichier, sans le code parent, là où le navigateur enregistre les téléchargements. Pour vérifier un texte ou le lire à voix haute, le serveur Mommy reçoit le texte et sa langue, et pour vérifier une récitation ou une dictée, aussi la tranche d’âge de l’enfant ; une vérification du Coran envoie à la place le numéro de la sourate et ceux des versets. Le serveur ne conserve ni les textes ni la tranche d’âge ; son journal note la langue, le type de vérification et les numéros des versets.',
       fam_ai_title: 'Votre accord pour Claude',
-      fam_ai_lead: 'Mommy est configuré pour utiliser Claude. Tant que vous n’avez pas donné votre accord, la lecture des photos et la vérification des récitations et des dictées restent désactivées ; la partie Coran fonctionne sans lui.',
+      fam_ai_lead: 'Mommy est configuré pour utiliser Claude. Tant que vous n’avez pas donné votre accord, la lecture des photos reste désactivée, et les récitations et les dictées sont vérifiées sans Claude (pour le sens, de façon seulement approximative) ; la partie Coran fonctionne sans lui.',
       fam_ai_later: 'Plus tard',
       fam_ai_tick_first: 'Veuillez d’abord cocher la case, ou choisir « Plus tard ».',
       fam_ai_saved: 'Merci : Claude peut maintenant être utilisé. Ce choix se modifie dans Réglages.',
@@ -617,13 +654,41 @@
       fam_set_lang_hint: 'Pour l’espace parents et le code. Chaque enfant garde sa propre langue (dans « Enfants »).',
       fam_set_lang_saved: 'C’est enregistré.',
       fam_set_delete_h: 'Effacer toutes les données de cet appareil',
-      fam_set_delete_about: 'Efface tous les enfants, tâches, étoiles et récompenses, le code et les réglages, sur cet appareil seulement. L’application recommence alors comme au premier jour.',
+      fam_set_delete_about: 'Efface tous les enfants, tâches, étoiles et récompenses, le code et les réglages, sur cet appareil seulement (pas une copie enregistrée dans un fichier). L’application recommence alors comme au premier jour.',
       fam_delete: 'Tout effacer',
       fam_delete_q1: 'Effacer toutes les données de la famille sur cet appareil ? C’est définitif.',
       fam_delete_q2: 'Dernière vérification : tous les enfants, tâches, étoiles et récompenses, et le code, seront effacés.',
       fam_delete_final: 'Tout effacer maintenant',
       fam_delete_failed: 'Les données n’ont pas pu être effacées : ce navigateur ne le permet pas pour l’instant.',
       fam_notice_deleted: 'Toutes les données de la famille sur cet appareil ont été effacées.',
+      fam_copy_h: 'Une copie de la liste de la famille',
+      fam_copy_about: 'La liste de la famille est enregistrée dans ce navigateur, pour cette adresse web seulement. Si Mommy change d’adresse (un nouveau lien), la liste y est vide : enregistrez une copie ici à l’avance, puis chargez-la à la nouvelle adresse. Une copie permet aussi de passer la liste sur un autre appareil.',
+      fam_copy_save: 'Enregistrer une copie',
+      fam_copy_load: 'Charger une copie',
+      fam_copy_note: 'Le fichier contient les surnoms et les tranches d’âge des enfants, leurs tâches, étoiles et récompenses, mais pas le code parent. Il n’est pas chiffré : gardez-le pour vous.',
+      fam_copy_saved: 'Le navigateur enregistre la copie sous le nom {name}, en général dans le dossier Téléchargements.',
+      fam_copy_summary_title: 'Dans cette copie, enregistrée le {date} :',
+      fam_copy_summary_title_nodate: 'Dans cette copie :',
+      fam_copy_children: 'Enfants : {n}',
+      fam_copy_child_line: '{name} — tâches : {tasks}, étoiles : {stars}',
+      fam_copy_repaired: 'Une partie de cette copie était abîmée : elle a été réparée autant que possible.',
+      fam_copy_replace_q: 'Remplacer la liste de la famille de cet appareil par la copie ? Les enfants, les tâches, les étoiles et les récompenses d’ici sont remplacés ; le code parent et les consentements de cet appareil restent tels quels.',
+      fam_copy_save_first: 'Pour garder aussi la liste actuelle, appuyez d’abord sur « Enregistrer une copie ».',
+      fam_copy_replace: 'Remplacer',
+      fam_copy_loaded: 'C’est fait : cet appareil utilise maintenant la liste de la famille de la copie.',
+      fam_copy_setup_hint: 'Vous avez une copie de la liste de votre famille, venue d’une autre adresse ou d’un autre appareil ? Chargez-la ici : ses enfants, tâches, étoiles et récompenses sont alors utilisés à la place d’un premier enfant.',
+      fam_copy_setup_using: 'Les enfants, les tâches, les étoiles et les récompenses de cette copie seront utilisés. Les consentements et le code parent ne sont pas dans la copie : ils sont demandés ici, comme pour une nouvelle famille.',
+      fam_copy_drop: 'Ne pas utiliser cette copie',
+      fam_copy_err_not_copy: 'Ce fichier n’est pas une copie d’une liste de famille de Mommy.',
+      fam_copy_err_damaged: 'Cette copie est abîmée et ne peut pas être utilisée.',
+      fam_copy_err_too_big: 'Ce fichier est trop gros pour être une copie d’une liste de famille de Mommy (plus de 2 Mo).',
+      fam_copy_err_newer: 'Cette copie a été enregistrée par une version plus récente de Mommy, que cette version ne sait pas lire.',
+      fam_copy_err_read: 'Le fichier n’a pas pu être lu. Veuillez réessayer.',
+      fam_copy_err_save_big: 'La liste de la famille est trop grosse pour être enregistrée dans une copie (plus de 2 Mo).',
+      fam_copy_err_save: 'La copie n’a pas pu être enregistrée dans ce navigateur.',
+      fam_copy_err_empty: 'Cette copie ne contient aucun enfant, il n’y a donc rien à utiliser.',
+      fam_copy_err_save_empty: 'La liste de la famille ne contient encore aucun enfant, il n’y a donc rien à enregistrer.',
+      fam_copy_err_full: 'Le stockage de ce navigateur est plein : la copie n’a pas pu être utilisée. Libérez de la place (par exemple d’anciennes données de sites), puis réessayez.',
     },
 
     ar: {
@@ -751,9 +816,9 @@
       fam_sec_children: 'الأطفال',
       fam_sec_settings: 'الإعدادات',
       fam_parent_close: 'إغلاق قسم الكبار',
-      fam_privacy_line: 'تُحفظ قائمة العائلة (الأطفال والمهام والنجوم والمكافآت ورمز الكبار) في هذا المتصفح فقط، على هذا الجهاز. وللتحقّق من نص أو قراءته بصوت مسموع يُرسَل النص ولغته إلى خادم Mommy، ومعهما الفئة العمرية للطفل عند التحقّق من التسميع أو الإملاء؛ أمّا التحقّق من القرآن فيُرسَل فيه رقم السورة وأرقام الآيات بدلًا منها. ولا يحفظ الخادم النصوص ولا الفئة العمرية، ويُدوَّن في سجلّه اللغة ونوع التحقّق وأرقام الآيات.',
+      fam_privacy_line: 'تُحفظ قائمة العائلة (الأطفال والمهام والنجوم والمكافآت ورمز الكبار) في هذا المتصفح فقط، على هذا الجهاز، ما لم تُحفظ نسخة منها بزرّ «حفظ نسخة»: فتكون النسخة ملفًا، من دون رمز الكبار، في المكان الذي يحفظ فيه المتصفح التنزيلات. وللتحقّق من نص أو قراءته بصوت مسموع يُرسَل النص ولغته إلى خادم Mommy، ومعهما الفئة العمرية للطفل عند التحقّق من التسميع أو الإملاء؛ أمّا التحقّق من القرآن فيُرسَل فيه رقم السورة وأرقام الآيات بدلًا منها. ولا يحفظ الخادم النصوص ولا الفئة العمرية، ويُدوَّن في سجلّه اللغة ونوع التحقّق وأرقام الآيات.',
       fam_ai_title: 'الموافقة على Claude',
-      fam_ai_lead: 'أُعِدّ Mommy لاستخدام Claude. وإلى حين الموافقة تبقى قراءة الصور والتحقّق من التسميع والإملاء متوقّفة، أمّا قسم القرآن فيعمل من دونه.',
+      fam_ai_lead: 'أُعِدّ Mommy لاستخدام Claude. وإلى حين الموافقة تبقى قراءة الصور متوقّفة، ويُتحقَّق من التسميع والإملاء من دون Claude (ويكون التحقّق من المعنى تقريبيًا فقط)، أمّا قسم القرآن فيعمل من دونه.',
       fam_ai_later: 'تأجيل',
       fam_ai_tick_first: 'يُرجى أولًا وضع علامة في الخانة، أو اختيار «تأجيل».',
       fam_ai_saved: 'شكرًا. يمكن الآن استخدام Claude، ويمكن تغيير هذا الاختيار في «الإعدادات».',
@@ -904,13 +969,41 @@
       fam_set_lang_hint: 'لقسم الكبار والرمز. يحتفظ كل طفل بلغته (في «الأطفال»).',
       fam_set_lang_saved: 'تمّ الحفظ.',
       fam_set_delete_h: 'حذف كل البيانات من هذا الجهاز',
-      fam_set_delete_about: 'يحذف كل الأطفال والمهام والنجوم والمكافآت والرمز والإعدادات، من هذا الجهاز فقط. ثم يبدأ التطبيق من جديد كما في اليوم الأول.',
+      fam_set_delete_about: 'يحذف كل الأطفال والمهام والنجوم والمكافآت والرمز والإعدادات، من هذا الجهاز فقط (ولا يحذف نسخة محفوظة في ملف). ثم يبدأ التطبيق من جديد كما في اليوم الأول.',
       fam_delete: 'حذف كل البيانات',
       fam_delete_q1: 'حذف كل بيانات العائلة من هذا الجهاز؟ لا يمكن التراجع عن ذلك.',
       fam_delete_q2: 'تأكيد أخير: ستُحذف كل بيانات الأطفال والمهام والنجوم والمكافآت، والرمز أيضًا.',
       fam_delete_final: 'حذف كل شيء',
       fam_delete_failed: 'تعذّر حذف البيانات: لا يسمح هذا المتصفح بذلك الآن.',
       fam_notice_deleted: 'حُذفت كل بيانات العائلة من هذا الجهاز.',
+      fam_copy_h: 'نسخة من قائمة العائلة',
+      fam_copy_about: 'تُحفظ قائمة العائلة في هذا المتصفح، ولهذا العنوان فقط. وإذا تغيّر عنوان Mommy (رابط جديد) تكون القائمة فارغة في العنوان الجديد: يُرجى حفظ نسخة هنا مسبقًا، ثم فتحها في العنوان الجديد. وتفيد النسخة أيضًا في نقل القائمة إلى جهاز آخر.',
+      fam_copy_save: 'حفظ نسخة',
+      fam_copy_load: 'فتح نسخة',
+      fam_copy_note: 'يحتوي الملف على أسماء الأطفال وفئاتهم العمرية ومهامهم ونجومهم ومكافآتهم، ولا يحتوي على الرمز. والملف غير مشفَّر، فيُرجى إبقاؤه خاصًّا.',
+      fam_copy_saved: 'يحفظ المتصفح النسخة باسم {name}، في مجلد التنزيلات عادةً.',
+      fam_copy_summary_title: 'في هذه النسخة، المحفوظة في {date}:',
+      fam_copy_summary_title_nodate: 'في هذه النسخة:',
+      fam_copy_children: 'الأطفال: {n}',
+      fam_copy_child_line: '{name} — المهام: {tasks}، النجوم: {stars}',
+      fam_copy_repaired: 'كان جزء من هذه النسخة تالفًا، وأُصلح قدر الإمكان.',
+      fam_copy_replace_q: 'استبدال قائمة العائلة على هذا الجهاز بالنسخة؟ يحلّ ما في النسخة محلّ الأطفال والمهام والنجوم والمكافآت هنا، ويبقى الرمز والموافقات على هذا الجهاز كما هي.',
+      fam_copy_save_first: 'للاحتفاظ بالقائمة الحالية أيضًا، يُرجى الضغط على «حفظ نسخة» أولًا.',
+      fam_copy_replace: 'استبدال',
+      fam_copy_loaded: 'تمّ: صار هذا الجهاز يستخدم قائمة العائلة التي في النسخة.',
+      fam_copy_setup_hint: 'هل توجد نسخة من قائمة العائلة من عنوان آخر أو جهاز آخر؟ يمكن فتحها هنا، فيُستخدم ما فيها من أطفال ومهام ونجوم ومكافآت بدلًا من الطفل الأول.',
+      fam_copy_setup_using: 'سيُستخدم ما في هذه النسخة من أطفال ومهام ونجوم ومكافآت. أمّا الموافقات والرمز فليست في النسخة، وتُطلب هنا كما لعائلة جديدة.',
+      fam_copy_drop: 'عدم استخدام هذه النسخة',
+      fam_copy_err_not_copy: 'هذا الملف ليس نسخة من قائمة عائلة في Mommy.',
+      fam_copy_err_damaged: 'هذه النسخة تالفة، ولا يمكن استخدامها.',
+      fam_copy_err_too_big: 'هذا الملف أكبر من أن يكون نسخة من قائمة عائلة في Mommy (أكثر من ٢ ميغابايت).',
+      fam_copy_err_newer: 'حُفظت هذه النسخة بإصدار أحدث من Mommy، ولا يستطيع هذا الإصدار قراءتها.',
+      fam_copy_err_read: 'تعذّرت قراءة الملف. يُرجى المحاولة مرة أخرى.',
+      fam_copy_err_save_big: 'قائمة العائلة أكبر من أن تُحفظ في نسخة (أكثر من ٢ ميغابايت).',
+      fam_copy_err_save: 'تعذّر حفظ النسخة في هذا المتصفح.',
+      fam_copy_err_empty: 'لا تضمّ هذه النسخة أيّ طفل، فلا يوجد فيها ما يمكن استخدامه.',
+      fam_copy_err_save_empty: 'لا تضمّ قائمة العائلة أيّ طفل بعد، فلا يوجد ما يمكن حفظه.',
+      fam_copy_err_full: 'مساحة التخزين في هذا المتصفح ممتلئة، فتعذّر استخدام النسخة. يُرجى إفراغ بعض المساحة (مثل بيانات مواقع قديمة) ثم المحاولة مرة أخرى.',
     },
   };
 
@@ -952,6 +1045,8 @@
     rwForm: null, // {kind: 'goal' | 'surprise' | 'adjust', childId}: the open form of Rewards
     ledgerAll: false, // the whole history of the stars is shown (else the newest entries)
     deleting: 0, // "delete all data": 0, or the confirmation step shown (1, then 2)
+    copy: null, // Settings: a copy read from a file (readFamilyCopy), waiting for "Replace"
+    setupCopy: null, // the setup: a copy read from a file, used instead of a first child
     aiPromptLater: false, // "Not now" on the AI consent prompt, until the parent area opens again
   };
 
@@ -1231,11 +1326,22 @@
    * so the other tab's change is never overwritten; the screen is drawn again after.
    */
   function update(fn) {
+    return updateSaved(fn).doc;
+  }
+
+  /**
+   * update(), saying also whether the document was stored: {doc, saved, before}, with
+   * `before` the document the operation ran on. saved is false when storage refused it
+   * (commit: full, or no storage at all, store.memoryOnly); this tab then holds `doc`
+   * all the same, as after any update.
+   */
+  function updateSaved(fn) {
     const external = adoptStored();
-    const next = fn(store.doc, nowIso());
-    commit(next);
+    const before = store.doc;
+    const next = fn(before, nowIso());
+    const saved = commit(next);
     if (external) setTimeout(() => store.doc && afterExternalChange(), 0);
-    return next;
+    return { doc: next, saved, before };
   }
 
   /** Take the stored document when it is newer than this tab's; true when it was. */
@@ -1343,6 +1449,7 @@
   function syncApp() {
     const d = store.doc;
     app.setConsent({ consent: !!(d && d.parent.consentAt), aiConsent: !!d && R.hasAiConsent(d) });
+    updateTaskOfflineNote();
     const c = activeChild();
     app.setChild(c ? { id: c.id, nickname: c.nickname, age: c.age, lang: c.lang, quran: c.quran } : null);
     if (c && ['home', 'prepare', 'recite', 'dictation', 'quran'].includes(app.screen())) app.setUiLang(c.lang);
@@ -1407,7 +1514,8 @@
   /** The visible family screen again (after a change, or in another language). */
   function redraw() {
     const screen = app.screen();
-    if (screen === 'who') renderWho();
+    if (screen === 'start') renderSetupCopy();
+    else if (screen === 'who') renderWho();
     else if (screen === 'home') renderHome();
     else if (screen === 'parent') renderParent();
     if (session.task) renderBanner();
@@ -1460,6 +1568,8 @@
     // The AI consent needs the general one: its box waits for the first one.
     $('#consent').addEventListener('change', syncSetupAiBox);
     syncSetupAiBox();
+    $('#setup-copy-file').addEventListener('change', onSetupCopyFile);
+    $('#setup-copy-drop').addEventListener('click', dropSetupCopy);
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       submitSetup();
@@ -1494,6 +1604,9 @@
     syncSetupAiBox();
     renderEmojiPick($('#setup-avatars'), R.AVATARS, R.AVATARS[0]);
     app.clearStatus($('#setup-status'));
+    app.clearStatus($('#setup-copy-status'));
+    session.setupCopy = null;
+    renderSetupCopy();
     $('#btn-start').disabled = false;
   }
 
@@ -1540,7 +1653,9 @@
       $('#setup-pin2').value = '';
       return fail('fam_err_pin_same', $('#setup-pin2'));
     }
-    if (!nickname) return fail('fam_err_nickname', $('#nickname'));
+    // With a copy, its children are used instead of a first child (its fields are hidden).
+    const copy = session.setupCopy;
+    if (!copy && !nickname) return fail('fam_err_nickname', $('#nickname'));
     const consent = $('#consent').checked;
     // The AI consent only from its own box, ticked while it stood under the Claude notice
     // (shown only while /api/health says Claude is set up), and with the general one.
@@ -1554,9 +1669,14 @@
       doc = R.emptyDoc(now, { uiLang: session.setupLang });
       doc = R.updateParent(doc, { consent, aiConsent }, now);
       doc = await R.setPin(doc, pin1, now);
-      const r = R.addChild(doc, { nickname, age: $('#age').value, lang: $('#child-lang').value, avatar: pickedEmoji($('#setup-avatars')) }, now);
-      doc = r.doc;
-      child = r.child;
+      if (copy) {
+        // The copy's family, with the consents and the PIN given here (rewards.js).
+        doc = R.useFamilyCopy(doc, copy.family, now);
+      } else {
+        const r = R.addChild(doc, { nickname, age: $('#age').value, lang: $('#child-lang').value, avatar: pickedEmoji($('#setup-avatars')) }, now);
+        doc = r.doc;
+        child = r.child;
+      }
     } catch (err) {
       btn.disabled = false;
       if (isRewardsError(err, 'unavailable')) return fail('fam_err_crypto');
@@ -1565,13 +1685,56 @@
     }
     btn.disabled = false;
     if (store.doc) return; // another tab finished a setup meanwhile: keep its document
+    // A copy that the storage refuses (full) is not used: the setup stays, with its
+    // fields, as nothing was set up (B-R2). Without any storage the session runs in
+    // memory, with its notice.
+    if (!commit(doc) && copy && !store.memoryOnly) {
+      store.doc = null;
+      return fail('fam_copy_err_full');
+    }
     $('#setup-pin').value = '';
     $('#setup-pin2').value = '';
     app.clearStatus(status);
-    commit(doc);
-    session.childId = child.id;
+    // A copy may hold several children: "Who is learning?" lets the family choose.
+    session.childId = child ? child.id : null;
+    session.setupCopy = null;
+    renderSetupCopy();
     syncApp();
-    app.go('home');
+    app.go(child ? 'home' : 'who');
+  }
+
+  // --- The setup: a copy of the family list instead of a first child -----------
+
+  async function onSetupCopyFile(e) {
+    const status = $('#setup-copy-status');
+    app.clearStatus(status);
+    const res = await readCopyFile(e.target);
+    if (!res || store.doc) return;
+    if (!res.ok) {
+      session.setupCopy = null;
+      renderSetupCopy();
+      app.setStatus(status, COPY_ERRORS[res.error] || COPY_ERRORS.damaged, null, { error: true });
+      return;
+    }
+    session.setupCopy = res;
+    clearSetupErrors(); // a nickname is no longer needed
+    renderSetupCopy();
+    $('#setup-copy-box').focus();
+  }
+
+  /** The copy's summary in place of the first child's fields (or the fields again). */
+  function renderSetupCopy() {
+    const copy = session.setupCopy;
+    $('#setup-copy-box').hidden = !copy;
+    $('#setup-first-child').hidden = !!copy;
+    if (copy) renderCopySummary('setup-copy', copy);
+  }
+
+  function dropSetupCopy() {
+    session.setupCopy = null;
+    app.clearStatus($('#setup-copy-status'));
+    renderSetupCopy();
+    $('#setup-copy-file').focus();
   }
 
   // ===========================================================================
@@ -2138,9 +2301,39 @@
     app.go('who');
   }
 
+  /**
+   * A file picker of the parent area ("Load a copy", the task form's photo) hides the page
+   * on some phones (Android opens it as another app). That is the grown-up choosing a
+   * file, not the app being left: the first hiding within a few seconds of a tap on such
+   * an input does not lock the area. The exemption ends as soon as the picker is done
+   * without hiding the page (a computer, an iPhone's sheet): a file chosen ('change'),
+   * the picker closed ('cancel'), or the window back in front ('focus'); the next hiding
+   * is then the app being left (B-R1). On Android the picker's hiding comes before
+   * 'change', so it still uses the exemption. The 3-minute timer still runs, and any
+   * other hiding locks the area.
+   */
+  const PICKER_GRACE_MS = 10 * 1000;
+  let pickerTappedAt = null;
+
+  function pickerDone() {
+    pickerTappedAt = null;
+  }
+
   function initAutoLock() {
+    for (const id of ['#ps-copy-file', '#tf-take', '#tf-choose']) {
+      const input = $(id);
+      input.addEventListener('click', () => {
+        pickerTappedAt = Date.now();
+      });
+      input.addEventListener('change', pickerDone);
+      input.addEventListener('cancel', pickerDone);
+    }
+    window.addEventListener('focus', pickerDone);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') lockParent();
+      if (document.visibilityState !== 'hidden') return;
+      const picker = pickerTappedAt !== null && Date.now() - pickerTappedAt < PICKER_GRACE_MS;
+      pickerTappedAt = null;
+      if (!picker) lockParent();
     });
     for (const ev of ['pointerdown', 'keydown', 'input', 'wheel', 'touchstart']) {
       document.addEventListener(ev, () => session.parentOpen && armParentIdle(), { capture: true, passive: true });
@@ -2269,6 +2462,7 @@
     session.sendBack = null;
     session.ledgerAll = false;
     session.deleting = 0;
+    session.copy = null;
     closeRewardForm();
   }
 
@@ -2882,6 +3076,8 @@
     $('#ps-delete').hidden = session.deleting > 0;
     $('#ps-delete-1').hidden = session.deleting !== 1;
     $('#ps-delete-2').hidden = session.deleting !== 2;
+    $('#ps-copy-confirm').hidden = !session.copy;
+    if (session.copy) renderCopySummary('ps-copy', session.copy);
   }
 
   /**
@@ -2974,6 +3170,182 @@
     }
     forgetFamily();
     notice('fam_notice_deleted');
+  }
+
+  // --- A copy of the family list: Settings (save, load) and the setup (load) ----
+
+  const COPY_ERRORS = {
+    not_copy: 'fam_copy_err_not_copy',
+    damaged: 'fam_copy_err_damaged',
+    too_big: 'fam_copy_err_too_big',
+    newer_version: 'fam_copy_err_newer',
+    empty: 'fam_copy_err_empty',
+    unreadable: 'fam_copy_err_read',
+  };
+
+  /** mommy-family-YYYY-MM-DD.json, with the date of the day on this device. */
+  function copyFileName(date) {
+    const two = (n) => String(n).padStart(2, '0');
+    return `mommy-family-${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}.json`;
+  }
+
+  /**
+   * "Save a copy": the family list as a JSON file, made in this browser and handed to it
+   * through a Blob URL and <a download> (no other origin; the CSP allows it). Without the
+   * PIN record and the consents (rewards.js makeFamilyCopy).
+   */
+  function saveCopy() {
+    const status = $('#ps-copy-status');
+    app.clearStatus(status);
+    try {
+      // The newest saved document: another tab may have saved since this one read it.
+      if (adoptStored()) setTimeout(() => store.doc && afterExternalChange(), 0);
+    } catch (err) {
+      return; // deleted in another tab: back to the setup
+    }
+    if (!store.doc) return;
+    // A copy without a child could not be loaded (readFamilyCopy: 'empty').
+    if (!store.doc.children.length) {
+      app.setStatus(status, 'fam_copy_err_save_empty', null, { error: true });
+      return;
+    }
+    let name;
+    try {
+      const blob = new Blob([JSON.stringify(R.makeFamilyCopy(store.doc, nowIso()))], { type: 'application/json' });
+      if (blob.size > R.FAMILY_COPY.maxBytes) {
+        app.setStatus(status, 'fam_copy_err_save_big', null, { error: true }); // it could not be loaded again
+        return;
+      }
+      name = copyFileName(new Date());
+      const url = URL.createObjectURL(blob);
+      const a = el('a', { href: url, download: name, hidden: true });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      // Some browsers read the URL after the click returns: it is freed a little later.
+      setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+    } catch (err) {
+      app.setStatus(status, 'fam_copy_err_save', null, { error: true });
+      return;
+    }
+    say(status, [['fam_copy_saved', { name: { user: name } }]]);
+  }
+
+  function fileText(file) {
+    if (typeof file.text === 'function') return file.text();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  /**
+   * The copy chosen in a file input, read in this browser (nothing is sent): the answer
+   * of rewards.js readFamilyCopy, {ok: false, error: 'too_big'} before a big file is
+   * read, 'unreadable' when the browser cannot read it, or null without a file.
+   */
+  async function readCopyFile(input) {
+    const file = input.files && input.files[0];
+    input.value = ''; // the same file can be chosen again
+    if (!file) return null;
+    if (file.size > R.FAMILY_COPY.maxBytes) return { ok: false, error: 'too_big' };
+    let text;
+    try {
+      text = await fileText(file);
+    } catch (err) {
+      return { ok: false, error: 'unreadable' };
+    }
+    return R.readFamilyCopy(text);
+  }
+
+  /**
+   * What a copy holds, for the grown-up to see before it is used: when it was saved, the
+   * number of children, each child (picture, name, tasks, stars), and whether parts of
+   * it were repaired. `prefix` names the nodes (setup-copy, ps-copy).
+   */
+  function renderCopySummary(prefix, copy) {
+    const lang = app.uiLang();
+    const s = R.familySummary(copy.family);
+    const title = $('#' + prefix + '-title');
+    if (copy.savedAt) setNodes(title, 'fam_copy_summary_title', { date: fmtDate(copy.savedAt, true, lang) }, lang);
+    else setNodes(title, 'fam_copy_summary_title_nodate', null, lang);
+    setNodes($('#' + prefix + '-count'), 'fam_copy_children', { n: s.children.length }, lang);
+    const list = $('#' + prefix + '-children');
+    list.textContent = '';
+    for (const c of s.children) {
+      list.append(el('li', null, [
+        el('span', { class: 'copy-avatar', 'aria-hidden': 'true' }, c.avatar),
+        ' ',
+        tNodes('fam_copy_child_line', { name: { user: c.nickname }, tasks: c.tasks, stars: c.stars }, lang),
+      ]));
+    }
+    $('#' + prefix + '-repaired').hidden = !copy.repairs.length;
+  }
+
+  /** "Load a copy" in Settings: read the file, then show what it holds and ask. */
+  async function onSettingsCopyFile(e) {
+    const status = $('#ps-copy-status');
+    app.clearStatus(status);
+    session.copy = null;
+    renderSettings();
+    const res = await readCopyFile(e.target);
+    if (!res || !store.doc || app.screen() !== 'parent' || session.section !== 'settings') return;
+    if (!res.ok) {
+      app.setStatus(status, COPY_ERRORS[res.error] || COPY_ERRORS.damaged, null, { error: true });
+      return;
+    }
+    session.copy = res;
+    renderSettings();
+    $('#ps-copy-confirm').focus();
+  }
+
+  function cancelCopy() {
+    session.copy = null;
+    renderSettings();
+    $('#ps-copy-file').focus();
+  }
+
+  /**
+   * "Replace": this device's family list becomes the copy's; the PIN, its backoff, the
+   * consents and the parent's language of this device stay (rewards.js useFamilyCopy).
+   * Another tab gets the storage event and draws its screen again.
+   */
+  function replaceWithCopy() {
+    const copy = session.copy;
+    if (!copy || !store.doc) return;
+    const status = $('#ps-copy-status');
+    session.copy = null;
+    let res;
+    try {
+      res = updateSaved((d, now) => R.useFamilyCopy(d, copy.family, now));
+    } catch (err) {
+      if (!store.doc) return; // deleted in another tab: the setup shows
+      renderSettings();
+      app.setStatus(status, 'error_generic', null, { error: true });
+      return;
+    }
+    // Not stored (the storage is full): this tab keeps the list that is stored, so that
+    // nothing that would be lost at the next load is shown as done (B-R2), and the
+    // question stays open. Without any storage (store.memoryOnly) the whole session runs
+    // in memory, with its notice, and the copy is used like any other change.
+    if (!res.saved && !store.memoryOnly) {
+      store.doc = res.before;
+      session.copy = copy;
+      renderSettings();
+      app.setStatus(status, 'fam_copy_err_full', null, { error: true });
+      $('#ps-copy-confirm').focus();
+      return;
+    }
+    // The children of this device may be gone: the choices that pointed at them go too.
+    if (session.childId && !store.doc.children.some((c) => c.id === session.childId)) session.childId = null;
+    session.ptChildId = null;
+    session.detailTaskId = null;
+    syncApp();
+    renderParent();
+    app.setStatus(status, 'fam_copy_loaded');
+    $('#ps-copy-h').focus();
   }
 
   // --- Children: add, edit, remove (with a confirmation) ---------------------
@@ -3303,21 +3675,26 @@
 
   /**
    * Without the online AI, a recite task by meaning is checked only approximately: said
-   * under the mode choice as on Prepare, while "The meaning" can be chosen (the health
-   * may arrive after the form opened: onHealth).
+   * under the mode choice as on Prepare, while "The meaning" can be chosen. That is so
+   * without Claude on the server, and also with Claude set up while the AI consent does
+   * not count: the check is then sent without ai_consent=1 and the server judges the
+   * meaning with its offline heuristic (app.aiConsentNow, the test of every request).
+   * Called again when the health arrives after the form opened (onHealth) and after
+   * every change of the consent (syncApp).
    */
   function updateTaskOfflineNote() {
     const note = $('#tf-mode-offline-note');
     if (!note) return;
     const h = app.health();
     const meaning = $('input[name="tf-mode"][value="contextual"]');
-    note.hidden = !(h && h.brain !== 'claude' && formKind() === 'recite' && !meaning.disabled);
+    note.hidden = !(h && !app.aiConsentNow() && formKind() === 'recite' && !meaning.disabled);
   }
 
   /**
-   * /api/health answered (at the start, or again before a Claude call): the task form's
-   * note, and the AI consent prompt and box of the parent area (Claude may have been set
-   * up, or turned off, since the page loaded).
+   * /api/health answered (at the start, again before a photo is sent, or after a request
+   * sent with the AI consent was answered by the offline brain): the task form's note, and
+   * the AI consent prompt and box of the parent area (Claude may have been set up, or
+   * turned off, since the page loaded).
    */
   function onHealth() {
     updateTaskOfflineNote();
@@ -3686,6 +4063,10 @@
     $('#ps-delete-next').addEventListener('click', () => askDelete(2));
     for (const id of ['#ps-delete-no1', '#ps-delete-no2']) $(id).addEventListener('click', () => askDelete(0));
     $('#ps-delete-yes').addEventListener('click', deleteAllData);
+    $('#ps-copy-save').addEventListener('click', saveCopy);
+    $('#ps-copy-file').addEventListener('change', onSettingsCopyFile);
+    $('#ps-copy-yes').addEventListener('click', replaceWithCopy);
+    $('#ps-copy-no').addEventListener('click', cancelCopy);
     $('#pt-new').addEventListener('click', () => {
       app.clearStatus($('#pt-status'));
       openTaskForm(null);

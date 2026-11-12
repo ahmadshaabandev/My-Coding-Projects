@@ -90,7 +90,7 @@
       consent_needed_ai: 'Let’s ask a grown-up to open the parent area and give their OK first.',
       consent_needed_ai_parent: 'Reading photos uses Claude: please give your OK for Claude in Settings first.',
       // The same on a card for the grown-up outside the parent area (Prepare, the check of a dictation).
-      consent_needed_ai_grownup: 'This uses Claude: please give your OK for Claude in the parent area (Settings) first.',
+      consent_needed_ai_grownup: 'Reading photos uses Claude: please give your OK for Claude in the parent area (Settings) first.',
       ai_not_sent: 'Nothing was sent.',
       server_down: "I can't reach the Mommy server. Is it running?",
       checking_server: 'Checking the server…',
@@ -308,7 +308,7 @@
       consent_needed: "Un parent doit cocher la case d'accord dans l'espace parents (Réglages) avant d'utiliser le micro ou l'appareil photo.",
       consent_needed_ai: 'Demandons d’abord à un adulte d’ouvrir l’espace parents et de donner son accord.',
       consent_needed_ai_parent: 'La lecture des photos utilise Claude : veuillez d’abord donner votre accord pour Claude dans Réglages.',
-      consent_needed_ai_grownup: 'Cela utilise Claude : veuillez d’abord donner votre accord pour Claude dans l’espace parents (Réglages).',
+      consent_needed_ai_grownup: 'La lecture des photos utilise Claude : veuillez d’abord donner votre accord pour Claude dans l’espace parents (Réglages).',
       ai_not_sent: 'Rien n’a été envoyé.',
       server_down: "Je n'arrive pas à joindre le serveur Mommy. Est-il lancé ?",
       checking_server: 'Vérification du serveur…',
@@ -525,7 +525,7 @@
       consent_needed: 'يجب أولًا وضع علامة في خانة الموافقة في قسم الكبار (الإعدادات) قبل استخدام الميكروفون أو الكاميرا.',
       consent_needed_ai: 'هيا نطلب من أحد الكبار فتح قسم الكبار والموافقة أولًا.',
       consent_needed_ai_parent: 'قراءة الصور تستخدم Claude: يُرجى أولًا تسجيل الموافقة على Claude في الإعدادات.',
-      consent_needed_ai_grownup: 'يُستخدَم Claude هنا: يُرجى أولًا تسجيل الموافقة على Claude في قسم الكبار (الإعدادات).',
+      consent_needed_ai_grownup: 'قراءة الصور تستخدم Claude: يُرجى أولًا تسجيل الموافقة على Claude في قسم الكبار (الإعدادات).',
       ai_not_sent: 'لم يُرسَل شيء.',
       server_down: 'لا أستطيع الوصول إلى خادم Mommy. هل هو يعمل؟',
       checking_server: 'جارٍ التحقّق من الخادم…',
@@ -728,16 +728,19 @@
    * <p data-why="<name>"> next to them explains why they are disabled.
    */
   const GATES = {
-    // 'ai-consent': closed while Claude is set up and the parent has not agreed to it
-    // (Claude reads the photos, judges the meaning and words the feedback of a check).
+    // 'ai-consent': closed while Claude is set up and the parent has not agreed to it.
+    // Only the photos wait for it: reading them needs Claude. A check of a recitation or
+    // of a dictation is sent with ai_consent=1 only when the consent counts (aiConsentNow),
+    // and without it the server answers with its offline brain (the offline templates and
+    // the approximate meaning check) and never calls Claude.
     'prep-photo': ['server', 'brain', 'consent', 'ai-consent'],
-    'recite-rec': ['server', 'asr', 'consent', 'ai-consent', 'mic', 'task-meaning'],
+    'recite-rec': ['server', 'asr', 'consent', 'mic', 'task-meaning'],
     'recite-tts': ['server', 'tts'],
     // 'dictation': the voice would meet Quran words the server could not mark as a Quran
     // part (a safety net: the server's "dictation": false): the text can only be recited.
     'dict-start': ['server', 'dictation'],
-    // A typed check is worded by Claude when it is configured: that needs the AI consent.
-    'dict-check': ['server', 'ai-consent'],
+    // A typed check is worded by Claude only with the AI consent (the server decides).
+    'dict-check': ['server'],
     'dict-play': ['server', 'tts'],
     'dict-photo': ['server', 'brain', 'consent', 'ai-consent'],
     'dict-tts': ['server', 'tts'],
@@ -1261,7 +1264,7 @@
 
   /**
    * Ask /api/health which parts are available. opts.quiet: the gates stay as they are
-   * while it is asked (no "checking" state), for the check before a Claude call.
+   * while it is asked (no "checking" state), for the check before a photo is sent.
    */
   async function loadHealth(opts) {
     if (!(opts && opts.quiet === true)) {
@@ -1324,23 +1327,54 @@
   }
 
   /**
-   * Before a call whose server path can use Claude (/api/page/read, /api/recite/check,
-   * /api/dictation/check): true when it may go. With the parent's AI consent it always
-   * may. Without it, /api/health is asked again first, since the server may have been
-   * started again with Claude after the page loaded: the call goes only while the brain
-   * is offline (the gates and the privacy texts follow the new answer).
+   * True when a request may carry the parent's AI consent (ai_consent=1): the consent
+   * counts (state.aiConsent, which family.js sets from MommyRewards.hasAiConsent(doc)
+   * after every change of the family document, in this tab or another) and the page
+   * shows the Claude notice it was given to (/api/health says "brain": "claude"). Read
+   * when the request is built, right before it is sent.
    */
-  async function brainCallAllowed() {
-    if (state.aiConsent) return true;
-    await loadHealth({ quiet: true });
-    return !!state.health && state.health.brain !== 'claude';
+  function aiConsentNow() {
+    return state.aiConsent && !!state.health && state.health.brain === 'claude';
   }
 
   /**
-   * A Claude call was not made (brainCallAllowed): "Nothing was sent." on the status line;
-   * the gate, closed now, says why next to the button (or the banner, if the server is down).
+   * Adds ai_consent=1 to the form of a call whose server path can use Claude
+   * (/api/page/read, /api/recite/check, /api/dictation/check) when aiConsentNow(), and
+   * says whether it did. Without the field the server answers with its offline brain and
+   * never calls Claude, whatever this page believes (docs/CONTRACT.md, hard rule 5).
    */
-  function brainCallRefused(status) {
+  function addAiConsent(form) {
+    const given = aiConsentNow();
+    if (given) form.append('ai_consent', '1');
+    return given;
+  }
+
+  /**
+   * After an answer of such a call: a request sent with the consent that the offline brain
+   * answered (the server was started again without Claude) asks /api/health again, so the
+   * gates and the privacy texts follow the server.
+   */
+  function followBrain(res, sent) {
+    if (sent && res && res.brain === 'offline') loadHealth({ quiet: true });
+  }
+
+  /**
+   * Before a photo is sent (/api/page/read, /api/dictation/check with an image): reading
+   * it needs Claude, so it goes only with the AI consent (aiConsentNow; the photo gates are
+   * closed without it). When the consent no longer counts (withdrawn while the photo was
+   * being made smaller), nothing is sent, and /api/health is asked again for the gates.
+   */
+  async function photoCallAllowed() {
+    if (aiConsentNow()) return true;
+    await loadHealth({ quiet: true });
+    return false;
+  }
+
+  /**
+   * A photo was not sent (photoCallAllowed): "Nothing was sent." on the status line; the
+   * gate, closed now, says why next to the button (or the banner, if the server is down).
+   */
+  function photoCallRefused(status) {
     setStatus(status, state.health ? 'ai_not_sent' : 'server_down', null, { error: true });
   }
 
@@ -1459,15 +1493,20 @@
     for (const node of $$('.photo-privacy')) {
       setT(node, online ? (claude ? 'photo_privacy_online_claude' : 'photo_privacy_online') : claude ? 'photo_privacy_claude' : 'photo_privacy');
     }
-    setT($('#recite-approx'), online ? 'approximate_online' : 'approximate');
+    // "(offline)" only where the app runs without the network: local, no Claude. With
+    // Claude set up, a check it did not judge (no AI consent that counts, or an error) is
+    // approximate "without the online AI", locally too, where the setup names Claude.
+    setT($('#recite-approx'), online || claude ? 'approximate_online' : 'approximate');
   }
 
   /**
    * Without the online AI the meaning check is approximate: said under the mode choice,
-   * unless "The meaning" is ruled out for the confirmed text (it has Quran words).
+   * unless "The meaning" is ruled out for the confirmed text (it has Quran words). That is
+   * also so with Claude set up while the AI consent does not count: the check is then sent
+   * without it, and the server judges the meaning with its offline heuristic.
    */
   function updateOfflineNotes() {
-    const offline = !!state.health && state.health.brain !== 'claude';
+    const offline = !!state.health && !aiConsentNow();
     $('#mode-offline-note').hidden = !offline || (state.page.noMeaning && !state.task);
   }
 
@@ -1975,13 +2014,14 @@
       else setStatus(status, 'photo_bad', null, { error: true });
       return;
     }
-    if (!(await brainCallAllowed())) {
-      brainCallRefused(status);
+    if (!(await photoCallAllowed())) {
+      photoCallRefused(status);
       return;
     }
     const form = new FormData();
     form.append('image', jpeg, 'page.jpg');
     form.append('lang', state.page.lang);
+    const sent = addAiConsent(form);
     jpeg = null;
     setStatus(status, 'reading_page');
     const quranNote = $('#prep-quran-note');
@@ -1989,6 +2029,7 @@
     for (const n of $$('[data-gate="prep-photo"]')) setBusy(n, true);
     try {
       const res = await api('api/page/read', { form });
+      followBrain(res, sent);
       const text = onlyText(res.text);
       if (LANGS.includes(res.lang)) {
         state.page.langChosen = true;
@@ -2424,16 +2465,15 @@
     form.append('lang', state.page.lang);
     form.append('mode', state.page.mode);
     form.append('age', state.profile.age);
+    // Claude judges the meaning and words the feedback only with the AI consent; without
+    // it the server answers with its offline templates and heuristic (approximate).
+    const sent = addAiConsent(form);
     setStatus(status, 'checking');
     const task = state.task; // a task started or left meanwhile drops this answer
-    // The server judges the meaning and words the feedback with Claude when it is set up.
-    if (!(await brainCallAllowed())) {
-      if (state.task === task) brainCallRefused(status);
-      return; // the recording is dropped: nothing went to the server
-    }
     let res;
     try {
       res = await api('api/recite/check', { form });
+      followBrain(res, sent);
     } catch (err) {
       if (state.task !== task) return;
       if (task && isQuranRefusal(err) && err.reason === 'meaning' && state.page.mode === 'contextual') {
@@ -3047,17 +3087,23 @@
     updateReviewConfirm();
     const task = state.task; // a task started or left meanwhile drops this answer
     let res;
+    let sent = false;
     try {
-      // The server words the feedback with Claude when it is set up.
-      if (!(await brainCallAllowed())) {
-        if (state.task === task) brainCallRefused(status);
+      // A photo is read by Claude, which needs the AI consent. A typed check is worded by
+      // Claude with the consent, else by the server's offline templates.
+      if (input.image && !(await photoCallAllowed())) {
+        if (state.task === task) photoCallRefused(status);
         return;
       }
+      sent = addAiConsent(form); // after the wait above: the consent as it is now
       res = await api('api/dictation/check', { form });
+      followBrain(res, sent);
       if (state.task !== task) return;
     } catch (err) {
       if (state.task !== task) return;
       if (err && err.code === 'needs_manual') {
+        // A photo sent with the consent and not read: the server may have no Claude now.
+        if (sent && input.image) loadHealth({ quiet: true });
         setStatus(status, 'needs_manual_writing', null, { error: true });
         $('#dict-written').focus();
       } else {
@@ -3753,6 +3799,7 @@
     state.consent = !!(c && c.consent);
     state.aiConsent = !!(c && c.aiConsent);
     if (!state.consent) cancelRecording();
+    updateOfflineNotes();
     refreshGates();
   }
 
@@ -3949,7 +3996,7 @@
    */
   async function readPage(file, lang) {
     let jpeg = await shrinkImage(file);
-    if (!(await brainCallAllowed())) {
+    if (!(await photoCallAllowed())) {
       // Not sent: the parent has not agreed to Claude (or the server cannot be reached).
       const why = state.health ? { status: 403, code: 'ai_consent_needed' } : { status: 0, code: null };
       throw Object.assign(new Error('not sent'), { name: 'ApiError' }, why);
@@ -3957,8 +4004,11 @@
     const form = new FormData();
     form.append('image', jpeg, 'page.jpg');
     form.append('lang', LANGS.includes(lang) ? lang : state.uiLang);
+    const sent = addAiConsent(form);
     jpeg = null;
-    return api('api/page/read', { form });
+    const res = await api('api/page/read', { form });
+    followBrain(res, sent);
+    return res;
   }
 
   // ===========================================================================
@@ -4014,6 +4064,8 @@
     takeFile,
     loadSurahs,
     health: () => (state.health ? Object.assign({}, state.health) : null),
+    // whether a request built now would carry ai_consent=1 (the server then may use Claude)
+    aiConsentNow,
     // navigation and gates
     setHooks,
     go,

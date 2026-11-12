@@ -286,6 +286,7 @@ async function mainFlow(browser, base) {
     await page.fill('#page-text', '');
     await page.setInputFiles('#prep-choose', { name: 'page.jpg', mimeType: 'image/jpeg', buffer: original });
     const call = await waitForCall(fake, '/api/page/read', 1);
+    assert.deepEqual(call.aiConsent, ['1'], 'the AI consent counts: sent once, as "1"');
     const img = call.form.image;
     assert.equal(img.type, 'image/jpeg');
     const size = jpegSize(img.data);
@@ -427,10 +428,12 @@ async function mainFlow(browser, base) {
     await record(page, '#recite-rec', 700);
     const call = await waitForCall(fake, '/api/recite/check', 4);
     assert.equal(call.form.mode.text, 'contextual');
+    assert.deepEqual(call.aiConsent, ['1']);
     await page.waitForSelector('#recite-verdict:not([hidden])');
     assert.match(await page.textContent('#recite-verdict'), /Partly right/);
     assert.match(await page.textContent('#recite-missing'), /on the mat/);
-    assert.ok(await page.isVisible('#recite-approx'));
+    // Claude judged the meaning (the AI consent was sent): no "approximate" label.
+    assert.ok(await page.isHidden('#recite-approx'));
     assert.equal((await page.textContent('#recite-feedback')).trim(), CONTEXTUAL_RESULT.feedback);
     await page.click('#nav [data-go="prepare"]');
     await page.check('input[name="mode"][value="strict"]');
@@ -518,6 +521,7 @@ async function mainFlow(browser, base) {
     });
     await page.setInputFiles('#dict-choose', { name: 'paper.png', mimeType: 'image/png', buffer: Buffer.from(b64, 'base64') });
     const call = await waitForCall(fake, '/api/dictation/check', 3);
+    assert.deepEqual(call.aiConsent, ['1']);
     assert.equal(call.form.image.type, 'image/jpeg');
     assert.deepEqual(jpegSize(call.form.image.data), { width: 1000, height: 2000 });
     assert.equal(call.form.written_text, undefined);
@@ -854,12 +858,18 @@ async function serverDown(browser, base) {
     await page.waitForSelector('#server-banner', { state: 'hidden' });
     // The setup was made while the server could not say that Claude is set up, so the
     // Claude notice and its box were not shown: the general consent does not cover Claude.
-    await page.waitForSelector('#why-recite-rec:not([hidden])');
-    assert.equal((await page.textContent('#why-recite-rec')).trim(), H.allStrings('en').consent_needed_ai);
-    assert.ok(await page.isDisabled('#recite-rec'));
-    await H.setConsent(page, true);
+    // Recite works all the same: it is sent without the AI consent, and the server's
+    // offline brain answers.
+    await page.waitForSelector('#recite-rec:not([disabled])');
+    assert.ok(await page.isHidden('#why-recite-rec'));
+    await record(page, '#recite-rec', 300);
+    assert.deepEqual((await waitForCall(fake, '/api/recite/check', 1)).aiConsent, [], 'no AI consent: no field');
+    await page.waitForSelector('#recite-result:not([hidden])');
+    await H.setConsent(page, true); // the AI box stands under the Claude notice now
     await page.click('#nav [data-go="recite"]');
     await page.waitForSelector('#recite-rec:not([disabled])');
+    await record(page, '#recite-rec', 300);
+    assert.deepEqual((await waitForCall(fake, '/api/recite/check', 2)).aiConsent, ['1']);
     // The aborted health request is logged by the browser as a failed load; nothing else.
     const others = problems.filter((p) => !/Failed to load resource|ERR_CONNECTION_REFUSED/.test(p));
     assert.deepEqual(others, []);
@@ -1988,7 +1998,7 @@ async function consentFlow(browser, base) {
     await page.selectOption('#setup-lang', 'en');
   });
 
-  await check('consent: with Claude configured, a typed dictation check waits for consent (PRV-1)', async () => {
+  await check('consent: with Claude configured, a typed dictation check without the AI consent goes without it and the offline brain answers; with it, ai_consent=1 (PRV-1, V6)', async () => {
     await startSession(page, { consent: false, nickname: '' });
     await page.fill('#page-text', PAGE_TEXT);
     await pressConfirm(page);
@@ -1998,16 +2008,20 @@ async function consentFlow(browser, base) {
     await page.click('#dict-next');
     await page.waitForSelector('[data-stage="check"]:not([hidden])');
     await page.fill('#dict-written', 'The cat sat on the matt');
-    assert.ok(await page.isDisabled('#btn-dict-check'));
-    // The check stage is for the grown-up: what needs the OK, and where it is given (V4).
-    assert.equal((await page.textContent('[data-stage="check"] [data-why="dict-check"]')).trim(), H.allStrings('en').consent_needed_ai_grownup);
-    assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-check"]'));
-    assert.equal(fake.callsTo('/api/dictation/check').length, 0, 'nothing went to the server');
+    // A photo of the paper needs the camera and Claude: off. The typed check is not.
+    assert.ok(await page.isDisabled('#dict-take'));
+    assert.ok(await page.isEnabled('#btn-dict-check'));
+    assert.ok(await page.isHidden('[data-stage="check"] [data-why="dict-check"]'));
+    await page.click('#btn-dict-check');
+    const first = await waitForCall(fake, '/api/dictation/check', 1);
+    assert.deepEqual(first.aiConsent, [], 'no AI consent: the field is not sent');
+    assert.equal(first.form.written_text.text, 'The cat sat on the matt');
+    await page.waitForSelector('[data-stage="review"]:not([hidden])');
     await H.setConsent(page, true);
     await page.click('#nav [data-go="dictation"]');
-    assert.ok(await page.isEnabled('#btn-dict-check'));
-    await page.click('#btn-dict-check');
-    await waitForCall(fake, '/api/dictation/check', 1);
+    await page.waitForSelector('[data-stage="review"]:not([hidden])');
+    await page.click('#btn-dict-recheck');
+    assert.deepEqual((await waitForCall(fake, '/api/dictation/check', 2)).aiConsent, ['1']);
     assert.deepEqual(problems, []);
   });
   await context.close();
@@ -2026,6 +2040,9 @@ async function consentFlow(browser, base) {
     await p.click('#dict-next');
     await p.waitForSelector('[data-stage="check"]:not([hidden])');
     assert.ok(await p.isEnabled('#btn-dict-check'));
+    await p.fill('#dict-written', 'The cat sat on the matt');
+    await p.click('#btn-dict-check');
+    assert.deepEqual((await waitForCall(offline.fake, '/api/dictation/check', 1)).aiConsent, [], 'no Claude: never the field');
     assert.deepEqual(offline.problems, []);
   });
   await offline.context.close();
@@ -2113,19 +2130,23 @@ async function dictationToCheck(page) {
 }
 
 /**
- * The AI consent (privacy audit P1) in the four ways the app runs. The setup's AI box is
- * there only under the Claude notice and needs the general box; the general consent alone
- * never covers Claude: with Claude set up, every call whose server path uses it stays off
- * (the page photo, Recite, the typed dictation check) with a neutral line for the child,
- * while "Confirm text", the dictation's voice and the Quran section work; without Claude
- * the general consent is enough. The parent's prompt (behind the PIN) then opens them.
+ * The AI consent (privacy audit P1; the server's part, V6) in the four ways the app runs.
+ * The setup's AI box is there only under the Claude notice and needs the general box; the
+ * general consent alone never covers Claude. With Claude set up and no AI consent, the
+ * photos stay off (reading them needs Claude), with the grown-up's line, while Recite (word
+ * by word and by meaning) and the typed dictation check work: they are sent without the
+ * field ai_consent, so the server answers with its offline brain (the meaning check is
+ * "approximate"). "Confirm text", the dictation's voice and the Quran section work too;
+ * without Claude the general consent is enough. The parent's prompt (behind the PIN) then
+ * gives the AI consent, and each check carries ai_consent=1.
  */
 async function aiConsentFlow(browser, base) {
   const S = H.allStrings('en');
   for (const mode of H.PRIVACY_MODES) {
     const claude = mode.brain === 'claude';
+    const where = mode.online ? 'online' : 'local';
     const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(mode) });
-    await check(`AI consent, ${mode.name}: ${claude ? 'the general consent alone keeps every Claude call off; Confirm text, the voice and the Quran work' : 'the general consent is enough, and no AI box is shown'}`, async () => {
+    await check(`AI consent, ${mode.name}: ${claude ? 'the general consent alone keeps the photos off and sends no check with the AI consent (the server answers offline); Recite, the typed check, Confirm text, the voice and the Quran work' : 'the general consent is enough, and no AI box is shown'}`, async () => {
       await page.goto(base + '/');
       await page.waitForSelector('#consent-extra:not([hidden])');
       assert.equal(await page.isVisible('#ai-consent'), claude, 'the AI box stands only under the Claude notice');
@@ -2138,44 +2159,60 @@ async function aiConsentFlow(browser, base) {
       // Prepare is for the grown-up: it names Claude and where the OK is given (V4).
       assert.equal(await textOf(page, '#why-prep-photo'), claude ? S.consent_needed_ai_grownup : S.no_brain);
       assert.equal(await textOf(page, '#screen-prepare .photo-privacy'), S[mode.photo]);
+      // The meaning check will be approximate (no Claude for it): said under the mode choice.
+      assert.ok(await page.isVisible('#mode-offline-note'));
       await page.click('#prep-next [data-go="recite"]');
       await page.waitForSelector('#screen-recite:not([hidden])');
-      assert.equal(await page.isDisabled('#recite-rec'), claude);
-      if (claude) {
-        assert.ok(await page.isVisible('#why-recite-rec'));
-        assert.equal(await textOf(page, '#why-recite-rec'), S.consent_needed_ai);
-        await H.shot(page, 'ai-consent-child-360-' + (mode.online ? 'online' : 'local'));
-      } else {
-        await record(page, '#recite-rec', 300);
-        await waitForCall(fake, '/api/recite/check', 1);
-        await page.waitForSelector('#recite-result:not([hidden])');
-      }
+      assert.ok(await page.isEnabled('#recite-rec'), 'Recite never waits for the AI consent');
+      assert.ok(await page.isHidden('#why-recite-rec'));
+      await record(page, '#recite-rec', 300);
+      const strict = await waitForCall(fake, '/api/recite/check', 1);
+      assert.deepEqual(strict.aiConsent, [], 'no AI consent: the field is not sent');
+      await page.waitForSelector('#recite-result:not([hidden])');
+      // By meaning: the server's offline heuristic, and the "approximate" label says so.
+      await page.click('#nav [data-go="prepare"]');
+      await page.check('input[name="mode"][value="contextual"]');
+      await pressConfirm(page);
+      await page.click('#prep-next [data-go="recite"]');
+      await page.waitForSelector('#recite-rec:not([disabled])');
+      await record(page, '#recite-rec', 300);
+      const meaning = await waitForCall(fake, '/api/recite/check', 2);
+      assert.equal(meaning.form.mode.text, 'contextual');
+      assert.deepEqual(meaning.aiConsent, []);
+      await page.waitForSelector('#recite-verdict:not([hidden])');
+      assert.ok(await page.isVisible('#recite-approx'));
+      assert.equal(await textOf(page, '#recite-approx'), S[mode.approx]);
+      if (claude) await H.shot(page, 'ai-consent-recite-offline-360-' + where);
+      await page.click('#nav [data-go="prepare"]');
+      await page.check('input[name="mode"][value="strict"]');
+      await pressConfirm(page);
       await dictationToCheck(page);
-      assert.equal(await page.isDisabled('#btn-dict-check'), claude);
+      assert.ok(await page.isEnabled('#btn-dict-check'), 'the typed check never waits for the AI consent');
+      assert.ok(await page.isHidden('[data-stage="check"] [data-why="dict-check"]'));
+      assert.ok(await page.isDisabled('#dict-take'));
       if (claude) {
-        // The check stage is for the grown-up too; the photo and the typed check share the line.
+        // The check stage is for the grown-up: the photo names Claude and where the OK is given (V4).
         assert.equal(await textOf(page, '[data-stage="check"] [data-why="dict-photo"]'), S.consent_needed_ai_grownup);
         assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-photo"]'));
-        assert.equal(await textOf(page, '[data-stage="check"] [data-why="dict-check"]'), S.consent_needed_ai_grownup);
-        await H.shot(page, 'ai-consent-dict-check-360-' + (mode.online ? 'online' : 'local'));
-      } else {
-        await page.click('#btn-dict-check');
-        await waitForCall(fake, '/api/dictation/check', 1);
+        await H.shot(page, 'ai-consent-dict-check-360-' + where);
       }
+      await page.click('#btn-dict-check');
+      assert.deepEqual((await waitForCall(fake, '/api/dictation/check', 1)).aiConsent, []);
+      await page.waitForSelector('[data-stage="review"]:not([hidden])');
       await page.click('#nav [data-go="quran"]');
       await page.waitForSelector('#quran-text .ayah');
       assert.ok(await page.isEnabled('#quran-rec'), 'the Quran section never uses Claude');
       await record(page, '#quran-rec', 300);
       await waitForCall(fake, '/api/quran/check', 1);
       assert.ok(fake.callsTo('/api/tts').length > 0, 'the dictation voice was used');
-      assert.equal(fake.callsTo('/api/text/check').length, 1, '"Confirm text" was checked');
-      assert.equal(fake.callsTo('/api/recite/check').length, claude ? 0 : 1);
-      assert.equal(fake.callsTo('/api/dictation/check').length, claude ? 0 : 1);
+      assert.equal(fake.callsTo('/api/text/check').length, 3, '"Confirm text" was checked');
+      assert.equal(fake.callsTo('/api/recite/check').length, 2);
+      assert.equal(fake.callsTo('/api/dictation/check').length, 1);
       assert.equal(fake.callsTo('/api/page/read').length, 0);
       assert.deepEqual(problems, []);
     });
     if (claude) {
-      await check(`AI consent, ${mode.name}: the parent's prompt behind the PIN (the Claude notice and a box of its own) opens the Claude features`, async () => {
+      await check(`AI consent, ${mode.name}: the parent's prompt behind the PIN (the Claude notice and a box of its own) gives it: the photos open, and each check carries ai_consent=1`, async () => {
         await H.openParent(page);
         assert.ok(await page.isVisible('#ai-prompt'));
         assert.equal(await textOf(page, '#ai-prompt-h'), S.fam_ai_title);
@@ -2194,16 +2231,34 @@ async function aiConsentFlow(browser, base) {
         assert.equal(d.parent.aiConsentVersion, require(path.join(WEB, 'rewards.js')).AI_CONSENT_VERSION);
         await H.closeParent(page);
         await page.click('#nav [data-go="dictation"]');
-        await page.waitForSelector('[data-stage="check"]:not([hidden])');
-        assert.ok(await page.isEnabled('#btn-dict-check'));
-        await page.click('#btn-dict-check');
-        await waitForCall(fake, '/api/dictation/check', 1);
+        await page.waitForSelector('[data-stage="review"]:not([hidden])');
+        await page.click('#btn-dict-recheck');
+        assert.deepEqual((await waitForCall(fake, '/api/dictation/check', 2)).aiConsent, ['1']);
         await page.click('#nav [data-go="recite"]');
         await page.waitForSelector('#recite-rec:not([disabled])');
         await record(page, '#recite-rec', 300);
-        await waitForCall(fake, '/api/recite/check', 1);
+        assert.deepEqual((await waitForCall(fake, '/api/recite/check', 3)).aiConsent, ['1']);
         await page.click('#nav [data-go="prepare"]');
         assert.ok(await page.isEnabled('#prep-take'));
+        assert.ok(await page.isHidden('#mode-offline-note'), 'Claude judges the meaning now');
+        await page.setInputFiles('#prep-choose', { name: 'page.png', mimeType: 'image/png', buffer: tinyPng() });
+        assert.deepEqual((await waitForCall(fake, '/api/page/read', 1)).aiConsent, ['1']);
+        await page.waitForFunction((t) => document.querySelector('#page-text').value === t, PAGE_TEXT);
+        assert.deepEqual(problems, []);
+      });
+      await check(`AI consent, ${mode.name}: withdrawn in Settings, the next check goes without it at once`, async () => {
+        await H.openParent(page);
+        await H.parentSection(page, 'settings');
+        await page.uncheck('#settings-ai-consent');
+        await H.closeParent(page);
+        await confirmPageText(page, PAGE_TEXT); // the photo's text, confirmed
+        await page.click('#prep-next [data-go="recite"]');
+        await page.waitForSelector('#recite-rec:not([disabled])');
+        await record(page, '#recite-rec', 300);
+        assert.deepEqual((await waitForCall(fake, '/api/recite/check', 4)).aiConsent, []);
+        await page.click('#nav [data-go="prepare"]');
+        assert.ok(await page.isDisabled('#prep-take'));
+        assert.equal(fake.callsTo('/api/page/read').length, 1);
         assert.deepEqual(problems, []);
       });
     }
@@ -2211,11 +2266,13 @@ async function aiConsentFlow(browser, base) {
   }
 
   // The owner sets up Claude while the page is open (the server is started again): the
-  // page still thinks the brain is offline. The check before each Claude call asks
-  // /api/health again, so nothing goes to Claude without the AI consent.
+  // page still thinks the brain is offline. Its checks carry no AI consent (none was given
+  // under the Claude notice), so the server answers them with its offline brain and nothing
+  // goes to Claude; the texts the page shows stay true. After a reload, the Claude notice,
+  // its box and the parent's prompt are there, and the checks still go without the field.
   for (const mode of H.PRIVACY_MODES.filter((m) => m.brain !== 'claude')) {
     const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(mode) });
-    await check(`AI consent, Claude added later while the page is open (${mode.name} at first): nothing is sent, the child is asked to fetch a grown-up, and the consent texts follow`, async () => {
+    await check(`AI consent, Claude added later while the page is open (${mode.name} at first): the checks go without the AI consent, the server answers offline, and after a reload the consent texts follow`, async () => {
       await page.goto(base + '/');
       await H.setupFamily(page, { consent: true });
       await confirmPageText(page, PAGE_TEXT);
@@ -2224,18 +2281,19 @@ async function aiConsentFlow(browser, base) {
       await waitForCall(fake, '/api/recite/check', 1);
       await page.waitForSelector('#recite-result:not([hidden])');
       fake.setHealth({ brain: 'claude' });
-      const health = fake.callsTo('/api/health').length;
       await record(page, '#recite-rec', 300);
-      await waitForCall(fake, '/api/health', health + 1);
-      await page.waitForSelector('#recite-rec[disabled]');
-      assert.equal(await textOf(page, '#recite-status'), S.ai_not_sent);
-      assert.equal(await textOf(page, '#why-recite-rec'), S.consent_needed_ai);
-      assert.equal(fake.callsTo('/api/recite/check').length, 1, 'the second recording was never sent');
-      // The typed dictation check: the gate knows now.
+      const second = await waitForCall(fake, '/api/recite/check', 2);
+      assert.deepEqual(second.aiConsent, [], 'no AI consent was ever given: the field is not sent');
+      await page.waitForSelector('#recite-result:not([hidden])');
+      assert.notEqual(await textOf(page, '#recite-status'), S.ai_not_sent);
+      assert.deepEqual(fake.callsTo('/api/recite/check').map((c) => c.aiConsent), [[], []]);
+      // The typed dictation check, likewise.
       await dictationToCheck(page);
-      assert.ok(await page.isDisabled('#btn-dict-check'));
-      assert.equal(fake.callsTo('/api/dictation/check').length, 0);
-      // The consent box of Settings now shows the Claude notice and its box (unticked).
+      await page.click('#btn-dict-check');
+      assert.deepEqual((await waitForCall(fake, '/api/dictation/check', 1)).aiConsent, []);
+      // A reload reads /api/health again: the Claude notice and its box (unticked), the prompt.
+      await page.reload();
+      await page.waitForSelector('#screen-who:not([hidden])');
       await H.openParent(page);
       assert.ok(await page.isVisible('#ai-prompt'), 'the prompt, at the top of the parent area');
       await H.parentSection(page, 'settings');
@@ -2245,19 +2303,24 @@ async function aiConsentFlow(browser, base) {
       assert.ok(!(await page.isChecked('#settings-ai-consent')));
       if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
       await H.closeParent(page);
-      // A reload keeps it so.
-      await page.reload();
-      await page.waitForSelector('#screen-who:not([hidden])');
-      await page.click('#who-list .who-btn');
+      if (await page.isVisible('#screen-who')) await page.click('#who-list .who-btn');
       await confirmPageText(page, PAGE_TEXT);
+      assert.ok(await page.isDisabled('#prep-take'), 'the photos wait for the AI consent');
       await page.click('#prep-next [data-go="recite"]');
-      await page.waitForSelector('#why-recite-rec:not([hidden])');
-      assert.ok(await page.isDisabled('#recite-rec'));
-      assert.equal(fake.callsTo('/api/recite/check').length, 1);
+      await page.waitForSelector('#recite-rec:not([disabled])');
+      await record(page, '#recite-rec', 300);
+      assert.deepEqual((await waitForCall(fake, '/api/recite/check', 3)).aiConsent, []);
+      assert.equal(fake.callsTo('/api/page/read').length, 0);
       assert.deepEqual(problems, []);
     });
     await context.close();
   }
+}
+
+/** A small white PNG (a page photo for the fake reader). */
+function tinyPng() {
+  // 1x1 white pixel.
+  return Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC', 'base64');
 }
 
 /** recorder.js with a 1 s limit instead of 120 s, so the limit can be reached in a test. */
@@ -2327,7 +2390,20 @@ function privacyStrings() {
   assert.doesNotMatch(en.consent_online_no_photos, /photo/, 'without Claude no photo is ever sent');
   assert.match(en.consent_online_no_photos, /voice recordings and the texts are sent over a secure connection/);
   // P3: the family line says what is saved (and where) and what travels with each check.
-  assert.match(en.fam_privacy_line, /^Your family’s list \(children, tasks, stars, rewards and the PIN\) is saved only in this browser, on this device\. /);
+  assert.match(en.fam_privacy_line, /^Your family’s list \(children, tasks, stars, rewards and the PIN\) is saved only in this browser, on this device, /);
+  // B-R5: "Save a copy" puts the list in a file (without the PIN), where the browser saves
+  // downloads (on an iPhone that may be iCloud Drive): the line says so in each language,
+  // naming the button as it is labelled.
+  const COPY_IN_LINE = {
+    en: / unless a copy is saved with “Save a copy”: the copy is a file, without the PIN, where the browser saves downloads\. /,
+    fr: / sauf si une copie est enregistrée avec «\u00a0Enregistrer une copie\u00a0»\u00a0: la copie est alors un fichier, sans le code parent, là où le navigateur enregistre les téléchargements\. /,
+    ar: /، ما لم تُحفظ نسخة منها بزرّ «حفظ نسخة»: فتكون النسخة ملفًا، من دون رمز الكبار، في المكان الذي يحفظ فيه المتصفح التنزيلات\. /,
+  };
+  for (const lang of ['en', 'fr', 'ar']) {
+    const S = H.allStrings(lang);
+    assert.match(S.fam_privacy_line, COPY_IN_LINE[lang], `${lang}.fam_privacy_line names the copy`);
+    assert.ok(S.fam_privacy_line.includes(S.fam_copy_save), `${lang}: the button's own label`);
+  }
   // V3: the language and the age group go with a school text, numbers with the Quran.
   assert.match(en.fam_privacy_line, / the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead\. /);
   // V2: what the server keeps out of its log, and what it notes there (backend/mommy/app.py).
@@ -2354,6 +2430,7 @@ function privacyStrings() {
 function aiConsentStrings() {
   const KEYS = ['consent_ai_label', 'consent_needed_ai', 'consent_needed_ai_parent', 'consent_needed_ai_grownup', 'ai_not_sent', 'fam_ai_title', 'fam_ai_lead', 'fam_ai_later', 'fam_ai_tick_first', 'fam_ai_saved'];
   const GROWNUP = { en: /parent area \(Settings\)/, fr: /espace parents \(Réglages\)/, ar: /قسم الكبار \(الإعدادات\)/ };
+  const PHOTOS_FIRST = { en: /^Reading photos uses Claude: /, fr: /^La lecture des photos utilise Claude\u00a0: /, ar: /^قراءة الصور تستخدم Claude: / };
   const MOMMY_STORAGE = ['consent_privacy', 'photo_privacy', 'fam_privacy_line'];
   const CLAUDE = { en: /such as Claude/, fr: /extérieur comme Claude/, ar: /خارجية مثل Claude/ };
   const ASK = { en: /^Let’s ask a grown-up/, fr: /^Demandons d’abord à un adulte/, ar: /^هيا نطلب من أحد الكبار/ };
@@ -2372,6 +2449,12 @@ function aiConsentStrings() {
     // V4: on a grown-up card, the line names Claude and where the OK is given.
     assert.match(S.consent_needed_ai_grownup, /Claude/, `${lang}.consent_needed_ai_grownup`);
     assert.match(S.consent_needed_ai_grownup, GROWNUP[lang], `${lang}.consent_needed_ai_grownup`);
+    // RA-3: only the photos wait for the OK (V6), so the grown-up's line, which stands
+    // beside the typed check of a dictation, names them as the parent area's line does.
+    for (const key of ['consent_needed_ai_grownup', 'consent_needed_ai_parent']) {
+      assert.match(S[key], PHOTOS_FIRST[lang], `${lang}.${key} says that reading photos needs Claude`);
+      assert.doesNotMatch(S[key], /^(This|Cela)|هنا/, `${lang}.${key}: no "this" or "here" that could cover the typed check`);
+    }
     // V5: the photo notes with Claude name it, and "not kept" is Mommy's, never Claude's.
     for (const key of ['photo_privacy_claude', 'photo_privacy_online_claude']) {
       assert.match(S[key], /Claude/, `${lang}.${key} says where the photos go`);

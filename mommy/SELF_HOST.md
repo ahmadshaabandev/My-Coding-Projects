@@ -17,8 +17,13 @@ How it works, in short:
   own browser, for one address. The tunnel's address changes each time it restarts
   (when your computer or Docker Desktop restarts), and with a new address Mommy starts
   empty again in your friend's browser (what was saved stays tied to the old address,
-  which no longer works). So avoid restarts while your friend uses Mommy. For a link
-  that never changes, see [deploy/oracle/ORACLE.md](deploy/oracle/ORACLE.md), step 6.
+  which no longer works). So avoid restarts while your friend uses Mommy, and ask your
+  friend to **save a copy** of the family list (in Mommy: **For parents** > **Settings**
+  > **Save a copy**) before a restart or an update, and now and then in case of an
+  unplanned one: at the new link, **Load a copy** on Mommy's first screen brings it back
+  (see "Moving the family list to a new link" in step 5). A copy can only be saved while
+  the old link still works. For a link that never changes, see
+  [deploy/oracle/ORACLE.md](deploy/oracle/ORACLE.md), step 6.
 
 What you need:
 
@@ -198,7 +203,8 @@ Reminder: this link changes when the tunnel restarts (after a reboot, for exampl
    A messaging app's own browser keeps its cookies apart and may not allow the
    microphone. Your friend's browser then remembers the code for 180 days, for this
    address (a new link has a new address: send the full new link each time, and Mommy
-   starts empty there, see "Good to know" at the top).
+   starts empty there until your friend loads a copy of the family list, see "Good to
+   know" at the top).
 
 **On your own computer** you can also use <http://localhost:8080>: it asks for the same
 code. Open the link above with its beginning replaced by `http://localhost:8080`, that is
@@ -229,9 +235,10 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
 
   **The link changes** (a new `trycloudflare.com` address) and **the code stays the
   same**: send the new link to your friend. With a new link, Mommy starts empty for your
-  friend: the children and tasks have to be added again. If it says `No such
-  container`, Mommy was stopped: start it in the `mommy` folder, then run the command
-  above again:
+  friend: **Load a copy** on its first screen brings back a copy saved before the
+  restart (see "Moving the family list to a new link" below); without one, the children
+  and tasks have to be added again. If it says `No such container`, Mommy was stopped:
+  start it in the `mommy` folder, then run the command above again:
 
   ```sh
   docker compose up -d
@@ -242,25 +249,53 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
   docker compose down
   ```
 
-  The code is kept. `docker compose up -d` starts it again (with a new link).
+  The code is kept. `docker compose up -d` starts it again (with a new link: ask your
+  friend to save a copy of the family list first).
 - **To update Mommy** when there is new code:
-  1. ZIP: in Downloads, delete the old folder
+  1. First ask your friend to save a copy of the family list (the link may change; see
+     "Moving the family list to a new link" below), and wait until it is done.
+  2. ZIP: in Downloads, delete the old folder
      `My-Coding-Projects-claude-laughing-goodall-h48bdw` and the old ZIP (your code is
      kept in Docker, not there). Then do step 2 again: download, Extract All, open the
      terminal in the new `mommy` folder. Git: run `git pull` in the `mommy` folder.
-  2. Run:
+  3. Run:
 
      ```sh
      docker compose up -d --build
      ```
 
      Only Mommy is rebuilt and restarted: the code stays the same, and usually so does
-     the link. Run the `share_link` command to check. Afterwards, `docker image prune -f`
-     frees the space of the old version.
+     the link. Run the `share_link` command to check: if the link changed, send the new
+     one, and your friend loads the copy there. Afterwards, `docker image prune -f` frees
+     the space of the old version.
 
   If `share_link` says that the tunnel program is many months old, an update brings a
   newer one (when the new files have one): Cloudflare supports each version for about a
   year.
+- **Moving the family list to a new link.** The list lives in your friend's browser, for
+  one address, so it does not follow a new link by itself; your friend moves it with a
+  file:
+  1. **Before** the restart or the update, while the old link still works: in Mommy,
+     **For parents** (with the parent PIN) > **Settings** > **Save a copy**. The browser
+     saves a file named `mommy-family-<date>.json` (usually in Downloads; on an iPhone,
+     in the Files app). It holds the children's names and age groups, their tasks,
+     stars and rewards, but not the PIN and not the consents. It is not encrypted: it
+     should stay on your friend's device or somewhere private.
+  2. **At the new link**, Mommy starts on its first screen: **Load a copy** (under the
+     language), pick that file, check what it shows (the children, their tasks and
+     stars), tick the consent box, choose a PIN (the same one or a new one), then
+     **Let's start**. The children, tasks, stars and rewards are back.
+
+  A family that already started at the new link can load the copy in **Settings** >
+  **Load a copy** instead: it replaces that browser's list (the PIN and the consents
+  there stay). A note to send before a restart or an update:
+  - en: "Before I restart Mommy, please save a copy of your family list: For parents >
+    Settings > Save a copy. With the new link, choose Load a copy on the first screen."
+  - fr: « Avant que je redémarre Mommy, enregistrez une copie de la liste de votre
+    famille : Pour les parents > Réglages > Enregistrer une copie. Avec le nouveau lien,
+    choisissez Charger une copie sur le premier écran. »
+  - ar: «قبل إعادة تشغيل Mommy، يُرجى حفظ نسخة من قائمة العائلة: للكبار > الإعدادات >
+    حفظ نسخة. ومع الرابط الجديد، يُرجى اختيار فتح نسخة في الشاشة الأولى.»
 - **To make a new code** (a lost link, or to shut out everyone who had the old one):
 
   ```sh
@@ -352,7 +387,10 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
   (`docker compose down`).
 - **The family data** (the children, tasks, stars, rewards and the parent PIN) stays in
   the browser on each person's own device: your friend's on your friend's phone or
-  computer, never on yours.
+  computer, never on yours. A copy saved with **Save a copy** is a file (without the PIN
+  or the consents, not encrypted) where that browser saves downloads: usually the
+  Downloads folder, and on an iPhone the Files app, which may be iCloud Drive. Mommy makes
+  it and reads it in the browser and never sends it to your computer.
 - **This setup runs Mommy without Claude**: page photos and handwriting are not read
   automatically (the parent types the text), and nothing is sent to the Claude API.
 - **Your home network stays closed:** the tunnel only connects out to Cloudflare. The

@@ -15,7 +15,8 @@ You get one of two kinds of link:
   through a free Cloudflare quick tunnel. Nothing to open on Oracle's side. The link
   changes when the tunnel restarts (when the VM restarts, and sometimes after an
   update). Each new link starts empty in your friend's browser (children, tasks and
-  stars are saved per address).
+  stars are saved per address) until your friend loads a copy of the family list saved
+  before (step 5).
 - **A permanent link (optional, step 6):** `https://129-146-10-20.sslip.io/#code=...`,
   made from the VM's own address. It does not change. It needs two ports opened in
   Oracle's console (exact clicks below). Recommended if your friend uses Mommy for more
@@ -100,10 +101,17 @@ common and not your fault.
 - If the **Placement** section offers several availability domains (AD-1, AD-2, AD-3),
   pick another one and click **Create** again.
 - Or try again later: capacity comes and goes, and it can take days.
-- Or make it with **1 OCPU and 6 GB** now (Mommy runs, more slowly), and later change
-  it: instance page > **Edit** > **Edit shape** > 2 OCPUs and 12 GB (the VM restarts),
-  then connect again and run the setup again: it uses the second core and prints the
-  new link.
+- Or make it with **1 OCPU and 6 GB** now, and later change it: instance page >
+  **Edit** > **Edit shape** > 2 OCPUs and 12 GB (the VM restarts; this too can answer
+  "out of capacity": try again another day), then connect again and run the setup
+  again: it uses the second core and prints the new link. On 1 OCPU, Mommy works, with
+  two costs:
+  - Each check takes about 1.8 times as long. In a test of one core against two (on
+    another kind of processor than Oracle's, so the times on the VM differ), an
+    8-second Arabic recitation took 6.2 s to check instead of 3.5 s.
+  - Memory is tight. Once each language has been used, Mommy holds about 5 GB, so the
+    setup's warning that memory "will be tight" is expected. The swap file it makes
+    takes the rest, and a check in a language not used for a while can then be slower.
 - Do not make several VMs to try: the free allowance counts all your Ampere VMs
   together (step 8).
 
@@ -252,8 +260,21 @@ bash ~/mommy-app/mommy/deploy/oracle/setup.sh --link
 With the quick tunnel, **the link changes when the VM restarts** (Oracle's maintenance,
 or `sudo reboot`), and when an update restarts the tunnel: run that command and send the
 new link. The code stays the same, but Mommy starts empty for your friend at the new
-address (the children and tasks have to be added again): the permanent link (step 6)
-avoids that.
+address. To bring the children, tasks, stars and rewards back, your friend needs a
+**copy of the family list** saved before, while the old link still worked:
+
+1. In Mommy: **For parents** (with the parent PIN) > **Settings** > **Save a copy**. The
+   browser saves a file `mommy-family-<date>.json` (it holds the children's names and
+   age groups, their tasks, stars and rewards, but not the PIN or the consents; it is
+   not encrypted, so it should stay private).
+2. At the new link, on Mommy's first screen: **Load a copy**, pick the file, tick the
+   consent box, choose a PIN, then **Let's start**. (A family that already started there
+   uses **Settings** > **Load a copy**, which replaces that browser's list.)
+
+So ask your friend to save a copy before a reboot or an update, and now and then in case
+of Oracle's maintenance ([SELF_HOST.md](../../SELF_HOST.md), step 5, "Moving the family
+list to a new link", has a note to send in English, French and Arabic). The permanent
+link (step 6) avoids all this.
 
 ## 6. Optional: a permanent link
 
@@ -288,7 +309,9 @@ With the quick tunnel, the link changes from time to time. The permanent link,
 7. Click **Add Ingress Rules**. The list now shows the two new rules (next to the rule
    for port 22, which is SSH: leave it).
 
-**B. Switch Mommy to the permanent link**, on the VM:
+**B. Switch Mommy to the permanent link**, on the VM. The permanent link is a new
+address: first ask your friend to save a copy of the family list (step 5), and to load
+it at the permanent link afterwards.
 
 ```sh
 bash ~/mommy-app/mommy/deploy/oracle/setup.sh --stable
@@ -313,7 +336,8 @@ Very old Android phones (Android 7.0 and older) may show a certificate warning f
 permanent link: Let's Encrypt's certificates need a newer phone. If your friend's phone
 does, use the quick tunnel instead.
 
-To go back to the quick tunnel: `bash ~/mommy-app/mommy/deploy/oracle/setup.sh --tunnel`.
+To go back to the quick tunnel: `bash ~/mommy-app/mommy/deploy/oracle/setup.sh --tunnel`
+(a new address again: a copy of the family list first, as above).
 It closes ports 80 and 443 in the VM's firewall again; you can then delete the two rules
 of part A.
 
@@ -327,8 +351,10 @@ see the page that asks for the code.
   restarts, and again if it ever stops on an error.
 - **The current link:** `bash ~/mommy-app/mommy/deploy/oracle/setup.sh --link`
   (with the quick tunnel, after a restart of the VM, send the new link).
-- **After an update** (new Mommy code on the branch): run the setup again. It updates
-  the code, rebuilds, restarts, and keeps the mode, the code and Docker's data:
+- **After an update** (new Mommy code on the branch): with the quick tunnel, first ask
+  your friend to save a copy of the family list (step 5), in case the link changes. Then
+  run the setup again. It updates the code, rebuilds, restarts, and keeps the mode, the
+  code and Docker's data:
 
   ```sh
   bash ~/mommy-app/mommy/deploy/oracle/setup.sh
@@ -341,8 +367,9 @@ see the page that asks for the code.
   `yes`) only if whoever looks after Mommy told you so.
 
   It also updates Docker. Ubuntu installs its own security updates by itself; when
-  `sudo reboot` is suggested at login ("System restart required"), do it, wait two
-  minutes, connect again, and run `--link`.
+  `sudo reboot` is suggested at login ("System restart required"), ask your friend to
+  save a copy of the family list first (quick tunnel), do it, wait two minutes, connect
+  again, and run `--link`.
 - **A new code** (a lost link, or to shut out everyone who had the old one):
 
   ```sh
@@ -408,7 +435,11 @@ Do not edit the files in `~/mommy-app` by hand: the setup puts such changes asid
   visits, and its error messages leave out the visitor's address. Docker keeps at most
   30 MB of log for each container, on the VM.
 - **The family data** (the children, tasks, stars, rewards and the parent PIN) stays in
-  the browser on each person's own device, never on the VM.
+  the browser on each person's own device, never on the VM. A copy saved with **Save a
+  copy** is a file (without the PIN or the consents, not encrypted) where that browser
+  saves downloads: usually the Downloads folder, and on an iPhone the Files app, which may
+  be iCloud Drive. Mommy makes it and reads it in the browser and never sends it to the
+  VM.
 - **This setup runs Mommy without Claude**: page photos and handwriting are not read
   automatically (the parent types the text), and nothing is sent to the Claude API.
 - **The code** is kept on the VM in a Docker volume (a file readable by Mommy only),
@@ -440,7 +471,8 @@ Do not edit the files in `~/mommy-app` by hand: the setup puts such changes asid
   characters after `#code=`), which can be typed on the code page. After 10 wrong
   codes in 10 minutes, that connection must wait up to 10 minutes.
 - **Your friend sees "This site can't be reached" or a Cloudflare error:** with the
-  quick tunnel, the link is old (the VM restarted): run `--link` and send the new one.
+  quick tunnel, the link is old (the VM restarted): run `--link` and send the new one
+  (the family list comes back with **Load a copy**, from a copy saved before: step 5).
   Otherwise the VM may be stopped: start it in the console (step 8).
 - **Is it running?** In `~/mommy-app/mommy`: `sudo docker compose ps` shows `mommy` as
   `healthy`. `free -h` shows the memory.

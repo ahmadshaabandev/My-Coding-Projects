@@ -1976,6 +1976,59 @@ h4 {
   color: var(--danger);
 }
 
+/* A copy of the family list (Settings and the setup): the file buttons and what a copy
+   holds, shown before it is used. */
+.copy-row > .btn {
+  flex: 1 1 150px;
+}
+
+.copy-pick {
+  margin: 0 0 14px;
+}
+
+.copy-pick .hint {
+  margin-bottom: 4px;
+}
+
+.copy-pick .copy-file {
+  padding-inline: 6px;
+}
+
+.copy-box:not(.confirm-box) {
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  border: 2px solid var(--notice-border);
+  border-radius: var(--radius-small);
+  background: var(--notice-bg);
+}
+
+.copy-box:focus {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.copy-title,
+.copy-count {
+  margin: 0 0 6px;
+  font-weight: 700;
+}
+
+.copy-children {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.copy-children li {
+  padding: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.copy-avatar {
+  font-size: 1.3rem;
+  vertical-align: middle;
+}
+
 /* A small form opened in place: the note of "Not yet", a goal, a surprise, a correction. */
 .sub-form {
   margin: 10px 0 4px;

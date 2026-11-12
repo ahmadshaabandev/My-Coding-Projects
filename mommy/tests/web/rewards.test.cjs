@@ -8,8 +8,9 @@
  * check result); star arithmetic and the ledger (cap with a carry entry); goals;
  * surprises; removal cascades; migration from v1; validation and repair of corrupt
  * documents (a fixed point); PIN hashing (PBKDF2, checked against node:crypto) and the
- * backoff; and a seeded random sequence of more than 3000 operations over 3 children
- * with the invariants checked after every operation.
+ * backoff; a seeded random sequence of more than 3000 operations over 3 children with
+ * the invariants checked after every operation; and a copy of the family list (the
+ * round trip, no PIN or consent in it, every refusal, prototype keys, repairs).
  *
  * Run:  node --test tests/web/rewards.test.cjs     or     node tests/web/rewards.test.cjs
  */
@@ -1813,4 +1814,319 @@ test('validateDoc: repair notes never read inherited values', () => {
   assert.equal(v.ok, true);
   for (const r of v.repaired) assert.match(r, /: unknown field, dropped$/, r);
   assert.equal(v.repaired.length, 3);
+});
+
+// ---------------------------------------------------------------------------
+// A copy of the family list ("Save a copy", "Load a copy")
+// ---------------------------------------------------------------------------
+
+/** richDoc with a PIN, a pause in progress, a PIN reset and both consents (this device's). */
+async function deviceDoc() {
+  const r = richDoc();
+  let d = R.updateParent(r.d, { consent: true, aiConsent: true, uiLang: 'fr' }, at(30));
+  d = await R.setPin(d, '2468', at(31));
+  d = R.applyPinCheck(d, { match: false }, at(32)).doc;
+  return Object.assign(r, { d });
+}
+
+const copyText = (copy) => JSON.stringify(copy);
+const familyPart = (d) => {
+  const f = Object.assign({}, d);
+  delete f.parent;
+  return f;
+};
+
+test('family copy: the format, and the round trip (save, load, use) keeps the whole family', async () => {
+  const { d } = await deviceDoc();
+  const frozen = deepFreeze(JSON.parse(JSON.stringify(d)));
+  const copy = R.makeFamilyCopy(frozen, at(40));
+  assert.deepEqual(Object.keys(copy), ['app', 'kind', 'version', 'savedAt', 'family']);
+  assert.deepEqual([copy.app, copy.kind, copy.version, copy.savedAt], ['mommy', 'family-copy', 1, at(40)]);
+  assert.deepEqual(R.FAMILY_COPY, { app: 'mommy', kind: 'family-copy', version: 1, maxBytes: 2 * 1024 * 1024 });
+  assert.ok(Object.isFrozen(R.FAMILY_COPY));
+  assert.deepEqual(copy.family, familyPart(d));
+  const text = copyText(copy);
+  assert.match(text, /^\{"app":"mommy","kind":"family-copy","version":1,"savedAt":"/);
+  const r = R.readFamilyCopy(text);
+  assert.deepEqual([r.ok, r.error, r.savedAt, r.repairs], [true, null, at(40), []]);
+  assert.deepEqual(r.family, familyPart(d));
+  // Another device (a new address): its own parent, the family of the copy.
+  let other = R.updateParent(R.emptyDoc(at(50), { uiLang: 'ar' }), { consent: true }, at(51));
+  other = deepFreeze(await R.setPin(other, '1357', at(52)));
+  const used = R.useFamilyCopy(other, deepFreeze(r.family), at(60));
+  assertClean(used);
+  assert.deepEqual(used.parent, other.parent, 'the PIN, the backoff, the consents and the language of this device stay');
+  assert.deepEqual(familyPart(used), Object.assign(familyPart(d), { updatedAt: at(60) }));
+  // Saving the device that used it gives the same family again.
+  assert.deepEqual(R.makeFamilyCopy(used, at(61)).family, familyPart(used));
+  // makeFamilyCopy checks its arguments.
+  throwsCode(() => R.makeFamilyCopy(d, 'now'), 'bad_input', 'now');
+  for (const bad of [null, {}, { version: 1 }, []]) throwsCode(() => R.makeFamilyCopy(bad, at(40)), 'bad_input', 'doc');
+  // useFamilyCopy refuses what is not a family, and changes nothing.
+  for (const bad of [null, 'x', [], { version: 3 }, { version: '2' }]) throwsCode(() => R.useFamilyCopy(other, bad, at(60)), 'bad_input', 'family');
+  throwsCode(() => R.useFamilyCopy(other, r.family, 'later'), 'bad_input', 'now');
+});
+
+test('family copy: the PIN record, its backoff and reset, the consents and the parent\'s language are left out', async () => {
+  const { d } = await deviceDoc();
+  const reset = R.applyPinCheck(R.setPinRecord(d, await R.hashPin('9753'), at(41), { reset: true }), { match: false }, at(41)).doc;
+  for (const doc of [d, reset]) {
+    assert.ok(doc.parent.pin && doc.parent.consentAt && doc.parent.aiConsentAt && doc.parent.aiConsentVersion && doc.parent.failedAttempts);
+    const copy = R.makeFamilyCopy(doc, at(42));
+    assert.equal('parent' in copy.family, false);
+    const text = copyText(copy);
+    for (const secret of [doc.parent.pin.salt, doc.parent.pin.hash]) assert.ok(!text.includes(secret), 'no salt or hash in the file');
+    for (const word of ['"pin"', 'salt', 'hash', 'iterations', 'consent', 'Consent', 'failedAttempts', 'lockedUntil', 'pinResetAt', 'uiLang', '"parent"']) {
+      assert.ok(!text.includes(word), `${word} is not in the file`);
+    }
+  }
+  assert.ok(reset.parent.pinResetAt);
+  // A file that holds a parent anyway (written by hand) never gives it to this device.
+  const copy = R.makeFamilyCopy(d, at(42));
+  copy.family.parent = d.parent;
+  const r = R.readFamilyCopy(copyText(copy));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.repairs, ['family.parent: never read from a copy, dropped']);
+  assert.equal('parent' in r.family, false);
+  const fresh = R.emptyDoc(at(50));
+  const used = R.useFamilyCopy(fresh, Object.assign({}, r.family, { parent: d.parent }), at(51));
+  assert.deepEqual(used.parent, fresh.parent, 'useFamilyCopy takes no parent from the family either');
+});
+
+test('family copy: every refusal (too big, not a copy, newer version, damaged), and readFamilyCopy never throws', () => {
+  const { d } = richDoc();
+  const copy = R.makeFamilyCopy(d, at(40));
+  const text = copyText(copy);
+  const MAX = R.FAMILY_COPY.maxBytes;
+  const with_ = (patch) => copyText(Object.assign({}, copy, patch));
+  const famWith = (patch) => with_({ family: Object.assign({}, copy.family, patch) });
+  const refuse = (input, error, label) => {
+    const r = R.readFamilyCopy(input);
+    assert.deepEqual(r, { ok: false, error, family: null, savedAt: null, repairs: [] }, label);
+  };
+  // Size: 2 MB of UTF-8 is the limit (JSON allows white space at the end).
+  const pad = (s, bytes) => s + ' '.repeat(bytes - Buffer.byteLength(s, 'utf8'));
+  assert.equal(R.readFamilyCopy(pad(text, MAX)).ok, true, 'exactly 2 MB is read');
+  refuse(pad(text, MAX + 1), 'too_big', 'one byte more');
+  // Bytes are counted, not characters: 1.1 million Arabic letters are 2.2 MB.
+  const arabic = text.slice(0, -1) + ',"pad":"' + 'ب'.repeat(1100000) + '"}';
+  assert.ok(arabic.length < MAX && Buffer.byteLength(arabic, 'utf8') > MAX);
+  refuse(arabic, 'too_big', 'Arabic letters');
+  const emoji = text.slice(0, -1) + ',"pad":"' + '⭐'.repeat(700000) + '"}';
+  assert.ok(emoji.length < MAX && Buffer.byteLength(emoji, 'utf8') > MAX);
+  refuse(emoji, 'too_big', 'three-byte characters');
+  const astral = text.slice(0, -1) + ',"pad":"' + '🐱'.repeat(530000) + '"}';
+  assert.ok(astral.length > MAX / 2 && Buffer.byteLength(astral, 'utf8') > MAX && astral.length < MAX);
+  refuse(astral, 'too_big', 'four-byte characters');
+  // Not a copy: another file, other JSON, another app or kind (the stored document itself too).
+  for (const [i, x] of [undefined, null, 42, {}, '', 'hello', '\x89PNG\r\n\x1a\n', '<html></html>', '[]', '[1,2]', '"text"', '12', 'null', '{}',
+    JSON.stringify(d), with_({ app: 'other' }), with_({ app: 'Mommy' }), with_({ kind: 'family' }), with_({ kind: undefined }),
+    copyText({ kind: 'family-copy', version: 1, family: copy.family })].entries()) refuse(x, 'not_copy', `not a copy ${i}`);
+  // A newer version: of the copy, or of the family document in it.
+  refuse(with_({ version: 2 }), 'newer_version', 'copy version 2');
+  refuse(with_({ version: 17 }), 'newer_version', 'copy version 17');
+  refuse(famWith({ version: 3 }), 'newer_version', 'family version 3');
+  // Damaged: cut short, another version that is not a newer one, no family, a family that
+  // validateDoc rejects.
+  for (const cut of [14, 20, 50, 200, text.length - 1]) refuse(text.slice(0, cut), 'damaged', `cut at ${cut}`);
+  refuse(text.slice(0, 10), 'not_copy', 'too short to tell');
+  refuse('  \n' + JSON.stringify(copy, null, 2).slice(0, 300), 'damaged', 'a pretty-printed copy cut short');
+  for (const [i, v] of [0, -1, 1.5, '1', null, undefined, true].entries()) refuse(with_({ version: v }), 'damaged', `version ${i}`);
+  for (const [i, f] of [undefined, null, 'x', 1, [], [copy.family]].entries()) refuse(with_({ family: f }), 'damaged', `family ${i}`);
+  for (const [i, v] of [1, 0, '2', null, 2.5].entries()) refuse(famWith({ version: v }), 'damaged', `family version ${i}`);
+  refuse(copyText(Object.assign({}, copy, { family: (() => { const f = Object.assign({}, copy.family); delete f.version; return f; })() })), 'damaged', 'no family version');
+  // Never throws, whatever it is given.
+  const proxy = new Proxy({}, { get() { throw new Error('boom'); } });
+  for (const x of [proxy, Symbol('s'), () => 1, new String(text)]) assert.equal(R.readFamilyCopy(x).ok, false);
+  // A byte-order mark is allowed; white space around the JSON too.
+  assert.equal(R.readFamilyCopy('﻿' + text).ok, true);
+  assert.equal(R.readFamilyCopy('\n ' + JSON.stringify(copy, null, 2) + '\n').ok, true);
+});
+
+test('family copy: "__proto__" and "constructor" keys anywhere pollute nothing and stay data', () => {
+  const { d, a } = richDoc();
+  const copy = R.makeFamilyCopy(d, at(40));
+  // JSON.parse makes an own "__proto__" property; here it is written into the text.
+  const evil = '{"polluted":"yes","toString":"no","hasOwnProperty":"no"}';
+  let text = copyText(copy);
+  text = text.replace(/^\{/, `{"__proto__":${evil},"constructor":{"prototype":${evil}},`);
+  text = text.replace('"family":{', `"family":{"__proto__":${evil},"constructor":${evil},`);
+  text = text.replace('"children":[{', `"children":[{"__proto__":${evil},`);
+  text = text.replace('"jar":{', `"jar":{"__proto__":{"balance":500},"constructor":{"balance":400},`);
+  text = text.replace('"tasks":[{', `"tasks":[{"__proto__":${evil},`);
+  const before = Object.getOwnPropertyNames(Object.prototype).sort();
+  const r = R.readFamilyCopy(text);
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(Object.getOwnPropertyNames(Object.prototype).sort(), before);
+  assert.equal({}.polluted, undefined);
+  assert.equal(typeof {}.toString, 'function');
+  const objects = [r, r.family, r.family.jar, ...r.family.children, ...r.family.tasks, ...Object.values(r.family.jar)];
+  for (const o of objects) {
+    assert.equal(Object.getPrototypeOf(o), Object.prototype);
+    assert.equal(o.polluted, undefined);
+  }
+  assert.deepEqual(Object.keys(r.family.jar).sort(), d.children.map((c) => c.id).sort(), 'no jar of a child that does not exist');
+  assert.deepEqual(r.family.jar, d.jar);
+  for (const re of [/^copy\.__proto__: unknown field, dropped$/, /^copy\.constructor: unknown field, dropped$/, /^family\.__proto__: unknown field, dropped$/,
+    /^family\.constructor: unknown field, dropped$/, /^children\[0\]\.__proto__: unknown field, dropped$/, /^jar\.__proto__: its child does not exist, dropped$/,
+    /^jar\.constructor: its child does not exist, dropped$/, /^tasks\[0\]\.__proto__: unknown field, dropped$/]) {
+    assert.ok(r.repairs.some((x) => re.test(x)), `${re} in ${JSON.stringify(r.repairs)}`);
+  }
+  // A child whose id is "constructor" is an ordinary child (its jar is its own).
+  const x = JSON.parse(JSON.stringify(copy));
+  x.family.children[0].id = 'constructor';
+  x.family.tasks = x.family.tasks.map((t) => (t.childId === a ? Object.assign(t, { childId: 'constructor' }) : t));
+  x.family.jar = { constructor: x.family.jar[a], [d.children[1].id]: x.family.jar[d.children[1].id] };
+  x.family.surprises = x.family.surprises.map((s) => Object.assign(s, { childId: 'constructor' }));
+  x.family.activeChildId = 'constructor';
+  const c = R.readFamilyCopy(JSON.stringify(x));
+  assert.deepEqual([c.ok, c.repairs], [true, []]);
+  assert.equal(c.family.jar.constructor.balance, d.jar[a].balance);
+  assert.equal(R.familySummary(c.family).children[0].stars, d.jar[a].balance);
+  // A child with the id "__proto__" is dropped like any invalid id (and its tasks with it).
+  const y = JSON.parse(JSON.stringify(copy));
+  y.family.children[0].id = '__proto__';
+  const p = R.readFamilyCopy(JSON.stringify(y));
+  assert.equal(p.ok, true);
+  assert.deepEqual(p.family.children.map((k) => k.id), [d.children[1].id]);
+  assert.ok(p.family.tasks.every((t) => t.childId === d.children[1].id));
+  assert.equal({}.polluted, undefined);
+});
+
+test('family copy: a loaded copy is checked by validateDoc exactly like stored data, and its repairs are reported', () => {
+  const { d, a, t1 } = richDoc();
+  const copy = JSON.parse(copyText(R.makeFamilyCopy(d, at(40))));
+  const f = copy.family;
+  f.children[0].nickname = '  ' + 'N'.repeat(40) + '  ';
+  f.children[0].shoeSize = 31;
+  f.tasks.find((t) => t.id === t1).stars = 9;
+  f.tasks.push({ id: 'orphan', childId: 'nobody', kind: 'recite', text: 'x' });
+  f.jar[a].balance = 999;
+  f.extra = true;
+  copy.note = 'hand-made';
+  copy.savedAt = 'yesterday';
+  const r = R.readFamilyCopy(JSON.stringify(copy));
+  assert.equal(r.ok, true);
+  assert.equal(r.savedAt, null);
+  // The same repairs as validateDoc on the family with an empty parent.
+  const stored = Object.assign({}, f, { parent: R.emptyDoc('1970-01-01T00:00:00.000Z').parent });
+  delete stored.extra;
+  const v = repairs(stored);
+  assert.deepEqual(r.family, familyPart(v.doc));
+  assert.deepEqual(r.repairs, ['copy.note: unknown field, dropped', 'copy.savedAt: invalid time, cleared', 'family.extra: unknown field, dropped'].concat(v.repaired));
+  for (const re of [/^children\[0\]\.nickname: text cleaned or shortened$/, /^children\[0\]\.shoeSize: unknown field, dropped$/, /^tasks\[\d+\]\.stars: /, /^tasks\[\d+\]: its child does not exist, dropped$/, /^jar\./]) {
+    assert.ok(r.repairs.some((x) => re.test(x)), `${re} in ${JSON.stringify(r.repairs)}`);
+  }
+  assert.equal(r.family.children[0].nickname, 'N'.repeat(24));
+  assert.equal(r.family.jar[a].balance, d.jar[a].balance, 'the balance is the sum of the ledger, as in stored data');
+  // The repaired family is canonical: used on a device, nothing more is repaired.
+  assertClean(R.useFamilyCopy(R.emptyDoc(at(50)), r.family, at(51)));
+  // A missing savedAt is null without a repair; the rest of a copy is enough.
+  delete copy.savedAt;
+  delete copy.note;
+  assert.deepEqual(R.readFamilyCopy(JSON.stringify(copy)).repairs.slice(0, 1), ['family.extra: unknown field, dropped']);
+});
+
+test('family copy: a family without the lists of a copy, or whose children all had to be dropped, is damaged; a family with no child is refused as empty (B-R3)', () => {
+  const { d } = richDoc();
+  const copy = R.makeFamilyCopy(d, at(40));
+  const refuse = (family, error, label) => {
+    const r = R.readFamilyCopy(JSON.stringify(Object.assign({}, copy, { family })));
+    assert.deepEqual(r, { ok: false, error, family: null, savedAt: null, repairs: [] }, label);
+  };
+  // validateDoc would read each of these as an empty list, and the copy as a family with
+  // no child: "Replace" would then empty this device's list.
+  refuse({ version: 2 }, 'damaged', 'no lists at all');
+  refuse(Object.assign({}, copy.family, { children: 'oops', tasks: {}, jar: [] }), 'damaged', 'lists of the wrong type');
+  for (const k of ['children', 'tasks', 'surprises', 'jar']) {
+    const f = Object.assign({}, copy.family);
+    delete f[k];
+    refuse(f, 'damaged', `no ${k}`);
+    refuse(Object.assign({}, copy.family, { [k]: k === 'jar' ? [] : {} }), 'damaged', `${k} of the wrong type`);
+    refuse(Object.assign({}, copy.family, { [k]: null }), 'damaged', `${k} null`);
+  }
+  // Children that are all invalid (dropped by validateDoc), however deep.
+  let deep = [];
+  for (let i = 0; i < 1000; i++) deep = [deep];
+  refuse(Object.assign({}, copy.family, { children: [deep] }), 'damaged', 'a nested array as the only child');
+  refuse(Object.assign({}, copy.family, { children: [1, 'x', null, { id: '__proto__' }] }), 'damaged', 'no valid child');
+  const deepText = '{"app":"mommy","kind":"family-copy","version":1,"family":{"version":2,"children":' + '['.repeat(200000) + ']'.repeat(200000) + ',"tasks":[],"jar":{},"surprises":[]}}';
+  assert.equal(R.readFamilyCopy(deepText).error, 'damaged', 'a 200,000-deep array (never throws)');
+  // A copy of a family with no child (possible: every child removed) holds nothing to use.
+  const none = R.makeFamilyCopy(R.emptyDoc(at(1)), at(2));
+  assert.deepEqual(R.readFamilyCopy(JSON.stringify(none)), { ok: false, error: 'empty', family: null, savedAt: null, repairs: [] });
+  // One valid child among invalid ones is a repaired copy, as before.
+  const one = R.readFamilyCopy(JSON.stringify(Object.assign({}, copy, { family: Object.assign({}, copy.family, { children: [1].concat(copy.family.children.slice(0, 1)) }) })));
+  assert.equal(one.ok, true);
+  assert.deepEqual(one.family.children.map((c) => c.id), [d.children[0].id]);
+  assert.ok(one.repairs.length > 0);
+});
+
+test('family copy: a copy that grows past 2 MB once checked is refused as damaged (the file is not too big), so a loaded copy can always be saved again (B-R2)', () => {
+  const { d } = richDoc();
+  const MAX = R.FAMILY_COPY.maxBytes;
+  const copy = JSON.parse(JSON.stringify(R.makeFamilyCopy(d, at(40))));
+  // Minimal children, which validateDoc completes (age group, language, Quran range...).
+  const small = { app: 'mommy', kind: 'family-copy', version: 1, family: { version: 2, children: [], tasks: [], jar: {}, surprises: [] } };
+  for (let i = 0; i < 20000; i++) small.family.children.push({ id: 'c' + i, avatar: '🐱' });
+  const text = JSON.stringify(small);
+  assert.ok(Buffer.byteLength(text, 'utf8') < MAX, 'the file itself is under 2 MB');
+  const started = Date.now();
+  assert.deepEqual(R.readFamilyCopy(text), { ok: false, error: 'damaged', family: null, savedAt: null, repairs: [] });
+  assert.ok(Date.now() - started < 5000, 'refused in reasonable time');
+  // Just under the limit once checked: read, used, and saved again within 2 MB.
+  const base = Buffer.byteLength(JSON.stringify(Object.assign({}, copy, { savedAt: '1970-01-01T00:00:00.000Z' })), 'utf8');
+  const near = JSON.parse(JSON.stringify(copy));
+  near.family.tasks[0].text = near.family.tasks[0].text + ' ' + 'a'.repeat(Math.min(19000, MAX - base - 100));
+  const r = R.readFamilyCopy(JSON.stringify(near));
+  assert.equal(r.ok, true, r.error);
+  const used = R.useFamilyCopy(R.emptyDoc(at(50)), r.family, at(51));
+  assert.ok(Buffer.byteLength(JSON.stringify(R.makeFamilyCopy(used, at(52))), 'utf8') <= MAX, 'saved again within 2 MB');
+  // Every copy that is read fits in a copy again, whatever validateDoc added; one that
+  // would not (12,000 minimal children: 600 KB as a file, over 2 MB once completed) is
+  // refused. A copy made here never grows when it is checked: one that does was changed.
+  for (const [n, ok] of [[1000, true], [9000, true], [12000, false]]) {
+    const many = JSON.parse(JSON.stringify(copy));
+    for (let i = 0; i < n; i++) many.family.children.push({ id: 'k' + i, nickname: 'K' + i, avatar: '🦊' });
+    const m = R.readFamilyCopy(JSON.stringify(many));
+    assert.equal(m.ok, ok, `${n} children`);
+    if (!ok) {
+      assert.equal(m.error, 'damaged', `${n} children`);
+      continue;
+    }
+    const again = JSON.stringify(R.makeFamilyCopy(R.useFamilyCopy(R.emptyDoc(at(50)), m.family, at(51)), at(52)));
+    assert.ok(Buffer.byteLength(again, 'utf8') <= MAX, `${n} children: saved again within 2 MB`);
+    assert.equal(R.readFamilyCopy(again).ok, true, `${n} children: read again`);
+  }
+});
+
+test('family copy: a file that is no JSON object is "not a copy" before its size is counted, so a photo chosen by mistake is never "too big" (B-R4)', () => {
+  const MAX = R.FAMILY_COPY.maxBytes;
+  // A JPEG of 1.5 MB read as UTF-8: each invalid byte is a U+FFFD of 3 bytes.
+  const bytes = Buffer.alloc(1536 * 1024);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 7919 + 13) & 0xff;
+  bytes[0] = 0xff;
+  bytes[1] = 0xd8;
+  const photo = new TextDecoder('utf-8').decode(bytes);
+  assert.ok(Buffer.byteLength(photo, 'utf8') > MAX, 'decoded, it counts more than 2 MB');
+  assert.equal(R.readFamilyCopy(photo).error, 'not_copy');
+  for (const start of ['\x89PNG\r\n', 'GIF89a', '%PDF-1.7', 'PK\x03\x04', '[', '  \n"', '\ufeff ['] ) {
+    assert.equal(R.readFamilyCopy(start + 'x'.repeat(MAX + 10)).error, 'not_copy', JSON.stringify(start.slice(0, 6)));
+  }
+  // A text that starts like JSON is measured as before.
+  assert.equal(R.readFamilyCopy('{' + ' '.repeat(MAX + 10) + '}').error, 'too_big');
+  assert.equal(R.readFamilyCopy('\ufeff \n {' + 'x'.repeat(MAX)).error, 'too_big');
+});
+
+test('family copy: familySummary counts the children, their tasks (not archived) and the stars in the jar', () => {
+  const { d, a, b, t2 } = richDoc();
+  const archived = R.archiveTask(d, t2, at(30));
+  const s = R.familySummary(R.makeFamilyCopy(archived, at(40)).family);
+  assert.deepEqual(s.children.map((c) => [c.id, c.nickname, c.avatar]), archived.children.map((c) => [c.id, c.nickname, c.avatar]));
+  const own = (id) => archived.tasks.filter((t) => t.childId === id && t.status !== 'archived').length;
+  assert.deepEqual(s.children.map((c) => [c.tasks, c.stars]), [[own(a), archived.jar[a].balance], [own(b), archived.jar[b].balance]]);
+  assert.equal(s.tasks, archived.tasks.length - 1);
+  assert.equal(s.stars, archived.jar[a].balance + archived.jar[b].balance);
+  assert.deepEqual(R.familySummary(null), { children: [], tasks: 0, stars: 0 });
+  assert.deepEqual(R.familySummary({ children: [{ id: 'x', nickname: 'X', avatar: '🐱' }] }).children, [{ id: 'x', nickname: 'X', avatar: '🐱', tasks: 0, stars: 0 }]);
 });
