@@ -179,7 +179,7 @@ test('emptyDoc: shape, now is required, and validateDoc repairs nothing', () => 
   const d = R.emptyDoc(at(0), { uiLang: 'fr' });
   assert.deepEqual(d, {
     version: 2, createdAt: at(0), updatedAt: at(0),
-    parent: { pin: null, failedAttempts: 0, lockedUntil: null, consentAt: null, aiConsentAt: null, uiLang: 'fr' },
+    parent: { pin: null, failedAttempts: 0, lockedUntil: null, pinResetAt: null, consentAt: null, aiConsentAt: null, uiLang: 'fr' },
     children: [], activeChildId: null, tasks: [], jar: {}, surprises: [],
   });
   assertClean(d);
@@ -902,7 +902,7 @@ test('migrateV1: the v1 profile becomes a v2 document with one child', () => {
   const d = R.migrateV1(v1, at(0), { newId: () => 'kid1' });
   assert.deepEqual(d, {
     version: 2, createdAt: at(0), updatedAt: at(0),
-    parent: { pin: null, failedAttempts: 0, lockedUntil: null, consentAt: null, aiConsentAt: null, uiLang: 'fr' },
+    parent: { pin: null, failedAttempts: 0, lockedUntil: null, pinResetAt: null, consentAt: null, aiConsentAt: null, uiLang: 'fr' },
     children: [{ id: 'kid1', nickname: 'Lina', age: '10-13', lang: 'fr', avatar: R.AVATARS[0], createdAt: at(0), quran: { surah: 2, from: 255, to: 257, juzAmma: false } }],
     activeChildId: 'kid1', tasks: [], jar: { kid1: { balance: 0, earned: 0, goals: [], ledger: [] } }, surprises: [],
   });
@@ -1608,4 +1608,100 @@ test('random sequence: 3500 seeded operations over 3 children keep every invaria
   assert.ok(stats['error:bad_state'] >= 50 && stats['error:bad_input'] >= 20 && stats['error:insufficient_stars'] >= 5, JSON.stringify(stats));
   assert.ok(doc.jar[permanent].ledger[0].reason === 'carry', 'the ledger cap was reached');
   assert.equal(JSON.stringify(doc).includes(SECRET), false, 'no transcript or feedback was stored');
+});
+
+// ---------------------------------------------------------------------------
+// Review fixes: the PIN check apart from the document (RL-3), "Forgot PIN" that never
+// leaves the family without a PIN (UX-01, RL-4), Quran results on school tasks (RL-8)
+// and repair notes of inherited keys (RL-9).
+// ---------------------------------------------------------------------------
+
+test('PIN: checkPin hashes without the document; applyPinCheck counts on the document as it is now', async () => {
+  const { d } = family();
+  const p = deepFreeze(await R.setPin(d, '2468', at(10)));
+  const right = await R.checkPin(p, '2468', at(11));
+  const wrong = await R.checkPin(p, '1357', at(11));
+  assert.deepEqual([right.locked, right.match, wrong.locked, wrong.match], [false, true, false, false]);
+  assert.equal(right.hash, p.parent.pin.hash);
+  // Meanwhile another tab added a child: applying the outcome keeps it.
+  const other = deepFreeze(R.addChild(p, { nickname: 'Other tab' }, at(12), { newId: () => 'tab2' }).doc);
+  const ok = R.applyPinCheck(other, right, at(13));
+  assert.equal(ok.ok, true);
+  assert.ok(ok.doc.children.some((c) => c.nickname === 'Other tab'));
+  // Three tabs at 4 failures each fail at the same moment: every failure counts.
+  let doc = p;
+  for (let i = 0; i < 4; i++) doc = R.applyPinCheck(doc, wrong, at(14)).doc;
+  const checks = await Promise.all([1, 2, 3].map(() => R.checkPin(doc, '0000', at(15))));
+  for (const c of checks) doc = R.applyPinCheck(doc, c, at(15)).doc;
+  assert.equal(doc.parent.failedAttempts, 7);
+  assert.equal(R.pinStatus(doc, at(15)).retryInMs, 120000, 'the 7th failure locks for 2 min');
+  // While locked, checkPin answers at once and never hashes.
+  const locked = await R.checkPin(doc, '2468', at(16));
+  assert.deepEqual([locked.locked, typeof locked.retryInMs], [true, 'number']);
+  // A PIN changed since the check: the outcome does not apply.
+  const changed = R.setPinRecord(p, await R.hashPin('9999'), at(17));
+  const stale = R.applyPinCheck(changed, right, at(18));
+  assert.deepEqual([stale.ok, stale.code], [false, 'stale']);
+  throwsCode(() => R.applyPinCheck(p, { match: 'yes' }, at(18)), 'bad_input', 'check');
+  assertClean(ok.doc);
+  assertClean(doc);
+});
+
+test('PIN: a forgotten PIN is replaced in one step, marked, and gate answers count', async () => {
+  const { d } = family();
+  const p = deepFreeze(await R.setPin(d, '2468', at(10)));
+  const rec = await R.hashPin('1111');
+  // Until the new PIN is set, the old one stays (no clearPin before it).
+  const reset = R.setPinRecord(p, rec, at(20), { reset: true });
+  assert.deepEqual([reset.parent.pinResetAt, reset.parent.failedAttempts, reset.parent.lockedUntil], [at(20), 0, null]);
+  assert.equal((await R.verifyPin(reset, '1111', at(21))).ok, true);
+  assert.equal((await R.verifyPin(reset, '2468', at(21))).ok, false);
+  assertClean(reset);
+  const changed = R.setPinRecord(reset, await R.hashPin('2222'), at(22));
+  assert.equal(changed.parent.pinResetAt, at(20), 'a change in Settings keeps the notice');
+  assert.equal(R.dismissPinReset(changed, at(23)).parent.pinResetAt, null);
+  for (const bad of [null, {}, { salt: rec.salt, hash: rec.hash }, { ...rec, extra: 1 }, { ...rec, hash: 'c2hvcnQ=' }]) {
+    throwsCode(() => R.setPinRecord(p, bad, at(24)), 'bad_input', 'record');
+  }
+  // Wrong gate answers use the same backoff, with or without a PIN (a migrated family
+  // answers the gate before its first PIN); validateDoc keeps that backoff.
+  for (const start of [p, d]) {
+    let doc = start;
+    let r;
+    for (let i = 0; i < 5; i++) r = R.applyPinCheck(doc, { match: false }, at(30)), doc = r.doc;
+    assert.deepEqual([r.code, r.retryInMs, R.pinStatus(doc, at(31)).locked], ['wrong_pin', 30000, true]);
+    assertClean(doc);
+  }
+  // A document saved before pinResetAt existed reads as null, with no repair.
+  const old = JSON.parse(JSON.stringify(p));
+  delete old.parent.pinResetAt;
+  const v = R.validateDoc(old);
+  assert.deepEqual([v.ok, v.repaired, v.doc.parent.pinResetAt], [true, [], null]);
+  // An invalid PIN record still takes its backoff along.
+  const broken = JSON.parse(JSON.stringify(p));
+  broken.parent.pin = { salt: 'x', hash: 'y', iterations: 1 };
+  broken.parent.failedAttempts = 3;
+  assert.deepEqual([R.validateDoc(broken).doc.parent.failedAttempts, R.validateDoc(broken).doc.parent.pin], [0, null]);
+});
+
+test('pass rules: a Quran check result never counts for a recite or dictation task', () => {
+  const { d, a } = family();
+  for (const kind of ['recite', 'dictation']) {
+    const { doc, task } = R.createTask(d, { childId: a, kind, text: TEXT_AR, lang: 'ar' }, at(1), { newId: ids('t' + kind) });
+    const quranBody = { first_error: null, n_errors: 0, n_expected: 4, word_accuracy: 1, verdict: 'correct' };
+    assert.equal(R.passes(task, quranBody), false, kind);
+    assert.equal(R.readResult(task, quranBody), null, kind);
+    throwsCode(() => R.recordAttempt(doc, task.id, quranBody, at(2)), 'bad_input', 'result');
+    assert.equal(R.passes(task, { tolerated: [], n_errors: 0, n_expected: 4, word_accuracy: 1 }), false);
+  }
+});
+
+test('validateDoc: repair notes never read inherited values', () => {
+  const { d } = family();
+  const x = JSON.parse(JSON.stringify(d));
+  x.parent = JSON.parse(JSON.stringify(x.parent).replace(/^\{/, '{"__proto__":{"a":1},"toString":1,"constructor":2,'));
+  const v = R.validateDoc(x);
+  assert.equal(v.ok, true);
+  for (const r of v.repaired) assert.match(r, /: unknown field, dropped$/, r);
+  assert.equal(v.repaired.length, 3);
 });

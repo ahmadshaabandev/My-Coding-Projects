@@ -8,6 +8,12 @@
  * behind the PIN). The task runner opens app.js's recite, dictation and Quran screens
  * preloaded (MommyApp.startTask) and records every check result (recordAttempt).
  *
+ * The parent area has five sections: To review (the queue across children: Confirm,
+ * "Not yet: try again" with a note for the child), Tasks (create, edit, archive, and the
+ * details of a task with "Confirm anyway"), Rewards (per child: the jar and its history,
+ * task rewards to give, goals, surprises, corrections), Children, and Settings (consent,
+ * change the PIN, the parent's language, delete all data on this device).
+ *
  * Handshake (independent of the script order): this file sets window.MommyFamily =
  * {attach}; app.js calls attach(MommyApp) when it starts, and if app.js already ran,
  * this file attaches at once. attach() runs once.
@@ -38,6 +44,19 @@
 
   const STRINGS = {
     en: {
+      fam_task_word_by_word: 'The task is now recited word by word.',
+      fam_make_word_by_word: 'Recite word by word',
+      fam_detail_meaning_quran: 'This task is by meaning, but its text has words of the Quran, which are recited word by word only: the child cannot do it as it is.',
+      fam_keep: 'Keep it',
+      fam_goal_remove_q: 'Remove this goal? The stars in the jar stay as they are.',
+      fam_archive_q: 'Archive this task? It leaves the lists, and it cannot be brought back.',
+      fam_improve_many: '{n} more words right than last time!',
+      fam_improve_few: '{n} more words right than last time!',
+      fam_improve_two: '{n} more words right than last time!',
+      fam_review_paper: 'Please look at the paper before confirming.',
+      fam_detail_anyway_dictation: 'The app has not passed this dictation. If you have checked your child’s paper yourself and it is right, you can confirm it anyway.',
+      fam_err_quran_meaning_diff: 'This text has words of the Quran, recited word by word only: “Word by word” is now chosen. Some of them are not as in the mushaf (see the note under the text). Please use the mushaf text before saving.',
+      fam_err_quran_diff_recite: 'Some words of the Quran in this text are not as in the mushaf: see the note under the text. Please use the mushaf text before saving.',
       fam_setup_lead: 'A grown-up sets up the app once, for the whole family.',
       fam_setup_title: 'Family setup',
       fam_parent_lang: 'Language for the grown-ups',
@@ -108,7 +127,7 @@
       fam_pin_label: 'PIN',
       fam_pin_create_title: 'Create the parent PIN',
       fam_pin_create_intro: 'Please choose a PIN of 4 to 6 digits and type it twice. It is a child lock: it keeps the parent area for the grown-ups.',
-      fam_pin_reset_intro: 'The PIN was removed and all the data is kept. Please choose a new PIN and type it twice.',
+      fam_pin_reset_intro: 'All the data is kept. Please choose a new PIN and type it twice; the old PIN works until the new one is saved.',
       fam_unlock: 'Open',
       fam_confirm: 'Confirm',
       fam_create: 'Create',
@@ -130,6 +149,16 @@
       fam_n7: 'seven',
       fam_n8: 'eight',
       fam_n9: 'nine',
+      fam_t2: 'twenty',
+      fam_t3: 'thirty',
+      fam_t4: 'forty',
+      fam_t5: 'fifty',
+      fam_t6: 'sixty',
+      fam_num_tu: '{t}-{u}',
+      fam_gate_first_intro: 'Before the first parent PIN, please answer this question for grown-ups.',
+      fam_pin_reset_notice: 'The PIN was reset on {date}. If it was not you, please choose a new PIN in Settings.',
+      fam_dismiss: 'Hide this',
+      fam_parent_autolock: 'It locks after 3 minutes without use, and when the app is left.',
       fam_parent_title: 'Parent area',
       fam_parent_help: 'Praise and surprises keep children wanting to learn; rewards work best for effort the child can see.',
       fam_parent_sections: 'Sections of the parent area',
@@ -138,7 +167,6 @@
       fam_sec_rewards: 'Rewards',
       fam_sec_children: 'Children',
       fam_sec_settings: 'Settings',
-      fam_placeholder: 'This section is being built.',
       fam_parent_close: 'Close the parent area',
       fam_privacy_line: 'Everything here stays on this device.',
       fam_tasks_of: 'Child',
@@ -151,6 +179,7 @@
       fam_archive: 'Archive',
       fam_task_archived: 'The task was archived.',
       fam_task_saved: 'The task was saved.',
+      fam_task_saved_quran: 'The task was saved. Its text has words of the Quran: they are checked word by word, and in a dictation a grown-up reads them aloud.',
       fam_status_assigned: 'To do',
       fam_status_ready: 'Waiting for review',
       fam_status_done: 'Done',
@@ -170,12 +199,14 @@
       fam_tf_reward_emoji: 'Picture of the reward',
       fam_save: 'Save',
       fam_err_quran_task: 'This text is from the Quran. Please create a task of the kind “Quran” instead.',
-      fam_err_quran_phrase_task: 'Part of this text is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud, so this text cannot be a dictation task. It can be a recite task, word by word.',
-      fam_err_quran_meaning_task: 'This text has words of the Quran (for example the basmala), so it is recited word by word only. Please choose “Word by word”.',
+      fam_err_quran_meaning_task: 'This text has words of the Quran, and the app never judges the meaning of the Quran, so “The meaning” is not available for it. “Word by word” is now chosen: please check the task and save it again.',
+      fam_err_quran_unmarked_task: 'This text cannot be a dictation task: the voice found words of the Quran in it that the app could not mark for a grown-up to read. It can be a recite task, word by word.',
+      fam_err_quran_diff_task: 'Some words of the Quran in this text are not as in the mushaf: see the note under the text. Please use the mushaf text, or press “Save” again to keep the text as it is.',
+      fam_make_quran_task: 'Create a Quran task with these ayat',
       fam_err_offline: 'The text could not be checked: the server cannot be reached. The form is kept; please try again when the server is back.',
       fam_err_quran_range: 'Please choose valid ayat: at most 50, inside the surah.',
       fam_err_due: 'Please choose a valid date.',
-      fam_page_has_quran: 'This page seems to contain Quran text. For the Quran, please create a task of the kind “Quran”.',
+      fam_page_has_quran: 'This page seems to be ayat of the Quran only. Please create a task of the kind “Quran” for them.',
       fam_child_add: 'Add a child',
       fam_child_new_title: 'New child',
       fam_child_edit_title: 'Edit the profile',
@@ -184,14 +215,135 @@
       fam_child_removed: 'The profile was removed, with all its data.',
       fam_child_saved: 'Saved.',
       fam_quran_title: '{name} {from}–{to}',
+      fam_review_mishear: 'The app can mishear. If you heard your child do it, you can confirm anyway (in the details of the task, under “Tasks”).',
+      fam_review_norec: 'The app keeps no recordings, so there is nothing to listen to afterwards. To hear it, ask your child to show you.',
+      fam_review_empty: 'Nothing to review right now. A task shows here when a child reaches its pass level. A task the app has not passed can still be confirmed in its details, under “Tasks”.',
+      fam_review_best: 'Best: {pct}',
+      fam_review_last: 'Last: {pct}',
+      fam_review_attempts: 'Tries: {n}',
+      fam_review_passed: 'Passed: {n}',
+      fam_review_ready_at: 'Ready since: {when}',
+      fam_review_improve: '{n} more words right in the last try than before.',
+      fam_review_improve_one: '{n} more word right in the last try than before.',
+      fam_res_same_meaning: 'same meaning',
+      fam_res_partly: 'partly the same meaning',
+      fam_res_different: 'another meaning',
+      fam_res_unclear: 'not clear',
+      fam_not_yet: 'Not yet: try again',
+      fam_confirm_anyway: 'Confirm anyway',
+      fam_sendback_label: 'A note for the child (optional)',
+      fam_sendback_hint: 'It is shown on the task card. A kind and specific tip helps, for example: slowly on the second line.',
+      fam_sendback_send: 'Send back',
+      fam_sent_back: 'Sent back to {name}: the task is in “To do” again.',
+      fam_confirmed_for: 'Confirmed: {stars} for {name}.',
+      fam_reward_to_give: 'The reward {reward} is unlocked. Once it is given, please mark it under “Rewards”.',
+      fam_details: 'Details',
+      fam_detail_created: 'Created: {date}',
+      fam_detail_due: 'Due: {date}',
+      fam_detail_done: 'Done: {date}',
+      fam_detail_by_app: 'Passed in the app, confirmed by a grown-up.',
+      fam_detail_by_parent: 'Confirmed anyway by a grown-up.',
+      fam_detail_sent_back: 'Sent back: {date}',
+      fam_detail_no_try: 'No try yet.',
+      fam_detail_quran: 'Ayat {from}–{to}',
+      fam_detail_mode: 'Reciting mode: {mode}',
+      fam_detail_anyway_hint: 'The app has not passed this task. If you heard your child do it, you can confirm it anyway.',
+      fam_detail_anyway_again: 'This task is to do again. If you heard your child do it, you can confirm it anyway.',
+      fam_detail_waiting: 'This task is waiting for a grown-up: it reached its pass level.',
+      fam_rs_locked: 'The reward unlocks when the task is confirmed.',
+      fam_rs_unlocked: 'The reward is unlocked and waits to be given.',
+      fam_rs_given: 'The reward was given.',
+      fam_mark_given: 'Mark as given',
+      fam_marked_given: 'Marked as given: {reward}.',
+      fam_rw_earned: 'Earned in all: {n}',
+      fam_rw_to_give_h: 'Rewards to give',
+      fam_rw_to_give_empty: 'No reward is waiting to be given.',
+      fam_rw_for_task: 'For the task: {title}',
+      fam_goals_h: 'Goals of the star jar',
+      fam_goals_empty: 'No goal yet. A goal is a reward the child saves stars for.',
+      fam_goal_cost: 'Stars needed: {n}',
+      fam_goal_enough: 'Enough stars!',
+      fam_goal_short: 'Still needed: {n}',
+      fam_goal_give: 'Give',
+      fam_goal_given_on: 'Given: {date}',
+      fam_goal_add: 'Add a goal',
+      fam_goal_new: 'New goal',
+      fam_goal_cost_label: 'Stars needed (1 to 500)',
+      fam_goal_added: 'The goal was added.',
+      fam_goal_removed: 'The goal was removed.',
+      fam_goal_given_now: 'Given: {reward}. Stars in the jar: {n}.',
+      fam_err_cost: 'Please type a number of stars from 1 to 500.',
+      fam_err_reward_text: 'Please type the reward.',
+      fam_err_not_enough: 'There are not enough stars in the jar for this goal yet.',
+      fam_surprise_h: 'Give a surprise',
+      fam_surprise_about: 'A surprise can come at any time, not only after a task. The child sees it once, on their home screen.',
+      fam_surprise_text: 'The surprise',
+      fam_surprise_ph: 'e.g. a picnic in the park',
+      fam_surprise_give: 'Give the surprise',
+      fam_surprise_done: 'The surprise is ready: {name} sees it on the home screen.',
+      fam_surprise_unseen: 'Not seen yet: {list}',
+      fam_err_surprise_text: 'Please type the surprise.',
+      fam_adjust_h: 'Adjust stars',
+      fam_adjust_about: 'For a correction only: stars are never taken away for a try that did not work, and the jar never goes below zero.',
+      fam_adjust_way: 'Correction',
+      fam_adjust_add: 'Add stars',
+      fam_adjust_take: 'Take stars away',
+      fam_adjust_n: 'Number of stars (1 to 500)',
+      fam_adjust_note: 'Reason',
+      fam_adjust_note_ph: 'e.g. a task done on paper',
+      fam_adjust_done: 'Saved. Stars in the jar: {n}.',
+      fam_adjust_limited: 'Only the stars in the jar were taken away: it is at zero now.',
+      fam_err_note: 'Please type a reason.',
+      fam_err_no_stars: 'There are no stars to take away.',
+      fam_history_h: 'History of the stars',
+      fam_history_empty: 'No stars yet.',
+      fam_led_task: 'Task: {title}',
+      fam_led_task_gone: 'A task',
+      fam_led_goal: 'Goal given: {reward}',
+      fam_led_goal_gone: 'A goal given',
+      fam_led_adjust: 'Correction: {note}',
+      fam_led_adjust_plain: 'Correction',
+      fam_led_carry: 'Earlier stars, added together',
+      fam_show_all: 'Show all ({n})',
+      fam_show_less: 'Show fewer',
+      fam_pin_change: 'Change the PIN',
+      fam_pin_change_title: 'Change the PIN',
+      fam_pin_change_intro: 'Please type the current PIN first.',
+      fam_pin_change_new: 'Please choose the new PIN (4 to 6 digits) and type it twice.',
+      fam_pin_changed: 'The PIN was changed.',
+      fam_continue: 'Continue',
+      fam_set_lang_h: 'Language of the parent area',
+      fam_set_lang_hint: 'For the parent area and the PIN. Each child keeps their own language (in “Children”).',
+      fam_set_lang_saved: 'Saved.',
+      fam_set_delete_h: 'Delete all data on this device',
+      fam_set_delete_about: 'Deletes every child, task, star and reward, the PIN and the settings, on this device only. The app then starts again as on the first day.',
+      fam_delete: 'Delete all data',
+      fam_delete_q1: 'Delete all the family data on this device? This cannot be undone.',
+      fam_delete_q2: 'Last check: every child, task, star and reward, and the PIN, will be deleted.',
+      fam_delete_final: 'Delete everything',
+      fam_delete_failed: 'The data could not be deleted: this browser does not allow it right now.',
+      fam_notice_deleted: 'All the family data on this device was deleted.',
     },
 
     fr: {
+      fam_task_word_by_word: 'La tâche se récite maintenant mot à mot.',
+      fam_make_word_by_word: 'Réciter mot à mot',
+      fam_detail_meaning_quran: 'Cette tâche se fait par le sens, mais son texte contient des mots du Coran, qui se récitent seulement mot à mot : l’enfant ne peut pas la faire telle quelle.',
+      fam_keep: 'Garder',
+      fam_goal_remove_q: 'Retirer cet objectif ? Les étoiles du bocal ne changent pas.',
+      fam_archive_q: 'Archiver cette tâche ? Elle quitte les listes et ne peut pas revenir.',
+      fam_improve_many: '{n} mots justes de plus que la dernière fois !',
+      fam_improve_few: '{n} mots justes de plus que la dernière fois !',
+      fam_improve_two: '{n} mots justes de plus que la dernière fois !',
+      fam_review_paper: 'Regardez la feuille avant de valider.',
+      fam_detail_anyway_dictation: 'L’application n’a pas validé cette dictée. Si vous avez vérifié vous-même la feuille de votre enfant et qu’elle est juste, vous pouvez la valider quand même.',
+      fam_err_quran_meaning_diff: 'Ce texte contient des mots du Coran, qui se récitent seulement mot à mot : « Mot à mot » est maintenant choisi. Certains ne sont pas comme dans le mushaf (voir la note sous le texte). Prenez le texte du mushaf avant d’enregistrer.',
+      fam_err_quran_diff_recite: 'Des mots du Coran de ce texte ne sont pas comme dans le mushaf : voir la note sous le texte. Prenez le texte du mushaf avant d’enregistrer.',
       fam_setup_lead: 'Un adulte prépare l’application une seule fois, pour toute la famille.',
       fam_setup_title: 'Préparer la famille',
       fam_parent_lang: 'Langue pour les adultes',
       fam_pin_legend: 'Code parent',
-      fam_pin_about: 'Le code est un verrou contre les enfants : il garde l’espace parents pour les adultes. Il a de 4 à 6 chiffres.',
+      fam_pin_about: 'Le code est un verrou parental : il réserve l’espace parents aux adultes. Il a de 4 à 6 chiffres.',
       fam_pin_new: 'Nouveau code',
       fam_pin_again: 'Le même code une deuxième fois',
       fam_first_child: 'Le premier enfant',
@@ -200,20 +352,20 @@
       fam_err_nickname: 'Tapez un surnom.',
       fam_err_pin_format: 'Un code a de 4 à 6 chiffres.',
       fam_err_pin_same: 'Les deux codes ne sont pas pareils. Tapez-les de nouveau.',
-      fam_err_crypto: 'Le code ne peut pas être utilisé sur cette page : il faut https ou localhost.',
+      fam_err_crypto: 'Le code ne peut pas être utilisé sur cette page : il faut https ou localhost.',
       fam_saving: 'Enregistrement…',
       fam_ok: 'OK',
       fam_notice_corrupt: 'Les données de la famille enregistrées sur cet appareil n’ont pas pu être lues. Elles ont été mises de côté sur cet appareil, et tout recommence.',
       fam_notice_repaired: 'Une partie des données de la famille sur cet appareil était abîmée et a été réparée. Une copie des anciennes données a été gardée sur cet appareil.',
-      fam_notice_quota: 'Le stockage de ce navigateur est plein : la dernière modification n’a pas pu être enregistrée. Libérez de la place (par exemple d’anciennes données de sites), puis réessayez.',
-      fam_notice_memory: 'Ce navigateur ne permet pas d’enregistrer ici (navigation privée ?). Tout fonctionne jusqu’à la fermeture de la page, puis les données sont perdues.',
-      fam_who_title: 'Qui apprend aujourd’hui ?',
+      fam_notice_quota: 'Le stockage de ce navigateur est plein : la dernière modification n’a pas pu être enregistrée. Libérez de la place (par exemple d’anciennes données de sites), puis réessayez.',
+      fam_notice_memory: 'Ce navigateur ne permet pas d’enregistrer ici (navigation privée ?). Tout fonctionne jusqu’à la fermeture de la page, puis les données sont perdues.',
+      fam_who_title: 'Qui apprend aujourd’hui ?',
       fam_who_empty: 'Pas encore d’enfant. Un adulte peut en ajouter un dans l’espace parents.',
       fam_for_parents: 'Pour les parents',
-      fam_jar: 'Étoiles dans le bocal : {n}',
-      fam_goal_missing: 'Encore {n} étoiles pour : {reward}',
-      fam_goal_missing_one: 'Encore {n} étoile pour : {reward}',
-      fam_goal_reached: 'Assez d’étoiles pour : {reward} ! Parles-en à ton parent.',
+      fam_jar: 'Étoiles dans le bocal : {n}',
+      fam_goal_missing: 'Encore {n} étoiles pour : {reward}',
+      fam_goal_missing_one: 'Encore {n} étoile pour : {reward}',
+      fam_goal_reached: 'Assez d’étoiles pour : {reward} ! Parles-en à ton parent.',
       fam_todo: 'À faire',
       fam_waiting: 'Un parent va vérifier',
       fam_done: 'Terminé',
@@ -225,51 +377,51 @@
       fam_kind_recite: 'Réciter',
       fam_kind_dictation: 'Dictée',
       fam_kind_quran: 'Coran',
-      fam_stars_n: 'Étoiles : {n}',
+      fam_stars_n: 'Étoiles : {n}',
       fam_due: 'Pour le {date}',
-      fam_reward_label: 'Récompense :',
-      fam_note_label: 'Note :',
+      fam_reward_label: 'Récompense :',
+      fam_note_label: 'Note :',
       fam_start: 'Commencer',
       fam_pass_all_words: 'Tous les mots justes',
       fam_pass_nine_in_ten: '9 mots sur 10',
       fam_pass_eight_in_ten: '8 mots sur 10',
       fam_pass_same_meaning: 'Même sens',
-      fam_pass_line: 'Pour réussir : {rule}',
-      fam_reward_unlocked: 'Débloquée : demande-la à ton parent',
+      fam_pass_line: 'Pour réussir : {rule}',
+      fam_reward_unlocked: 'Débloquée : demande-la à ton parent',
       fam_reward_given: 'Reçue',
-      fam_surprise_title: 'Une surprise pour toi !',
-      fam_surprise_ok: 'Merci !',
+      fam_surprise_title: 'Une surprise pour toi !',
+      fam_surprise_ok: 'Merci !',
       fam_task_banner_label: 'Tâche',
       fam_task_leave: 'Retour à mes tâches',
-      fam_celebrate: 'Bravo ! Ton parent va vérifier, puis tu auras tes étoiles {stars}.',
-      fam_celebrate_reward: 'Bravo ! Ton parent va vérifier, puis tu auras tes étoiles {stars} et {reward}.',
-      fam_improve: '{n} mots justes de plus que la dernière fois !',
-      fam_improve_one: '{n} mot juste de plus que la dernière fois !',
+      fam_celebrate: 'Bravo ! Ton parent va vérifier, puis tu auras tes étoiles {stars}.',
+      fam_celebrate_reward: 'Bravo ! Ton parent va vérifier, puis tu auras tes étoiles {stars} et {reward}.',
+      fam_improve: '{n} mots justes de plus que la dernière fois !',
+      fam_improve_one: '{n} mot juste de plus que la dernière fois !',
       fam_try_again: 'Tu peux réessayer quand tu veux.',
       fam_dict_shortcut: 'Cette dictée atteint le niveau de réussite de la tâche.',
       fam_confirm_task_now: 'Valider la tâche maintenant',
-      fam_task_confirmed: 'Tâche validée : les étoiles {stars} sont dans le bocal.',
-      fam_reward_unlocked_now: 'Récompense débloquée : {reward}',
+      fam_task_confirmed: 'Tâche validée : les étoiles {stars} sont dans le bocal.',
+      fam_reward_unlocked_now: 'Récompense débloquée : {reward}',
       fam_pin_enter_title: 'Espace parents',
-      fam_pin_enter_intro: 'Tapez le code parent. C’est un verrou contre les enfants : il garde cet espace pour les adultes.',
+      fam_pin_enter_intro: 'Tapez le code parent. C’est un verrou contre les enfants : il garde cet espace pour les adultes.',
       fam_pin_confirm_title: 'Valider la tâche',
       fam_pin_confirm_intro: 'Tapez le code parent pour valider la tâche.',
       fam_pin_label: 'Code',
       fam_pin_create_title: 'Créer le code parent',
-      fam_pin_create_intro: 'Choisissez un code de 4 à 6 chiffres et tapez-le deux fois. C’est un verrou contre les enfants : il garde l’espace parents pour les adultes.',
-      fam_pin_reset_intro: 'Le code a été effacé et toutes les données sont gardées. Choisissez un nouveau code et tapez-le deux fois.',
+      fam_pin_create_intro: 'Choisissez un code de 4 à 6 chiffres et tapez-le deux fois. C’est un verrou contre les enfants : il garde l’espace parents pour les adultes.',
+      fam_pin_reset_intro: 'Toutes les données sont gardées. Choisissez un nouveau code et tapez-le deux fois ; l’ancien code marche jusqu’à ce que le nouveau soit enregistré.',
       fam_unlock: 'Ouvrir',
       fam_confirm: 'Valider',
       fam_create: 'Créer',
       fam_cancel: 'Annuler',
-      fam_forgot: 'Code oublié ?',
-      fam_pin_wrong: 'Code faux. Essais restants avant une pause : {n}.',
+      fam_forgot: 'Code oublié ?',
+      fam_pin_wrong: 'Code faux. Essais restants avant une pause : {n}.',
       fam_pin_wrong_last: 'Code faux.',
       fam_pin_locked: 'Trop d’essais. Attendez {time} avant de réessayer.',
       fam_pin_checking: 'Vérification…',
       fam_gate_title: 'Code oublié',
       fam_gate_intro: 'Pour créer un nouveau code, répondez à cette question pour les adultes. Toutes les données sont gardées.',
-      fam_gate_q: 'Combien font {a} fois {b} ? Tapez la réponse en chiffres.',
+      fam_gate_q: 'Combien font {a} fois {b} ? Tapez la réponse en chiffres.',
       fam_gate_wrong: 'Ce n’est pas la bonne réponse. Voici une autre question.',
       fam_gate_check: 'Vérifier',
       fam_n3: 'trois',
@@ -279,27 +431,37 @@
       fam_n7: 'sept',
       fam_n8: 'huit',
       fam_n9: 'neuf',
+      fam_t2: 'vingt',
+      fam_t3: 'trente',
+      fam_t4: 'quarante',
+      fam_t5: 'cinquante',
+      fam_t6: 'soixante',
+      fam_num_tu: '{t}-{u}',
+      fam_gate_first_intro: 'Avant le premier code parent, répondez à cette question pour les adultes.',
+      fam_pin_reset_notice: 'Le code a été réinitialisé le {date}. Si ce n’était pas vous, choisissez un nouveau code dans Réglages.',
+      fam_dismiss: 'Masquer',
+      fam_parent_autolock: 'Il se verrouille après 3 minutes sans utilisation, et quand on quitte l’application.',
       fam_parent_title: 'Espace parents',
-      fam_parent_help: 'Les compliments et les surprises donnent envie d’apprendre ; les récompenses marchent le mieux pour un effort que l’enfant peut voir.',
+      fam_parent_help: 'Les compliments et les surprises donnent envie d’apprendre ; les récompenses marchent le mieux pour un effort que l’enfant peut voir.',
       fam_parent_sections: 'Rubriques de l’espace parents',
       fam_sec_review: 'À vérifier',
       fam_sec_tasks: 'Tâches',
       fam_sec_rewards: 'Récompenses',
       fam_sec_children: 'Enfants',
       fam_sec_settings: 'Réglages',
-      fam_placeholder: 'Cette rubrique est en préparation.',
       fam_parent_close: 'Fermer l’espace parents',
       fam_privacy_line: 'Tout ce qui est ici reste sur cet appareil.',
       fam_tasks_of: 'Enfant',
-      fam_tasks_nochild: 'Ajoutez d’abord un enfant, dans la rubrique « Enfants ».',
+      fam_tasks_nochild: 'Ajoutez d’abord un enfant, dans la rubrique « Enfants ».',
       fam_tasks_empty: 'Pas encore de tâche.',
-      fam_tasks_archived: 'Tâches archivées : {n}',
+      fam_tasks_archived: 'Tâches archivées : {n}',
       fam_task_new: 'Nouvelle tâche',
       fam_task_edit_title: 'Modifier la tâche',
       fam_edit: 'Modifier',
       fam_archive: 'Archiver',
       fam_task_archived: 'La tâche a été archivée.',
       fam_task_saved: 'La tâche a été enregistrée.',
+      fam_task_saved_quran: 'La tâche a été enregistrée. Son texte contient des mots du Coran : ils sont vérifiés mot à mot, et dans une dictée un adulte les lit à voix haute.',
       fam_status_assigned: 'À faire',
       fam_status_ready: 'À vérifier',
       fam_status_done: 'Terminée',
@@ -310,7 +472,7 @@
       fam_tf_qmode: 'Comment l’enfant récite',
       fam_tf_quran_note: 'Une tâche de Coran est toujours vérifiée mot à mot, avec le texte exact de Tanzil.',
       fam_tf_pass: 'Niveau de réussite',
-      fam_tf_pass_meaning: 'Avec « Le sens », la tâche est réussie quand le sens est le même, sans idée oubliée.',
+      fam_tf_pass_meaning: 'Avec « Le sens », la tâche est réussie quand le sens est le même, sans idée oubliée.',
       fam_tf_stars: 'Étoiles',
       fam_tf_due: 'Pour le (facultatif)',
       fam_tf_reward: 'Récompense (facultative)',
@@ -318,24 +480,147 @@
       fam_tf_reward_ph: 'ex. une glace',
       fam_tf_reward_emoji: 'Image de la récompense',
       fam_save: 'Enregistrer',
-      fam_err_quran_task: 'Ce texte vient du Coran. Créez plutôt une tâche de type « Coran ».',
-      fam_err_quran_phrase_task: 'Une partie de ce texte est un verset du Coran (par exemple la basmala), et l’application ne lit jamais le Coran à voix haute : ce texte ne peut donc pas servir à une tâche de dictée. Il peut servir à une tâche de récitation mot à mot.',
-      fam_err_quran_meaning_task: 'Ce texte contient des mots du Coran (par exemple la basmala) : il se récite seulement mot à mot. Choisissez « Mot à mot ».',
-      fam_err_offline: 'Le texte n’a pas pu être vérifié : le serveur ne répond pas. Le formulaire est gardé ; réessayez quand le serveur sera revenu.',
-      fam_err_quran_range: 'Choisissez des âyât valables : 50 au maximum, dans la sourate.',
+      fam_err_quran_task: 'Ce texte vient du Coran. Créez plutôt une tâche de type « Coran ».',
+      fam_err_quran_meaning_task: 'Ce texte contient des mots du Coran, et l’application ne juge jamais le sens du Coran : « Le sens » n’est donc pas possible. « Mot à mot » est maintenant choisi : vérifiez la tâche et enregistrez-la de nouveau.',
+      fam_err_quran_unmarked_task: 'Ce texte ne peut pas servir à une tâche de dictée : la voix y a trouvé des mots du Coran que l’application n’a pas pu marquer pour qu’un adulte les lise. Il peut servir à une tâche de récitation mot à mot.',
+      fam_err_quran_diff_task: 'Des mots du Coran de ce texte ne sont pas comme dans le mushaf : voir la note sous le texte. Prenez le texte du mushaf, ou appuyez de nouveau sur « Enregistrer » pour garder le texte tel quel.',
+      fam_make_quran_task: 'Créer une tâche Coran avec ces âyât',
+      fam_err_offline: 'Le texte n’a pas pu être vérifié : le serveur ne répond pas. Le formulaire est gardé ; réessayez quand le serveur sera revenu.',
+      fam_err_quran_range: 'Choisissez des âyât valables : 50 au maximum, dans la sourate.',
       fam_err_due: 'Choisissez une date valable.',
-      fam_page_has_quran: 'Cette page semble contenir un texte du Coran. Pour le Coran, créez une tâche de type « Coran ».',
+      fam_page_has_quran: 'Cette page semble ne contenir que des âyât du Coran. Créez pour elles une tâche de type « Coran ».',
       fam_child_add: 'Ajouter un enfant',
       fam_child_new_title: 'Nouvel enfant',
       fam_child_edit_title: 'Modifier le profil',
       fam_remove: 'Supprimer',
-      fam_child_remove_q: 'Supprimer le profil de {name} ? Toutes les tâches, étoiles et récompenses de ce profil sur cet appareil sont aussi effacées. C’est définitif.',
+      fam_child_remove_q: 'Supprimer le profil de {name} ? Toutes les tâches, étoiles et récompenses de ce profil sur cet appareil sont aussi effacées. C’est définitif.',
       fam_child_removed: 'Le profil a été supprimé, avec toutes ses données.',
       fam_child_saved: 'C’est enregistré.',
       fam_quran_title: '{name} {from}–{to}',
+      fam_review_mishear: 'L’application peut mal entendre. Si vous avez entendu votre enfant le faire, vous pouvez valider quand même (dans les détails de la tâche, rubrique « Tâches »).',
+      fam_review_norec: 'L’application ne garde aucun enregistrement : il n’y a rien à réécouter. Pour l’entendre, demandez à votre enfant de vous le montrer.',
+      fam_review_empty: 'Rien à vérifier pour l’instant. Une tâche s’affiche ici quand un enfant atteint son niveau de réussite. Une tâche que l’application n’a pas réussie peut quand même être validée dans ses détails, rubrique « Tâches ».',
+      fam_review_best: 'Meilleur : {pct}',
+      fam_review_last: 'Dernier : {pct}',
+      fam_review_attempts: 'Essais : {n}',
+      fam_review_passed: 'Réussis : {n}',
+      fam_review_ready_at: 'Prête depuis : {when}',
+      fam_review_improve: '{n} mots justes de plus au dernier essai qu’avant.',
+      fam_review_improve_one: '{n} mot juste de plus au dernier essai qu’avant.',
+      fam_res_same_meaning: 'même sens',
+      fam_res_partly: 'sens en partie le même',
+      fam_res_different: 'un autre sens',
+      fam_res_unclear: 'pas clair',
+      fam_not_yet: 'Pas encore : on réessaie',
+      fam_confirm_anyway: 'Valider quand même',
+      fam_sendback_label: 'Un mot pour l’enfant (facultatif)',
+      fam_sendback_hint: 'Il s’affiche sur la carte de la tâche. Un conseil gentil et précis aide, par exemple : doucement à la deuxième ligne.',
+      fam_sendback_send: 'Renvoyer',
+      fam_sent_back: 'Renvoyée à {name} : la tâche est de nouveau dans « À faire ».',
+      fam_confirmed_for: 'Validée : {stars} pour {name}.',
+      fam_reward_to_give: 'La récompense {reward} est débloquée. Une fois donnée, notez-la dans la rubrique « Récompenses ».',
+      fam_details: 'Détails',
+      fam_detail_created: 'Créée : {date}',
+      fam_detail_due: 'Pour le : {date}',
+      fam_detail_done: 'Terminée : {date}',
+      fam_detail_by_app: 'Réussie dans l’application, validée par un adulte.',
+      fam_detail_by_parent: 'Validée quand même par un adulte.',
+      fam_detail_sent_back: 'Renvoyée : {date}',
+      fam_detail_no_try: 'Pas encore d’essai.',
+      fam_detail_quran: 'Âyât {from}–{to}',
+      fam_detail_mode: 'Mode de récitation : {mode}',
+      fam_detail_anyway_hint: 'L’application n’a pas réussi cette tâche. Si vous avez entendu votre enfant la faire, vous pouvez la valider quand même.',
+      fam_detail_anyway_again: 'Cette tâche est de nouveau à faire. Si vous avez entendu votre enfant la faire, vous pouvez la valider quand même.',
+      fam_detail_waiting: 'Cette tâche attend un adulte : elle a atteint son niveau de réussite.',
+      fam_rs_locked: 'La récompense se débloque quand la tâche est validée.',
+      fam_rs_unlocked: 'La récompense est débloquée et attend d’être donnée.',
+      fam_rs_given: 'La récompense a été donnée.',
+      fam_mark_given: 'Marquer comme donnée',
+      fam_marked_given: 'Notée comme donnée : {reward}.',
+      fam_rw_earned: 'Gagnées en tout : {n}',
+      fam_rw_to_give_h: 'Récompenses à donner',
+      fam_rw_to_give_empty: 'Aucune récompense n’attend d’être donnée.',
+      fam_rw_for_task: 'Pour la tâche : {title}',
+      fam_goals_h: 'Objectifs du bocal',
+      fam_goals_empty: 'Pas encore d’objectif. Un objectif est une récompense pour laquelle l’enfant garde ses étoiles.',
+      fam_goal_cost: 'Étoiles nécessaires : {n}',
+      fam_goal_enough: 'Assez d’étoiles !',
+      fam_goal_short: 'Il en manque : {n}',
+      fam_goal_give: 'Donner',
+      fam_goal_given_on: 'Donné : {date}',
+      fam_goal_add: 'Ajouter un objectif',
+      fam_goal_new: 'Nouvel objectif',
+      fam_goal_cost_label: 'Étoiles nécessaires (de 1 à 500)',
+      fam_goal_added: 'L’objectif a été ajouté.',
+      fam_goal_removed: 'L’objectif a été supprimé.',
+      fam_goal_given_now: 'Donné : {reward}. Étoiles dans le bocal : {n}.',
+      fam_err_cost: 'Tapez un nombre d’étoiles de 1 à 500.',
+      fam_err_reward_text: 'Tapez la récompense.',
+      fam_err_not_enough: 'Il n’y a pas encore assez d’étoiles dans le bocal pour cet objectif.',
+      fam_surprise_h: 'Faire une surprise',
+      fam_surprise_about: 'Une surprise peut arriver à tout moment, pas seulement après une tâche. L’enfant la voit une fois, sur son écran d’accueil.',
+      fam_surprise_text: 'La surprise',
+      fam_surprise_ph: 'ex. un pique-nique au parc',
+      fam_surprise_give: 'Offrir la surprise',
+      fam_surprise_done: 'La surprise est prête : {name} la verra sur son écran d’accueil.',
+      fam_surprise_unseen: 'Pas encore vue : {list}',
+      fam_err_surprise_text: 'Tapez la surprise.',
+      fam_adjust_h: 'Corriger les étoiles',
+      fam_adjust_about: 'Seulement pour corriger une erreur : on n’enlève jamais d’étoiles pour un essai qui n’a pas marché, et le bocal ne descend jamais sous zéro.',
+      fam_adjust_way: 'Correction',
+      fam_adjust_add: 'Ajouter des étoiles',
+      fam_adjust_take: 'Retirer des étoiles',
+      fam_adjust_n: 'Nombre d’étoiles (de 1 à 500)',
+      fam_adjust_note: 'Raison',
+      fam_adjust_note_ph: 'ex. une tâche faite sur papier',
+      fam_adjust_done: 'C’est enregistré. Étoiles dans le bocal : {n}.',
+      fam_adjust_limited: 'Seules les étoiles du bocal ont été retirées : il est à zéro.',
+      fam_err_note: 'Tapez une raison.',
+      fam_err_no_stars: 'Il n’y a pas d’étoile à retirer.',
+      fam_history_h: 'Historique des étoiles',
+      fam_history_empty: 'Pas encore d’étoile.',
+      fam_led_task: 'Tâche : {title}',
+      fam_led_task_gone: 'Une tâche',
+      fam_led_goal: 'Objectif donné : {reward}',
+      fam_led_goal_gone: 'Un objectif donné',
+      fam_led_adjust: 'Correction : {note}',
+      fam_led_adjust_plain: 'Correction',
+      fam_led_carry: 'Étoiles plus anciennes, additionnées',
+      fam_show_all: 'Tout afficher ({n})',
+      fam_show_less: 'Afficher moins',
+      fam_pin_change: 'Changer le code',
+      fam_pin_change_title: 'Changer le code',
+      fam_pin_change_intro: 'Tapez d’abord le code actuel.',
+      fam_pin_change_new: 'Choisissez le nouveau code (de 4 à 6 chiffres) et tapez-le deux fois.',
+      fam_pin_changed: 'Le code a été changé.',
+      fam_continue: 'Continuer',
+      fam_set_lang_h: 'Langue de l’espace parents',
+      fam_set_lang_hint: 'Pour l’espace parents et le code. Chaque enfant garde sa propre langue (dans « Enfants »).',
+      fam_set_lang_saved: 'C’est enregistré.',
+      fam_set_delete_h: 'Effacer toutes les données de cet appareil',
+      fam_set_delete_about: 'Efface tous les enfants, tâches, étoiles et récompenses, le code et les réglages, sur cet appareil seulement. L’application recommence alors comme au premier jour.',
+      fam_delete: 'Tout effacer',
+      fam_delete_q1: 'Effacer toutes les données de la famille sur cet appareil ? C’est définitif.',
+      fam_delete_q2: 'Dernière vérification : tous les enfants, tâches, étoiles et récompenses, et le code, seront effacés.',
+      fam_delete_final: 'Tout effacer maintenant',
+      fam_delete_failed: 'Les données n’ont pas pu être effacées : ce navigateur ne le permet pas pour l’instant.',
+      fam_notice_deleted: 'Toutes les données de la famille sur cet appareil ont été effacées.',
     },
 
     ar: {
+      fam_task_word_by_word: 'صارت المهمة تُسمَّع كلمةً بكلمة.',
+      fam_make_word_by_word: 'التسميع كلمةً بكلمة',
+      fam_detail_meaning_quran: 'هذه المهمة بالمعنى، لكن في نصها كلمات من القرآن الكريم تُسمَّع كلمةً بكلمة فقط، فلا يمكن للطفل إنجازها كما هي.',
+      fam_keep: 'إبقاء',
+      fam_goal_remove_q: 'حذف هذا الهدف؟ تبقى النجوم في الجرّة كما هي.',
+      fam_archive_q: 'أرشفة هذه المهمة؟ تخرج من القوائم، ولا يمكن إرجاعها.',
+      fam_improve_many: '{n} كلمة صحيحة أكثر من المرة السابقة!',
+      fam_improve_few: '{n} كلمات صحيحة أكثر من المرة السابقة!',
+      fam_improve_two: 'كلمتان صحيحتان أكثر من المرة السابقة!',
+      fam_review_paper: 'يُرجى النظر في الورقة قبل التأكيد.',
+      fam_detail_anyway_dictation: 'لم يحتسب التطبيق هذا الإملاء ناجحًا. بعد مراجعة ورقة الطفل والتأكد من صحتها، يمكن تأكيده على أي حال.',
+      fam_err_quran_meaning_diff: 'في هذا النص كلمات من القرآن الكريم، وهي تُسمَّع كلمةً بكلمة فقط، وقد اختيرت «كلمة بكلمة». وبعضها ليس كما في المصحف، كما هو مبيَّن تحت النص. يُرجى استخدام نص المصحف قبل الحفظ.',
+      fam_err_quran_diff_recite: 'بعض كلمات القرآن الكريم في هذا النص ليست كما في المصحف، كما هو مبيَّن تحت النص. يُرجى استخدام نص المصحف قبل الحفظ.',
       fam_setup_lead: 'يُعِدّ أحد الكبار التطبيق مرة واحدة للعائلة كلها.',
       fam_setup_title: 'إعداد العائلة',
       fam_parent_lang: 'لغة الكبار',
@@ -392,8 +677,8 @@
       fam_task_leave: 'العودة إلى مهامي',
       fam_celebrate: 'أحسنت! سيراجع أحد الوالدين المهمة، ثم تُضاف النجوم {stars} إلى الجرّة.',
       fam_celebrate_reward: 'أحسنت! سيراجع أحد الوالدين المهمة، ثم تُضاف النجوم {stars} إلى الجرّة وتُفتح المكافأة: {reward}.',
-      fam_improve: 'كلمات صحيحة أكثر من المرة السابقة: {n}',
-      fam_improve_one: 'كلمات صحيحة أكثر من المرة السابقة: {n}',
+      fam_improve: '{n} كلمة صحيحة أكثر من المرة السابقة!',
+      fam_improve_one: 'كلمة صحيحة واحدة أكثر من المرة السابقة!',
       fam_try_again: 'هيا نحاول مرة أخرى عندما نكون جاهزين.',
       fam_dict_shortcut: 'هذا الإملاء يبلغ مستوى نجاح المهمة.',
       fam_confirm_task_now: 'تأكيد المهمة الآن',
@@ -406,7 +691,7 @@
       fam_pin_label: 'الرمز',
       fam_pin_create_title: 'إنشاء رمز الكبار',
       fam_pin_create_intro: 'يُرجى اختيار رمز من ٤ إلى ٦ أرقام وكتابته مرتين. هذا الرمز قفل للأطفال: يُبقي قسم الكبار للكبار.',
-      fam_pin_reset_intro: 'حُذف الرمز، وبقيت البيانات كلها. يُرجى اختيار رمز جديد وكتابته مرتين.',
+      fam_pin_reset_intro: 'تبقى البيانات كلها محفوظة. يُرجى اختيار رمز جديد وكتابته مرتين، ويبقى الرمز القديم صالحًا حتى حفظ الجديد.',
       fam_unlock: 'فتح',
       fam_confirm: 'تأكيد',
       fam_create: 'إنشاء',
@@ -428,6 +713,16 @@
       fam_n7: 'سبعة',
       fam_n8: 'ثمانية',
       fam_n9: 'تسعة',
+      fam_t2: 'عشرين',
+      fam_t3: 'ثلاثين',
+      fam_t4: 'أربعين',
+      fam_t5: 'خمسين',
+      fam_t6: 'ستين',
+      fam_num_tu: '{u} و{t}',
+      fam_gate_first_intro: 'قبل إنشاء أول رمز للكبار، يُرجى الإجابة عن هذا السؤال المخصّص للكبار.',
+      fam_pin_reset_notice: 'أُعيد تعيين الرمز في {date}. إذا لم تتم إعادة التعيين على يد أحد الكبار، يُرجى اختيار رمز جديد في «الإعدادات».',
+      fam_dismiss: 'إخفاء',
+      fam_parent_autolock: 'يُقفَل بعد ٣ دقائق من عدم الاستخدام، وعند مغادرة التطبيق.',
       fam_parent_title: 'قسم الكبار',
       fam_parent_help: 'المديح والمفاجآت تُبقي رغبة الأطفال في التعلّم، والمكافآت أنفع لجهد يراه الطفل بنفسه.',
       fam_parent_sections: 'أجزاء قسم الكبار',
@@ -436,7 +731,6 @@
       fam_sec_rewards: 'المكافآت',
       fam_sec_children: 'الأطفال',
       fam_sec_settings: 'الإعدادات',
-      fam_placeholder: 'هذا القسم قيد الإعداد.',
       fam_parent_close: 'إغلاق قسم الكبار',
       fam_privacy_line: 'كل ما هنا يبقى على هذا الجهاز.',
       fam_tasks_of: 'الطفل',
@@ -449,6 +743,7 @@
       fam_archive: 'أرشفة',
       fam_task_archived: 'تمّت أرشفة المهمة.',
       fam_task_saved: 'تمّ حفظ المهمة.',
+      fam_task_saved_quran: 'تمّ حفظ المهمة. في نصها كلمات من القرآن الكريم: تُراجَع كلمةً بكلمة، وفي الإملاء يقرؤها أحد الكبار بصوت مسموع.',
       fam_status_assigned: 'مطلوبة',
       fam_status_ready: 'بانتظار المراجعة',
       fam_status_done: 'منجزة',
@@ -468,12 +763,14 @@
       fam_tf_reward_emoji: 'صورة المكافأة',
       fam_save: 'حفظ',
       fam_err_quran_task: 'هذا النص من القرآن الكريم. يُرجى إنشاء مهمة من نوع «القرآن الكريم» بدلًا من ذلك.',
-      fam_err_quran_phrase_task: 'جزء من هذا النص آية من القرآن الكريم (مثل البسملة)، والتطبيق لا يقرأ القرآن الكريم بصوت مسموع أبدًا، لذلك لا يصلح النص لمهمة إملاء، ولكن يصلح لمهمة تسميع كلمة بكلمة.',
-      fam_err_quran_meaning_task: 'في هذا النص كلمات من القرآن الكريم (مثل البسملة)، لذلك يُسمَّع كلمة بكلمة فقط. يُرجى اختيار «كلمة بكلمة».',
+      fam_err_quran_meaning_task: 'في هذا النص كلمات من القرآن الكريم، والتطبيق لا يحكم أبدًا على معاني القرآن الكريم، لذلك لا يُتاح له «المعنى». وقد اختيرت «كلمة بكلمة»، فيُرجى مراجعة المهمة وحفظها مرة أخرى.',
+      fam_err_quran_unmarked_task: 'لا يصلح هذا النص لمهمة إملاء: وجد الصوت فيه كلمات من القرآن الكريم تعذّر تحديدها ليقرأها أحد الكبار. ولكنه يصلح لمهمة تسميع كلمة بكلمة.',
+      fam_err_quran_diff_task: 'بعض كلمات القرآن الكريم في هذا النص ليست كما في المصحف، كما هو مبيَّن تحت النص. يُرجى استخدام نص المصحف، أو الضغط على «حفظ» مرة أخرى لإبقاء النص كما هو.',
+      fam_make_quran_task: 'إنشاء مهمة القرآن الكريم بهذه الآيات',
       fam_err_offline: 'تعذّر التحقّق من النص: الخادم غير متاح. بقي النموذج كما هو، ويُرجى المحاولة مرة أخرى عند عودة الخادم.',
       fam_err_quran_range: 'يُرجى اختيار آيات صحيحة: خمسون آية على الأكثر، داخل السورة.',
       fam_err_due: 'يُرجى اختيار تاريخ صحيح.',
-      fam_page_has_quran: 'يبدو أن هذه الصفحة تحتوي على نص من القرآن الكريم. للقرآن الكريم، يُرجى إنشاء مهمة من نوع «القرآن الكريم».',
+      fam_page_has_quran: 'يبدو أن هذه الصفحة آيات من القرآن الكريم فقط. يُرجى إنشاء مهمة من نوع «القرآن الكريم» لها.',
       fam_child_add: 'إضافة طفل',
       fam_child_new_title: 'طفل جديد',
       fam_child_edit_title: 'تعديل ملف الطفل',
@@ -482,6 +779,114 @@
       fam_child_removed: 'تمّ حذف الملف وكل بياناته.',
       fam_child_saved: 'تمّ الحفظ.',
       fam_quran_title: 'سورة {name} {from}–{to}',
+      fam_review_mishear: 'قد يُخطئ التطبيق في السماع. عند سماع الطفل يُنجز المهمة، يمكن تأكيدها على أي حال (في تفاصيل المهمة، ضمن «المهام»).',
+      fam_review_norec: 'لا يحتفظ التطبيق بأي تسجيل، لذلك لا يمكن الاستماع لاحقًا. للسماع، يُرجى الطلب من الطفل إعادة الأداء.',
+      fam_review_empty: 'لا شيء للمراجعة الآن. تظهر المهمة هنا عندما يبلغ الطفل مستوى نجاحها. ويمكن تأكيد مهمة لم يحتسبها التطبيق ناجحة من تفاصيلها، ضمن «المهام».',
+      fam_review_best: 'أفضل نتيجة: {pct}',
+      fam_review_last: 'آخر نتيجة: {pct}',
+      fam_review_attempts: 'المحاولات: {n}',
+      fam_review_passed: 'الناجحة: {n}',
+      fam_review_ready_at: 'جاهزة منذ: {when}',
+      fam_review_improve: 'كلمات صحيحة إضافية في المحاولة الأخيرة: {n}',
+      fam_review_improve_one: 'كلمات صحيحة إضافية في المحاولة الأخيرة: {n}',
+      fam_res_same_meaning: 'المعنى نفسه',
+      fam_res_partly: 'المعنى نفسه جزئيًا',
+      fam_res_different: 'معنى آخر',
+      fam_res_unclear: 'غير واضح',
+      fam_not_yet: 'ليس بعد: محاولة أخرى',
+      fam_confirm_anyway: 'تأكيد على أي حال',
+      fam_sendback_label: 'ملاحظة للطفل (اختيارية)',
+      fam_sendback_hint: 'تظهر على بطاقة المهمة. تفيد نصيحة لطيفة ومحدّدة، مثل: ببطء في السطر الثاني.',
+      fam_sendback_send: 'إعادة المهمة',
+      fam_sent_back: 'أُعيدت المهمة إلى {name}، وهي الآن في «المهام المطلوبة».',
+      fam_confirmed_for: 'تمّ التأكيد: {stars} لـ {name}.',
+      fam_reward_to_give: 'فُتحت المكافأة {reward}. بعد تقديمها، يُرجى تسجيل ذلك في «المكافآت».',
+      fam_details: 'التفاصيل',
+      fam_detail_created: 'أُنشئت: {date}',
+      fam_detail_due: 'الموعد: {date}',
+      fam_detail_done: 'أُنجزت: {date}',
+      fam_detail_by_app: 'نجحت في التطبيق، وأكّدها أحد الكبار.',
+      fam_detail_by_parent: 'أكّدها أحد الكبار على أي حال.',
+      fam_detail_sent_back: 'أُعيدت: {date}',
+      fam_detail_no_try: 'لا توجد محاولة بعد.',
+      fam_detail_quran: 'الآيات {from}–{to}',
+      fam_detail_mode: 'طريقة التسميع: {mode}',
+      fam_detail_anyway_hint: 'لم يحتسب التطبيق هذه المهمة ناجحة. عند سماع الطفل يُنجزها، يمكن تأكيدها على أي حال.',
+      fam_detail_anyway_again: 'هذه المهمة مطلوبة من جديد. عند سماع الطفل يُنجزها، يمكن تأكيدها على أي حال.',
+      fam_detail_waiting: 'هذه المهمة بانتظار أحد الكبار: بلغت مستوى نجاحها.',
+      fam_rs_locked: 'تُفتح المكافأة عند تأكيد المهمة.',
+      fam_rs_unlocked: 'المكافأة مفتوحة وبانتظار التقديم.',
+      fam_rs_given: 'قُدّمت المكافأة.',
+      fam_mark_given: 'تسجيل التقديم',
+      fam_marked_given: 'سُجّل تقديم المكافأة: {reward}.',
+      fam_rw_earned: 'مجموع النجوم المكتسبة: {n}',
+      fam_rw_to_give_h: 'مكافآت بانتظار التقديم',
+      fam_rw_to_give_empty: 'لا توجد مكافأة بانتظار التقديم.',
+      fam_rw_for_task: 'عن المهمة: {title}',
+      fam_goals_h: 'أهداف جرّة النجوم',
+      fam_goals_empty: 'لا توجد أهداف بعد. الهدف مكافأة يجمع الطفل النجوم من أجلها.',
+      fam_goal_cost: 'النجوم المطلوبة: {n}',
+      fam_goal_enough: 'النجوم تكفي!',
+      fam_goal_short: 'النجوم الناقصة: {n}',
+      fam_goal_give: 'تقديم',
+      fam_goal_given_on: 'قُدّم: {date}',
+      fam_goal_add: 'إضافة هدف',
+      fam_goal_new: 'هدف جديد',
+      fam_goal_cost_label: 'النجوم المطلوبة (من ١ إلى ٥٠٠)',
+      fam_goal_added: 'تمّت إضافة الهدف.',
+      fam_goal_removed: 'تمّ حذف الهدف.',
+      fam_goal_given_now: 'تمّ تقديم {reward}. النجوم في الجرّة: {n}.',
+      fam_err_cost: 'يُرجى كتابة عدد النجوم من ١ إلى ٥٠٠.',
+      fam_err_reward_text: 'يُرجى كتابة المكافأة.',
+      fam_err_not_enough: 'النجوم في الجرّة لا تكفي لهذا الهدف بعد.',
+      fam_surprise_h: 'تقديم مفاجأة',
+      fam_surprise_about: 'يمكن تقديم مفاجأة في أي وقت، لا بعد المهام فقط. يراها الطفل مرة واحدة في صفحته الرئيسية.',
+      fam_surprise_text: 'المفاجأة',
+      fam_surprise_ph: 'مثلًا: نزهة في الحديقة',
+      fam_surprise_give: 'تقديم المفاجأة',
+      fam_surprise_done: 'المفاجأة جاهزة، وستظهر لـ {name} في الصفحة الرئيسية.',
+      fam_surprise_unseen: 'لم تُشاهَد بعد: {list}',
+      fam_err_surprise_text: 'يُرجى كتابة المفاجأة.',
+      fam_adjust_h: 'تعديل النجوم',
+      fam_adjust_about: 'للتصحيح فقط: لا تُنقَص النجوم أبدًا بسبب محاولة لم تنجح، ولا تقلّ الجرّة عن الصفر.',
+      fam_adjust_way: 'نوع التعديل',
+      fam_adjust_add: 'إضافة نجوم',
+      fam_adjust_take: 'إنقاص نجوم',
+      fam_adjust_n: 'عدد النجوم (من ١ إلى ٥٠٠)',
+      fam_adjust_note: 'السبب',
+      fam_adjust_note_ph: 'مثلًا: مهمة أُنجزت على الورق',
+      fam_adjust_done: 'تمّ الحفظ. النجوم في الجرّة: {n}.',
+      fam_adjust_limited: 'أُنقص ما في الجرّة فقط، وصارت الآن صفرًا.',
+      fam_err_note: 'يُرجى كتابة السبب.',
+      fam_err_no_stars: 'لا توجد نجوم لإنقاصها.',
+      fam_history_h: 'سجلّ النجوم',
+      fam_history_empty: 'لا توجد نجوم بعد.',
+      fam_led_task: 'مهمة: {title}',
+      fam_led_task_gone: 'مهمة',
+      fam_led_goal: 'هدف مُقدَّم: {reward}',
+      fam_led_goal_gone: 'هدف مُقدَّم',
+      fam_led_adjust: 'تعديل: {note}',
+      fam_led_adjust_plain: 'تعديل',
+      fam_led_carry: 'نجوم سابقة مجموعة معًا',
+      fam_show_all: 'عرض الكل ({n})',
+      fam_show_less: 'عرض أقل',
+      fam_pin_change: 'تغيير الرمز',
+      fam_pin_change_title: 'تغيير الرمز',
+      fam_pin_change_intro: 'يُرجى كتابة الرمز الحالي أولًا.',
+      fam_pin_change_new: 'يُرجى اختيار الرمز الجديد (من ٤ إلى ٦ أرقام) وكتابته مرتين.',
+      fam_pin_changed: 'تمّ تغيير الرمز.',
+      fam_continue: 'متابعة',
+      fam_set_lang_h: 'لغة قسم الكبار',
+      fam_set_lang_hint: 'لقسم الكبار والرمز. يحتفظ كل طفل بلغته (في «الأطفال»).',
+      fam_set_lang_saved: 'تمّ الحفظ.',
+      fam_set_delete_h: 'حذف كل البيانات من هذا الجهاز',
+      fam_set_delete_about: 'يحذف كل الأطفال والمهام والنجوم والمكافآت والرمز والإعدادات، من هذا الجهاز فقط. ثم يبدأ التطبيق من جديد كما في اليوم الأول.',
+      fam_delete: 'حذف كل البيانات',
+      fam_delete_q1: 'حذف كل بيانات العائلة من هذا الجهاز؟ لا يمكن التراجع عن ذلك.',
+      fam_delete_q2: 'تأكيد أخير: ستُحذف كل بيانات الأطفال والمهام والنجوم والمكافآت، والرمز أيضًا.',
+      fam_delete_final: 'حذف كل شيء',
+      fam_delete_failed: 'تعذّر حذف البيانات: لا يسمح هذا المتصفح بذلك الآن.',
+      fam_notice_deleted: 'حُذفت كل بيانات العائلة من هذا الجهاز.',
     },
   };
 
@@ -490,6 +895,7 @@
   const PARENT_SECTIONS = ['review', 'tasks', 'rewards', 'children', 'settings'];
   const MAX_AYAT = 50;
   const STAR = '⭐';
+  const LEDGER_SHOWN = 10; // history entries shown before "Show all"
 
   // ===========================================================================
   // Module state
@@ -512,9 +918,16 @@
     setupLang: null,
     setupChildLangTouched: false,
     ptChildId: null, // the child whose tasks the parent area shows
-    taskForm: null, // {id: taskId | null, childId, token}
+    // The open task form: {id: taskId | null, childId, token, diffSeen}; diffSeen is the
+    // text whose differences from the mushaf were shown (a second "Save" keeps it as typed).
+    taskForm: null,
     childForm: null, // {id: childId | null}
     removing: null, // childId waiting for the remove confirmation
+    detailTaskId: null, // the task whose details are open (Tasks)
+    sendBack: null, // {taskId, where: 'review' | 'detail', text}: the open "Not yet" note
+    rwForm: null, // {kind: 'goal' | 'surprise' | 'adjust', childId}: the open form of Rewards
+    ledgerAll: false, // the whole history of the stars is shown (else the newest entries)
+    deleting: 0, // "delete all data": 0, or the confirmation step shown (1, then 2)
   };
 
   // ===========================================================================
@@ -609,6 +1022,57 @@
       s = day;
     }
     return l === 'ar' ? app.arabicDigits(s) : s;
+  }
+
+  /** A time ('2026-11-11T14:05:00Z') as a date, or a date and time, in the UI language. */
+  function fmtDate(iso, withTime, lang) {
+    const l = lang || app.uiLang();
+    const date = new Date(iso);
+    if (!iso || Number.isNaN(date.getTime())) return '';
+    const opts = { day: 'numeric', month: withTime ? 'short' : 'long' };
+    if (date.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+    if (withTime) {
+      opts.hour = '2-digit';
+      opts.minute = '2-digit';
+    }
+    let s;
+    try {
+      s = new Intl.DateTimeFormat(l === 'ar' ? 'ar-u-nu-arab' : l, opts).format(date);
+    } catch (e) {
+      s = iso.slice(0, 10);
+    }
+    return l === 'ar' ? app.arabicDigits(s) : s;
+  }
+
+  /** A share of words right (0..1) as a percentage; below 1 it never rounds up to 100. */
+  function fmtPct(x, lang) {
+    const l = lang || app.uiLang();
+    const v = Math.max(0, Math.min(1, Number(x) || 0));
+    const n = v >= 1 ? 100 : Math.floor(v * 100);
+    if (l === 'ar') return app.arabicDigits(n) + '٪';
+    if (l === 'fr') return n + '\u202f%';
+    return n + '%';
+  }
+
+  /** A whole number typed in a field (Arabic-Indic digits accepted); NaN otherwise. */
+  function numberValue(sel) {
+    const v = app.asciiDigits($(sel).value).trim();
+    return /^[0-9]{1,4}$/.test(v) ? Number(v) : NaN;
+  }
+
+  /**
+   * A status line made of translated sentences ([key, vars] pairs, see tNodes), so that
+   * names and rewards typed by people are <bdi> of their own. Not repainted on a language
+   * change: the parent's language change clears the parent area's statuses.
+   */
+  function say(node, parts, error) {
+    app.clearStatus(node);
+    const list = typeof parts === 'string' ? [[parts]] : parts;
+    list.forEach((p, i) => {
+      if (i) node.append(' ');
+      node.append(tNodes(p[0], p[1]));
+    });
+    node.classList.toggle('is-error', !!error);
   }
 
   /** m:ss for a wait, with the digits of the language. */
@@ -735,11 +1199,42 @@
     }
   }
 
-  /** Apply a rewards.js operation (doc -> doc) and save it. Throws what it throws. */
+  /**
+   * Apply a rewards.js operation (doc -> doc) and save it. Throws what it throws.
+   * Compare and swap: when another tab saved since this tab last read or wrote (its
+   * storage event may not have arrived yet), the operation runs on that newer document,
+   * so the other tab's change is never overwritten; the screen is drawn again after.
+   */
   function update(fn) {
+    const external = adoptStored();
     const next = fn(store.doc, nowIso());
     commit(next);
+    if (external) setTimeout(() => store.doc && afterExternalChange(), 0);
     return next;
+  }
+
+  /** Take the stored document when it is newer than this tab's; true when it was. */
+  function adoptStored() {
+    const ls = storage();
+    if (!ls || store.memoryOnly) return false;
+    let raw;
+    try {
+      raw = ls.getItem(R.STORAGE_KEY);
+    } catch (err) {
+      return false;
+    }
+    if (raw === store.raw) return false;
+    if (raw === null) {
+      // Deleted in another tab ("delete all data"): never written back.
+      forgetFamily();
+      notice('fam_notice_deleted');
+      throw new Error('the family data was deleted in another tab');
+    }
+    const v = R.validateDoc(raw);
+    if (!v.ok) return false; // unreadable: this tab's document is written over it
+    store.doc = v.doc;
+    store.raw = raw;
+    return true;
   }
 
   /** Another tab changed the stored document: reload it and draw the screen again. */
@@ -756,13 +1251,8 @@
     if (raw === store.raw) return;
     if (raw === null) {
       // All the family data was deleted in another tab: back to the setup.
-      store.doc = null;
-      store.raw = null;
-      session.childId = null;
-      session.parentOpen = false;
-      if (app.taskRunning()) app.leaveTask();
-      syncApp();
-      app.go('start');
+      forgetFamily();
+      notice('fam_notice_deleted');
       return;
     }
     const v = R.validateDoc(raw);
@@ -770,6 +1260,30 @@
     store.doc = v.doc;
     store.raw = raw;
     afterExternalChange();
+  }
+
+  /**
+   * The family document is gone (deleted here or in another tab): the session forgets
+   * the child, the parent area and every open form, and the app starts on the family
+   * setup again, in the language the grown-ups had.
+   */
+  function forgetFamily() {
+    const lang = store.doc ? store.doc.parent.uiLang : app.uiLang();
+    store.doc = null;
+    store.raw = null;
+    if ($('#pin-dialog').open) closePin(false);
+    if (app.taskRunning()) app.leaveTask();
+    Object.assign(session, {
+      childId: null, parentOpen: false, section: 'tasks', task: null, ptChildId: null,
+      setupLang: lang, setupChildLangTouched: false,
+    });
+    closeTaskForm();
+    closeChildForm();
+    hideRemoveConfirm();
+    resetParentForms();
+    resetSetupForm(lang);
+    syncApp();
+    app.go('start');
   }
 
   function afterExternalChange() {
@@ -783,6 +1297,8 @@
     if (session.taskForm && session.taskForm.id && !doc.tasks.some((x) => x.id === session.taskForm.id && (x.status === 'assigned' || x.status === 'ready'))) closeTaskForm();
     if (session.childForm && session.childForm.id && !doc.children.some((c) => c.id === session.childForm.id)) closeChildForm();
     if (session.removing && !doc.children.some((c) => c.id === session.removing)) hideRemoveConfirm();
+    if (session.detailTaskId && !doc.tasks.some((x) => x.id === session.detailTaskId)) session.detailTaskId = null;
+    if (session.sendBack && !doc.tasks.some((x) => x.id === session.sendBack.taskId && x.status === 'ready')) session.sendBack = null;
     syncApp();
     const screen = app.screen();
     const allowed = route(screen);
@@ -854,9 +1370,12 @@
   function leave(screen) {
     if (screen === 'parent') {
       session.parentOpen = false; // the PIN is asked again next time
+      armParentIdle();
       closeTaskForm();
       closeChildForm();
       hideRemoveConfirm();
+      resetParentForms();
+      session.detailTaskId = null;
     }
   }
 
@@ -924,6 +1443,29 @@
     $('#setup-form').hidden = !!store.doc;
   }
 
+  /** The setup form as on a first run (after "delete all data"), in the grown-ups' language. */
+  function resetSetupForm(lang) {
+    for (const id of ['#setup-lang', '#child-lang']) $(id).value = lang;
+    for (const id of ['#setup-pin', '#setup-pin2', '#nickname']) $(id).value = '';
+    $('#age').value = '6-9';
+    $('#consent').checked = false;
+    renderEmojiPick($('#setup-avatars'), R.AVATARS, R.AVATARS[0]);
+    app.clearStatus($('#setup-status'));
+    $('#btn-start').disabled = false;
+  }
+
+  function clearSetupErrors() {
+    for (const id of ['setup-pin', 'setup-pin2', 'nickname']) {
+      const input = document.getElementById(id);
+      const err = document.getElementById(id + '-err');
+      if (err) app.clearStatus(err);
+      if (input) {
+        input.removeAttribute('aria-invalid');
+        if (input.getAttribute('aria-describedby') === id + '-err') input.removeAttribute('aria-describedby');
+      }
+    }
+  }
+
   async function submitSetup() {
     if (store.doc) return;
     const status = $('#setup-status');
@@ -932,9 +1474,24 @@
     const pin2 = $('#setup-pin2').value;
     const nickname = $('#nickname').value.trim();
     const fail = (key, focus) => {
-      app.setStatus(status, key, null, { error: true });
-      if (focus) focus.focus();
+      clearSetupErrors();
+      if (!focus) {
+        app.setStatus(status, key, null, { error: true });
+        return;
+      }
+      // Under the field that needs it, and read with it (UX-08).
+      app.clearStatus(status);
+      let err = document.getElementById(focus.id + '-err');
+      if (!err) {
+        err = el('p', { class: 'status is-error field-error', id: focus.id + '-err', role: 'alert' });
+        focus.after(err);
+      }
+      app.setStatus(err, key, null, { error: true });
+      focus.setAttribute('aria-invalid', 'true');
+      focus.setAttribute('aria-describedby', err.id);
+      focus.focus();
     };
+    clearSetupErrors();
     if (!R.isValidPin(pin1)) return fail('fam_err_pin_format', $('#setup-pin'));
     if (R.normalizePin(pin1) !== R.normalizePin(pin2)) {
       $('#setup-pin2').value = '';
@@ -1052,8 +1609,8 @@
         renderHome();
         $('#home-title').focus();
       });
-      box.append(el('div', { class: 'card celebrate surprise' }, [
-        el('p', { class: 'celebrate-title' }, t('fam_surprise_title')),
+      box.append(el('div', { class: 'card celebrate surprise', 'data-surprise': s.id }, [
+        el('p', { class: 'celebrate-title' }, [el('span', { 'aria-hidden': 'true' }, '🎉 '), t('fam_surprise_title')]),
         el('p', { class: 'surprise-reward' }, [el('span', { class: 'big-emoji', 'aria-hidden': 'true' }, s.reward.emoji), ' ', userText(s.reward.text)]),
         ok,
       ]));
@@ -1087,11 +1644,24 @@
       ]));
     }
     if (section !== 'done') {
-      lines.push(el('p', { class: 'task-pass' }, t('fam_pass_line', { rule: t('fam_pass_' + R.passRule(task)) })));
+      lines.push(el('p', { class: 'task-pass' }, t('fam_pass_line', { rule: passRuleText(task) })));
     }
     if (task.due && section === 'todo') lines.push(el('p', { class: 'task-due' }, t('fam_due', { date: fmtDay(task.due) })));
+    // A dictation whose text has Quran parts: a grown-up reads them (UX-04).
+    if (section === 'todo' && task.kind === 'dictation') {
+      // Shown in place when the server's answer comes (no new drawing of the home).
+      const line = el('p', { class: 'task-quran-line gu-child', 'data-quran-for': task.id, hidden: '' }, t('dict_quran_child'));
+      const info = textInfoFor(task, () => {
+        const later = textInfoFor(task);
+        const node = document.querySelector('#screen-home [data-quran-for="' + task.id + '"]');
+        if (node && later && later.parts.length) node.hidden = false;
+      });
+      if (info && info.parts.length) line.hidden = false;
+      lines.push(line);
+    }
     if (task.sentBackNote && section === 'todo') {
-      lines.push(el('p', { class: 'task-note' }, [t('fam_note_label') + ' ', userText(task.sentBackNote)]));
+      // "Not yet: try again" with a note from the grown-up: shown kindly, never as a failure.
+      lines.push(el('p', { class: 'task-note' }, [el('span', { 'aria-hidden': 'true' }, '💬 '), t('fam_note_label') + ' ', userText(task.sentBackNote)]));
     }
     if (section === 'done' && task.reward) {
       const given = task.rewardStatus === 'given';
@@ -1139,7 +1709,26 @@
     pass.textContent = '';
     if (!task) return;
     title.append(el('span', { class: 'kind-icon', 'aria-hidden': 'true' }, svgIcon(KIND_ICONS[task.kind])), userText(task.title));
-    pass.textContent = t('fam_pass_line', { rule: t('fam_pass_' + R.passRule(task)) });
+    pass.textContent = t('fam_pass_line', { rule: passRuleText(task) });
+  }
+
+  /**
+   * The key of a line that counts words: Arabic has its own forms for 1, 2, 3 to 10 and
+   * 11 or more (كلمة واحدة، كلمتان، ٣ كلمات، ١١ كلمة); en and fr have one and many (UX-15).
+   */
+  function countKey(base, n) {
+    if (app.uiLang() === 'ar') {
+      if (n === 1) return base + '_one';
+      if (n === 2) return base + '_two';
+      return n % 100 >= 3 && n % 100 <= 10 ? base + '_few' : base + '_many';
+    }
+    return n === 1 ? base + '_one' : base;
+  }
+
+  /** The pass rule as it follows "Pass:" (lower case after a French colon). */
+  function passRuleText(task) {
+    const rule = t('fam_pass_' + R.passRule(task));
+    return app.uiLang() === 'fr' ? rule.charAt(0).toLocaleLowerCase('fr') + rule.slice(1) : rule;
   }
 
   /** A check result of the running task: record it, then show what it means. */
@@ -1147,13 +1736,12 @@
     if (!store.doc || !node) return;
     let out;
     try {
-      out = R.recordAttempt(store.doc, taskId, res, nowIso());
+      update((d, now) => (out = R.recordAttempt(d, taskId, res, now)).doc);
     } catch (err) {
       // A result that does not fit the task (it should not happen) is not counted.
       if (isRewardsError(err)) return;
       throw err;
     }
-    commit(out.doc);
     renderOutcome(node, out.task, out.passed);
   }
 
@@ -1165,7 +1753,7 @@
   function renderOutcome(node, task, passed) {
     node.textContent = '';
     const imp = R.improvement(task);
-    if (imp !== null && imp > 0) node.append(el('p', { class: 'improve' }, tNodes(imp === 1 ? 'fam_improve_one' : 'fam_improve', { n: imp })));
+    if (imp !== null && imp > 0) node.append(el('p', { class: 'improve' }, tNodes(countKey('fam_improve', imp), { n: imp })));
     if (passed) {
       const vars = { stars: starsText(task.stars) };
       if (task.reward) vars.reward = { user: rewardLabel(task.reward) };
@@ -1208,17 +1796,30 @@
   // The PIN dialog: create (twice), enter, "Forgot PIN" behind a parental gate
   // ===========================================================================
 
-  const pin = { mode: null, purpose: null, resolve: null, busy: false, timer: null, until: 0, gate: null, intro: null };
+  // allowCreate: the gate was answered (a forgotten PIN, or the first PIN of a migrated
+  // family) or the current PIN was given (a change): only then may a new PIN be set.
+  // reset: the new PIN replaces a forgotten one (parent.pinResetAt is set).
+  const pin = {
+    mode: null, purpose: null, resolve: null, busy: false, timer: null, until: 0, gate: null, intro: null,
+    allowCreate: false, reset: false,
+  };
 
-  /** Ask for the PIN ('unlock' the parent area or 'confirm' a task). Resolves to true when given. */
+  /**
+   * Ask for the PIN: 'unlock' the parent area, 'confirm' a task, or 'change' it (the
+   * current PIN, then the new one twice). Resolves to true when given (or changed).
+   */
   function pinDialog(purpose) {
     return new Promise((resolve) => {
       if (!store.doc) return resolve(false);
       if (pin.resolve) pin.resolve(false);
       pin.resolve = resolve;
       pin.purpose = purpose;
+      pin.allowCreate = false;
+      pin.reset = false;
       const dlg = $('#pin-dialog');
-      setPinMode(store.doc.parent.pin ? 'enter' : 'create', null);
+      // No PIN yet (a family migrated from v1): whoever creates it answers the gate first.
+      if (store.doc.parent.pin) setPinMode('enter', null);
+      else setPinMode('gate', 'fam_gate_first_intro');
       if (!dlg.open) dlg.showModal();
       focusPin();
     });
@@ -1243,6 +1844,8 @@
     const resolve = pin.resolve;
     pin.resolve = null;
     pin.mode = null;
+    pin.allowCreate = false;
+    pin.reset = false;
     if (dlg.open) dlg.close();
     if (resolve) resolve(result);
   }
@@ -1264,6 +1867,7 @@
     pin.mode = mode;
     pin.intro = intro || null;
     const confirm = pin.purpose === 'confirm';
+    const change = pin.purpose === 'change';
     const p1 = $('#pin-1');
     const p2 = $('#pin-2');
     p1.value = '';
@@ -1272,35 +1876,41 @@
     $('#pin-ok').disabled = false;
     pinStatus(null);
     if (mode === 'enter') {
-      $('#pin-title').textContent = pt(confirm ? 'fam_pin_confirm_title' : 'fam_pin_enter_title');
-      $('#pin-intro').textContent = pt(intro || (confirm ? 'fam_pin_confirm_intro' : 'fam_pin_enter_intro'));
+      $('#pin-title').textContent = pt(change ? 'fam_pin_change_title' : confirm ? 'fam_pin_confirm_title' : 'fam_pin_enter_title');
+      $('#pin-intro').textContent = pt(intro || (change ? 'fam_pin_change_intro' : confirm ? 'fam_pin_confirm_intro' : 'fam_pin_enter_intro'));
       $('#pin-1-label').textContent = pt('fam_pin_label');
       p1.type = 'password';
       $('#pin-f2').hidden = true;
-      $('#pin-ok').textContent = pt(confirm ? 'fam_confirm' : 'fam_unlock');
+      $('#pin-ok').textContent = pt(change ? 'fam_continue' : confirm ? 'fam_confirm' : 'fam_unlock');
       $('#pin-forgot').hidden = false;
       $('#pin-forgot').textContent = pt('fam_forgot');
       const st = R.pinStatus(store.doc, nowIso());
-      if (st.locked) showLocked(st.retryInMs);
+      if (st.locked) showLocked(st.retryInMs); // "Forgot the PIN?" waits for the pause too
     } else if (mode === 'create') {
-      $('#pin-title').textContent = pt('fam_pin_create_title');
-      $('#pin-intro').textContent = pt(intro || 'fam_pin_create_intro');
+      $('#pin-title').textContent = pt(change ? 'fam_pin_change_title' : 'fam_pin_create_title');
+      $('#pin-intro').textContent = pt(intro || (change ? 'fam_pin_change_new' : 'fam_pin_create_intro'));
       $('#pin-1-label').textContent = pt('fam_pin_new');
       $('#pin-2-label').textContent = pt('fam_pin_again');
       p1.type = 'password';
       $('#pin-f2').hidden = false;
-      $('#pin-ok').textContent = pt('fam_create');
+      $('#pin-ok').textContent = pt(change ? 'fam_save' : 'fam_create');
       $('#pin-forgot').hidden = true;
     } else {
-      // The parental gate: a multiplication written in words, answered in digits.
-      pin.gate = { a: randomInt(3, 9), b: randomInt(3, 9) };
-      $('#pin-title').textContent = pt('fam_gate_title');
-      $('#pin-intro').textContent = pt('fam_gate_intro');
-      $('#pin-1-label').textContent = pt('fam_gate_q', { a: pt('fam_n' + pin.gate.a), b: pt('fam_n' + pin.gate.b) });
+      // The parental gate: a two-digit number times a one-digit number, written in
+      // words and answered in digits; wrong answers count toward the PIN's pause.
+      const t = randomInt(2, 6);
+      const u = randomInt(3, 9);
+      pin.gate = { a: 10 * t + u, b: randomInt(3, 9) };
+      const a = pt('fam_num_tu', { t: pt('fam_t' + t), u: pt('fam_n' + u) });
+      $('#pin-title').textContent = pt(store.doc.parent.pin ? 'fam_gate_title' : 'fam_pin_create_title');
+      $('#pin-intro').textContent = pt(intro || 'fam_gate_intro');
+      $('#pin-1-label').textContent = pt('fam_gate_q', { a, b: pt('fam_n' + pin.gate.b) });
       p1.type = 'text';
       $('#pin-f2').hidden = true;
       $('#pin-ok').textContent = pt('fam_gate_check');
       $('#pin-forgot').hidden = true;
+      const st = R.pinStatus(store.doc, nowIso());
+      if (st.locked) showLocked(st.retryInMs);
     }
     $('#pin-cancel').textContent = pt('fam_cancel');
   }
@@ -1316,6 +1926,7 @@
     pin.until = Date.now() + ms;
     $('#pin-1').disabled = true;
     $('#pin-ok').disabled = true;
+    $('#pin-forgot').hidden = true;
     const lang = parentLang();
     pinStatus('fam_pin_locked', { time: fmtWait(ms, lang) }, true);
     pin.timer = setInterval(() => {
@@ -1325,6 +1936,7 @@
         stopPinTimer();
         $('#pin-1').disabled = false;
         $('#pin-ok').disabled = false;
+        $('#pin-forgot').hidden = pin.mode !== 'enter';
         pinStatus(null);
         $('#pin-1').focus();
         return;
@@ -1339,21 +1951,36 @@
     const p1 = $('#pin-1');
     const v1 = p1.value;
     if (pin.mode === 'gate') {
+      if (R.pinStatus(store.doc, nowIso()).locked) return;
       const answer = app.asciiDigits(v1).replace(/\s+/g, '');
       if (/^\d+$/.test(answer) && Number(answer) === pin.gate.a * pin.gate.b) {
-        update((d, now) => R.clearPin(d, now)); // the PIN goes; all the data stays
-        setPinMode('create', 'fam_pin_reset_intro');
+        // The old PIN stays until the new one is saved: Cancel keeps it.
+        pin.allowCreate = true;
+        pin.reset = !!store.doc.parent.pin;
+        setPinMode('create', pin.reset ? 'fam_pin_reset_intro' : null);
         p1.focus();
       } else {
-        setPinMode('gate');
-        pinStatus('fam_gate_wrong', null, true);
-        p1.focus();
+        let r;
+        try {
+          update((d, now) => (r = R.applyPinCheck(d, { match: false }, now)).doc);
+        } catch (err) {
+          return;
+        }
+        setPinMode('gate', pin.intro);
+        if (!r.lockedUntil) pinStatus('fam_gate_wrong', null, true);
+        if (!p1.disabled) p1.focus();
+        else $('#pin-cancel').focus();
       }
       return;
     }
     pin.busy = true;
     try {
       if (pin.mode === 'create') {
+        if (!pin.allowCreate) {
+          // Never a new PIN without the gate or the current PIN.
+          setPinMode(store.doc.parent.pin ? 'enter' : 'gate', store.doc.parent.pin ? null : 'fam_gate_first_intro');
+          return;
+        }
         if (!R.isValidPin(v1)) {
           pinStatus('fam_err_pin_format', null, true);
           p1.focus();
@@ -1366,8 +1993,10 @@
           return;
         }
         pinStatus('fam_saving');
-        const doc = await R.setPin(store.doc, v1, nowIso());
-        commit(doc);
+        // Hash first, then set it on the document as it is now (another tab may have saved).
+        const record = await R.hashPin(v1);
+        const reset = pin.reset;
+        update((d, now) => R.setPinRecord(d, record, now, { reset }));
         closePin(true);
         return;
       }
@@ -1378,20 +2007,38 @@
         return;
       }
       pinStatus('fam_pin_checking');
-      const r = await R.verifyPin(store.doc, v1, nowIso());
-      commit(r.doc); // the backoff lives in the document: always saved
+      let r = null;
+      for (let round = 0; round < 3 && (!r || r.code === 'stale'); round++) {
+        const c = await R.checkPin(store.doc, v1, nowIso());
+        if (c.locked) {
+          r = { ok: false, code: 'locked', retryInMs: c.retryInMs };
+          break;
+        }
+        // The outcome counts on the document as it is now (the backoff lives in it).
+        update((d, now) => (r = R.applyPinCheck(d, c, now)).doc);
+      }
       if (r.ok) {
+        if (pin.purpose === 'change') {
+          // The current PIN was right: now the new one, twice.
+          pin.allowCreate = true;
+          pin.reset = false;
+          setPinMode('create', null);
+          $('#pin-1').focus();
+          return;
+        }
         closePin(true);
         return;
       }
       p1.value = '';
       if (r.code === 'locked' || r.lockedUntil) showLocked(r.retryInMs);
+      else if (r.code === 'stale') pinStatus('error_generic', null, true);
       else if (r.attemptsLeft > 0) pinStatus('fam_pin_wrong', { n: r.attemptsLeft }, true);
       else pinStatus('fam_pin_wrong_last', null, true);
       if (!p1.disabled) p1.focus();
     } catch (err) {
+      if (!store.doc) return;
       if (isRewardsError(err, 'unavailable')) pinStatus('fam_err_crypto', null, true);
-      else if (isRewardsError(err, 'bad_state') && !store.doc.parent.pin) setPinMode('create', null);
+      else if (isRewardsError(err, 'bad_state') && !store.doc.parent.pin) setPinMode('gate', 'fam_gate_first_intro');
       else if (isRewardsError(err, 'bad_input')) pinStatus('fam_err_pin_format', null, true);
       else pinStatus('error_generic', null, true);
     } finally {
@@ -1423,14 +2070,59 @@
   // The parent area (behind the PIN)
   // ===========================================================================
 
+  /** The parent area locks after this long without a tap or a key (UX-02). */
+  const PARENT_IDLE_MS = 3 * 60 * 1000;
+  let parentIdle = null;
+
+  function armParentIdle() {
+    if (parentIdle) clearTimeout(parentIdle);
+    parentIdle = session.parentOpen ? setTimeout(lockParent, PARENT_IDLE_MS) : null;
+  }
+
+  /**
+   * Lock the parent area (the page was hidden, or nobody used it for 3 minutes): the
+   * phone may be back in a child's hands. "Who is learning?" shows next.
+   */
+  function lockParent() {
+    if (parentIdle) clearTimeout(parentIdle);
+    parentIdle = null;
+    if (!session.parentOpen) return;
+    if ($('#pin-dialog').open && pin.purpose === 'change') closePin(false);
+    session.parentOpen = false;
+    app.go('who');
+  }
+
+  function initAutoLock() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') lockParent();
+    });
+    for (const ev of ['pointerdown', 'keydown', 'input', 'wheel', 'touchstart']) {
+      document.addEventListener(ev, () => session.parentOpen && armParentIdle(), { capture: true, passive: true });
+    }
+  }
+
   async function openParent() {
     if (!store.doc) return;
     const ok = await pinDialog('unlock');
     if (!ok) return;
     session.parentOpen = true;
-    // Without consent the microphone stays off: the box is in Settings.
-    session.section = store.doc.parent.consentAt ? 'tasks' : 'settings';
+    armParentIdle();
+    // Without consent the microphone stays off: the box is in Settings. Otherwise the
+    // tasks waiting for a grown-up come first.
+    if (!store.doc.parent.consentAt) session.section = 'settings';
+    else session.section = R.reviewQueue(store.doc).length ? 'review' : 'tasks';
     app.go('parent');
+  }
+
+  /** After "Forgot PIN": a notice until a grown-up dismisses it (a child may have reset it). */
+  function renderPinResetNotice() {
+    const box = $('#parent-reset-notice');
+    const at = store.doc.parent.pinResetAt;
+    box.hidden = !at;
+    if (!at) return;
+    const lang = parentLang();
+    $('#parent-reset-text').textContent = pt('fam_pin_reset_notice', { date: fmtDate(at, true, lang) });
+    $('#parent-reset-ok').textContent = pt('fam_dismiss');
   }
 
   function closeParent() {
@@ -1440,14 +2132,18 @@
 
   function renderParent() {
     if (!store.doc) return;
+    renderPinResetNotice();
     for (const tab of $$('#psec-nav .psec-tab')) {
       if (tab.dataset.psec === session.section) tab.setAttribute('aria-current', 'true');
       else tab.removeAttribute('aria-current');
     }
     for (const sec of $$('#screen-parent .psec')) sec.hidden = sec.dataset.psec !== session.section;
-    if (session.section === 'tasks') renderTasks();
+    if (session.section === 'review') renderReview();
+    else if (session.section === 'tasks') renderTasks();
+    else if (session.section === 'rewards') renderRewards();
     else if (session.section === 'children') renderChildren();
     else if (session.section === 'settings') renderSettings();
+    renderCounts();
   }
 
   function showSection(name) {
@@ -1456,6 +2152,8 @@
       closeTaskForm();
       closeChildForm();
       hideRemoveConfirm();
+      resetParentForms();
+      for (const n of $$('#screen-parent .psec .status')) app.clearStatus(n);
     }
     session.section = name;
     renderParent();
@@ -1463,10 +2161,621 @@
     if (h) h.focus();
   }
 
-  // --- Settings (the consent box; the rest is the next step) -----------------
+  /** The small forms of To review, Rewards and Settings, closed. */
+  function resetParentForms() {
+    session.sendBack = null;
+    session.ledgerAll = false;
+    session.deleting = 0;
+    closeRewardForm();
+  }
+
+  /** What waits for the parent, after the labels of the sections: tasks to review, rewards to give. */
+  function renderCounts() {
+    const doc = store.doc;
+    const kids = new Set(doc.children.map((c) => c.id));
+    const give = doc.tasks.filter((x) => x.rewardStatus === 'unlocked' && kids.has(x.childId)).length;
+    setCount($('#psec-count-review'), R.reviewQueue(doc).length);
+    setCount($('#psec-count-rewards'), give);
+  }
+
+  function setCount(node, n) {
+    node.textContent = n ? app.fmtNum(n) : '';
+    node.hidden = !n;
+  }
+
+  /** The child shown by Tasks and Rewards (one choice for both), or null without children. */
+  function parentChildId() {
+    const children = store.doc.children;
+    if (!children.some((c) => c.id === session.ptChildId)) {
+      session.ptChildId = children.some((c) => c.id === session.childId) ? session.childId : children.length ? children[0].id : null;
+    }
+    return session.ptChildId;
+  }
+
+  function fillChildSelect(select) {
+    select.textContent = '';
+    for (const c of store.doc.children) select.append(el('option', { value: c.id }, c.avatar + ' ' + c.nickname));
+    if (session.ptChildId) select.value = session.ptChildId;
+  }
+
+  function childName(childId) {
+    const c = store.doc.children.find((x) => x.id === childId);
+    return { user: c ? c.nickname : '' };
+  }
+
+  function kindIcon(kind) {
+    return el('span', { class: 'kind-icon kind-' + kind }, svgIcon(KIND_ICONS[kind]));
+  }
+
+  // --- Results of a task, for the parent ---------------------------------------
+
+  function isMeaningTask(task) {
+    return task.kind === 'recite' && task.mode === 'contextual';
+  }
+
+  /** The figures of the attempts: best and last result, tries, passes, when it became ready. */
+  function statList(task, stats, opts) {
+    const o = opts || {};
+    const items = [];
+    if (isMeaningTask(task)) {
+      const last = task.attempts.length ? task.attempts[task.attempts.length - 1] : null;
+      if (last && last.verdict) items.push(t('fam_review_last', { pct: t('fam_res_' + (last.verdict === 'same_meaning' || last.verdict === 'partly' || last.verdict === 'different' ? last.verdict : 'unclear')) }));
+    } else {
+      if (stats.bestAccuracy !== null) items.push(t('fam_review_best', { pct: fmtPct(stats.bestAccuracy) }));
+      if (stats.lastAccuracy !== null) items.push(t('fam_review_last', { pct: fmtPct(stats.lastAccuracy) }));
+    }
+    items.push(t('fam_review_attempts', { n: stats.attemptCount }));
+    if (o.passed && stats.passedCount) items.push(t('fam_review_passed', { n: stats.passedCount }));
+    if (task.status === 'ready' && task.readyAt) items.push(t('fam_review_ready_at', { when: fmtDate(task.readyAt, true) }));
+    return el('ul', { class: 'stat-list' }, items.map((x) => el('li', null, x)));
+  }
+
+  /** "N more words right in the last try than before", only when it is true. */
+  function improvementLine(n) {
+    if (n === null || n === undefined || n <= 0) return null;
+    return el('p', { class: 'improve' }, tNodes(n === 1 ? 'fam_review_improve_one' : 'fam_review_improve', { n }));
+  }
+
+  // --- To review: the queue across children ------------------------------------
+
+  function renderReview() {
+    const queue = R.reviewQueue(store.doc);
+    const list = $('#pr-list');
+    list.textContent = '';
+    for (const entry of queue) list.append(reviewItem(entry));
+    $('#pr-notes').hidden = !queue.length;
+    $('#pr-empty').hidden = queue.length > 0;
+  }
+
+  function reviewItem(entry) {
+    const task = entry.task;
+    return el('li', { class: 'ptask review-item status-ready', 'data-task': task.id }, [
+      el('p', { class: 'review-who' }, [el('span', { class: 'review-avatar', 'aria-hidden': 'true' }, entry.child.avatar), userText(entry.child.nickname)]),
+      el('div', { class: 'ptask-head' }, [kindIcon(task.kind), el('p', { class: 'ptask-title' }, userText(task.title))]),
+      el('p', { class: 'hint ptask-meta' }, t('fam_kind_' + task.kind) + ' · ' + t('fam_pass_line', { rule: passRuleText(task) })),
+      statList(task, entry),
+      improvementLine(entry.improvement),
+      // A dictation is written: the paper is the parent's real check (UX-13).
+      task.kind === 'dictation' ? el('p', { class: 'hint-parent' }, t('fam_review_paper')) : null,
+      readyActions(task, 'review'),
+    ]);
+  }
+
+  /** Confirm and "Not yet: try again" (with the note form when it is open) for a task waiting for the parent. */
+  function readyActions(task, where) {
+    const box = el('div', { class: 'ready-actions' });
+    const open = !!session.sendBack && session.sendBack.taskId === task.id && session.sendBack.where === where;
+    const confirm = el('button', { type: 'button', class: 'btn btn-primary btn-small', 'data-confirm': task.id }, t('fam_confirm'));
+    confirm.addEventListener('click', () => confirmNow(task.id, 'app_pass', where));
+    const notYet = el('button', { type: 'button', class: 'btn btn-small', 'data-not-yet': task.id, 'aria-expanded': open ? 'true' : 'false' }, t('fam_not_yet'));
+    notYet.addEventListener('click', () => toggleSendBack(task.id, where));
+    box.append(el('div', { class: 'ptask-actions' }, [confirm, notYet]));
+    if (open) box.append(sendBackForm(task, where));
+    return box;
+  }
+
+  function sectionStatus(where) {
+    return where === 'review' ? $('#pr-status') : where === 'rewards' ? $('#prw-status') : $('#pt-status');
+  }
+
+  /** After an action in a list that was drawn again: focus where the parent was. */
+  function refocus(where, taskId) {
+    const target = where === 'review' ? $('#psec-review-h') : where === 'rewards' ? $('#prw-give-h') : $('#pt-list [data-details="' + taskId + '"]') || $('#psec-tasks-h');
+    if (target) target.focus();
+  }
+
+  function toggleSendBack(taskId, where) {
+    const open = session.sendBack && session.sendBack.taskId === taskId && session.sendBack.where === where;
+    session.sendBack = open ? null : { taskId, where, text: '' };
+    renderParent();
+    if (open) {
+      const b = $('#screen-parent [data-not-yet="' + taskId + '"]');
+      if (b) b.focus();
+    } else {
+      const input = $('#sb-note-' + taskId);
+      if (input) input.focus();
+    }
+  }
+
+  function sendBackForm(task, where) {
+    const id = 'sb-note-' + task.id;
+    const input = el('input', { id, type: 'text', maxlength: String(R.LIMITS.sentBackNote), autocomplete: 'off', spellcheck: 'false', dir: 'auto' });
+    input.value = session.sendBack.text;
+    input.addEventListener('input', () => {
+      if (session.sendBack) session.sendBack.text = input.value;
+    });
+    const status = el('p', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    const send = el('button', { type: 'submit', class: 'btn btn-primary btn-small', 'data-send-back': task.id }, t('fam_sendback_send'));
+    const cancel = el('button', { type: 'button', class: 'btn btn-small' }, t('fam_cancel'));
+    cancel.addEventListener('click', () => toggleSendBack(task.id, where));
+    const form = el('form', { class: 'sub-form send-back', novalidate: true }, [
+      el('div', { class: 'field' }, [el('label', { for: id }, t('fam_sendback_label')), input]),
+      el('p', { class: 'hint' }, t('fam_sendback_hint')),
+      status,
+      el('div', { class: 'btn-row' }, [send, cancel]),
+    ]);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      sendBackNow(task.id, input.value, where, status);
+    });
+    return form;
+  }
+
+  function sendBackNow(taskId, note, where, formStatus) {
+    const task = R.getTask(store.doc, taskId);
+    if (!task) return;
+    try {
+      update((d, now) => R.sendBack(d, taskId, note.trim() || null, now));
+    } catch (err) {
+      app.setStatus(formStatus, 'error_generic', null, { error: true });
+      return;
+    }
+    session.sendBack = null;
+    renderParent();
+    say(sectionStatus(where), [['fam_sent_back', { name: childName(task.childId) }]]);
+    refocus(where, taskId);
+  }
+
+  /** Confirm ('app_pass', a task waiting) or confirm anyway ('parent_override', a task to do). */
+  function confirmNow(taskId, how, where) {
+    let task;
+    try {
+      update((d, now) => R.confirmTask(d, taskId, how, now));
+      task = R.getTask(store.doc, taskId);
+    } catch (err) {
+      renderParent();
+      app.setStatus(sectionStatus(where), 'error_generic', null, { error: true });
+      return;
+    }
+    if (session.sendBack && session.sendBack.taskId === taskId) session.sendBack = null;
+    renderParent();
+    const parts = [['fam_confirmed_for', { stars: starsText(task.stars), name: childName(task.childId) }]];
+    if (task.reward) parts.push(['fam_reward_to_give', { reward: { user: rewardLabel(task.reward) } }]);
+    say(sectionStatus(where), parts);
+    refocus(where, taskId);
+  }
+
+  /** A task reward the child has received ('unlocked' -> 'given'). */
+  function markGiven(taskId, where) {
+    let task;
+    try {
+      update((d, now) => R.markRewardGiven(d, taskId, now));
+      task = R.getTask(store.doc, taskId);
+    } catch (err) {
+      renderParent();
+      app.setStatus(sectionStatus(where), 'error_generic', null, { error: true });
+      return;
+    }
+    renderParent();
+    say(sectionStatus(where), [['fam_marked_given', { reward: { user: rewardLabel(task.reward) } }]]);
+    refocus(where, taskId);
+  }
+
+  // --- The details of a task (Tasks): figures, text, and "Confirm anyway" -------
+
+  function toggleDetail(taskId) {
+    session.detailTaskId = session.detailTaskId === taskId ? null : taskId;
+    if (session.sendBack && session.sendBack.where === 'detail') session.sendBack = null;
+    renderTasks();
+    const b = $('#pt-list [data-details="' + taskId + '"]');
+    if (b) b.focus();
+  }
+
+  function taskDetail(task) {
+    const stats = R.taskStats(task);
+    const box = el('div', { class: 'ptask-detail', id: 'ptd-' + task.id });
+    const dates = [t('fam_detail_created', { date: fmtDate(task.createdAt) })];
+    if (task.due) dates.push(t('fam_detail_due', { date: fmtDay(task.due) }));
+    if (task.sentBackAt) dates.push(t('fam_detail_sent_back', { date: fmtDate(task.sentBackAt) }));
+    if (task.doneAt) dates.push(t('fam_detail_done', { date: fmtDate(task.doneAt) }));
+    box.append(el('ul', { class: 'stat-list' }, dates.map((x) => el('li', null, x))));
+    if (task.kind === 'quran') {
+      const q = task.quran;
+      const info = surahInfo(q.surah);
+      const name = info ? (app.uiLang() !== 'ar' && info.name_translit ? info.name_translit : info.name_ar) : null;
+      box.append(el('p', { class: 'detail-line' }, [
+        t('surah') + ' ' + app.fmtNum(q.surah) + (name ? ' ' : ''),
+        name ? el('bdi', null, name) : null,
+        ' · ' + t('fam_detail_quran', { from: q.from, to: q.to }) + ' · ' + t(q.memory ? 'mode_memory' : 'mode_looking'),
+      ]));
+      if (!surahsCache) loadSurahsFor(task.id);
+    } else {
+      box.append(el('div', { class: 'detail-text', lang: task.lang, dir: app.dirOf(task.lang), tabindex: '0', role: 'region', 'aria-label': t('fam_tf_text') }, task.text));
+      if (task.kind === 'recite') box.append(el('p', { class: 'hint detail-line' }, t('fam_detail_mode', { mode: t(isMeaningTask(task) ? 'mode_contextual' : 'mode_strict') })));
+      // The Quran parts of the text (and differences kept as typed), from the server;
+      // filled in place when the answer comes (the focus stays where it is).
+      const holder = el('div', { class: 'detail-quran' });
+      box.append(holder);
+      const info = textInfoFor(task, () => {
+        const later = document.querySelector('#ptd-' + task.id + ' .detail-quran');
+        if (later) fillDetailQuran(later, task, textInfoFor(task));
+      });
+      if (info) fillDetailQuran(holder, task, info);
+    }
+    if (stats.attemptCount) {
+      box.append(statList(task, stats, { passed: true }));
+      const imp = improvementLine(stats.improvement);
+      if (imp) box.append(imp);
+    } else {
+      box.append(el('p', { class: 'hint detail-line' }, t('fam_detail_no_try')));
+    }
+    if (task.sentBackNote && task.status === 'assigned') box.append(el('p', { class: 'task-note' }, [t('fam_note_label') + ' ', userText(task.sentBackNote)]));
+    if (task.confirmedBy) box.append(el('p', { class: 'detail-line' }, t(task.confirmedBy === 'app_pass' ? 'fam_detail_by_app' : 'fam_detail_by_parent')));
+    if (task.reward) box.append(el('p', { class: 'detail-line' }, [el('span', { 'aria-hidden': 'true' }, task.reward.emoji + ' '), t('fam_rs_' + (task.rewardStatus === 'none' ? 'locked' : task.rewardStatus))]));
+    const actions = R.taskActions(task);
+    if (actions.confirm) {
+      box.append(el('p', { class: 'hint-parent' }, t('fam_detail_waiting')), readyActions(task, 'detail'));
+    } else if (actions.confirmAnyway) {
+      const b = el('button', { type: 'button', class: 'btn btn-primary btn-small', 'data-confirm-anyway': task.id }, t('fam_confirm_anyway'));
+      b.addEventListener('click', () => confirmNow(task.id, 'parent_override', 'detail'));
+      // Never passed in the app, or to do again (sent back, or its text changed).
+      const hint = stats.passedCount ? 'fam_detail_anyway_again' : task.kind === 'dictation' ? 'fam_detail_anyway_dictation' : 'fam_detail_anyway_hint';
+      box.append(el('p', { class: 'hint-parent' }, t(hint)), el('div', { class: 'ptask-actions' }, b));
+    }
+    if (actions.markRewardGiven) {
+      const b = el('button', { type: 'button', class: 'btn btn-small', 'data-given': task.id }, t('fam_mark_given'));
+      b.addEventListener('click', () => markGiven(task.id, 'detail'));
+      box.append(el('div', { class: 'ptask-actions' }, b));
+    }
+    return box;
+  }
+
+  /**
+   * The Quran parts of a task's text in its details (UX-17) and, for a task by meaning
+   * whose text has Quran words, which cannot be done (RL-6), "Recite word by word".
+   */
+  function fillDetailQuran(holder, task, info) {
+    holder.textContent = '';
+    if (!info) return;
+    if (info.parts.length) {
+      const qbox = el('div', { class: 'quran-parts' });
+      app.renderQuranParts(qbox, info, { lang: task.lang, note: false });
+      holder.append(qbox);
+    }
+    if (isMeaningTask(task) && !info.contextual && R.taskActions(task).edit) {
+      const fix = el('button', { type: 'button', class: 'btn btn-primary btn-small', 'data-word-by-word': task.id }, t('fam_make_word_by_word'));
+      fix.addEventListener('click', () => makeWordByWord(task.id));
+      holder.append(el('p', { class: 'hint-parent' }, t('fam_detail_meaning_quran')), el('div', { class: 'ptask-actions' }, fix));
+    }
+  }
+
+  /** A task by meaning whose text has Quran words becomes a word-by-word task (RL-6). */
+  function makeWordByWord(taskId) {
+    try {
+      update((d, now) => R.updateTask(d, taskId, { mode: 'strict' }, now));
+    } catch (err) {
+      app.setStatus($('#pt-status'), 'error_generic', null, { error: true });
+      return;
+    }
+    renderParent();
+    app.setStatus($('#pt-status'), 'fam_task_word_by_word');
+    const details = $('#pt-list [data-details="' + taskId + '"]');
+    if (details) details.focus();
+  }
+
+  /** The surah names, for the details of a Quran task (the number is shown until then). */
+  async function loadSurahsFor(taskId) {
+    try {
+      surahsCache = await app.loadSurahs();
+    } catch (err) {
+      return;
+    }
+    if (session.detailTaskId === taskId && session.section === 'tasks' && app.screen() === 'parent') renderTasks();
+  }
+
+  // --- Rewards, per child: jar and history, rewards to give, goals, surprises, corrections
+
+  function renderRewards() {
+    const doc = store.doc;
+    const id = parentChildId();
+    fillChildSelect($('#prw-child'));
+    const none = !id;
+    $('#prw-child-field').hidden = none;
+    $('#prw-nochild').hidden = !none;
+    $('#prw-body').hidden = none;
+    if (session.rwForm && session.rwForm.childId !== id) closeRewardForm();
+    if (none) return;
+    const sum = R.childSummary(doc, id);
+    const jar = R.getJar(doc, id) || { goals: [], ledger: [] };
+    setNodes($('#prw-balance'), 'fam_jar', { n: sum.balance });
+    setNodes($('#prw-earned'), 'fam_rw_earned', { n: sum.earned });
+
+    // Task rewards unlocked and not given yet.
+    const give = $('#prw-give-list');
+    give.textContent = '';
+    for (const task of sum.rewardsToGive) give.append(rewardToGiveItem(task));
+    $('#prw-give-empty').hidden = sum.rewardsToGive.length > 0;
+
+    // Goals: the open ones, cheapest first, then the given ones, newest first.
+    const goals = $('#prw-goals');
+    goals.textContent = '';
+    const given = jar.goals.filter((g) => g.status === 'given').sort((a, b) => (a.givenAt < b.givenAt ? 1 : a.givenAt > b.givenAt ? -1 : 0));
+    for (const g of sum.goals.concat(given)) goals.append(goalItem(g, sum.balance, id));
+    $('#prw-goals-empty').hidden = jar.goals.length > 0;
+
+    // Surprises the child has not seen yet.
+    const unseen = $('#prw-unseen');
+    if (sum.unseenSurprises.length) {
+      const sep = app.uiLang() === 'ar' ? '، ' : ', ';
+      setNodes(unseen, 'fam_surprise_unseen', { list: { user: sum.unseenSurprises.map((x) => rewardLabel(x.reward)).join(sep) } });
+      unseen.hidden = false;
+    } else {
+      unseen.textContent = '';
+      unseen.hidden = true;
+    }
+
+    // The forms (only one is open at a time).
+    const f = session.rwForm ? session.rwForm.kind : null;
+    $('#gf').hidden = f !== 'goal';
+    $('#sf').hidden = f !== 'surprise';
+    $('#af').hidden = f !== 'adjust';
+    $('#prw-goal-add').hidden = f === 'goal';
+    $('#prw-surprise-open').hidden = f === 'surprise';
+    $('#prw-adjust-open').hidden = f === 'adjust';
+
+    renderLedger(doc, jar);
+  }
+
+  function rewardToGiveItem(task) {
+    const nameId = 'rg-' + task.id;
+    const b = el('button', { type: 'button', class: 'btn btn-primary btn-small', 'data-given': task.id, 'aria-describedby': nameId }, t('fam_mark_given'));
+    b.addEventListener('click', () => markGiven(task.id, 'rewards'));
+    return el('li', { class: 'ptask reward-item', 'data-task': task.id }, [
+      el('div', { class: 'goal-head' }, [el('span', { class: 'goal-emoji', 'aria-hidden': 'true' }, task.reward.emoji), el('p', { class: 'goal-name', id: nameId }, userText(task.reward.text))]),
+      el('p', { class: 'hint' }, tNodes('fam_rw_for_task', { title: { user: task.title } })),
+      task.doneAt ? el('p', { class: 'hint' }, t('fam_detail_done', { date: fmtDate(task.doneAt) })) : null,
+      el('div', { class: 'ptask-actions' }, b),
+    ]);
+  }
+
+  function goalItem(goal, balance, childId) {
+    const given = goal.status === 'given';
+    const nameId = 'goal-' + goal.id;
+    const lines = [el('div', { class: 'goal-head' }, [el('span', { class: 'goal-emoji', 'aria-hidden': 'true' }, goal.reward.emoji), el('p', { class: 'goal-name', id: nameId }, userText(goal.reward.text))])];
+    const meta = [t('fam_goal_cost', { n: goal.cost })];
+    if (given) meta.push(t('fam_goal_given_on', { date: fmtDate(goal.givenAt) }));
+    lines.push(el('p', { class: 'hint' }, meta.join(' · ')));
+    const buttons = [];
+    if (!given) {
+      if (balance >= goal.cost) {
+        lines.push(el('p', { class: 'goal-enough' }, t('fam_goal_enough')));
+        const b = el('button', { type: 'button', class: 'btn btn-primary btn-small', 'data-give-goal': goal.id, 'aria-describedby': nameId }, t('fam_goal_give'));
+        b.addEventListener('click', () => giveGoalNow(childId, goal.id));
+        buttons.push(b);
+      } else {
+        lines.push(el('p', { class: 'hint' }, t('fam_goal_short', { n: goal.cost - balance })));
+      }
+    }
+    const rm = el('button', { type: 'button', class: 'btn btn-small btn-danger-ghost', 'data-remove-goal': goal.id, 'aria-describedby': nameId }, t('fam_remove'));
+    rm.addEventListener('click', () => {
+      session.removingGoal = goal.id; // asked in place first: a removal cannot be undone
+      renderRewards();
+      const yes = $('#prw-goals [data-remove-goal-yes="' + goal.id + '"]');
+      if (yes) yes.focus();
+    });
+    buttons.push(rm);
+    if (session.removingGoal === goal.id) {
+      const yes = el('button', { type: 'button', class: 'btn btn-small btn-danger-ghost', 'data-remove-goal-yes': goal.id }, t('fam_remove'));
+      yes.addEventListener('click', () => {
+        session.removingGoal = null;
+        removeGoalNow(childId, goal.id);
+      });
+      const no = el('button', { type: 'button', class: 'btn btn-small', 'data-remove-goal-no': goal.id }, t('fam_keep'));
+      no.addEventListener('click', () => {
+        session.removingGoal = null;
+        renderRewards();
+        const again = $('#prw-goals [data-remove-goal="' + goal.id + '"]');
+        if (again) again.focus();
+      });
+      lines.push(el('div', { class: 'ptask-actions inline-confirm', role: 'group' }, [el('p', null, t('fam_goal_remove_q')), yes, no]));
+    } else {
+      lines.push(el('div', { class: 'ptask-actions' }, buttons));
+    }
+    return el('li', { class: 'ptask goal-item' + (given ? ' is-given' : ''), 'data-goal': goal.id }, lines);
+  }
+
+  function giveGoalNow(childId, goalId) {
+    const status = $('#prw-status');
+    const goal = (R.getJar(store.doc, childId) || { goals: [] }).goals.find((g) => g.id === goalId);
+    try {
+      update((d, now) => R.giveGoal(d, childId, goalId, now));
+    } catch (err) {
+      renderRewards();
+      renderCounts();
+      app.setStatus(status, isRewardsError(err, 'insufficient_stars') ? 'fam_err_not_enough' : 'error_generic', null, { error: true });
+      return;
+    }
+    renderRewards();
+    say(status, [['fam_goal_given_now', { reward: { user: rewardLabel(goal.reward) }, n: R.getJar(store.doc, childId).balance }]]);
+    $('#prw-goals-h').focus();
+  }
+
+  function removeGoalNow(childId, goalId) {
+    try {
+      update((d, now) => R.removeGoal(d, childId, goalId, now));
+    } catch (err) {
+      renderRewards();
+      app.setStatus($('#prw-status'), 'error_generic', null, { error: true });
+      return;
+    }
+    renderRewards();
+    app.setStatus($('#prw-status'), 'fam_goal_removed');
+    $('#prw-goals-h').focus();
+  }
+
+  /** The history of the stars, newest first: the last entries, or all of them. */
+  function renderLedger(doc, jar) {
+    const list = $('#prw-ledger');
+    list.textContent = '';
+    const entries = jar.ledger.slice().reverse();
+    const shown = session.ledgerAll ? entries : entries.slice(0, LEDGER_SHOWN);
+    for (const e of shown) {
+      const plus = e.delta > 0;
+      const delta = el('bdi', { class: 'ledger-delta ' + (plus ? 'is-plus' : 'is-minus'), dir: 'ltr' }, (plus ? '+' : e.delta < 0 ? '−' : '') + app.fmtNum(Math.abs(e.delta)) + ' ' + STAR);
+      list.append(el('li', null, [delta, el('span', { class: 'ledger-what' }, ledgerWhat(doc, jar, e)), el('span', { class: 'ledger-when' }, fmtDate(e.at))]));
+    }
+    $('#prw-ledger-empty').hidden = entries.length > 0;
+    const more = $('#prw-ledger-more');
+    more.hidden = entries.length <= LEDGER_SHOWN;
+    more.setAttribute('aria-expanded', session.ledgerAll ? 'true' : 'false');
+    more.textContent = session.ledgerAll ? t('fam_show_less') : t('fam_show_all', { n: entries.length });
+  }
+
+  function ledgerWhat(doc, jar, e) {
+    if (e.reason === 'task') {
+      const task = doc.tasks.find((x) => x.id === e.ref);
+      return task ? tNodes('fam_led_task', { title: { user: task.title } }) : t('fam_led_task_gone');
+    }
+    if (e.reason === 'goal') {
+      const goal = jar.goals.find((g) => g.id === e.ref);
+      return goal ? tNodes('fam_led_goal', { reward: { user: rewardLabel(goal.reward) } }) : t('fam_led_goal_gone');
+    }
+    if (e.reason === 'adjust') return e.note ? tNodes('fam_led_adjust', { note: { user: e.note } }) : t('fam_led_adjust_plain');
+    return t('fam_led_carry');
+  }
+
+  // The three forms of Rewards: a goal, a surprise, a correction of the stars.
+
+  function openRewardForm(kind) {
+    const id = parentChildId();
+    if (!id) return;
+    session.rwForm = { kind, childId: id };
+    app.clearStatus($('#prw-status'));
+    if (kind === 'goal') {
+      $('#gf-text').value = '';
+      $('#gf-cost').value = app.fmtNum(10);
+      renderEmojiPick($('#gf-emojis'), R.REWARD_EMOJIS, R.REWARD_EMOJIS[0]);
+      app.clearStatus($('#gf-status'));
+    } else if (kind === 'surprise') {
+      $('#sf-text').value = '';
+      renderEmojiPick($('#sf-emojis'), R.REWARD_EMOJIS, R.REWARD_EMOJIS[0]);
+      app.clearStatus($('#sf-status'));
+    } else {
+      setRadio('af-way', 'add');
+      $('#af-n').value = '';
+      $('#af-note').value = '';
+      app.clearStatus($('#af-status'));
+    }
+    renderRewards();
+    const first = { goal: '#gf-h', surprise: '#sf-text', adjust: '#af-n' }[kind];
+    $(first).focus();
+  }
+
+  function closeRewardForm() {
+    session.rwForm = null;
+    for (const id of ['#gf', '#sf', '#af']) $(id).hidden = true;
+    for (const id of ['#prw-goal-add', '#prw-surprise-open', '#prw-adjust-open']) $(id).hidden = false;
+  }
+
+  function cancelRewardForm() {
+    const kind = session.rwForm ? session.rwForm.kind : null;
+    closeRewardForm();
+    renderRewards();
+    const opener = { goal: '#prw-goal-add', surprise: '#prw-surprise-open', adjust: '#prw-adjust-open' }[kind];
+    if (opener) $(opener).focus();
+  }
+
+  function submitGoal() {
+    const f = session.rwForm;
+    if (!f || f.kind !== 'goal') return;
+    const status = $('#gf-status');
+    const text = $('#gf-text').value.trim();
+    const cost = numberValue('#gf-cost');
+    if (!text) return failAt(status, 'fam_err_reward_text', '#gf-text');
+    if (!Number.isInteger(cost) || cost < R.LIMITS.goalCostMin || cost > R.LIMITS.goalCostMax) return failAt(status, 'fam_err_cost', '#gf-cost');
+    try {
+      update((d, now) => R.addGoal(d, f.childId, { cost, reward: { text, emoji: pickedEmoji($('#gf-emojis')) || R.REWARD_EMOJIS[0] } }, now).doc);
+    } catch (err) {
+      const field = isRewardsError(err, 'bad_input') ? String(err.field || '') : '';
+      if (field === 'cost') return failAt(status, 'fam_err_cost', '#gf-cost');
+      if (field.startsWith('reward')) return failAt(status, 'fam_err_reward_text', '#gf-text');
+      return failAt(status, 'error_generic');
+    }
+    closeRewardForm();
+    renderRewards();
+    app.setStatus($('#prw-status'), 'fam_goal_added');
+    $('#prw-goal-add').focus();
+  }
+
+  function submitSurprise() {
+    const f = session.rwForm;
+    if (!f || f.kind !== 'surprise') return;
+    const status = $('#sf-status');
+    const text = $('#sf-text').value.trim();
+    if (!text) return failAt(status, 'fam_err_surprise_text', '#sf-text');
+    try {
+      update((d, now) => R.addSurprise(d, f.childId, { text, emoji: pickedEmoji($('#sf-emojis')) || R.REWARD_EMOJIS[0] }, now).doc);
+    } catch (err) {
+      return failAt(status, isRewardsError(err, 'bad_input') ? 'fam_err_surprise_text' : 'error_generic', '#sf-text');
+    }
+    closeRewardForm();
+    renderRewards();
+    say($('#prw-status'), [['fam_surprise_done', { name: childName(f.childId) }]]);
+    $('#prw-surprise-open').focus();
+  }
+
+  function submitAdjust() {
+    const f = session.rwForm;
+    if (!f || f.kind !== 'adjust') return;
+    const status = $('#af-status');
+    const n = numberValue('#af-n');
+    const note = $('#af-note').value.trim();
+    const take = ($('input[name="af-way"]:checked') || {}).value === 'take';
+    if (!Number.isInteger(n) || n < 1 || n > R.LIMITS.adjustMax) return failAt(status, 'fam_err_cost', '#af-n');
+    if (!note) return failAt(status, 'fam_err_note', '#af-note');
+    const before = R.getJar(store.doc, f.childId).balance;
+    try {
+      update((d, now) => R.adjustStars(d, f.childId, take ? -n : n, now, note));
+    } catch (err) {
+      if (isRewardsError(err, 'insufficient_stars')) return failAt(status, 'fam_err_no_stars', '#af-n');
+      const field = isRewardsError(err, 'bad_input') ? err.field : '';
+      if (field === 'note') return failAt(status, 'fam_err_note', '#af-note');
+      if (field === 'delta') return failAt(status, 'fam_err_cost', '#af-n');
+      return failAt(status, 'error_generic');
+    }
+    const after = R.getJar(store.doc, f.childId).balance;
+    closeRewardForm();
+    renderRewards();
+    const parts = [];
+    if (take && before - after < n) parts.push(['fam_adjust_limited']); // never below zero
+    parts.push(['fam_adjust_done', { n: after }]);
+    say($('#prw-status'), parts);
+    $('#prw-adjust-open').focus();
+  }
+
+  function failAt(status, key, focusSel) {
+    app.setStatus(status, key, null, { error: true });
+    if (focusSel) $(focusSel).focus();
+  }
+
+  // --- Settings: consent, the PIN, the parent's language, delete all data -------
 
   function renderSettings() {
     $('#settings-consent').checked = !!store.doc.parent.consentAt;
+    $('#ps-lang').value = store.doc.parent.uiLang;
+    $('#ps-delete').hidden = session.deleting > 0;
+    $('#ps-delete-1').hidden = session.deleting !== 1;
+    $('#ps-delete-2').hidden = session.deleting !== 2;
   }
 
   function onSettingsConsent(e) {
@@ -1478,6 +2787,68 @@
       return;
     }
     syncApp();
+  }
+
+  /** Change the PIN: the current one, then the new one twice (the PIN dialog). */
+  async function changePin() {
+    const status = $('#ps-pin-status');
+    app.clearStatus(status);
+    const ok = await pinDialog('change');
+    if (!store.doc || app.screen() !== 'parent') return;
+    if (ok) app.setStatus(status, 'fam_pin_changed');
+    $('#ps-pin-change').focus();
+  }
+
+  /** The language of the parent area (and of the PIN dialog); each child keeps their own. */
+  function onParentLang(e) {
+    const lang = e.target.value;
+    if (!R.LANGS.includes(lang) || !store.doc) return;
+    try {
+      update((d, now) => R.updateParent(d, { uiLang: lang }, now));
+    } catch (err) {
+      e.target.value = store.doc.parent.uiLang;
+      return;
+    }
+    // Statuses written in the old language go; the area is drawn again in the new one.
+    for (const n of $$('#screen-parent .status')) app.clearStatus(n);
+    app.setUiLang(lang);
+    app.setStatus($('#ps-lang-status'), 'fam_set_lang_saved');
+  }
+
+  /** "Delete all data on this device", confirmed twice: step 0 (none), 1, 2. */
+  function askDelete(step) {
+    session.deleting = step;
+    app.clearStatus($('#ps-delete-status'));
+    renderSettings();
+    const target = step === 1 ? $('#ps-delete-1') : step === 2 ? $('#ps-delete-2') : $('#ps-delete');
+    target.focus();
+  }
+
+  /**
+   * Remove the family document, an old v1 profile and every copy kept aside, then start
+   * again as on the first day. Nothing else of the app is stored.
+   */
+  function deleteAllData() {
+    if (session.deleting !== 2 || !store.doc) return;
+    const ls = storage();
+    if (ls) {
+      try {
+        const keys = [];
+        for (let i = 0; i < ls.length; i++) {
+          const k = ls.key(i);
+          if (k === R.STORAGE_KEY || k === R.V1_KEY || (k && k.startsWith(R.CORRUPT_KEY_PREFIX))) keys.push(k);
+        }
+        for (const k of keys) ls.removeItem(k);
+        if (ls.getItem(R.STORAGE_KEY) !== null) throw new Error('still stored');
+      } catch (err) {
+        session.deleting = 0;
+        renderSettings();
+        app.setStatus($('#ps-delete-status'), 'fam_delete_failed', null, { error: true });
+        return;
+      }
+    }
+    forgetFamily();
+    notice('fam_notice_deleted');
   }
 
   // --- Children: add, edit, remove (with a confirmation) ---------------------
@@ -1591,14 +2962,8 @@
 
   function renderTasks() {
     const doc = store.doc;
-    const select = $('#pt-child');
-    const children = doc.children;
-    if (!children.some((c) => c.id === session.ptChildId)) {
-      session.ptChildId = children.some((c) => c.id === session.childId) ? session.childId : children.length ? children[0].id : null;
-    }
-    select.textContent = '';
-    for (const c of children) select.append(el('option', { value: c.id }, c.avatar + ' ' + c.nickname));
-    if (session.ptChildId) select.value = session.ptChildId;
+    parentChildId();
+    fillChildSelect($('#pt-child'));
     const none = !session.ptChildId;
     $('#pt-child-field').hidden = none;
     $('#pt-nochild').hidden = !none;
@@ -1622,9 +2987,43 @@
     arch.hidden = !archived;
   }
 
+  /**
+   * What the server said about the text of a task, in mode strict ({parts, mushafText,
+   * text, contextual}), kept for the session (filled when a task is saved, else asked
+   * once): the details, the edit form and the child's home show the Quran parts from it.
+   * null while it is not known; `then` runs when the answer arrives.
+   */
+  const textInfo = new Map();
+
+  function textInfoKey(text, lang) {
+    return lang + '\n' + text;
+  }
+
+  function rememberTextInfo(text, lang, res, contextual) {
+    textInfo.set(textInfoKey(text, lang), { parts: res.quranParts, mushafText: res.mushafText, text, contextual });
+  }
+
+  function textInfoFor(task, then) {
+    if (!task || task.kind === 'quran' || !task.text) return null;
+    const key = textInfoKey(task.text, task.lang);
+    const known = textInfo.get(key);
+    if (known && known !== 'pending') return known;
+    if (!known) {
+      textInfo.set(key, 'pending');
+      app.checkText(task.text, task.lang, 'strict').then((res) => {
+        rememberTextInfo(task.text, task.lang, res, res.contextual);
+        if (then) then();
+      }).catch(() => textInfo.delete(key)); // asked again next time
+    }
+    return null;
+  }
+
   function parentTaskItem(task) {
     const actions = R.taskActions(task);
-    const buttons = [];
+    const open = session.detailTaskId === task.id;
+    const details = el('button', { type: 'button', class: 'btn btn-small', 'data-details': task.id, 'aria-expanded': open ? 'true' : 'false', 'aria-controls': open ? 'ptd-' + task.id : null }, t('fam_details'));
+    details.addEventListener('click', () => toggleDetail(task.id));
+    const buttons = [details];
     if (actions.edit) {
       const b = el('button', { type: 'button', class: 'btn btn-small', 'data-edit-task': task.id }, t('fam_edit'));
       b.addEventListener('click', () => openTaskForm(task.id));
@@ -1632,8 +3031,26 @@
     }
     if (actions.archive) {
       const b = el('button', { type: 'button', class: 'btn btn-small btn-danger-ghost', 'data-archive-task': task.id }, t('fam_archive'));
-      b.addEventListener('click', () => archive(task.id));
+      b.addEventListener('click', () => {
+        session.archiving = task.id; // asked in place first: an archive cannot be undone
+        renderTasks();
+        const yes = $('#pt-list [data-archive-yes="' + task.id + '"]');
+        if (yes) yes.focus();
+      });
       buttons.push(b);
+    }
+    let actionRow = el('div', { class: 'ptask-actions' }, buttons);
+    if (actions.archive && session.archiving === task.id) {
+      const yes = el('button', { type: 'button', class: 'btn btn-small btn-danger-ghost', 'data-archive-yes': task.id }, t('fam_archive'));
+      yes.addEventListener('click', () => archive(task.id));
+      const no = el('button', { type: 'button', class: 'btn btn-small', 'data-archive-no': task.id }, t('fam_keep'));
+      no.addEventListener('click', () => {
+        session.archiving = null;
+        renderTasks();
+        const again = $('#pt-list [data-archive-task="' + task.id + '"]');
+        if (again) again.focus();
+      });
+      actionRow = el('div', { class: 'ptask-actions inline-confirm', role: 'group' }, [el('p', null, t('fam_archive_q')), yes, no]);
     }
     return el('li', { class: 'ptask status-' + task.status, 'data-task': task.id }, [
       el('div', { class: 'ptask-head' }, [
@@ -1648,11 +3065,13 @@
         task.reward ? el('span', { 'aria-hidden': 'true' }, task.reward.emoji + ' ') : null,
         task.reward ? userText(task.reward.text) : null,
       ]),
-      el('div', { class: 'ptask-actions' }, buttons),
+      actionRow,
+      open ? taskDetail(task) : null,
     ]);
   }
 
   function archive(taskId) {
+    session.archiving = null;
     try {
       update((d, now) => R.archiveTask(d, taskId, now));
     } catch (err) {
@@ -1660,7 +3079,8 @@
       return;
     }
     if (session.taskForm && session.taskForm.id === taskId) closeTaskForm();
-    renderTasks();
+    if (session.sendBack && session.sendBack.taskId === taskId) session.sendBack = null;
+    renderParent();
     app.setStatus($('#pt-status'), 'fam_task_archived');
     $('#pt-new').focus();
   }
@@ -1675,6 +3095,73 @@
     return r && r.value === 'contextual' ? 'contextual' : 'strict';
   }
 
+  /**
+   * The Quran parts of the form's text, as the server found them (a check or a page
+   * read), shown under the text; null hides them. `resubmit`: "Use the mushaf text" also
+   * saves again (the parent had pressed "Save"). A text with Quran parts is recited word
+   * by word only, so "The meaning" is disabled with the reason.
+   */
+  function showTaskQuran(info, resubmit) {
+    app.renderQuranParts($('#tf-quran'), info, { lang: $('#tf-lang').value, onUseMushaf: (mushaf) => useTaskMushaf(mushaf, resubmit, info) });
+    setTaskMeaningOff(!!(info && info.parts && info.parts.length));
+  }
+
+  function setTaskMeaningOff(off) {
+    const meaning = $('input[name="tf-mode"][value="contextual"]');
+    if (off && meaning.checked) setRadio('tf-mode', 'strict');
+    meaning.disabled = off;
+    const why = $('#tf-mode-why');
+    if (off) app.setT(why, 'mode_meaning_off');
+    else app.setT(why, null);
+    why.hidden = !off;
+    updateFormKind();
+  }
+
+  /**
+   * "Use the mushaf text" in the task form: the mushaf words go into the text. The parts
+   * stay listed (without differences) until the server checks the new text; after
+   * "Save" the check runs again at once.
+   */
+  function useTaskMushaf(mushaf, resubmit, info) {
+    if (typeof mushaf !== 'string' || !mushaf.trim()) return;
+    $('#tf-text').value = mushaf;
+    const parts = info && info.parts ? info.parts.map((p) => Object.assign({}, p, { differences: [] })) : [];
+    showTaskQuran(parts.length ? { parts, mushafText: mushaf, text: mushaf, mushafUsed: true } : null, resubmit);
+    app.clearStatus($('#tf-status'));
+    if (resubmit) submitTaskForm();
+    else $('#tf-text').focus();
+  }
+
+  /** The text (or its language) was changed: what the server said about it is out of date. */
+  function taskTextChanged() {
+    if (!$('#tf-quran').hidden || $('#tf-mode-why').dataset.i18n) showTaskQuran(null);
+    $('#tf-to-quran').hidden = true;
+  }
+
+  /**
+   * A text that is Quran: "Create a Quran task with these ayat" turns the form (a new
+   * task) into a Quran task on `range` ({surah, from, to}); placed after `after`.
+   */
+  function offerQuranTask(range, after) {
+    const btn = $('#tf-to-quran');
+    const f = session.taskForm;
+    const can = !!(range && f && !f.id);
+    btn.hidden = !can;
+    if (!can) return;
+    after.after(btn);
+    btn.onclick = () => {
+      btn.hidden = true;
+      setRadio('tf-kind', 'quran');
+      $('#tf-surah').dataset.want = String(range.surah);
+      $('#tf-from').value = app.fmtNum(range.from);
+      $('#tf-to').value = app.fmtNum(range.to);
+      for (const id of ['#tf-status', '#tf-quran-note']) app.clearStatus($(id));
+      showTaskQuran(null);
+      updateFormKind();
+      $('#tf-surah').focus();
+    };
+  }
+
   /** Show the fields of the chosen kind (and mode). */
   function updateFormKind() {
     const kind = formKind();
@@ -1684,8 +3171,22 @@
     $('#tf-quran-group').hidden = kind !== 'quran';
     $('#tf-pass').hidden = contextual;
     $('#tf-pass-meaning').hidden = !contextual;
+    updateTaskOfflineNote();
     app.setTextLang($('#tf-text'), $('#tf-lang').value);
     if (kind === 'quran') fillSurahSelect();
+  }
+
+  /**
+   * Without the online AI, a recite task by meaning is checked only approximately: said
+   * under the mode choice as on Prepare, while "The meaning" can be chosen (the health
+   * may arrive after the form opened: onHealth).
+   */
+  function updateTaskOfflineNote() {
+    const note = $('#tf-mode-offline-note');
+    if (!note) return;
+    const h = app.health();
+    const meaning = $('input[name="tf-mode"][value="contextual"]');
+    note.hidden = !(h && h.brain !== 'claude' && formKind() === 'recite' && !meaning.disabled);
   }
 
   function setRadio(name, value) {
@@ -1759,6 +3260,21 @@
     renderEmojiPick($('#tf-emojis'), R.REWARD_EMOJIS, task && task.reward ? task.reward.emoji : R.REWARD_EMOJIS[0]);
     $('#tf-due').value = task && task.due ? task.due : '';
     for (const id of ['#tf-status', '#tf-photo-status', '#tf-quran-note', '#tf-surah-status']) app.clearStatus($(id));
+    showTaskQuran(null);
+    $('#tf-to-quran').hidden = true;
+    if (task && task.kind !== 'quran') {
+      // The Quran parts of the saved text, so that "The meaning" is off from the start
+      // (a task by meaning with Quran words gets "Word by word": saving it fixes it).
+      const token = session.taskForm.token;
+      const apply = () => {
+        const info = textInfoFor(task);
+        if (!info || !session.taskForm || session.taskForm.token !== token) return;
+        if ($('#tf-text').value.trim() !== task.text || $('#tf-lang').value !== task.lang) return;
+        if (info.parts.length) showTaskQuran(info, true);
+        else if (!info.contextual) setTaskMeaningOff(true);
+      };
+      if (textInfoFor(task, apply)) apply();
+    }
     $('#tf').hidden = false;
     $('#pt-new').hidden = true;
     updateFormKind();
@@ -1774,27 +3290,36 @@
     if ($('#pt-new')) $('#pt-new').hidden = !session.ptChildId;
   }
 
-  /** The text of the task checked by the server in the mode of the task: null or an error key. */
+  /**
+   * The text of the task checked by the server in the mode of the task: {key} for an
+   * error (with `range` for a text that is Quran, `res` when a check in mode strict
+   * answered), or {res} (app.checkText's answer, with the Quran parts). A school text
+   * that includes Quran is accepted (word by word; a grown-up reads its Quran parts in a
+   * dictation). When mode contextual or dictation refuses it with quran_text, one more
+   * check in mode strict tells a text that is Quran from a school text with Quran parts
+   * (refused by meaning) or from the safety net of the dictation.
+   */
   async function checkTaskText(text, lang, kind, mode) {
     const checkMode = kind === 'dictation' ? 'dictation' : mode;
     try {
       const res = await app.checkText(text, lang, checkMode);
-      return res.words === 0 ? 'error_no_words' : null;
+      if (res.words === 0) return { key: 'error_no_words' };
+      if (kind === 'dictation' && !res.dictation) return { key: 'fam_err_quran_unmarked_task', res };
+      return { res };
     } catch (err) {
-      if (!err || err.name !== 'ApiError') return 'error_generic';
-      if (err.status === 0) return 'fam_err_offline';
-      if (app.isPhraseRefusal(err)) return 'fam_err_quran_phrase_task';
+      if (!err || err.name !== 'ApiError') return { key: 'error_generic' };
+      if (err.status === 0) return { key: 'fam_err_offline' };
       if (err.code === 'quran_text') {
-        if (checkMode !== 'contextual') return 'fam_err_quran_task';
-        // Refused by meaning: is it Quran text, or a text with Quran words (the basmala)?
+        if (checkMode === 'strict' || err.quranRange) return { key: 'fam_err_quran_task', range: err.quranRange };
         try {
-          await app.checkText(text, lang, 'strict');
-          return 'fam_err_quran_meaning_task';
+          const res = await app.checkText(text, lang, 'strict');
+          return { key: checkMode === 'contextual' ? 'fam_err_quran_meaning_task' : 'fam_err_quran_unmarked_task', res };
         } catch (e2) {
-          return 'fam_err_quran_task';
+          if (e2 && e2.name === 'ApiError' && e2.status === 0) return { key: 'fam_err_offline' };
+          return { key: 'fam_err_quran_task', range: e2 && e2.quranRange };
         }
       }
-      return app.errorInfo(err).key;
+      return { key: app.errorInfo(err).key };
     }
   }
 
@@ -1810,6 +3335,7 @@
       app.setStatus(status, key, null, { error: true });
       if (focus) focus.focus();
     };
+    let withQuran = false;
     const common = {};
     const title = $('#tf-title').value.trim();
     common.title = title ? title : task ? null : undefined;
@@ -1849,10 +3375,42 @@
         // Saving needs a successful check of the text, in the mode of the task.
         app.setStatus(status, 'checking_text');
         $('#tf-save').disabled = true;
-        const key = await checkTaskText(text, lang, kind, content.mode);
+        const out = await checkTaskText(text, lang, kind, content.mode);
         if (!session.taskForm || session.taskForm.token !== token) return; // closed meanwhile
         $('#tf-save').disabled = false;
-        if (key) return fail(key, key === 'fam_err_offline' ? null : $('#tf-text'));
+        // The Quran parts of the text, with their differences from the mushaf.
+        const parts = out.res ? out.res.quranParts : [];
+        showTaskQuran(parts.length ? { parts, mushafText: out.res.mushafText, text } : null, true);
+        offerQuranTask(out.range || null, status);
+        const diffs = parts.some((p) => p.differences.length);
+        const focusParts = () => ($('#tf-quran').hidden ? $('#tf-mode') : $('#tf-quran'));
+        // A recite task with words that differ from the mushaf: the child would read the
+        // misquote, so the mushaf text is needed before saving (UX-03); with "The meaning"
+        // refused as well, one message says both (UX-06).
+        if (kind === 'recite' && diffs) {
+          fail(out.key === 'fam_err_quran_meaning_task' ? 'fam_err_quran_meaning_diff' : 'fam_err_quran_diff_recite');
+          focusParts().focus();
+          return;
+        }
+        if (out.key === 'fam_err_quran_meaning_task') {
+          fail(out.key);
+          focusParts().focus();
+          return;
+        }
+        if (out.key) return fail(out.key, out.key === 'fam_err_offline' ? null : $('#tf-text'));
+        if (out.res) rememberTextInfo(text, lang, out.res, kind === 'recite' && content.mode === 'contextual' ? true : out.res.contextual);
+        // A dictation with differences: shown once before saving ("Use the mushaf text",
+        // or "Save" again to keep the text as typed: the child never sees the typed Quran
+        // words, a grown-up reads the mushaf text, and the checks use the mushaf words).
+        if (diffs && f.diffSeen !== text) {
+          f.diffSeen = text;
+          app.setStatus(status, 'fam_err_quran_diff_task', null, { error: true });
+          $('#tf-quran').focus();
+          return;
+        }
+        // The default title is read by the child: from the mushaf words, never a misquote.
+        if (diffs && !title && !task && out.res.mushafText.trim()) common.title = R.defaultTitle(kind, { text: out.res.mushafText.trim() });
+        withQuran = parts.length > 0;
       }
     }
     try {
@@ -1875,8 +3433,8 @@
       return fail('error_generic');
     }
     closeTaskForm();
-    renderTasks();
-    app.setStatus($('#pt-status'), 'fam_task_saved');
+    renderParent(); // an edit of a waiting task can send it back to "To do": the counts change too
+    app.setStatus($('#pt-status'), withQuran ? 'fam_task_saved_quran' : 'fam_task_saved');
     $('#pt-new').focus();
   }
 
@@ -1887,6 +3445,7 @@
     const status = $('#tf-photo-status');
     const note = $('#tf-quran-note');
     app.clearStatus(note);
+    taskTextChanged();
     app.setStatus(status, 'reading_page');
     const inputs = [$('#tf-take'), $('#tf-choose')];
     for (const n of inputs) n.dataset.busy = '1';
@@ -1900,7 +3459,15 @@
       if (res.needs_manual || !text.trim()) app.setStatus(status, 'page_needs_manual');
       else if (res.notes) app.setStatus(status, 'page_read_ok', null, { detail: String(res.notes) });
       else app.setStatus(status, 'page_read_ok');
-      if (res.contains_quran === true) app.setStatus(note, 'fam_page_has_quran');
+      // A page that is Quran (the server decides): a Quran task, on its ayat when they are
+      // one range. A school page that includes Quran: its Quran parts, as on Prepare.
+      if (res.contains_quran === true) {
+        app.setStatus(note, 'fam_page_has_quran');
+        offerQuranTask(app.quranRangeOf(res.quran_range), note);
+      } else {
+        const parts = app.quranPartsOf(res.quran_parts);
+        if (parts.length) showTaskQuran({ parts, mushafText: typeof res.mushaf_text === 'string' ? res.mushaf_text : text, text }, false);
+      }
       $('#tf-text').focus();
     } catch (err) {
       if (err && err.code === 'needs_manual') app.setStatus(status, 'page_needs_manual');
@@ -1915,6 +3482,14 @@
   function initParent() {
     for (const tab of $$('#psec-nav .psec-tab')) tab.addEventListener('click', () => showSection(tab.dataset.psec));
     $('#btn-parent-close').addEventListener('click', closeParent);
+    $('#parent-reset-ok').addEventListener('click', () => {
+      try {
+        update((d, now) => R.dismissPinReset(d, now));
+      } catch (err) {
+        /* storage notices are shown by commit */
+      }
+      renderPinResetNotice();
+    });
     $('#settings-consent').addEventListener('change', onSettingsConsent);
     // Children
     $('#pc-add').addEventListener('click', () => openChildForm(null));
@@ -1935,9 +3510,41 @@
     $('#pt-child').addEventListener('change', (e) => {
       session.ptChildId = e.target.value;
       closeTaskForm();
+      session.detailTaskId = null;
+      session.sendBack = null;
       app.clearStatus($('#pt-status'));
       renderTasks();
     });
+    // Rewards (the same choice of child as Tasks)
+    $('#prw-child').addEventListener('change', (e) => {
+      session.ptChildId = e.target.value;
+      closeRewardForm();
+      session.ledgerAll = false;
+      app.clearStatus($('#prw-status'));
+      renderRewards();
+    });
+    $('#prw-goal-add').addEventListener('click', () => openRewardForm('goal'));
+    $('#prw-surprise-open').addEventListener('click', () => openRewardForm('surprise'));
+    $('#prw-adjust-open').addEventListener('click', () => openRewardForm('adjust'));
+    for (const [form, submit] of [['#gf', submitGoal], ['#sf', submitSurprise], ['#af', submitAdjust]]) {
+      $(form).addEventListener('submit', (e) => {
+        e.preventDefault();
+        submit();
+      });
+    }
+    for (const id of ['#gf-cancel', '#sf-cancel', '#af-cancel']) $(id).addEventListener('click', cancelRewardForm);
+    $('#prw-ledger-more').addEventListener('click', () => {
+      session.ledgerAll = !session.ledgerAll;
+      renderRewards();
+      $('#prw-ledger-more').focus();
+    });
+    // Settings
+    $('#ps-pin-change').addEventListener('click', changePin);
+    $('#ps-lang').addEventListener('change', onParentLang);
+    $('#ps-delete').addEventListener('click', () => askDelete(1));
+    $('#ps-delete-next').addEventListener('click', () => askDelete(2));
+    for (const id of ['#ps-delete-no1', '#ps-delete-no2']) $(id).addEventListener('click', () => askDelete(0));
+    $('#ps-delete-yes').addEventListener('click', deleteAllData);
     $('#pt-new').addEventListener('click', () => {
       app.clearStatus($('#pt-status'));
       openTaskForm(null);
@@ -1952,7 +3559,11 @@
       $('#pt-new').focus();
     });
     for (const r of $$('input[name="tf-kind"], input[name="tf-mode"]')) r.addEventListener('change', updateFormKind);
-    $('#tf-lang').addEventListener('change', () => app.setTextLang($('#tf-text'), $('#tf-lang').value));
+    $('#tf-lang').addEventListener('change', () => {
+      app.setTextLang($('#tf-text'), $('#tf-lang').value);
+      taskTextChanged();
+    });
+    $('#tf-text').addEventListener('input', taskTextChanged);
     $('#tf-surah').addEventListener('change', () => {
       const info = surahInfo(Number($('#tf-surah').value));
       if (!info) return;
@@ -1978,6 +3589,7 @@
     store.doc = loadDoc();
     initSetup();
     initPinDialog();
+    initAutoLock();
     initParent();
     $('#data-notice-close').addEventListener('click', () => {
       $('#data-notice').hidden = true;
@@ -1990,7 +3602,7 @@
     });
     window.addEventListener('storage', onStorage);
     syncApp();
-    app.setHooks({ route, langFor, enter, leave, onQuranPrefs, onLanguage: redraw, onHealth: () => {} });
+    app.setHooks({ route, langFor, enter, leave, onQuranPrefs, onLanguage: redraw, onHealth: updateTaskOfflineNote });
   }
 
   window.MommyFamily = Object.freeze({ attach });

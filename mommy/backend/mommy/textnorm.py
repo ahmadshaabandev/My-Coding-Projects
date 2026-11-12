@@ -183,6 +183,14 @@ def _is_word_char(c: str) -> bool:
     return unicodedata.category(c)[0] in "LMN"
 
 
+#: The Arabic letter mark (a bidi control): never inside an Arabic word.
+ARABIC_LETTER_MARK = "\u061c"
+
+
+def _is_arabic_letter_or_mark(c: str) -> bool:
+    return is_arabic_char(c) and unicodedata.category(c)[0] in "LM"
+
+
 # ---------------------------------------------------------------------------
 # Tashkeel
 # ---------------------------------------------------------------------------
@@ -538,10 +546,12 @@ def _token_spans(text: str) -> list[tuple[int, int]]:
 
     A token is a run of letters, combining marks and digits.  An apostrophe or hyphen
     stays inside a token when it has a word character on both sides (``l'école``,
-    ``aujourd'hui``, ``don't``, ``peut-être``).  ``. , :`` and the Arabic decimal and
-    thousands separators stay inside a number when they have a digit on both sides
-    (``3,5``, ``12:30``).  Invisible format characters inside a word are kept with it.
-    Everything else separates tokens.
+    ``aujourd'hui``, ``don't``, ``peut-être``), except between two Arabic letters (or
+    marks): Arabic has no elision, so ``قل-هو`` is two words, as the reader hears them.
+    ``. , :`` and the Arabic decimal and thousands separators stay inside a number when
+    they have a digit on both sides (``3,5``, ``12:30``).  Invisible format characters
+    inside a word are kept with it, except the Arabic letter mark (U+061C) between two
+    Arabic letters.  Everything else separates tokens.
     """
     spans: list[tuple[int, int]] = []
     n = len(text)
@@ -551,8 +561,12 @@ def _token_spans(text: str) -> list[tuple[int, int]]:
             inside = True
         elif start is not None and 0 < i < n - 1:
             before, after = text[i - 1], text[i + 1]
-            if c in APOSTROPHES or c in HYPHENS:
-                inside = _is_word_char(before) and _is_word_char(after)
+            if c in APOSTROPHES or c in HYPHENS or c == ARABIC_LETTER_MARK:
+                inside = (
+                    _is_word_char(before)
+                    and _is_word_char(after)
+                    and not (_is_arabic_letter_or_mark(before) and _is_arabic_letter_or_mark(after))
+                )
             elif c in _NUMBER_SEPARATORS:
                 inside = before.isdigit() and after.isdigit()
             elif unicodedata.category(c) == "Cf" and c != END_OF_AYAH:

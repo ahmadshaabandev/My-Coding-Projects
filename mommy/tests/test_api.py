@@ -346,9 +346,15 @@ def quran_words(quran: Quran, surah: int, start: int, end: int) -> list[str]:
 
 
 def assert_error(response: Any, status: int, code: str) -> dict:
+    """The error body of the contract; a ``quran_text`` refusal of a text that is Quran
+    may also name its range (``quran_range``), and a refusal by meaning says so
+    (``"reason": "meaning"``, with ``QURAN_MEANING_MESSAGE``, never with a range)."""
     assert response.status_code == status, response.text
     body = response.json()
-    assert set(body) == {"error", "message"}
+    assert set(body) - ({"quran_range", "reason"} if code == "quran_text" else set()) == {"error", "message"}
+    if "reason" in body:
+        assert body["reason"] == "meaning" and body["message"] == app_mod.QURAN_MEANING_MESSAGE
+        assert "quran_range" not in body
     assert body["error"] == code
     assert isinstance(body["message"], str) and body["message"]
     assert response.headers["cache-control"] == "no-store"
@@ -625,6 +631,7 @@ class TestPageRead:
         assert r.json() == {
             "text": FR_TEXT, "lang": "fr", "notes": "", "source": "claude", "needs_manual": False,
             "contains_quran": False, "unreadable_marks": 0,
+            "quran_parts": [], "mushaf_text": FR_TEXT, "quran_range": None,
         }
         assert brain.called("read_page") == [((clean_image(image), "fr"), {})]
 
@@ -744,7 +751,10 @@ class TestReciteStrict:
         r = recite(make_client(transcriber=transcriber, brain=brain))
         assert r.status_code == 200
         body = r.json()
-        assert set(body) == {"mode", "heard_text", "result", "feedback", "quality", "say_again"}
+        assert set(body) == {
+            "mode", "heard_text", "result", "feedback", "quality", "say_again", "feedback_is_quran", "quran_parts",
+        }
+        assert body["feedback_is_quran"] is False and body["quran_parts"] == []
         assert body["mode"] == "strict" and body["heard_text"] == "the cat sat on mat"
         assert body["result"] == json.loads(json.dumps(dataclasses.asdict(check_recitation(EN_TEXT, "the cat sat on mat", "en"))))
         assert set(body["result"]) == RESULT_KEYS and all(set(op) == OP_KEYS for op in body["result"]["ops"])
@@ -909,7 +919,11 @@ class TestDictationPhrases:
     def test_phrases(self, make_client: Callable[..., TestClient]) -> None:
         text = "Le chat dort. Le chien court vite dans le grand jardin vert ce matin."
         r = make_client().post("/api/dictation/phrases", json={"text": text, "lang": "fr"})
-        assert r.status_code == 200 and r.json() == {"phrases": split_phrases(text, "fr")}
+        phrases = split_phrases(text, "fr")
+        assert r.status_code == 200 and r.json() == {
+            "phrases": phrases, "readers": ["voice"] * len(phrases), "read_text": [None] * len(phrases),
+            "parts": [None] * len(phrases), "quran_parts": [],
+        }
 
     def test_errors(self, make_client: Callable[..., TestClient]) -> None:
         client = make_client()
@@ -1020,7 +1034,9 @@ class TestDictationCheck:
         body = r.json()
         assert set(body) == {
             "read_text", "source", "uncertain_words", "legible", "result", "feedback", "needs_parent_confirmation",
+            "feedback_is_quran", "quran_parts",
         }
+        assert body["feedback_is_quran"] is False and body["quran_parts"] == []
         assert body["read_text"] == written and body["source"] == "typed"
         assert body["needs_parent_confirmation"] is True and body["uncertain_words"] == []
         assert body["result"] == json.loads(json.dumps(dataclasses.asdict(check_writing(FR_TEXT, written, "fr"))))
@@ -1061,6 +1077,40 @@ class TestDictationCheck:
         assert_error(self.post(client, written_text="x", age="adult"), 422, "invalid_field")
         assert_error(self.post(client, written_text="x" * (MAX_TEXT_CHARS + 1)), 400, "text_too_long")
         assert brain.called("read_handwriting") == []
+
+    @pytest.mark.parametrize("multipart", [False, True], ids=["urlencoded", "multipart"])
+    def test_line_breaks_come_back_as_a_textarea_holds_them(
+        self, make_client: Callable[..., TestClient], quran: Quran, multipart: bool
+    ) -> None:
+        # Regression (final verification, P1): a browser sends the line breaks of a form
+        # field as CRLF, while a textarea's value holds LF. read_text came back with CRLF,
+        # so the client always saw an edited text and the result could not be confirmed.
+        # The line breaks of every form text field are now LF, and so are read_text and
+        # the offsets of the Quran parts (into the text the client holds).
+        basmala = " ".join(quran_words(quran, 1, 1, 1))
+        ayah = " ".join(quran_words(quran, 2, 153, 153))
+        client = make_client()
+        for text, lang in ((basmala + "\n" + lesson(quran), "ar"), ("The cat sat.\nIt was a sunny day.", "en")):
+            for sent in (text.replace("\n", "\r\n"), text.replace("\n", "\r"), text):
+                fields = {"expected_text": sent, "lang": lang, "age": "6-9", "written_text": sent}
+                if multipart:
+                    r = client.post("/api/dictation/check", files={k: (None, v) for k, v in fields.items()})
+                else:
+                    r = client.post("/api/dictation/check", data=fields)
+                assert r.status_code == 200, r.text
+                body = r.json()
+                assert body["read_text"] == text and body["result"]["verdict"] == "correct"
+                if lang == "ar":
+                    assert [text[slice(*p["chars"])] for p in body["quran_parts"]] == [basmala, ayah]
+                    assert [text[slice(*p["utf16"])] for p in body["quran_parts"]] == [basmala, ayah]  # no astral char
+                else:
+                    assert body["quran_parts"] == []
+        # What a reader writes (a photo of the paper, a page) has LF line breaks too.
+        brain = FakeBrain(handwriting={"text": "Le chat\r\ndort.", "uncertain_words": [], "legible": True})
+        assert self.post(make_client(brain=brain), image=jpeg()).json()["read_text"] == "Le chat\ndort."
+        brain = FakeBrain(page={"text": "Le chat\r\ndort.", "lang": "fr", "notes": "a\rb"})
+        page = make_client(brain=brain).post("/api/page/read", files={"image": ("p.jpg", jpeg(), "image/jpeg")}).json()
+        assert (page["text"], page["notes"]) == ("Le chat\ndort.", "a\nb")
 
     def test_strict_tashkeel(self, make_client: Callable[..., TestClient]) -> None:
         expected, written = "كَتَبَ الوَلَدُ الدَّرْسَ", "كتب الولد الدرس"
@@ -1598,21 +1648,52 @@ class TestQuranGuardCannotBeBypassed:
     ) -> None:
         # Regression: Surah 112 + "صدق الله العظيم" scored 15/18 = 0.83 < 0.9 and was
         # accepted, so its phrases were spoken and the whole surah reached judge_meaning.
+        # A text that is Quran with its framing (Q1) is refused everywhere.
         surah = " ".join(quran_words(quran, 112, 1, 4))
         brain, tts = ExplodingBrain(), ExplodingTTS()
         client = make_client(brain=brain, tts=tts, transcriber=RecordingTranscriber(surah))
         texts = [
             surah + " صدق الله العظيم",
-            "قال الله تعالى في سورة الإخلاص: " + surah + ". تعلمنا هذه السورة في المدرسة.",
-            "تعلمنا في المدرسة اليوم: " + surah + " ثم عدنا إلى البيت.",
+            "قال الله تعالى في سورة الإخلاص: " + surah,
+            "أعوذ بالله من الشيطان الرجيم " + surah,
+            "سورة الإخلاص\n" + " ".join(f"{w} ({i})" for i, w in enumerate(surah.split(), 1)),
         ]
         for text in texts:
-            assert looks_like_quran(text, quran)
-            assert_error(client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}), 422, "quran_text")
+            body = assert_error(client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}), 422, "quran_text")
+            if "(" not in text:
+                assert body["quran_range"] == {"surah": 112, "from": 1, "to": 4}
             for mode in ("strict", "contextual"):
                 assert_error(recite(client, expected_text=text, lang="ar", mode=mode), 422, "quran_text")
             assert_error(check_dictation(client, expected_text=text, lang="ar", written_text=text), 422, "quran_text")
+            for mode in ("strict", "contextual", "dictation"):
+                assert_error(text_check(client, text, "ar", mode), 422, "quran_text")
         assert brain.calls == [] and tts.calls == []
+
+    def test_a_lesson_that_quotes_a_surah_is_a_school_text(
+        self, make_client: Callable[..., TestClient], quran: Quran
+    ) -> None:
+        # Q2: the quoted surah is a Quran part. Recited word by word, dictated with a
+        # grown-up reading it, never judged by meaning and never given to the voice.
+        surah = " ".join(quran_words(quran, 112, 1, 4))
+        tts = ExplodingTTS()
+        client = make_client(tts=tts, brain=ExplodingBrain())
+        lessons = [
+            "قال الله تعالى في سورة الإخلاص: " + surah + ". تعلمنا هذه السورة في المدرسة.",
+            "تعلمنا في المدرسة اليوم: " + surah + " ثم عدنا إلى البيت.",
+        ]
+        for text in lessons:
+            assert looks_like_quran(text, quran)  # the voice's guard sees the surah, as before
+            body = client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}).json()
+            assert body["readers"].count("grown_up") == 4  # one chunk per ayah
+            for phrase, reader, read in zip(body["phrases"], body["readers"], body["read_text"]):
+                assert (reader == "grown_up") == is_quran_phrase(phrase, quran), phrase
+                assert (read is not None) == (reader == "grown_up")
+            [part] = body["quran_parts"]
+            assert (part["surah"], part["ayah_from"], part["ayah_to"], part["whole"]) == (112, 1, 4, True)
+            assert_error(recite(client, expected_text=text, lang="ar", mode="contextual"), 422, "quran_text")
+            checked = text_check(client, text, "ar").json()
+            assert checked["dictation"] is True and checked["contextual"] is False
+        assert tts.calls == []
 
     def test_short_quran_phrases_are_not_spoken(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
         tts = ExplodingTTS()
@@ -1646,28 +1727,31 @@ class TestQuranGuardCannotBeBypassed:
         self, make_client: Callable[..., TestClient], quran: Quran
     ) -> None:
         # These two were accepted for dictation until the contained-ayah rule: the
-        # voice spoke the basmala (1:1) and 1:2 as part of a longer phrase.
+        # voice spoke the basmala (1:1) and 1:2 as part of a longer phrase. Now the ayah
+        # is a Quran part that a grown-up reads; the voice still refuses it.
         texts = [
             " ".join(quran_words(quran, 1, 1, 1)) + " ذهبت مع أبي إلى السوق واشترينا الخبز",
             " ".join(quran_words(quran, 1, 2, 2)) + " والصلاة والسلام على رسول الله",
         ]
         tts = ExplodingTTS()
         client = make_client(tts=tts, transcriber=RecordingTranscriber(texts[0]))
-        for text in texts:
-            assert not looks_like_quran(text, quran), text
+        for text, ayah in zip(texts, (1, 2)):
+            assert not app_mod.find_quran_parts(text, "ar", quran).is_quran, text
             assert recite(client, expected_text=text, lang="ar").status_code == 200
             body = client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}).json()
-            assert body["error"] == "quran_text" and body["scope"] == "phrase"
+            assert body["readers"][0] == "grown_up" and body["phrases"][0] == " ".join(quran_words(quran, 1, ayah, ayah))
+            assert body["read_text"][0] == quran.ayat(1, ayah, ayah)[0].display
+            assert set(body["readers"][1:]) == {"voice"}
             assert_error(client.post("/api/tts", json={"text": split_phrases(text, "ar")[0], "lang": "ar"}), 422, "quran_text")
         assert tts.calls == []
 
-    def test_a_basmala_on_its_own_line_refuses_only_dictation(
+    def test_a_basmala_on_its_own_line_is_read_by_a_grown_up(
         self, make_client: Callable[..., TestClient], quran: Quran
     ) -> None:
         # Regression (final verification): a school text whose basmala is a phrase of its
-        # own was refused by /api/dictation/phrases with the same answer as a Quran text,
-        # and the web client, which checks every text there at "Confirm text", could not
-        # tell that the text may still be recited. The refusal now says scope "phrase".
+        # own was refused by /api/dictation/phrases with the same answer as a Quran text.
+        # It was then refused with scope "phrase" (reciting only); now it is dictated, with
+        # a grown-up reading the basmala from the mushaf text.
         story = "ذهب الولد إلى المدرسة مع أخيه صباحا."
         texts = [
             "بسم الله الرحمن الرحيم. " + story,
@@ -1677,13 +1761,12 @@ class TestQuranGuardCannotBeBypassed:
         tts = ExplodingTTS()
         client = make_client(tts=tts, transcriber=RecordingTranscriber(story))
         for text in texts:
-            assert not looks_like_quran(text, quran), text
             res = client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"})
-            assert res.status_code == 422, text
+            assert res.status_code == 200, text
             body = res.json()
-            assert body["error"] == "quran_text" and body["scope"] == "phrase"
-            assert set(body) == {"error", "message", "scope"}
-            assert "بسم" not in body["message"] and "الولد" not in body["message"]
+            assert body["readers"] == ["grown_up", "voice", "voice"]
+            assert body["phrases"][0] == quran.basmala_match and body["read_text"][0] == quran.basmala_display
+            assert body["parts"] == [0, None, None] and len(body["quran_parts"]) == 1
             assert recite(client, expected_text=text, lang="ar").status_code == 200
             written = check_dictation(client, expected_text=text, lang="ar", written_text=story)
             assert written.status_code == 200
@@ -1789,17 +1872,24 @@ class TestContainedAyahIsNotSpoken:
         assert make_client(tts=tts).post("/api/tts", json={"text": text, "lang": "ar"}).status_code == 200
         assert tts.calls == [(text, "ar", False)]
 
-    def test_dictation_refuses_them_with_scope_phrase(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+    def test_dictation_has_a_grown_up_read_them(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
         client = make_client(tts=ExplodingTTS())
-        for text in contained_examples(quran):
+        for text, (surah, ayah) in zip(contained_examples(quran), ((112, 1), (1, 2), (1, 4))):
             r = client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"})
-            assert r.status_code == 422 and r.json()["error"] == "quran_text" and r.json()["scope"] == "phrase", text
-            body = client.post("/api/text/check", json={"text": text, "lang": "ar"}).json()
-            assert body == {"ok": True, "words": len(text.split()), "dictation": False, "contextual": False}
+            assert r.status_code == 200, text
+            body = r.json()
+            grown = [i for i, reader in enumerate(body["readers"]) if reader == "grown_up"]
+            assert [body["phrases"][i] for i in grown] == [" ".join(quran_words(quran, surah, ayah, ayah))]
+            assert [body["read_text"][i] for i in grown] == [quran.ayat(surah, ayah, ayah)[0].display]
+            checked = client.post("/api/text/check", json={"text": text, "lang": "ar"}).json()
+            assert {k: checked[k] for k in ("ok", "words", "dictation", "contextual")} == {
+                "ok": True, "words": len(text.split()), "dictation": True, "contextual": False,
+            }
+            assert [(p["surah"], p["ayah_from"], p["rule"]) for p in checked["quran_parts"]] == [(surah, ayah, "contained")]
 
-    def test_recitation_is_unaffected_by_the_phrase_rule(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+    def test_recitation_is_word_by_word_only(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
         # Word by word, a sentence with a short ayah is recited and checked as before. By
-        # meaning it is refused, by the contextual guard (the brain never judges an ayah).
+        # meaning it is refused (the brain never judges an ayah).
         brain = FakeBrain()
         for text in contained_examples(quran):
             client = make_client(transcriber=RecordingTranscriber(text), brain=brain)
@@ -1808,38 +1898,46 @@ class TestContainedAyahIsNotSpoken:
             assert app_mod.looks_like_quran_for_meaning(text, quran)
             assert_error(recite(client, expected_text=text, lang="ar", mode="contextual"), 422, "quran_text")
         assert brain.called("judge_meaning") == []
-        # A text refused only for dictation (a phrase of its own is a whole two-word
-        # ayah) is recited both ways.
+        # A two-word ayah that the comma cut into a phrase of its own stays ordinary words
+        # (the decision of 2026-11-11, RL-5): the dictation joins it with the phrase before
+        # it, which the voice accepts, and the sentence is recited either way.
         text = "الصيف بعيد، " + " ".join(quran_words(quran, 70, 7, 7)) + "."
         client = make_client(transcriber=RecordingTranscriber(text), brain=FakeBrain())
-        assert client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}).json()["scope"] == "phrase"
+        body = client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}).json()
+        assert body["readers"] == ["voice"] and body["phrases"] == [text]
+        assert not app_mod.is_quran_phrase(body["phrases"][0], quran)
+        assert client.post("/api/tts", json={"text": body["phrases"][0], "lang": "ar"}).status_code == 200
         assert recite(client, expected_text=text, lang="ar").status_code == 200
         assert recite(client, expected_text=text, lang="ar", mode="contextual").status_code == 200
 
     def test_a_basmala_line_without_a_full_stop(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
         # Regression: the splitter joins the lines of a paragraph, so the basmala on a
-        # line of its own reached the phrases glued to the next word, and only the web
-        # client caught it (by sending the lines again as paragraphs).
+        # line of its own reached the phrases glued to the next word. It is a Quran part,
+        # cut apart from the next line and read by a grown-up.
         basmala = " ".join(quran_words(quran, 1, 1, 1))
         story = "ذهب الولد إلى المدرسة مع أخيه صباحا"
         text = basmala + "\n" + story
         assert split_phrases(text, "ar")[0].startswith(basmala + " ")
         client = make_client(tts=ExplodingTTS(), transcriber=RecordingTranscriber(story))
         r = client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"})
-        assert r.status_code == 422 and r.json() == {"error": "quran_text", "message": app_mod.QURAN_PHRASE_MESSAGE, "scope": "phrase"}
-        assert client.post("/api/text/check", json={"text": text, "lang": "ar"}).json()["dictation"] is False
+        assert r.status_code == 200
+        assert r.json()["phrases"] == [basmala, *split_phrases(story, "ar")]
+        assert r.json()["readers"] == ["grown_up", "voice", "voice"]
+        assert client.post("/api/text/check", json={"text": text, "lang": "ar"}).json()["dictation"] is True
         assert recite(client, expected_text=text, lang="ar").status_code == 200
 
     def test_an_ayah_cut_between_two_phrases(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
-        # The splitter caps phrases at six words; a short ayah cut in two is still read
-        # out in full, one phrase after the other.
+        # The splitter caps phrases at six words; a short ayah cut in two would still be
+        # read out in full, one phrase after the other. It is one Quran part.
         ayah = quran_words(quran, 1, 4, 4)
         text = "ذهبنا إلى السوق " + ayah[0] + "\n" + " ".join(ayah[1:]) + " ثم عدنا"
         phrases = split_phrases(text, "ar")
         assert not any(is_quran_phrase(p, quran) for p in phrases)
-        assert not any(is_quran_phrase(line, quran) for line in text.splitlines())
         r = make_client().post("/api/dictation/phrases", json={"text": text, "lang": "ar"})
-        assert r.status_code == 422 and r.json()["scope"] == "phrase"
+        assert r.status_code == 200
+        body = r.json()
+        assert body["phrases"] == ["ذهبنا إلى السوق", " ".join(ayah), "ثم عدنا"]
+        assert body["readers"] == ["voice", "grown_up", "voice"]
 
 
 # ---------------------------------------------------------------------------
@@ -1855,7 +1953,7 @@ def text_check(client: TestClient, text: Any = AR_TEXT, lang: Any = "ar", mode: 
 
 
 class TestTextCheck:
-    KEYS = {"ok", "words", "dictation", "contextual"}
+    KEYS = {"ok", "words", "dictation", "contextual", "quran_parts", "mushaf_text"}
 
     def test_ordinary_texts(self, make_client: Callable[..., TestClient]) -> None:
         client = make_client()
@@ -1865,7 +1963,10 @@ class TestTextCheck:
                 assert r.status_code == 200, (text, mode)
                 assert r.headers["content-type"] == "application/json; charset=utf-8"
                 assert r.headers["cache-control"] == "no-store"
-                assert r.json() == {"ok": True, "words": len(app_mod.tokenize(text, lang)), "dictation": True, "contextual": True}
+                assert r.json() == {
+                    "ok": True, "words": len(app_mod.tokenize(text, lang)), "dictation": True, "contextual": True,
+                    "quran_parts": [], "mushaf_text": text,
+                }
 
     def test_words_count_the_cleaned_text(self, make_client: Callable[..., TestClient]) -> None:
         client = make_client()
@@ -1932,51 +2033,56 @@ class TestTextCheck:
         assert_error(text_check(client, surah + " [?]", "ar"), 400, "unreadable_text")  # before the Quran guard
         assert_error(text_check(client, surah, "en"), 422, "quran_text")  # before the language
         basmala_line = " ".join(quran_words(quran, 1, 1, 1)) + "\n" + AR_TEXT
-        body = text_check(client, basmala_line, "fr", "dictation").json()
-        assert body["error"] == "quran_text" and body["scope"] == "phrase"
-        assert_error(text_check(client, basmala_line, "fr", "strict"), 422, "lang_mismatch")
+        for mode in ("strict", "dictation"):  # a school text with a Quran part: the language decides
+            assert_error(text_check(client, basmala_line, "fr", mode), 422, "lang_mismatch")
+        assert_error(text_check(client, basmala_line, "fr", "contextual"), 422, "quran_text")
 
     def test_quran_text_in_every_mode(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
         client = make_client()
-        texts = [
-            " ".join(quran_words(quran, 112, 1, 4)),
-            quran.ayat(114, 1, 1)[0].display,  # Uthmani script
-            "قال الله تعالى: " + " ".join(quran_words(quran, 112, 4, 4)[2:]),
-        ]
-        for text in texts:
+        texts = {
+            " ".join(quran_words(quran, 112, 1, 4)): (112, 1, 4),
+            quran.ayat(114, 1, 1)[0].display: (114, 1, 1),  # Uthmani script
+            "قال الله تعالى: " + " ".join(quran_words(quran, 112, 4, 4)): (112, 4, 4),
+            " ".join(quran_words(quran, 113, 1, 5) + quran_words(quran, 1, 1, 1) + quran_words(quran, 114, 1, 6)): None,
+        }
+        for text, ref in texts.items():
             for mode in ("strict", "contextual", "dictation"):
                 body = assert_error(text_check(client, text, "ar", mode), 422, "quran_text")
                 assert body["message"] == app_mod.QURAN_TEXT_MESSAGE and "scope" not in body
+                want = {"surah": ref[0], "from": ref[1], "to": ref[2]} if ref else None
+                assert body.get("quran_range") == want
 
     def test_flags(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
-        """One strict call says whether recitation by meaning and dictation are possible."""
+        """One strict call says whether recitation by meaning and dictation are possible,
+        and where the Quran parts are."""
         client = make_client()
         basmala = " ".join(quran_words(quran, 1, 1, 1))
         cases = {
-            # text: (dictation, contextual)
-            AR_TEXT: (True, True),
-            basmala + "\n" + AR_TEXT: (False, False),  # a whole ayah: never spoken, never judged
-            basmala + ". " + AR_TEXT: (False, False),
-            "خلق الله السماوات والأرض والجبال والبحار.": (True, False),  # four Quran words in a row
-            "إن شاء الله سنذهب غدًا إلى البحر.": (True, True),  # an everyday formula
-            "الصيف بعيد، " + " ".join(quran_words(quran, 70, 7, 7)) + ".": (False, True),  # a phrase is a whole ayah
-            " ".join(quran_words(quran, 74, 21, 21)) + " إلى السماء.": (True, True),
-            **{text: (False, False) for text in contained_examples(quran)},
+            # text: (contextual, number of Quran parts); dictation is always possible
+            AR_TEXT: (True, 0),
+            basmala + "\n" + AR_TEXT: (False, 1),  # a whole ayah: never spoken, never judged
+            basmala + ". " + AR_TEXT: (False, 1),
+            "خلق الله السماوات والأرض والجبال والبحار.": (False, 0),  # four Quran words in a row
+            "إن شاء الله سنذهب غدًا إلى البحر.": (True, 0),  # an everyday formula
+            # a two-word ayah the comma made a phrase of its own: joined back (RL-5), ordinary
+            "الصيف بعيد، " + " ".join(quran_words(quran, 70, 7, 7)) + ".": (True, 0),
+            "قال أبي: لا إله إلا الله، ثم خرجنا إلى المسجد.": (True, 0),  # an everyday formula
+            " ".join(quran_words(quran, 74, 21, 21)) + " إلى السماء.": (True, 0),
+            **{text: (False, 1) for text in contained_examples(quran)},
         }
-        for text, (dictation, contextual) in cases.items():
+        for text, (contextual, n_parts) in cases.items():
             body = text_check(client, text, "ar").json()
-            assert body == {"ok": True, "words": len(app_mod.tokenize(text, "ar")), "dictation": dictation, "contextual": contextual}, text
+            assert set(body) == self.KEYS, text
+            assert {k: body[k] for k in ("ok", "words", "dictation", "contextual")} == {
+                "ok": True, "words": len(app_mod.tokenize(text, "ar")), "dictation": True, "contextual": contextual,
+            }, text
+            assert len(body["quran_parts"]) == n_parts and body["mushaf_text"] == text
             r = text_check(client, text, "ar", "contextual")
             if contextual:
                 assert r.json() == {**body, "contextual": True}
             else:
                 assert "scope" not in assert_error(r, 422, "quran_text")
-            r = text_check(client, text, "ar", "dictation")
-            if dictation:
-                assert r.json() == {**body, "dictation": True}
-            else:
-                assert r.status_code == 422
-                assert r.json() == {"error": "quran_text", "message": app_mod.QURAN_PHRASE_MESSAGE, "scope": "phrase"}
+            assert text_check(client, text, "ar", "dictation").json() == body  # no "scope: phrase" refusal any more
 
     def test_agrees_with_the_endpoints_that_use_the_text(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
         """Confirming a text and then reciting or dictating it always agree."""
@@ -2015,7 +2121,9 @@ class TestTextCheck:
         assert_error(text_check(client, quran.ayat(114, 1, 1)[0].display, "ar"), 503, "quran_unavailable")
         assert_error(text_check(client, "", "ar"), 400, "empty_text")  # the text checks come first
         assert_error(text_check(client, "ذهب [?]", "ar"), 400, "unreadable_text")
-        assert text_check(client, FR_TEXT, "fr", "dictation").json() == {"ok": True, "words": 6, "dictation": True, "contextual": True}
+        assert text_check(client, FR_TEXT, "fr", "dictation").json() == {
+            "ok": True, "words": 6, "dictation": True, "contextual": True, "quran_parts": [], "mushaf_text": FR_TEXT,
+        }
 
     def test_host_and_origin(self, make_client: Callable[..., TestClient]) -> None:
         client = make_client()
@@ -2063,3 +2171,237 @@ class TestTextCheck:
         body = text_check(client, "\n".join(lines), "ar").json()
         assert body["dictation"] and body["contextual"] and body["words"] >= 1000
         assert time.perf_counter() - started < 2.0
+
+
+# ---------------------------------------------------------------------------
+# School texts with Quran parts (Q2) and texts that are Quran (Q1)
+# ---------------------------------------------------------------------------
+
+
+def lesson(quran: Quran, surah: int = 2, ayah: int = 153) -> str:
+    """A lesson that quotes one ayah, framed."""
+    return "الصبر مفتاح الفرج. قال تعالى: " + " ".join(quran_words(quran, surah, ayah, ayah)) + " ثم شرح المعلم الآية."
+
+
+class TestQuranPartsInTheApi:
+    def test_a_refusal_by_meaning_says_so(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        # RL-6: the client must tell "recite it word by word" (a school text with Quran
+        # words) from "this is Quran: the Quran section" (Q1).
+        client = make_client()
+        body = assert_error(text_check(client, lesson(quran), "ar", "contextual"), 422, "quran_text")
+        assert body["reason"] == "meaning" and "quran_range" not in body
+        body = assert_error(recite(client, expected_text=lesson(quran), lang="ar", mode="contextual"), 422, "quran_text")
+        assert body["reason"] == "meaning"
+        q1 = " ".join(quran_words(quran, 112, 1, 4))
+        body = assert_error(text_check(client, q1, "ar", "contextual"), 422, "quran_text")
+        assert "reason" not in body and body["quran_range"] == {"surah": 112, "from": 1, "to": 4}
+
+    def test_a_body_that_is_not_json(self, make_client: Callable[..., TestClient]) -> None:
+        r = make_client().post("/api/text/check", content=b"{not json", headers={"Content-Type": "application/json"})
+        assert r.status_code == 422 and r.json() == {"error": "invalid_field", "message": "The body is not valid JSON."}
+
+    def test_text_check_lists_the_parts(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        ayah = quran.ayat(2, 153, 153)[0]
+        typed = list(ayah.match_words)
+        typed[6] = typed[6].replace("ص", "ض")  # a misread word in the parent's text
+        submitted = "  الصبر مفتاح الفرج. قال تعالى: " + " ".join(typed) + " ثم شرح المعلم الآية.\n"
+        body = text_check(make_client(brain=ExplodingBrain(), tts=ExplodingTTS()), submitted, "ar").json()
+        assert body["dictation"] is True and body["contextual"] is False
+        [part] = body["quran_parts"]
+        c0, c1 = part["chars"]
+        assert submitted[c0:c1] == " ".join(typed) and part["utf16"] == [c0, c1]
+        assert (part["surah"], part["ayah_from"], part["ayah_to"], part["whole"]) == (2, 153, 153, True)
+        assert (part["word_from"], part["word_to"]) == (0, len(ayah.match_words))
+        assert part["clean"] == ayah.match_words and part["uthmani"] == ayah.display_words
+        assert len(part["clean_display"]) == len(part["clean"])
+        assert part["differences"] == [{
+            "op": "sub", "typed": typed[6], "mushaf": part["clean_display"][6], "mushaf_clean": ayah.match_words[6],
+            "index": 6, "token": part["start"] + 6,
+        }]
+        assert part["replacement"] == ayah.match and part["chunks"] == [
+            quran.display_slice(2, 153, 0, 4), quran.display_slice(2, 153, 5, 9),
+        ]
+        assert part["rule"] == "near" and part["exp_start"] == 5 and part["exp_end"] == 5 + len(ayah.match_words)
+        assert body["mushaf_text"] == submitted.replace(" ".join(typed), ayah.match)
+        fixed = text_check(make_client(), body["mushaf_text"], "ar").json()
+        assert fixed["quran_parts"][0]["differences"] == [] and fixed["mushaf_text"] == body["mushaf_text"]
+
+    def test_a_text_that_is_quran_names_its_range(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        client = make_client()
+        text = "قال تعالى: " + " ".join(quran_words(quran, 2, 153, 153))
+        for mode in ("strict", "contextual", "dictation"):
+            body = assert_error(text_check(client, text, "ar", mode), 422, "quran_text")
+            assert body["quran_range"] == {"surah": 2, "from": 153, "to": 153}
+        body = assert_error(client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}), 422, "quran_text")
+        assert body["quran_range"] == {"surah": 2, "from": 153, "to": 153}
+
+    def test_page_reader_decides_from_the_text(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        surah = " ".join(quran_words(quran, 112, 1, 4))
+        # A page that is Quran keeps the "page is Quran" answer, whatever the reader said.
+        page = {"text": surah, "lang": "ar", "notes": "", "contains_quran": False, "needs_manual": False}
+        body = TestPageRead().post(make_client(brain=FakeBrain(page=page)), jpeg(), lang="ar").json()
+        assert body["contains_quran"] is True and body["quran_range"] == {"surah": 112, "from": 1, "to": 4}
+        assert len(body["quran_parts"]) == 1
+        # A school page with a quoted ayah is read as usual, with its parts marked.
+        text = lesson(quran)
+        page = {"text": text, "lang": "ar", "notes": "", "contains_quran": True, "needs_manual": False}
+        body = TestPageRead().post(make_client(brain=FakeBrain(page=page)), jpeg(), lang="ar").json()
+        assert body["contains_quran"] is False and body["quran_range"] is None
+        assert [(p["surah"], p["ayah_from"]) for p in body["quran_parts"]] == [(2, 153)]
+        assert body["mushaf_text"] == text and body["text"] == text
+        # An unreadable word inside the ayah: the parent sees the difference.
+        missing = text.replace(quran_words(quran, 2, 153, 153)[6], "[?]")
+        page = {"text": missing, "lang": "ar", "notes": "", "contains_quran": True, "needs_manual": False}
+        body = TestPageRead().post(make_client(brain=FakeBrain(page=page)), jpeg(), lang="ar").json()
+        assert body["unreadable_marks"] == 1 and body["mushaf_text"] == text
+        # Offline: no text, no parts.
+        body = TestPageRead().post(make_client(brain=OfflineBrain()), jpeg(), lang="ar").json()
+        assert body["quran_parts"] == [] and body["mushaf_text"] == "" and body["contains_quran"] is False
+
+    def test_dictation_phrases_and_the_voice(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        text = lesson(quran)
+        tts = FakeTTS()
+        client = make_client(tts=tts)
+        body = client.post("/api/dictation/phrases", json={"text": text, "lang": "ar"}).json()
+        assert set(body) == {"phrases", "readers", "read_text", "parts", "quran_parts"}
+        assert body["readers"] == ["voice", "voice", "grown_up", "grown_up", "voice"]
+        assert body["read_text"][2:4] == body["quran_parts"][0]["chunks"]
+        assert body["parts"] == [None, None, 0, 0, None]
+        for phrase, reader in zip(body["phrases"], body["readers"]):
+            r = client.post("/api/tts", json={"text": phrase, "lang": "ar", "slow": True})
+            assert r.status_code == (200 if reader == "voice" else 422), phrase
+        for read in body["read_text"][2:4]:  # the grown-up's text is never spoken either
+            assert_error(client.post("/api/tts", json={"text": read, "lang": "ar"}), 422, "quran_text")
+        spoken = list(dict.fromkeys(c[0] for c in tts.calls))  # slow speech may be made twice (speech check)
+        assert spoken == [p for p, r in zip(body["phrases"], body["readers"]) if r == "voice"]
+
+    def test_recitation_by_meaning_is_refused(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        brain = FakeBrain()
+        client = make_client(brain=brain, transcriber=RecordingTranscriber(lesson(quran)))
+        body = assert_error(recite(client, expected_text=lesson(quran), lang="ar", mode="contextual"), 422, "quran_text")
+        assert body["message"] == app_mod.QURAN_MEANING_MESSAGE
+        assert brain.calls == []
+
+    def test_a_quran_mistake_gets_the_quran_template(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        ayah = quran.ayat(2, 153, 153)[0]
+        heard_words = list(ayah.match_words)
+        heard_words[6] = "والصلوات"
+        heard = "الصبر مفتاح الفرج قال تعالى " + " ".join(heard_words) + " ثم شرح المعلم الآية"
+        brain = FakeBrain()
+        client = make_client(brain=brain, transcriber=RecordingTranscriber(heard))
+        body = recite(client, expected_text=lesson(quran), lang="ar").json()
+        assert [(op["kind"], op["expected"]) for op in body["result"]["ops"] if op["kind"] != "match"] == [
+            ("sub", ayah.match_words[6])
+        ]
+        display = ayah.display_words[ayah.word_map[6]]
+        assert body["feedback"] == feedback.quran_part_feedback("sub", display, "ar", "recitation")
+        assert body["feedback_is_quran"] is True
+        assert brain.called("word_feedback") == []  # Claude never receives a Quran word
+        [part] = body["quran_parts"]
+        assert part["exp_start"] == 5 and body["result"]["ops"][5]["expected"] == ayah.match_words[0]
+
+    def test_a_mistake_outside_the_parts_may_be_worded_by_claude(
+        self, make_client: Callable[..., TestClient], quran: Quran
+    ) -> None:
+        ayah = quran_words(quran, 2, 153, 153)
+        heard = "الصبر مفتاح النجاح قال تعالى " + " ".join(ayah) + " ثم شرح المعلم الآية"
+        brain = FakeBrain(feedback_text="اِقْتَرَبْت!")
+        client = make_client(brain=brain, transcriber=RecordingTranscriber(heard))
+        body = recite(client, expected_text=lesson(quran), lang="ar").json()
+        assert body["feedback"] == "اِقْتَرَبْت!" and body["feedback_is_quran"] is False
+        [(args, kwargs)] = brain.called("word_feedback")
+        quran_only = set(ayah) - set(tokenize_ar("الصبر مفتاح الفرج قال تعالى ثم شرح المعلم الآية"))
+        sent = json.dumps([args, kwargs], ensure_ascii=False)
+        assert not any(w in sent.split('"') for w in quran_only), sent
+        assert args[0]["errors"] == [{"kind": "sub", "expected": "الفرج", "heard": "النجاح", "exp_index": 2}]
+
+    def test_quran_words_said_past_the_text_never_reach_claude(
+        self, make_client: Callable[..., TestClient], quran: Quran
+    ) -> None:
+        # RL-7: the child recites the lesson, then says words of its ayah again at the end.
+        # Those extra words lie outside the part (the text ends with ordinary words), but
+        # they are Quran words: the brain gets the mistake without them.
+        ayah = list(quran_words(quran, 2, 153, 153))
+        heard = "الصبر مفتاح الفرج قال تعالى " + " ".join(ayah) + " ثم شرح المعلم الآية " + " ".join(ayah[:2])
+        brain = FakeBrain()
+        client = make_client(brain=brain, transcriber=RecordingTranscriber(heard))
+        body = recite(client, expected_text=lesson(quran), lang="ar").json()
+        assert [op["kind"] for op in body["result"]["ops"] if op["kind"] != "match"] == ["ins", "ins"]
+        [(args, kwargs)] = brain.called("word_feedback")
+        sent = json.dumps([args, kwargs], ensure_ascii=False)
+        assert not any(w in sent.split('"') for w in ayah[:2]), sent
+        assert [e["heard"] for e in args[0]["errors"]] == [None, None]
+        # And a child who says an ayah of a short surah instead of the text: the template.
+        client = make_client(brain=(brain := FakeBrain()), transcriber=RecordingTranscriber(" ".join(quran_words(quran, 112, 1, 1))))
+        recite(client, expected_text=lesson(quran), lang="ar")
+        assert brain.called("word_feedback") == []
+
+    def test_mistakes_in_and_out_of_the_part_skip_claude(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        ayah = list(quran_words(quran, 2, 153, 153))
+        heard_ayah = ayah[:-1]  # a word of the ayah left out, and a word of the lesson misread before it
+        heard = "الصبر مفتاح النجاح قال تعالى " + " ".join(heard_ayah) + " ثم شرح المعلم الآية"
+        brain = FakeBrain()
+        client = make_client(brain=brain, transcriber=RecordingTranscriber(heard))
+        body = recite(client, expected_text=lesson(quran), lang="ar").json()
+        assert body["feedback_is_quran"] is False  # the first mistake is outside: the ordinary template
+        assert body["feedback"] == feedback.for_result(check_like(body), "ar", "6-9", activity="recitation")
+        assert brain.called("word_feedback") == []
+
+    def test_the_child_stopped_in_the_ayah(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        ayah = quran.ayat(2, 153, 153)[0]
+        text = "قال تعالى: " + ayah.match + " وفي الصبر خير كثير."
+        heard = "قال تعالى " + " ".join(ayah.match_words[:7])
+        brain = FakeBrain()
+        body = recite(make_client(brain=brain, transcriber=RecordingTranscriber(heard)), expected_text=text, lang="ar").json()
+        display = ayah.display_words[ayah.word_map[7]]
+        assert body["feedback"] == feedback.quran_part_feedback("stopped", display, "ar", "recitation")
+        assert body["feedback_is_quran"] is True and brain.calls == []
+
+    def test_dictation_check_with_a_quran_part(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        ayah = quran.ayat(2, 153, 153)[0]
+        text = lesson(quran)
+        brain = FakeBrain()
+        client = make_client(brain=brain)
+        uthmani = text.replace(ayah.match, " ".join(ayah.display_words))
+        body = check_dictation(client, expected_text=text, lang="ar", written_text=uthmani).json()
+        assert body["result"]["verdict"] == "correct" and body["feedback_is_quran"] is False
+        wrong = text.replace(ayah.match_words[1], ayah.match_words[1].replace("أ", "ا"))  # no hamza
+        body = check_dictation(client, expected_text=text, lang="ar", written_text=wrong).json()
+        assert body["result"]["n_errors"] == 1 and body["feedback_is_quran"] is True
+        display = ayah.display_words[ayah.word_map[1]]
+        assert body["feedback"] == feedback.quran_part_feedback("sub", display, "ar", "dictation")
+        # Only the first (correct) check reached the brain, with no word in it at all.
+        [(args, _)] = brain.called("word_feedback")
+        assert args[0]["errors"] == [] and args[0]["verdict"] == "correct"
+        [part] = body["quran_parts"]
+        assert body["result"]["ops"][part["exp_start"] + 1]["expected"] == ayah.match_words[1]
+
+    def test_recite_offsets_are_into_the_text_with_lf_line_breaks(
+        self, make_client: Callable[..., TestClient], quran: Quran
+    ) -> None:
+        # P1: the browser sends expected_text with CRLF; the offsets of the parts are into
+        # the text the client holds (LF), as for the JSON endpoints.
+        basmala = " ".join(quran_words(quran, 1, 1, 1))
+        text = basmala + "\n" + lesson(quran)
+        client = make_client(transcriber=FakeTranscriber(text.replace("\n", " ")))
+        for sent in (text.replace("\n", "\r\n"), text):
+            body = recite(client, expected_text=sent, lang="ar").json()
+            assert body["result"]["verdict"] == "correct"
+            assert [text[slice(*p["chars"])] for p in body["quran_parts"]] == [basmala, " ".join(quran_words(quran, 2, 153, 153))]
+
+    def test_the_parts_are_never_taken_from_the_client(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        # Whatever extra fields a client sends, the server recomputes the parts from the text.
+        client = make_client()
+        body = client.post(
+            "/api/text/check", json={"text": lesson(quran), "lang": "ar", "quran_parts": [], "mushaf_text": "x"}
+        ).json()
+        assert len(body["quran_parts"]) == 1
+
+
+def tokenize_ar(text: str) -> list[str]:
+    return app_mod.tokenize(text, "ar")
+
+
+def check_like(body: dict) -> dict:
+    """The result of a response, in the form feedback.for_result reads."""
+    return body["result"]

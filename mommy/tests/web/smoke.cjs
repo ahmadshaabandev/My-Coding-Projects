@@ -28,18 +28,25 @@
  *     whose feedback Claude words, a complete notice of what Claude receives, the text
  *     language following the UI and the script of the text, re-checking an edited
  *     dictation reading before the child sees it, the too_short hint, the length-limit
- *     note and the mode-change reset; "Start the dictation" disabled, with the reason
- *     shown, after a whole-ayah phrase refusal (reciting stays available), also for a
- *     basmala on a line of its own (a text with line breaks is checked line by line too)
- *     and for a phrase the voice refuses (back to the start of the dictation, not to
- *     the Quran section); Arabic UI strings (app.js and family.js) without singular
- *     imperatives or visibly gendered second-person forms; the riwaya named in Arabic in
- *     the Arabic UI;
+ *     note and the mode-change reset; a phrase the voice refuses becoming a grown-up
+ *     step (not the Quran section); Arabic UI strings (app.js and family.js) without
+ *     singular imperatives or visibly gendered second-person forms; the riwaya named in
+ *     Arabic in the Arabic UI;
  *   - v2 (docs/REWARDS.md): a session starts with the family setup (helpers.cjs), the
  *     child's language and the consent box are changed in the parent area; "Confirm
- *     text" asks /api/text/check once (mode strict): its "dictation" flag rules out
- *     dictation and its "contextual" flag disables "The meaning" with the reason, also
- *     for a basmala on a line of its own (no second /api/dictation/phrases request).
+ *     text" asks /api/text/check once (mode strict).
+ *   - Quran in a school text (docs/CONTRACT.md, hard rule 4, Q1 and Q2): the fake's
+ *     Quran parts are the server's on the fixtures (guard.find_quran_parts, through the
+ *     backend's Python); "Confirm text" of a lesson quoting an ayah (the note with its
+ *     reference, "The meaning" off with the reason, dictation on), with a changed or a
+ *     dropped word (the differences, "Use the mushaf text" confirming the mushaf words),
+ *     and from a page photo; Recite word by word with the note for the grown-up and
+ *     feedback that quotes the mushaf shown but never spoken; the dictation with a
+ *     grown-up step in the middle and at the start (show, "Done reading", the words out
+ *     of the page, Repeat asking again, keyboard and focus), the voice-refusal safety
+ *     net and "dictation": false; a text that is Quran opening the Quran section on its
+ *     ayat; the screens in en, fr and ar at 360 px and in dark mode; and, over every
+ *     flow, no /api/tts request holding a Quran part.
  *
  * Shared helpers (server, fake API, page helpers) are in helpers.cjs; the family UI
  * itself is tested by family.cjs.
@@ -58,7 +65,7 @@ const H = require('./helpers.cjs');
 const {
   ROOT, WEB, PYTHON, check, sleep, startServer, parseWav, jpegSize, withExif, ATTRIBUTION, ayah,
   PAGE_TEXT, STRICT_RESULT, SAY_AGAIN_RESULT, CONTEXTUAL_RESULT, DICTATION_RESULT,
-  QURAN_SAMPLE, BASMALA_TEXT, BASMALA_LINE_TEXT, QURAN_PHRASE_MESSAGE,
+  QURAN_SAMPLE, BASMALA_TEXT, BASMALA_LINE_TEXT, QURAN_MESSAGE, QURAN_MEANING_MESSAGE,
   makeFakeApi, newPage, shot, shotEl, noHorizontalScroll, waitForCall, waitForTts, record, expected4xx,
 } = H;
 
@@ -855,8 +862,12 @@ async function serverDown(browser, base) {
 const AR_TEXT = 'ذَهَبَ الْوَلَدُ إِلَى الْمَدْرَسَةِ مَعَ أَخِيهِ.';
 const AR_QURAN_MSG = 'هذا النص من القرآن الكريم. يُرجى التدرّب عليه في قسم القرآن الكريم.';
 const EN_QURAN_MSG = 'This text is from the Quran. Please practise it in the Quran section.';
-const EN_PHRASE_MSG = 'Part of this text is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud, so this text cannot be used for dictation. It can still be recited.';
-const AR_PHRASE_MSG = 'جزء من هذا النص آية من القرآن الكريم (مثل البسملة)، والتطبيق لا يقرأ القرآن الكريم بصوت مسموع أبدًا، لذلك لا يمكن استخدام هذا النص في الإملاء، ولكن يمكن تسميعه.';
+// The server's safety net ("dictation": false, or 422 quran_text from the phrases of a
+// checked text): Quran words the voice would meet outside the Quran parts.
+const EN_UNMARKED_MSG = 'This text cannot be used for dictation: the voice found words of the Quran in it that the app could not mark for a grown-up to read. It can still be recited word by word.';
+const AR_UNMARKED_MSG = 'لا يمكن استخدام هذا النص في الإملاء: وجد الصوت فيه كلمات من القرآن الكريم تعذّر تحديدها ليقرأها أحد الكبار. ولكن يمكن تسميعه كلمةً بكلمة.';
+const EN_MEANING_OFF = '“The meaning” is not available for this text: it has words of the Quran, and the app never judges the meaning of the Quran. They are checked word by word.';
+const EN_CONFIRMED_QURAN = 'Text confirmed. It includes words of the Quran: see the note under the text.';
 const DICT_START_WHY = '[data-stage="intro"] [data-why="dict-start"]';
 const WESTERN_DIGIT = /[0-9]/;
 
@@ -910,8 +921,8 @@ async function arabicFlow(browser, base) {
     await page.goto(base + '/');
     await waitForCall(fake, '/api/health', 1);
     await page.selectOption('#setup-lang', 'ar');
-    assert.equal((await page.textContent('label[for="consent"]')).trim(), 'أنا أحد والدَي هذا الطفل أو وليّ أمره، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.');
-    assert.match(await page.textContent('#consent-extra'), /نسخة مكتوبة مما يقوله طفلك/);
+    assert.equal((await page.textContent('label[for="consent"]')).trim(), 'أنا أحد والدَي الأطفال الذين يستخدمون Mommy على هذا الجهاز أو وليّ أمرهم، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.');
+    assert.match(await page.textContent('#consent-extra'), /نسخة مكتوبة مما يقوله الطفل/);
     await startSession(page, { consent: true, nickname: 'سامي' });
     await page.waitForSelector('#screen-prepare:not([hidden])');
     assert.equal(await page.inputValue('#page-lang'), 'ar', 'the browser is en-US, but the parent picked Arabic');
@@ -932,6 +943,12 @@ async function arabicFlow(browser, base) {
     assert.equal((await go.textContent()).trim(), 'الانتقال إلى قسم القرآن الكريم');
     await go.click();
     await page.waitForSelector('#screen-quran:not([hidden])');
+    // The Quran section opens on the ayat of the text (quran_range 112:1-4).
+    await page.waitForSelector('#quran-text .ayah[data-ayah="4"]');
+    assert.equal(await page.inputValue('#quran-surah'), '112');
+    assert.deepEqual([await page.inputValue('#quran-from'), await page.inputValue('#quran-to')], ['١', '٤']);
+    // Back to the first surah of Juz' Amma (its first ten ayat) for the checks below.
+    await page.selectOption('#quran-surah', '78');
     await page.waitForSelector('#quran-text .ayah[data-ayah="10"]');
   });
 
@@ -972,9 +989,10 @@ async function arabicFlow(browser, base) {
     assert.equal((await page.textContent('#recite-status')).trim(), AR_QURAN_MSG);
     assert.ok(await page.isVisible('#recite-status + .status-action'));
     fake.refuse('/api/recite/check', false);
-    // The voice refuses a phrase of a confirmed text (an ayah inside a school text): the
-    // text is not "from the Quran", so the child is not sent to the Quran section; the
-    // dictation goes back to its start, where the disabled button says why (R1).
+    // The voice refuses a phrase of a confirmed text (Quran words the server did not mark
+    // as a Quran part): the text is not "from the Quran", so the child is not sent to the
+    // Quran section, and the dictation goes on: a grown-up reads that phrase (the safety
+    // net), worded in Arabic.
     fake.refuse('/api/tts', true);
     await page.click('#nav [data-go="prepare"]');
     await pressConfirm(page); // a new confirmation starts a new dictation
@@ -982,11 +1000,11 @@ async function arabicFlow(browser, base) {
     const before = fake.callsTo('/api/tts').length;
     await page.click('#btn-dict-start');
     await waitForCall(fake, '/api/tts', before + 1);
-    await page.waitForSelector('#btn-dict-start[disabled]:not([data-busy])');
-    assert.ok(await page.isVisible('[data-stage="intro"]'));
-    assert.ok(await page.isVisible(DICT_START_WHY));
-    assert.equal((await page.textContent(DICT_START_WHY)).trim(), AR_PHRASE_MSG);
-    assert.equal((await page.textContent('#dict-intro-status')).trim(), '');
+    await page.waitForSelector('#dict-gu:not([hidden])');
+    assert.ok(await page.isVisible('[data-stage="speak"]'));
+    assert.equal((await page.textContent('#dict-gu-ask-text')).trim(), 'هيا نطلب من أحد الكبار قراءة هذا الجزء.');
+    assert.equal((await page.textContent('#dict-gu-why')).trim(), 'لا يستطيع الصوت قراءة هذا الجزء. يُرجى إظهار الكلمات وقراءتها بصوت مسموع كما هي مكتوبة، ثم الضغط على «انتهاء القراءة».');
+    assert.equal((await page.textContent('#dict-speak-status')).trim(), '');
     assert.equal(await page.locator('#dict-speak-status + .status-action, #dict-intro-status + .status-action').count(), 0);
     await shot(page, 'dictation-voice-refused-ar-360');
     fake.refuse('/api/tts', false);
@@ -1074,7 +1092,7 @@ async function fixesFlow(browser, base) {
     fake.setPageRead({ text: 'A page.', lang: 'en', notes: '', source: 'claude', needs_manual: false, contains_quran: true });
     await page.setInputFiles('#prep-choose', { name: 'p.png', mimeType: 'image/png', buffer: Buffer.from(tinyPng, 'base64') });
     await page.waitForSelector('#prep-quran-note:not(:empty)');
-    assert.equal((await page.textContent('#prep-quran-note')).trim(), 'This page seems to contain Quran text. Please practise the Quran in the Quran section.');
+    assert.equal((await page.textContent('#prep-quran-note')).trim(), 'This page seems to be ayat of the Quran only. Please practise them in the Quran section.');
     assert.equal((await page.textContent('#prep-quran-note + .status-action')).trim(), 'Go to the Quran section');
     fake.setPageRead(null);
     const before = fake.callsTo('/api/page/read').length;
@@ -1248,7 +1266,7 @@ async function fixesFlow(browser, base) {
     fake.refuse('/api/tts', false);
   });
 
-  await check('prepare: a basmala on its own line is confirmed for reciting, and dictation says why it cannot read it; [?] marks are explained (final verification)', async () => {
+  await check('prepare: a text that starts with the basmala is confirmed with its Quran part, recited word by word and dictated with a grown-up; [?] marks are explained (final verification, Q2)', async () => {
     await page.click('#nav [data-go="prepare"]');
     await page.waitForSelector('#screen-prepare:not([hidden])');
     // A page read with [?] marks: Confirm explains them instead of "Something went wrong".
@@ -1258,28 +1276,31 @@ async function fixesFlow(browser, base) {
     await page.waitForSelector('#prep-confirm-status.is-error');
     assert.equal((await page.textContent('#prep-confirm-status')).trim(), 'Some words could not be read and are marked [?]. Please type them in place of [?] first.');
     assert.ok(await page.isHidden('#prep-next'));
-    // The basmala as a phrase of its own: confirmed (it can be recited), with a note.
+    // The basmala as a sentence of its own: a Quran part (Q2). The text is confirmed with
+    // the note about its Quran words; no English server text, no button to the Quran section.
     await page.selectOption('#page-lang', 'ar');
     await page.fill('#page-text', BASMALA_TEXT);
     await pressConfirm(page);
     await page.waitForSelector('#prep-next:not([hidden])');
     const note = (await page.textContent('#prep-confirm-status')).trim();
-    assert.equal(note, 'Text confirmed for reciting. It cannot be used for dictation: part of it is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud.');
-    assert.ok(!note.includes(QURAN_PHRASE_MESSAGE));
+    assert.equal(note, EN_CONFIRMED_QURAN);
+    assert.ok(!note.includes(QURAN_MESSAGE) && !note.includes(QURAN_MEANING_MESSAGE));
     assert.equal(await page.locator('#prep-confirm-status + .status-action').count(), 0);
+    await page.waitForFunction(() => /Surah Al-Faatiha, ayah 1/.test(document.querySelector('#prep-quran').textContent));
+    assert.ok(await page.isDisabled('input[name="mode"][value="contextual"]'));
     await page.click('#prep-next [data-go="recite"]');
     await page.waitForSelector('#screen-recite:not([hidden])');
     assert.equal((await page.textContent('#recite-text')).trim(), BASMALA_TEXT);
     assert.ok(await page.isEnabled('#recite-rec'));
-    // Dictation: the refusal is already known, so "Start the dictation" is disabled and
-    // the specific, localized reason is shown next to it (no English server text).
+    assert.ok(await page.isVisible('#recite-quran-note'));
+    // Dictation is possible: a grown-up reads the basmala (no request before "Start").
     const before = fake.callsTo('/api/dictation/phrases').length;
     await page.click('#nav [data-go="dictation"]');
     await page.waitForSelector('#screen-dictation:not([hidden])');
-    assert.ok(await page.isDisabled('#btn-dict-start'));
-    assert.ok(await page.isVisible(DICT_START_WHY));
-    assert.equal((await page.textContent(DICT_START_WHY)).trim(), EN_PHRASE_MSG);
-    assert.equal(fake.callsTo('/api/dictation/phrases').length, before, 'nothing is asked again');
+    assert.ok(await page.isEnabled('#btn-dict-start'));
+    assert.ok(await page.isHidden(DICT_START_WHY));
+    assert.ok(await page.isVisible('#dict-quran-intro'));
+    assert.equal(fake.callsTo('/api/dictation/phrases').length, before, 'nothing is asked before "Start the dictation"');
     assert.equal(fake.callsTo('/api/tts').filter((c) => c.json.text.includes('بسم')).length, 0);
     await page.click('#nav [data-go="prepare"]');
     await page.selectOption('#page-lang', 'en');
@@ -1295,165 +1316,555 @@ async function fixesFlow(browser, base) {
 }
 
 /**
- * A text with a phrase that is a whole ayah (often the basmala on its own line) can be
- * recited but not dictated. Once the server has said so, "Start the dictation" stays
- * disabled with the reason next to it, until the text is changed or confirmed again.
+ * Quran in a school text (docs/CONTRACT.md, hard rule 4: Q1 and Q2), on the fixtures of
+ * helpers.quranFixtures (built from the verbatim Tanzil words): "Confirm text" with and
+ * without differences from the mushaf and "Use the mushaf text"; Recite word by word
+ * only, with feedback that quotes the mushaf shown and never spoken; the dictation with
+ * a grown-up step in the middle (a quoted ayah) and at the start (the basmala on its own
+ * line), Repeat, keyboard and focus; the voice-refusal safety net; "dictation": false; a
+ * text that is Quran (Q1) opening the Quran section on its ayat; the page reader.
  */
-async function dictationPhraseFlow(browser, base) {
+async function quranPartsFlow(browser, base) {
+  const FX = H.quranFixtures();
+  const LESSON = H.fakeQuranAnalysis(FX.LESSON, 'ar');
+  const PLAN = LESSON.plan([]);
+  const DIFF = H.fakeQuranAnalysis(FX.LESSON_MISREAD, 'ar').parts[0].differences[0];
   const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 });
   await page.goto(base + '/');
   await startSession(page, { consent: true, nickname: 'Lina' });
-  await page.waitForSelector('#screen-prepare:not([hidden])');
-  const phraseCalls = () => fake.callsTo('/api/dictation/phrases').length;
-  const checkCalls = () => fake.callsTo('/api/text/check').length;
-  const NO_DICTATION_NOTE = 'Text confirmed for reciting. It cannot be used for dictation: part of it is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud.';
-  const MEANING_OFF = '“The meaning” is not available for this text: it has words of the Quran (for example the basmala), so it is recited word by word.';
+  const checks = () => fake.callsTo('/api/text/check');
+  const ttsTexts = () => fake.callsTo('/api/tts').map((c) => c.json.text);
+  const focused = () => page.evaluate(() => document.activeElement && document.activeElement.id);
+  const txt = async (sel) => (await page.textContent(sel)).trim();
 
-  /** Confirm the text while the server cannot be reached: it is confirmed anyway. */
-  async function confirmOffline() {
-    fake.unreachable('/api/text/check', true);
-    const before = checkCalls();
-    await pressConfirm(page);
-    await waitForCall(fake, '/api/text/check', before + 1);
-    await page.waitForSelector('#prep-next:not([hidden])');
-    fake.unreachable('/api/text/check', false);
-  }
-
-  /** Press "Start the dictation": the server refuses the text (scope "phrase"). */
-  async function startRefused() {
-    await page.click('#nav [data-go="dictation"]');
-    await page.waitForSelector('#screen-dictation:not([hidden])');
-    assert.ok(await page.isEnabled('#btn-dict-start'), 'the refusal is not known yet');
-    assert.ok(await page.isHidden(DICT_START_WHY));
-    const before = phraseCalls();
-    await page.click('#btn-dict-start');
-    await waitForCall(fake, '/api/dictation/phrases', before + 1);
-    // Disabled for the refusal, not only busy while the request runs.
-    await page.waitForSelector('#btn-dict-start[disabled]:not([data-busy])');
-  }
-
-  await check('dictation: after a whole-ayah phrase refusal, "Start the dictation" is disabled with the reason shown once, and a press sends nothing (W3)', async () => {
-    await page.selectOption('#page-lang', 'ar');
-    await page.fill('#page-text', BASMALA_TEXT);
-    await confirmOffline();
-    await startRefused();
-    assert.ok(await page.isVisible(DICT_START_WHY));
-    assert.equal((await page.textContent(DICT_START_WHY)).trim(), EN_PHRASE_MSG);
-    assert.equal(await page.getAttribute('#btn-dict-start', 'aria-describedby'), await page.getAttribute(DICT_START_WHY, 'id'));
-    assert.equal((await page.textContent('#dict-intro-status')).trim(), '', 'the reason is not repeated in the status line');
-    const n = phraseCalls();
-    await page.$eval('#btn-dict-start', (b) => b.click()); // a disabled button ignores it
-    await sleep(300);
-    assert.equal(phraseCalls(), n, 'nothing is asked again');
-    assert.ok(await page.isVisible('[data-stage="intro"]'));
-    // The reason follows the interface language (the child's, set in the parent area).
-    await switchLang(page, 'ar', 'dictation');
-    assert.ok(await page.isDisabled('#btn-dict-start'));
-    assert.ok(await page.isVisible(DICT_START_WHY));
-    assert.equal((await page.textContent(DICT_START_WHY)).trim(), AR_PHRASE_MSG);
-    await shot(page, 'dictation-phrase-refused-ar-360');
-    await noHorizontalScroll(page);
-    await switchLang(page, 'en');
-  });
-
-  await check('dictation: with dictation ruled out, reciting the same text stays available (W3)', async () => {
-    await page.click('#nav [data-go="recite"]');
-    await page.waitForSelector('#recite-main:not([hidden])');
-    assert.equal((await page.textContent('#recite-text')).trim(), BASMALA_TEXT);
-    assert.ok(await page.isEnabled('#recite-rec'));
-    const before = fake.callsTo('/api/recite/check').length;
-    await record(page, '#recite-rec', 600);
-    const call = await waitForCall(fake, '/api/recite/check', before + 1);
-    assert.equal(call.form.expected_text.text, BASMALA_TEXT);
-    await page.waitForSelector('#recite-result:not([hidden])');
-  });
-
-  await check('dictation: confirming the text again asks again (still refused: still disabled); a changed text can be dictated (W3)', async () => {
-    // Confirmed again while the server is unreachable: the old refusal no longer counts.
-    await page.click('#nav [data-go="prepare"]');
-    await confirmOffline();
-    await startRefused();
-    // Confirmed again with the server answering: /api/text/check says "dictation": false,
-    // so the button is disabled before anyone presses it.
-    await page.click('#nav [data-go="prepare"]');
-    const before = checkCalls();
-    const phrases = phraseCalls();
-    await pressConfirm(page);
-    const call = await waitForCall(fake, '/api/text/check', before + 1);
-    assert.deepEqual(call.json, { text: BASMALA_TEXT, lang: 'ar', mode: 'strict' });
-    assert.equal(phraseCalls(), phrases, '/api/dictation/phrases is not asked at "Confirm text"');
-    assert.equal((await page.textContent('#prep-confirm-status')).trim(), NO_DICTATION_NOTE);
-    await page.click('#prep-next [data-go="dictation"]');
-    assert.ok(await page.isDisabled('#btn-dict-start'));
-    assert.equal((await page.textContent(DICT_START_WHY)).trim(), EN_PHRASE_MSG);
-    // The parent takes the basmala line out: the changed text must be confirmed first...
-    await page.click('#nav [data-go="prepare"]');
-    await page.fill('#page-text', AR_TEXT);
-    await page.click('#nav [data-go="dictation"]');
-    await page.waitForSelector('#dict-empty:not([hidden])');
-    // ... and then it can be dictated.
-    await page.click('#nav [data-go="prepare"]');
-    await pressConfirm(page);
-    await page.waitForSelector('#prep-next:not([hidden])');
-    await page.click('#prep-next [data-go="dictation"]');
-    assert.ok(await page.isEnabled('#btn-dict-start'));
-    assert.ok(await page.isHidden(DICT_START_WHY));
-    await page.click('#btn-dict-start');
-    await page.waitForSelector('[data-stage="speak"]:not([hidden])');
-  });
-
-  await check('dictation: a basmala on a line of its own, without a full stop, rules out dictation and "The meaning" at "Confirm text", with one /api/text/check request (R1)', async () => {
+  /** Type `text` (Arabic) on Prepare and press "Confirm text". */
+  async function confirmArabic(t) {
     await page.click('#nav [data-go="prepare"]');
     await page.waitForSelector('#screen-prepare:not([hidden])');
-    // An ordinary text on two lines: one request with the text as typed (the server
-    // checks every line itself); it is confirmed for dictation and by meaning.
-    const lines = 'ذهب الولد إلى المدرسة\nمع أخيه صباحا.';
-    let before = checkCalls();
-    const phrases = phraseCalls();
-    await page.fill('#page-text', lines);
+    await page.selectOption('#page-lang', 'ar');
+    await page.fill('#page-text', t);
     await pressConfirm(page);
+  }
+
+  /** Start the dictation and go to phrase `index` (0-based), answering the grown-up steps on the way. */
+  async function dictateTo(index) {
+    await page.click('#nav [data-go="dictation"]');
+    await page.waitForSelector('#screen-dictation:not([hidden])');
+    await page.click('#btn-dict-start');
+    await page.waitForSelector('[data-stage="speak"]:not([hidden])');
+    for (let i = 0; i < index; i++) {
+      if (await page.isVisible('#dict-gu')) {
+        await page.click('#dict-gu-show');
+        await page.click('#dict-gu-done');
+      }
+      await page.waitForSelector('#dict-next:not([disabled])');
+      await page.click('#dict-next');
+      await page.waitForFunction((n) => document.querySelector('#dict-counter').textContent.startsWith('Part ' + n + ' '), i + 2);
+    }
+  }
+
+  await check('Q2: "Confirm text" of a lesson quoting an ayah shows the note and its reference, turns "The meaning" off with the reason and keeps dictation (one /api/text/check)', async () => {
+    const n = checks().length;
+    await confirmArabic(FX.LESSON);
     await page.waitForSelector('#prep-next:not([hidden])');
-    assert.equal(checkCalls(), before + 1);
-    assert.equal(fake.callsTo('/api/text/check').at(-1).json.text, lines);
-    assert.notEqual((await page.textContent('#prep-confirm-status')).trim(), NO_DICTATION_NOTE);
-    assert.ok(await page.isEnabled('input[name="mode"][value="contextual"]'));
-    assert.ok(await page.isHidden('#mode-meaning-why'));
-    // The parent wants it by meaning.
-    await page.check('input[name="mode"][value="contextual"]');
-    // The basmala on a line of its own: dictation and the meaning are ruled out before
-    // anyone presses "Start the dictation" or records.
-    before = checkCalls();
-    await page.fill('#page-text', BASMALA_LINE_TEXT);
-    await pressConfirm(page);
-    await page.waitForSelector('#prep-next:not([hidden])');
-    assert.equal(checkCalls(), before + 1);
-    assert.equal(fake.callsTo('/api/text/check').at(-1).json.text, BASMALA_LINE_TEXT);
-    assert.equal(phraseCalls(), phrases, 'no /api/dictation/phrases request, line by line or otherwise');
-    assert.equal((await page.textContent('#prep-confirm-status')).trim(), NO_DICTATION_NOTE);
-    assert.ok(await page.isDisabled('input[name="mode"][value="contextual"]'), '"The meaning" is disabled');
-    assert.ok(await page.isChecked('input[name="mode"][value="strict"]'), 'word by word is chosen instead');
-    assert.equal((await page.textContent('#mode-meaning-why')).trim(), MEANING_OFF);
+    assert.equal(checks().length, n + 1, 'one request answers for every use');
+    assert.deepEqual(checks().at(-1).json, { text: FX.LESSON, lang: 'ar', mode: 'strict' });
+    assert.equal(fake.callsTo('/api/dictation/phrases').length, 0);
+    assert.equal(await txt('#prep-confirm-status'), EN_CONFIRMED_QURAN);
+    await page.waitForSelector('#prep-quran:not([hidden])');
+    assert.equal(await txt('#prep-quran .qp-title'), 'Words of the Quran in this text');
+    await page.waitForFunction(() => document.querySelector('#prep-quran .qp-refs').textContent.trim().startsWith('Surah Al-Baqara, ayah 153 “'));
+    // UX-05: which words were taken: the part's first two and last two mushaf words.
+    const lessonPart = H.fakeQuranAnalysis(FX.LESSON, 'ar').parts[0];
+    assert.equal(await txt('#prep-quran .qp-snippet'), `${lessonPart.uthmani.slice(0, 2).join(' ')} … ${lessonPart.uthmani.slice(-2).join(' ')}`);
+    assert.equal(await txt('#prep-quran .qp-note'), 'They are checked word by word against the mushaf, and “The meaning” is not available for this text. In a dictation, the app stops at them and asks a grown-up to read them aloud: its voice never reads the Quran.');
+    assert.equal(await page.locator('#prep-quran .qp-diff-list, #prep-quran .qp-use').count(), 0, 'nothing differs from the mushaf');
+    assert.ok(await page.isDisabled('input[name="mode"][value="contextual"]'), '"The meaning" is off');
+    assert.ok(await page.isChecked('input[name="mode"][value="strict"]'));
+    assert.equal(await txt('#mode-meaning-why'), EN_MEANING_OFF);
     await page.click('#prep-next [data-go="dictation"]');
     await page.waitForSelector('#screen-dictation:not([hidden])');
-    assert.ok(await page.isDisabled('#btn-dict-start'));
-    assert.equal((await page.textContent(DICT_START_WHY)).trim(), EN_PHRASE_MSG);
-    assert.equal(fake.callsTo('/api/tts').filter((c) => c.json.text.includes('بسم')).length, 0, 'the voice never got the basmala');
-    // Reciting the same text stays available, word by word.
-    await page.click('#nav [data-go="recite"]');
-    await page.waitForSelector('#recite-main:not([hidden])');
-    assert.ok(await page.isEnabled('#recite-rec'));
-    assert.match(await page.textContent('#recite-mode-label'), /Word by word/);
-    // Changing the text gives "The meaning" back.
-    await page.click('#nav [data-go="prepare"]');
-    await page.fill('#page-text', AR_TEXT);
-    assert.ok(await page.isEnabled('input[name="mode"][value="contextual"]'));
-    assert.ok(await page.isHidden('#mode-meaning-why'));
+    assert.ok(await page.isEnabled('#btn-dict-start'), 'a text that includes Quran can be dictated');
+    assert.ok(await page.isHidden(DICT_START_WHY));
+    assert.equal(await txt('#dict-quran-intro .tag-parent'), 'For the grown-up');
+    assert.match(await txt('#dict-quran-intro p:last-child'), /^This text has words of the Quran\. When the dictation reaches them, it stops and asks a grown-up/);
   });
 
-  await check('whole-ayah phrase flow: no console errors (besides the refusals and the unreachable server asked for), page errors or external requests', async () => {
-    assert.deepEqual(expected4xx(problems).filter((p) => !/Failed to load resource: net::ERR_CONNECTION_REFUSED/.test(p)), []);
+  await check('Q2: a misread ayah lists the typed word and the mushaf word; "Use the mushaf text" puts the mushaf words in and confirms again', async () => {
+    await confirmArabic(FX.LESSON_MISREAD);
+    await page.waitForSelector('#prep-quran .qp-diff-list');
+    assert.equal(await txt('#prep-confirm-status'), EN_CONFIRMED_QURAN, 'the text is confirmed; the checks use the mushaf words');
+    assert.equal(await txt('#prep-quran .qp-diff-title'), 'Typed differently from the mushaf:');
+    assert.equal(await txt('#prep-quran .qp-diff-list'), `typed “${FX.MISREAD_TYPED}”, in the mushaf “${DIFF.mushaf_clean}” (${DIFF.mushaf})`);
+    // UX-05: the changed letter is marked in the typed word and in the mushaf word.
+    assert.deepEqual(await page.$$eval('#prep-quran .qp-diff-list mark', (ms) => ms.map((m) => m.textContent)), ['ض', 'ص']);
+    assert.equal(await page.getAttribute('#prep-quran .qp-mushaf', 'lang'), 'ar');
+    assert.match(await txt('#prep-quran .qp-diffs .hint'), /^Vowel marks and the spelling of the mushaf do not count as differences\./);
+    assert.equal(await txt('#prep-quran .qp-use'), 'Use the mushaf text');
+    await H.noHorizontalScroll(page);
+    assert.deepEqual(await H.smallTargets(page), []);
+    const n = checks().length;
+    await page.click('#prep-quran .qp-use');
+    await waitForCall(fake, '/api/text/check', n + 1);
+    await page.waitForSelector('#prep-quran .qp-done');
+    assert.equal(await page.inputValue('#page-text'), FX.LESSON, 'the mushaf words are in the text, nothing else changed');
+    assert.deepEqual(checks().at(-1).json, { text: FX.LESSON, lang: 'ar', mode: 'strict' }, 'checked again');
+    assert.equal(await txt('#prep-quran .qp-done'), 'The words of the mushaf were put into the text.');
+    assert.equal(await page.locator('#prep-quran .qp-diff-list').count(), 0);
+    assert.equal(await focused(), 'prep-quran');
+    assert.ok(await page.isVisible('#prep-next'));
+  });
+
+  await check('UX-03: a text confirmed with a misquote is shown to the child with the mushaf words (the check expects them)', async () => {
+    await confirmArabic(FX.LESSON_MISREAD);
+    await page.waitForSelector('#prep-quran .qp-diff-list');
+    await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#recite-main:not([hidden])');
+    assert.equal(await page.textContent('#recite-text'), FX.LESSON, 'the reading card shows the mushaf words');
+    assert.ok(!(await page.textContent('#recite-text')).includes(FX.MISREAD_TYPED));
+    await page.click('#nav [data-go="prepare"]');
+    assert.equal(await page.inputValue('#page-text'), FX.LESSON_MISREAD, 'the typed text stays in the grown-up\'s box');
+  });
+
+  await check('Q2: a dropped word is listed as missing, and the mushaf text puts it back', async () => {
+    await confirmArabic(FX.LESSON_DROPPED);
+    await page.waitForSelector('#prep-quran .qp-diff-list');
+    const del = H.fakeQuranAnalysis(FX.LESSON_DROPPED, 'ar').parts[0].differences[0];
+    assert.equal(del.op, 'del');
+    const delPart = H.fakeQuranAnalysis(FX.LESSON_DROPPED, 'ar').parts[0];
+    assert.equal(await txt('#prep-quran .qp-diff-list'), del.index > 0 ? `missing word after “${delPart.clean[del.index - 1]}”: “${del.mushaf}”` : `missing word: “${del.mushaf}”`);
+    await page.click('#prep-quran .qp-use');
+    await page.waitForSelector('#prep-quran .qp-done');
+    assert.equal(await page.inputValue('#page-text'), FX.LESSON);
+  });
+
+  await check('Q2 recite: word by word only, the note for the grown-up, and feedback quoting the mushaf is shown but never spoken', async () => {
+    await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#recite-main:not([hidden])');
+    assert.match(await txt('#recite-mode-label'), /Word by word/);
+    assert.ok(await page.isVisible('#recite-quran-note'));
+    assert.equal(await txt('#recite-quran-note p:last-child'), 'This text has words of the Quran. They are checked word by word, as written in the mushaf. The app’s voice never reads them: to let your child hear the text first, please read it aloud yourself.');
+    // A mistake in the Quran part: the fixed template, quoting the mushaf word.
+    const part = LESSON.parts[0];
+    const quoting = `في الآية الكريمة كلمة تحتاج إلى انتباه: «${part.clean_display[6]}». هيا نقرؤها مرة أخرى.`;
+    fake.queueRecite(H.quranStrictResult(FX.LESSON, [part.exp_start + 6], quoting, true));
+    const tts0 = fake.callsTo('/api/tts').length;
+    const plays0 = (await page.evaluate(() => window.__plays.length));
+    let before = fake.callsTo('/api/recite/check').length;
+    await record(page, '#recite-rec', 500);
+    const call = await waitForCall(fake, '/api/recite/check', before + 1);
+    assert.equal(call.form.mode.text, 'strict');
+    assert.equal(call.form.expected_text.text, FX.LESSON, 'the text as typed: the server finds the parts itself');
+    await page.waitForSelector('#recite-result:not([hidden])');
+    assert.equal(await txt('#recite-feedback'), quoting);
+    assert.ok(await page.isHidden('#recite-listen'), 'no "Listen" for feedback that quotes the Quran');
+    assert.equal(await txt('#recite-fb-quran'), 'This message quotes the Quran, so it is shown and not spoken.');
+    await sleep(400);
+    assert.equal(fake.callsTo('/api/tts').length, tts0, 'the feedback was not sent to the voice');
+    assert.equal(await page.evaluate(() => window.__plays.length), plays0, 'nothing was played');
+    // A mistake outside the parts: ordinary feedback, spoken as usual.
+    fake.queueRecite(H.quranStrictResult(FX.LESSON, [1], 'Almost! Look again at the second word.', false));
+    before = fake.callsTo('/api/recite/check').length;
+    await record(page, '#recite-rec', 500);
+    await waitForCall(fake, '/api/recite/check', before + 1);
+    await waitForTts(fake, 'Almost! Look again at the second word.');
+    assert.ok(await page.isVisible('#recite-listen'));
+    assert.ok(await page.isHidden('#recite-fb-quran'));
+    // "The meaning" stays off on Prepare for this text.
+    await page.click('#nav [data-go="prepare"]');
+    assert.ok(await page.isDisabled('input[name="mode"][value="contextual"]'));
+  });
+
+  await check('Q2 dictation: the voice reads the phrases around the quote; a grown-up shows, reads and hides each chunk; Repeat asks the grown-up again; /api/tts never gets a chunk', async () => {
+    assert.deepEqual(PLAN.readers, ['voice', 'voice', 'grown_up', 'grown_up', 'voice']);
+    const n0 = fake.callsTo('/api/dictation/phrases').length;
+    await dictateTo(0);
+    const ph = await waitForCall(fake, '/api/dictation/phrases', n0 + 1);
+    assert.deepEqual(ph.json, { text: FX.LESSON, lang: 'ar' });
+    assert.equal(await txt('#dict-counter'), 'Part 1 of 5');
+    assert.ok(await page.isHidden('#dict-gu'));
+    await waitForTts(fake, PLAN.phrases[0]);
+    await page.waitForSelector('#dict-next:not([disabled])');
+    await page.click('#dict-next');
+    await waitForTts(fake, PLAN.phrases[1]);
+    await page.waitForSelector('#dict-next:not([disabled])');
+    // Phrase 3: a chunk of the ayah. No voice: a grown-up is asked.
+    const ttsBefore = ttsTexts().length;
+    await page.click('#dict-next');
+    await page.waitForSelector('#dict-gu:not([hidden])');
+    assert.equal(await txt('#dict-counter'), 'Part 3 of 5');
+    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask a grown-up to read this part.');
+    assert.equal(await txt('#dict-gu-why'), 'This part is from the Quran, and the app’s voice never reads the Quran. Please show the words where only you can see them, read them aloud slowly, then press “Done reading”: the words are hidden again before your child writes.');
+    assert.equal(await txt('#dict-gu-show'), 'Show the words of the Quran');
+    assert.doesNotMatch(await page.getAttribute('#dict-gu-show', 'class'), /btn-primary/, 'an outline button: the child\'s eye goes to the ask line');
+    // UX-04: a child who cannot read yet hears the ask line once (no Quran word in it).
+    await waitForTts(fake, 'Let’s ask a grown-up to read this part.');
+    assert.deepEqual(fake.ttsFor('Let’s ask a grown-up to read this part.')[0].json, { text: 'Let’s ask a grown-up to read this part.', lang: 'en', slow: false });
+    assert.equal(await focused(), 'dict-gu-show', 'focus goes to the grown-up\'s button');
+    assert.equal(await page.getAttribute('#dict-gu-show', 'aria-expanded'), 'false');
+    assert.equal(await page.getAttribute('#dict-gu-ask-text', 'aria-live'), 'polite');
+    assert.ok(await page.isHidden('#dict-gu-reveal'));
+    assert.equal(await page.textContent('#dict-gu-text'), '', 'the words are not in the page before the tap');
+    assert.ok(await page.isDisabled('#dict-next'), 'Next waits for the grown-up');
+    assert.ok(await page.isEnabled('#dict-repeat'));
+    assert.ok(await page.isHidden('#dict-show'), 'no "Show the words" for the voice here');
+    // Keyboard: Enter on the focused button shows the vowelled mushaf text, large.
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#dict-gu-reveal:not([hidden])');
+    assert.equal(await page.textContent('#dict-gu-text'), PLAN.read_text[2], 'verbatim Uthmani text from the server');
+    assert.match(await page.getAttribute('#dict-gu-text', 'class'), /quran-text/);
+    assert.equal(await page.getAttribute('#dict-gu-text', 'lang'), 'ar');
+    assert.equal(await page.getAttribute('#dict-gu-text', 'dir'), 'rtl');
+    assert.equal(await txt('#dict-gu-source'), 'Hafs – Tanzil');
+    assert.equal(await page.getAttribute('#dict-gu-show', 'aria-expanded'), 'true');
+    assert.equal(await focused(), 'dict-gu-done');
+    const size = await page.$eval('#dict-gu-text', (n) => parseFloat(getComputedStyle(n).fontSize));
+    assert.ok(size >= 28, 'large text: ' + size);
+    await H.noHorizontalScroll(page);
+    assert.deepEqual(await H.overflowing(page), []);
+    // "Done reading": hidden again (and out of the page), Next is free and focused.
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#dict-gu-reveal', { state: 'hidden' });
+    assert.equal(await page.textContent('#dict-gu-text'), '');
+    assert.equal(await txt('#dict-gu-ask-text'), 'Now let’s write it, then press “Next”.');
+    assert.ok(await page.isEnabled('#dict-next'));
+    assert.equal(await focused(), 'dict-next');
+    // Repeat on a Quran chunk asks the grown-up again; it never calls the voice.
+    const ttsAtRepeat = ttsTexts().length;
+    await page.click('#dict-repeat');
+    assert.equal(ttsTexts().length, ttsAtRepeat, 'Repeat never calls the voice');
+    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask the grown-up to read it again.');
+    assert.ok(await page.isVisible('#dict-gu-show'));
+    assert.ok(await page.isDisabled('#dict-next'));
+    assert.equal(await focused(), 'dict-gu-show');
+    await page.click('#dict-gu-show');
+    await page.click('#dict-gu-done');
+    // Phrase 4: the second chunk; then phrase 5: the voice again.
+    await page.click('#dict-next');
+    await page.waitForFunction(() => document.querySelector('#dict-counter').textContent.trim() === 'Part 4 of 5');
+    assert.ok(await page.isVisible('#dict-gu'));
+    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask a grown-up to read this part.');
+    await page.click('#dict-gu-show');
+    assert.equal(await page.textContent('#dict-gu-text'), PLAN.read_text[3]);
+    await page.click('#dict-gu-done');
+    await page.click('#dict-next');
+    await page.waitForFunction(() => document.querySelector('#dict-counter').textContent.trim() === 'Part 5 of 5');
+    assert.ok(await page.isHidden('#dict-gu'));
+    await waitForTts(fake, PLAN.phrases[4]);
+    for (const i of [2, 3]) {
+      assert.equal(fake.ttsFor(PLAN.phrases[i]).length, 0, 'never sent to the voice: ' + PLAN.phrases[i]);
+      assert.equal(fake.ttsFor(PLAN.read_text[i]).length, 0);
+    }
+    assert.ok(ttsTexts().slice(ttsBefore).every((t) => t === PLAN.phrases[4] || t === 'Let’s ask a grown-up to read this part.'), 'only the last phrase (and the ask line) was asked of the voice meanwhile');
+    assert.equal(fake.ttsFor('Let’s ask a grown-up to read this part.').length, 1, 'the ask line is fetched once, then said from memory');
+    await page.waitForSelector('#dict-next:not([disabled])');
+    await page.click('#dict-next');
+    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+  });
+
+  await check('Q2 dictation: feedback about a word of the Quran part is shown to the child but never spoken', async () => {
+    const part = LESSON.parts[0];
+    const quoting = `في الآية الكريمة كلمة تحتاج إلى انتباه: «${part.clean_display[6]}». هيا نقرؤها مرة أخرى.`;
+    const res = H.quranStrictResult(FX.LESSON, [part.exp_start + 6], quoting, true, 'dictation');
+    fake.queueDictation(res);
+    await page.fill('#dict-written', res.read_text);
+    await page.click('#btn-dict-check');
+    await page.waitForSelector('[data-stage="review"]:not([hidden])');
+    const tts0 = fake.callsTo('/api/tts').length;
+    await page.click('#btn-dict-confirm');
+    await page.waitForSelector('[data-stage="child"]:not([hidden])');
+    assert.equal(await txt('#dict-child-feedback'), quoting);
+    assert.ok(await page.isHidden('#dict-listen'));
+    assert.equal(await txt('#dict-fb-quran'), 'This message quotes the Quran, so it is shown and not spoken.');
+    await sleep(400);
+    assert.equal(fake.callsTo('/api/tts').length, tts0);
+  });
+
+  await check('Q2 dictation: the basmala on a line of its own starts with the grown-up step (no voice for it)', async () => {
+    await confirmArabic(BASMALA_LINE_TEXT);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    assert.equal(await txt('#prep-confirm-status'), EN_CONFIRMED_QURAN);
+    const plan = H.fakeQuranAnalysis(BASMALA_LINE_TEXT, 'ar').plan([]);
+    assert.deepEqual(plan.readers, ['grown_up', 'voice']);
+    await dictateTo(0);
+    await page.waitForSelector('#dict-gu:not([hidden])');
+    assert.equal(await txt('#dict-counter'), 'Part 1 of 2');
+    assert.equal(await focused(), 'dict-gu-show');
+    assert.ok(await page.isDisabled('#dict-next'));
+    await page.keyboard.press('Enter');
+    assert.equal(await page.textContent('#dict-gu-text'), plan.read_text[0]);
+    await page.keyboard.press('Enter');
+    assert.equal(fake.ttsFor(plan.phrases[0]).length, 0, 'the basmala never reached the voice');
+    assert.equal(fake.callsTo('/api/tts').filter((c) => c.json.text.includes('بسم')).length, 0);
+    await page.click('#dict-next');
+    await waitForTts(fake, plan.phrases[1]);
+    assert.equal(await txt('#dict-next-label'), "I've finished");
+    await page.waitForSelector('#dict-next:not([disabled])');
+    await page.click('#dict-next');
+    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+  });
+
+  await check('dictation: an answer typed on two lines (the basmala on its own line) can be confirmed, also after "Check again" (final verification, P1)', async () => {
+    // A browser sends a form field with CRLF line breaks while the textarea holds LF; an
+    // answer echoing the field as sent (as the server did) must not look edited.
+    const echo = (call) => {
+      const sent = call.form.written_text.text;
+      const words = sent.split(/\s+/).filter(Boolean);
+      const ops = words.map((w, i) => ({ kind: 'match', exp_index: i, heard_index: i, expected: w, heard: w }));
+      return { read_text: sent, source: 'typed', uncertain_words: [], legible: true, result: { ops, n_expected: words.length, n_errors: 0, first_error_exp_index: null, verdict: 'correct', say_again: false, word_accuracy: 1 }, feedback: 'أحسنت!', needs_parent_confirmation: true };
+    };
+    fake.queueDictation(echo);
+    fake.queueDictation(echo);
+    const n = fake.callsTo('/api/dictation/check').length;
+    await page.fill('#dict-written', BASMALA_LINE_TEXT);
+    await page.click('#btn-dict-check');
+    const call = await waitForCall(fake, '/api/dictation/check', n + 1);
+    assert.equal(call.form.written_text.text, BASMALA_LINE_TEXT.replace('\n', '\r\n'), 'the browser sends CRLF');
+    await page.waitForSelector('[data-stage="review"]:not([hidden])');
+    assert.equal(await page.inputValue('#dict-read-text'), BASMALA_LINE_TEXT);
+    assert.ok(await page.isHidden('#dict-stale'), 'nothing was edited');
+    assert.ok(await page.isEnabled('#btn-dict-confirm'));
+    await page.click('#btn-dict-recheck');
+    await waitForCall(fake, '/api/dictation/check', n + 2);
+    await page.waitForSelector('#btn-dict-confirm:not([disabled])');
+    assert.ok(await page.isHidden('#dict-stale'));
+    // An edit still asks for a new check.
+    await page.fill('#dict-read-text', BASMALA_LINE_TEXT + ' x');
+    assert.ok(await page.isDisabled('#btn-dict-confirm'));
+    assert.ok(await page.isVisible('#dict-stale'));
+    await page.fill('#dict-read-text', BASMALA_LINE_TEXT);
+    assert.ok(await page.isEnabled('#btn-dict-confirm'));
+    await page.click('#btn-dict-confirm');
+    await page.waitForSelector('[data-stage="child"]:not([hidden])');
+    assert.equal(await page.locator('#dict-child-words .w-match').count(), 10);
+  });
+
+  await check('safety net: a phrase the voice refuses as Quran becomes a grown-up step (the words as written), and the dictation goes on', async () => {
+    const refusedPhrase = PLAN.phrases[4];
+    const asked = fake.ttsFor(refusedPhrase).length; // the voice read it in the dictation above
+    fake.setTts({ refuse: (j) => j.text === refusedPhrase });
+    await confirmArabic(FX.LESSON);
+    await dictateTo(4);
+    await page.waitForSelector('#dict-gu:not([hidden])');
+    assert.equal(await txt('#dict-counter'), 'Part 5 of 5');
+    assert.equal(await txt('#dict-gu-why'), 'The voice cannot read this part. Please show the words, read them aloud as they are written, then press “Done reading”.');
+    assert.equal(await txt('#dict-gu-show'), 'Show the words');
+    await page.click('#dict-gu-show');
+    assert.equal(await txt('#dict-gu-text'), refusedPhrase, 'the phrase as written (there is no mushaf text for it)');
+    assert.doesNotMatch(await page.getAttribute('#dict-gu-text', 'class'), /quran-text/);
+    assert.ok(await page.isHidden('#dict-gu-source'));
+    assert.equal(fake.ttsFor(refusedPhrase).length, asked + 1, 'asked of the voice once (while it was fetched ahead)');
+    await page.click('#dict-gu-done');
+    assert.equal(await txt('#dict-gu-ask-text'), "Now let’s write it, then press “I've finished”.");
+    await page.click('#dict-repeat');
+    assert.equal(fake.ttsFor(refusedPhrase).length, asked + 1, 'Repeat does not ask the voice again');
+    await page.click('#dict-gu-show');
+    await page.click('#dict-gu-done');
+    await page.click('#dict-next');
+    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+    assert.ok(await page.isHidden(DICT_START_WHY));
+    fake.setTts(null);
+  });
+
+  await check('safety net: "dictation": false at "Confirm text" rules out the dictation, with the reason next to the disabled button', async () => {
+    fake.setUnmarked((t) => t === FX.LESSON);
+    await confirmArabic(FX.LESSON);
+    await page.waitForSelector('#prep-next:not([hidden])');
+    assert.equal(await txt('#prep-confirm-status'), 'Text confirmed for reciting. It cannot be used for dictation: the voice found words of the Quran in it that the app could not mark for a grown-up to read.');
+    await page.click('#prep-next [data-go="dictation"]');
+    assert.ok(await page.isDisabled('#btn-dict-start'));
+    assert.equal(await txt(DICT_START_WHY), EN_UNMARKED_MSG);
+    // The same answer from /api/dictation/phrases for a text confirmed while the server
+    // was out of reach is a Quran refusal (the text was never checked).
+    fake.setUnmarked(null);
+    await confirmArabic(FX.LESSON);
+    await page.click('#prep-next [data-go="dictation"]');
+    assert.ok(await page.isEnabled('#btn-dict-start'));
+    fake.setUnmarked((t) => t === FX.LESSON);
+    await page.click('#btn-dict-start');
+    await page.waitForSelector('#btn-dict-start[disabled]:not([data-busy])');
+    assert.equal(await txt(DICT_START_WHY), EN_UNMARKED_MSG, 'a checked text: the safety net, not "this text is from the Quran"');
+    assert.equal(await txt('#dict-intro-status'), '');
+    fake.setUnmarked(null);
+  });
+
+  await check('Q1: a text that is Quran is refused at "Confirm text"; its button opens the Quran section on its ayat (quran_range)', async () => {
+    await confirmArabic(FX.Q1_FRAMED);
+    await page.waitForSelector('#prep-confirm-status.is-error');
+    assert.equal(await txt('#prep-confirm-status'), EN_QURAN_MSG);
+    assert.ok(await page.isHidden('#prep-next'));
+    assert.ok(await page.isHidden('#prep-quran'));
+    const n = fake.callsTo('/api/quran/ayat').length;
+    await page.click('#prep-confirm-status + .status-action');
+    await page.waitForSelector('#screen-quran:not([hidden])');
+    const call = await waitForCall(fake, '/api/quran/ayat', n + 1);
+    assert.deepEqual([call.query.get('surah'), call.query.get('from'), call.query.get('to')], ['112', '1', '4']);
+    await page.waitForSelector('#quran-text .ayah[data-ayah="4"]');
+    assert.equal(await page.inputValue('#quran-surah'), '112');
+    assert.deepEqual([await page.inputValue('#quran-from'), await page.inputValue('#quran-to')], ['1', '4']);
+  });
+
+  await check('page reader: a school page that includes Quran is read as usual, with its parts and differences ("Use the mushaf text", also for a [?] in an ayah); a page that is Quran keeps "page_has_quran" with its range', async () => {
+    const tinyPng = await page.evaluate(() => {
+      const c = document.createElement('canvas');
+      c.width = 40;
+      c.height = 30;
+      return c.toDataURL('image/png').split(',')[1];
+    });
+    await page.click('#nav [data-go="prepare"]');
+    fake.setPageRead({ text: FX.LESSON_MISREAD, lang: 'ar', notes: '', source: 'claude', needs_manual: false, contains_quran: true });
+    await page.setInputFiles('#prep-choose', { name: 'p.png', mimeType: 'image/png', buffer: Buffer.from(tinyPng, 'base64') });
+    await page.waitForFunction((t) => document.querySelector('#page-text').value === t, FX.LESSON_MISREAD);
+    assert.equal(await txt('#prep-quran-note'), '', 'the server decides: a school page, not a Quran page');
+    await page.waitForSelector('#prep-quran .qp-diff-list');
+    assert.equal(await txt('#prep-quran .qp-diff-list'), `typed “${FX.MISREAD_TYPED}”, in the mushaf “${DIFF.mushaf_clean}” (${DIFF.mushaf})`);
+    await page.click('#prep-quran .qp-use');
+    await page.waitForSelector('#prep-quran .qp-done');
+    assert.equal(await page.inputValue('#page-text'), FX.LESSON);
+    assert.equal(await txt('#prep-confirm-status'), EN_CONFIRMED_QURAN);
+    // A word the reader could not read inside the ayah ([?]): "Confirm text" asks for
+    // it first, and "Use the mushaf text" puts the mushaf word in place of the mark.
+    fake.setPageRead({ text: FX.LESSON_UNREAD, lang: 'ar', notes: '', source: 'claude', needs_manual: false, contains_quran: false });
+    await page.setInputFiles('#prep-choose', { name: 'p.png', mimeType: 'image/png', buffer: Buffer.from(tinyPng, 'base64') });
+    await page.waitForFunction((t) => document.querySelector('#page-text').value === t, FX.LESSON_UNREAD);
+    await page.waitForSelector('#prep-quran .qp-diff-list');
+    const unread = H.fakeQuranAnalysis(FX.LESSON_UNREAD, 'ar').parts[0].differences[0];
+    const unreadPart = H.fakeQuranAnalysis(FX.LESSON_UNREAD, 'ar').parts[0];
+    assert.equal(await txt('#prep-quran .qp-diff-list'), unread.index > 0 ? `missing word after “${unreadPart.clean[unread.index - 1]}”: “${unread.mushaf}”` : `missing word: “${unread.mushaf}”`);
+    await page.click('#btn-confirm');
+    await page.waitForSelector('#prep-confirm-status.is-error');
+    assert.equal(await txt('#prep-confirm-status'), 'Some words could not be read and are marked [?]. Please type them in place of [?] first.');
+    assert.ok(await page.isVisible('#prep-quran .qp-use'), 'the mushaf text can still fill the mark');
+    await page.click('#prep-quran .qp-use');
+    await page.waitForSelector('#prep-quran .qp-done');
+    assert.equal(await page.inputValue('#page-text'), FX.LESSON);
+    assert.equal(await txt('#prep-confirm-status'), EN_CONFIRMED_QURAN);
+    // A page that is Quran (Q1), even when the reader did not say so.
+    fake.setPageRead({ text: FX.Q1_SAMPLE, lang: 'ar', notes: '', source: 'claude', needs_manual: false, contains_quran: false });
+    await page.setInputFiles('#prep-choose', { name: 'p.png', mimeType: 'image/png', buffer: Buffer.from(tinyPng, 'base64') });
+    await page.waitForSelector('#prep-quran-note:not(:empty)');
+    assert.equal(await txt('#prep-quran-note'), 'This page seems to be ayat of the Quran only. Please practise them in the Quran section.');
+    assert.ok(await page.isHidden('#prep-quran'));
+    fake.setPageRead(null);
+    const n = fake.callsTo('/api/quran/ayat').length;
+    await page.click('#prep-quran-note + .status-action');
+    const call = await waitForCall(fake, '/api/quran/ayat', n + 1);
+    assert.deepEqual([call.query.get('surah'), call.query.get('from'), call.query.get('to')], ['112', '1', '4']);
+  });
+
+  await check('Q1/Q2 flow: no console errors (besides the refusals asked for), page errors or external requests', async () => {
+    assert.deepEqual(expected4xx(problems), []);
   });
   await context.close();
+}
+
+/**
+ * The Q2 screens in English, French and Arabic at 360 px (and Arabic in dark mode): the
+ * note of "Confirm text" with a difference, and the grown-up step of the dictation
+ * (asked, then the words shown). Each is checked for its wording, overflow and touch
+ * targets, and saved as a screenshot with MOMMY_SHOTS_DIR.
+ */
+async function quranPartsLanguages(browser, base) {
+  const FX = H.quranFixtures();
+  const PLAN = H.fakeQuranAnalysis(FX.LESSON, 'ar').plan([]);
+  const WORDS = {
+    en: { ask: 'Let’s ask a grown-up to read this part.', title: 'Words of the Quran in this text', counter: 'Part 3 of 5', show: 'Show the words of the Quran', done: 'Done reading' },
+    fr: { ask: 'Demandons à un adulte de lire ce morceau.', title: 'Des mots du Coran dans ce texte', counter: 'Morceau 3 sur 5', show: 'Montrer les mots du Coran', done: 'Lecture terminée' },
+    ar: { ask: 'هيا نطلب من أحد الكبار قراءة هذا الجزء.', title: 'كلمات من القرآن الكريم في هذا النص', counter: 'الجزء ٣ من ٥', show: 'إظهار كلمات القرآن الكريم', done: 'انتهاء القراءة' },
+  };
+  for (const [lang, scheme] of [['en', 'light'], ['fr', 'light'], ['ar', 'light'], ['ar', 'dark']]) {
+    const w = WORDS[lang];
+    const tag = lang + (scheme === 'dark' ? '-dark' : '') + '-360';
+    const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, null, { colorScheme: scheme });
+    await check(`${tag}: the Q2 note of "Confirm text" and the grown-up step of the dictation, worded in the language, without overflow`, async () => {
+      await page.goto(base + '/');
+      await H.setupFamily(page, { lang, childLang: lang, consent: true, nickname: lang === 'ar' ? 'سلمى' : 'Lina' });
+      assert.equal(await page.getAttribute('html', 'dir'), lang === 'ar' ? 'rtl' : 'ltr');
+      await page.click('#nav [data-go="prepare"]');
+      await page.selectOption('#page-lang', 'ar');
+      await page.fill('#page-text', FX.LESSON_MISREAD);
+      await pressConfirm(page);
+      await page.waitForSelector('#prep-quran .qp-diff-list');
+      if (lang !== 'ar') await page.waitForFunction(() => document.querySelector('#prep-quran .qp-refs').textContent.includes('Al-Baqara'));
+      assert.equal((await page.textContent('#prep-quran .qp-title')).trim(), w.title);
+      if (lang === 'ar') {
+        await page.waitForFunction(() => document.querySelector('#prep-quran .qp-refs').textContent.trim().startsWith('سورة البقرة، الآية ١٥٣ «'));
+        assert.doesNotMatch(await page.textContent('#prep-quran .qp-refs'), /[0-9]/, 'Arabic-Indic digits');
+      }
+      await H.noHorizontalScroll(page);
+      assert.deepEqual(await H.overflowing(page), []);
+      assert.deepEqual(await H.smallTargets(page), []);
+      await H.shot(page, `quran-confirm-note-${tag}`);
+      await page.click('#prep-next [data-go="dictation"]');
+      await page.waitForSelector('#screen-dictation:not([hidden])');
+      assert.ok(await page.isVisible('#dict-quran-intro'));
+      await page.click('#btn-dict-start');
+      await page.waitForSelector('[data-stage="speak"]:not([hidden])');
+      for (let i = 0; i < 2; i++) {
+        await page.waitForSelector('#dict-next:not([disabled])');
+        await page.click('#dict-next');
+      }
+      await page.waitForSelector('#dict-gu:not([hidden])');
+      assert.equal((await page.textContent('#dict-counter')).trim(), w.counter);
+      assert.equal((await page.textContent('#dict-gu-ask-text')).trim(), w.ask);
+      assert.equal((await page.textContent('#dict-gu-show')).trim(), w.show);
+      await H.noHorizontalScroll(page);
+      assert.deepEqual(await H.overflowing(page), []);
+      assert.deepEqual(await H.smallTargets(page), []);
+      await H.shot(page, `quran-grownup-ask-${tag}`);
+      await page.click('#dict-gu-show');
+      assert.equal(await page.textContent('#dict-gu-text'), PLAN.read_text[2]);
+      assert.equal((await page.textContent('#dict-gu-done')).trim(), w.done);
+      await H.noHorizontalScroll(page);
+      assert.deepEqual(await H.overflowing(page), []);
+      assert.deepEqual(await H.smallTargets(page), []);
+      await H.shot(page, `quran-grownup-show-${tag}`);
+      for (const i of [2, 3]) assert.equal(fake.ttsFor(PLAN.phrases[i]).length, 0);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+}
+
+/**
+ * The fake's Quran parts (helpers.fakeQuranAnalysis) against the server's own finder
+ * (backend guard.find_quran_parts), on every fixture: the same parts (offsets, references,
+ * mushaf words, differences, replacement, chunks, expected range), the same mushaf
+ * text, the same decision for a text that is Quran with its range, and the same
+ * dictation plan. Skipped when the backend's Python is not there.
+ */
+function fakeMatchesServer() {
+  if (!fs.existsSync(PYTHON)) {
+    console.log('       (skipped: no backend Python)');
+    return;
+  }
+  const fixtures = H.quranFixtures();
+  delete fixtures.MISREAD_TYPED;
+  const code = [
+    'import sys, json',
+    'sys.path.insert(0, sys.argv[1])',
+    'from pathlib import Path',
+    'from mommy.quran import Quran',
+    'from mommy.guard import find_quran_parts',
+    'q = Quran(Path(sys.argv[2]))',
+    'out = {}',
+    'for k, t in json.load(sys.stdin).items():',
+    "    an = find_quran_parts(t, 'ar', q)",
+    '    plan = None if an.refused else an.dictation_plan()',
+    "    out[k] = {'refused': an.refused, 'range': an.quran_range(), 'parts': an.parts_json(t), 'mushaf_text': an.mushaf_text() if an.parts else t,",
+    "              'voice_safe': an.voice_safe, 'plan': None if plan is None or not an.parts else {'phrases': [p['phrase'] for p in plan], 'readers': [p['reader'] for p in plan], 'read_text': [p['read_text'] for p in plan], 'parts': [p['part'] for p in plan]}}",
+    'print(json.dumps(out, ensure_ascii=False))',
+  ].join('\n');
+  const r = spawnSync(PYTHON, ['-c', code, path.join(ROOT, 'backend'), path.join(ROOT, 'data', 'quran')], { input: JSON.stringify(fixtures), encoding: 'utf8' });
+  assert.equal(r.status, 0, String(r.stderr));
+  const real = JSON.parse(r.stdout);
+  for (const [k, t] of Object.entries(fixtures)) {
+    const an = H.fakeQuranAnalysis(t, 'ar');
+    const plan = an.refused || !an.parts.length ? null : an.plan([]);
+    if (plan) delete plan.quran_parts;
+    const fake = { refused: an.refused, range: an.range, parts: an.parts, mushaf_text: an.mushafText, voice_safe: an.voiceSafe, plan };
+    assert.deepEqual(fake, real[k], 'fixture ' + k);
+  }
 }
 
 const uiStrings = H.allStrings; // app.js and family.js
@@ -1603,6 +2014,20 @@ async function limitFlow(browser, base) {
   await context.close();
 }
 
+/**
+ * French typography (UX-12): a no-break space, never a plain one, before : ; ! ? and
+ * inside « », so that no ":" or "«" is left alone at the start or end of a line.
+ */
+function frenchTypography() {
+  const bad = [];
+  for (const file of ['app.js', 'family.js']) {
+    for (const [key, value] of Object.entries(H.uiStrings('fr', file))) {
+      if (/ [:;!?»]/.test(value) || /« /.test(value)) bad.push(file + ' ' + key + ': ' + value);
+    }
+  }
+  assert.deepEqual(bad, []);
+}
+
 async function main() {
   console.log('# syntax');
   await check('node --check web/*.js', checkSyntax);
@@ -1610,8 +2035,11 @@ async function main() {
   await recorderUnitTests();
   console.log('# Arabic UI wording (Node)');
   await check('ar: UI strings use no singular imperative or visibly gendered second-person form', arabicWording);
+  await check('fr: a no-break space before : ; ! ? and inside « » (no plain space)', frenchTypography);
 
   H.loadTanzil();
+  console.log('# the fake Quran parts against the server\'s finder (Python)');
+  await check('fake API: its Quran parts, mushaf text, Q1 decision and dictation plan are the server\'s on every fixture', fakeMatchesServer);
 
   const server = await startServer();
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -1636,8 +2064,10 @@ async function main() {
     await arabicFlow(browser, base);
     console.log('# browser: review fixes');
     await fixesFlow(browser, base);
-    console.log('# browser: dictation of a text with a whole-ayah phrase');
-    await dictationPhraseFlow(browser, base);
+    console.log('# browser: Quran in a school text (Q1, Q2)');
+    await quranPartsFlow(browser, base);
+    console.log('# browser: Quran in a school text, in en, fr and ar at 360 px; dark mode');
+    await quranPartsLanguages(browser, base);
     console.log('# browser: consent and Claude');
     await consentFlow(browser, base);
     console.log('# browser: length limit');
@@ -1646,6 +2076,10 @@ async function main() {
     await browser.close();
     server.close();
   }
+  console.log('# every flow');
+  await check('no /api/tts request of any flow held a Quran part (the fake API\'s own list of the parts it answered with)', () => {
+    assert.deepEqual(H.ttsQuranLeaks(), []);
+  });
 
   H.finish();
 }

@@ -29,7 +29,8 @@ does not find childish. The children are girls and boys, so:
 The Quran feedback (:func:`quran_feedback`) is a separate, fixed and respectful set of
 Arabic messages that quotes at most the single word it is given. It is shown as text
 only (never spoken), and follows the same neutrality rule (``تنبيه``, ``هيا نعيدها
-مرة أخرى`` rather than ``انتبه``/``أعد``).
+مرة أخرى`` rather than ``انتبه``/``أعد``; ``سقطت من التلاوة كلمة``, ``بارك الله في هذه
+التلاوة`` rather than ``فاتتك``, ``بارك الله فيك``).
 
 The messages match the result: one mistake is "one word", several are "a few words,
 the first one is ..."; a child who stopped early is told where; a clear recording far
@@ -352,19 +353,74 @@ _SAY_AGAIN: dict[str, dict[str, str]] = {
 # Quran: fixed, respectful, Arabic only, and neutral for a boy or a girl (no imperative:
 # a noun, an unvocalised past-tense form or هيا + نفعل instead of انتبه / أعد). Shown as
 # text only, never spoken, so it is not vocalised for the synthetic voice.
-QURAN_CORRECT = "أحسنت، بارك الله فيك."
+QURAN_CORRECT = "أحسنت، بارك الله في هذه التلاوة."
 # Unclear: too quiet or too short, or far from the chosen ayat. The Quran screen shows no
 # other hint, so the message says that the recitation did not come through, not that
 # it was wrong.
 QURAN_UNCLEAR = "لم تتّضح التلاوة جيدًا. هيا نعيدها مرة أخرى."
 _QURAN_MISTAKE = {
     "sub": "تنبيه: «{word}»",
-    "del": "تنبيه: فاتتك كلمة «{word}».",
+    "del": "تنبيه: سقطت من التلاوة كلمة «{word}».",
     "ins": "تنبيه: في التلاوة كلمة زائدة عند «{word}».",
     "stopped": "أحسنت فيما تلوت، وتوقفت التلاوة قبل «{word}».",
 }
 _QURAN_MISTAKE_NO_WORD = "تنبيه: في التلاوة خطأ. هيا نعيدها مرة أخرى."
 _QURAN_KINDS = ("correct", "mistakes", "mistake", "sub", "del", "ins", "stopped", "unclear")
+
+# A mistake inside a Quran part of a school text (recited word by word, or written in a
+# dictation): fixed and respectful like the Quran section's wording, never worded by
+# Claude, and quoting only the given word, which is the word as it is in the mushaf. Shown
+# as text only: the client never sends it to the voice. Neutral for a girl or a boy.
+_QURAN_PART: dict[str, dict[str, dict[str, str]]] = {
+    "ar": {
+        "recitation": {
+            "sub": "في الآية الكريمة كلمة تحتاج إلى انتباه: «{word}». هيا نقرؤها مرة أخرى.",
+            "del": "تنبيه في الآية الكريمة: سقطت كلمة «{word}».",
+            "ins": "تنبيه في الآية الكريمة: كلمة زائدة عند «{word}».",
+            "stopped": "أحسنت فيما تلوت، وتوقفت التلاوة قبل «{word}».",
+            "none": "تنبيه: في تلاوة الآية الكريمة خطأ. هيا نعيدها مرة أخرى.",
+        },
+        "dictation": {
+            "sub": "في كتابة الآية الكريمة كلمة تحتاج إلى انتباه: «{word}». هيا نكتبها مرة أخرى.",
+            "del": "تنبيه في كتابة الآية الكريمة: نقصت كلمة «{word}».",
+            "ins": "تنبيه في كتابة الآية الكريمة: كلمة زائدة عند «{word}».",
+            "stopped": "أحسنت فيما كتبت، وتوقفت الكتابة قبل «{word}».",
+            "none": "تنبيه: في كتابة الآية الكريمة خطأ. هيا نعيدها مرة أخرى.",
+        },
+    },
+    "en": {
+        "recitation": {
+            "sub": 'A word of the noble ayah was not right: "{word}".',
+            "del": 'A word of the noble ayah was left out: "{word}".',
+            "ins": 'An extra word came into the noble ayah, at "{word}".',
+            "stopped": 'Well done so far. The recitation stopped before "{word}".',
+            "none": "A word of the noble ayah was not right. Let us read it again.",
+        },
+        "dictation": {
+            "sub": 'A word of the noble ayah was not written right: "{word}".',
+            "del": 'A word of the noble ayah is missing in the writing: "{word}".',
+            "ins": 'An extra word was written in the noble ayah, at "{word}".',
+            "stopped": 'Well done so far. The writing stopped before "{word}".',
+            "none": "A word of the noble ayah was not written right. Let us write it again.",
+        },
+    },
+    "fr": {
+        "recitation": {
+            "sub": "Un mot du noble verset n'était pas juste : « {word} ».",
+            "del": "Un mot du noble verset a été oublié : « {word} ».",
+            "ins": "Un mot en trop s'est glissé dans le noble verset, à « {word} ».",
+            "stopped": "Bon début. La récitation s'est arrêtée avant « {word} ».",
+            "none": "Un mot du noble verset n'était pas juste. On le relit ensemble.",
+        },
+        "dictation": {
+            "sub": "Un mot du noble verset n'était pas bien écrit : « {word} ».",
+            "del": "Un mot du noble verset manque dans l'écriture : « {word} ».",
+            "ins": "Un mot en trop a été écrit dans le noble verset, à « {word} ».",
+            "stopped": "Bon début. L'écriture s'est arrêtée avant « {word} ».",
+            "none": "Un mot du noble verset n'était pas bien écrit. On le réécrit ensemble.",
+        },
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +516,7 @@ def quran_feedback(kind: str, expected_word: str | None) -> str:
     (for ``"stopped"``, the first word not recited), and is the only Quran text ever
     quoted; it is quoted exactly as given (only surrounding whitespace is removed). It is
     ignored for ``"correct"`` and ``"unclear"``. The wording addresses a boy or a girl
-    alike (no imperative).
+    alike (no imperative, and no suffix ``ـك``: not ``فاتتك``, ``بارك الله فيك``).
 
     Raises ValueError for an unknown kind.
     """
@@ -475,6 +531,33 @@ def quran_feedback(kind: str, expected_word: str | None) -> str:
         return _QURAN_MISTAKE_NO_WORD
     template = _QURAN_MISTAKE["sub" if kind in ("mistakes", "mistake") else kind]
     return template.format(word=word)
+
+
+def quran_part_feedback(kind: str, mushaf_word: str | None, lang: Lang, activity: str = "recitation") -> str:
+    """Fixed feedback for a mistake inside a Quran part of a school text.
+
+    ``kind`` is ``"sub"`` (``"mistakes"``/``"mistake"`` read the same), ``"del"``,
+    ``"ins"`` or ``"stopped"``; ``mushaf_word`` is the word as it is in the mushaf (the
+    Uthmani display word), quoted exactly as given and the only Quran text quoted; for an
+    insertion it is the mushaf word the extra word stands before. ``activity`` is
+    ``"recitation"`` or ``"dictation"``. The wording is respectful and the same for a
+    boy or a girl; it is shown as text only, never spoken, and never written by Claude.
+
+    Raises ValueError for an unknown language, kind or activity.
+    """
+    if lang not in _QURAN_PART:
+        raise ValueError(f"unsupported language: {lang!r}")
+    if activity not in ("recitation", "dictation"):
+        raise ValueError(f"unknown activity: {activity!r}")
+    if kind in ("mistakes", "mistake"):
+        kind = "sub"
+    if kind not in ("sub", "del", "ins", "stopped"):
+        raise ValueError(f"unknown Quran feedback kind: {kind!r}")
+    templates = _QURAN_PART[lang][activity]
+    word = (mushaf_word or "").strip()
+    if not word:
+        return templates["none"]
+    return templates[kind].format(word=word)
 
 
 def for_result(
@@ -536,6 +619,7 @@ __all__ = [
     "point_out",
     "praise",
     "quran_feedback",
+    "quran_part_feedback",
     "say_again",
     "stopped",
     "unreadable",

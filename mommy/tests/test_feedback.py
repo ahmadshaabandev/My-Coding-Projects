@@ -215,7 +215,7 @@ def test_quran_contract_examples() -> None:
     assert quran_feedback("mistakes", "كلمة") == "تنبيه: «كلمة»"
     # Unclear says that the recitation did not come through, not that it was wrong.
     assert quran_feedback("unclear", None) == "لم تتّضح التلاوة جيدًا. هيا نعيدها مرة أخرى."
-    assert quran_feedback("del", "كلمة") == "تنبيه: فاتتك كلمة «كلمة»."
+    assert quran_feedback("del", "كلمة") == "تنبيه: سقطت من التلاوة كلمة «كلمة»."
     assert quran_feedback("ins", "كلمة") == "تنبيه: في التلاوة كلمة زائدة عند «كلمة»."
     assert quran_feedback("sub", None) == "تنبيه: في التلاوة خطأ. هيا نعيدها مرة أخرى."
     assert quran_feedback("stopped", "كلمة") == "أحسنت فيما تلوت، وتوقفت التلاوة قبل «كلمة»."
@@ -263,6 +263,27 @@ def test_quran_feedback_without_word_and_unknown_kind() -> None:
 def test_quran_messages_are_fixed() -> None:
     assert quran_feedback("correct", None) == feedback.QURAN_CORRECT
     assert quran_feedback("unclear", "x") == feedback.QURAN_UNCLEAR
+    assert feedback.QURAN_CORRECT == "أحسنت، بارك الله في هذه التلاوة."
+
+
+def test_quran_messages_have_no_addressed_suffix() -> None:
+    # Regression (final verification, P4): the Quran section said "تنبيه: فاتتك كلمة …"
+    # and "أحسنت، بارك الله فيك." to the child. Shown, not spoken, they still follow the
+    # wording rule of every message: no ـك ending outside demonstratives (and the verb
+    # بارك, whose ك is a root letter). The quoted mushaf word is left out (it is the Quran
+    # text itself).
+    messages = [quran_feedback(kind, "كلمة") for kind in ("correct", "mistakes", "sub", "del", "ins", "stopped", "unclear")]
+    messages.append(quran_feedback("sub", None))
+    for activity in ("recitation", "dictation"):
+        for kind in ("sub", "del", "ins", "stopped"):
+            messages.append(feedback.quran_part_feedback(kind, "كلمة", "ar", activity))
+        messages.append(feedback.quran_part_feedback("sub", None, "ar", activity))
+    for msg in messages:
+        bare = strip_tashkeel(re.sub(r"«[^»]*»", "", msg))
+        for word in re.findall(r"[\u0621-\u064a]+", bare):
+            if word.endswith("ك"):
+                assert word in ("هناك", "هنالك", "ذلك", "تلك", "كذلك", "بارك"), msg
+        assert "فيك" not in bare.split() and "فاتتك" not in bare, msg
 
 
 # ---------------------------------------------------------------------------
@@ -462,3 +483,50 @@ def test_dictation_feedback(lang: str) -> None:
     # An unreadable word is never pointed out; the real mistake after it is.
     mixed = check_writing("le chat dort sur le tapis", "le [?] dor sur le tapis", "fr")
     assert for_result(mixed, lang, "6-9") == point_out(lang, "6-9", "dort", "sub")
+
+
+# ---------------------------------------------------------------------------
+# A mistake in a Quran part of a school text
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("lang", ["ar", "en", "fr"])
+@pytest.mark.parametrize("activity", ["recitation", "dictation"])
+def test_quran_part_feedback_quotes_only_the_mushaf_word(quran_dir: Path, lang: str, activity: str) -> None:
+    from mommy.feedback import quran_part_feedback
+
+    line = next(
+        l for l in (quran_dir / "quran-uthmani.txt").read_text(encoding="utf-8").splitlines() if l.startswith("2|255|")
+    )
+    word = line.split("|")[2].split()[6]
+    for kind in ("sub", "del", "ins", "stopped", "mistakes"):
+        msg = quran_part_feedback(kind, word, lang, activity)
+        assert msg.count(word) == 1, (kind, msg)
+        rest = msg.replace(word, "")
+        assert not any(w in rest for w in line.split("|")[2].split() if len(strip_tashkeel(w)) > 2), msg
+    assert word not in quran_part_feedback("sub", None, lang, activity)
+    with pytest.raises(ValueError):
+        quran_part_feedback("correct", word, lang, activity)
+    with pytest.raises(ValueError):
+        quran_part_feedback("sub", word, lang, "reading")
+    with pytest.raises(ValueError):
+        quran_part_feedback("sub", word, "de", activity)  # type: ignore[arg-type]
+
+
+def test_quran_part_feedback_is_respectful_and_neutral() -> None:
+    from mommy.feedback import _QURAN_PART
+
+    gendered = re.compile(r"(^|\s)(أعد|أعيدي|انتبه|انتبهي|اقرأ|اقرئي|اتل|اتلي|اكتب|اكتبي)(\s|[،.!؟:]|$)")
+    for activity, templates in _QURAN_PART["ar"].items():
+        for kind, template in templates.items():
+            text = strip_tashkeel(template.replace("{word}", "كلمة"))
+            assert not gendered.search(text), (activity, kind)
+            assert not re.search(r"\w(ك|كِ|كَ)(\s|[،.!؟:»]|$)", template.replace("{word}", "")), (activity, kind)
+            assert "الآية الكريمة" in text or kind == "stopped", (activity, kind)
+    for lang in ("en", "fr"):
+        for templates in _QURAN_PART[lang].values():
+            for kind, template in templates.items():
+                assert "noble" in template or kind == "stopped", (lang, kind)
+    # French addressed to the child stays gender-neutral (no "tu es prêt(e)", "content(e)").
+    for template in (t for v in _QURAN_PART["fr"].values() for t in v.values()):
+        assert "tu " not in template.lower() and "(e)" not in template

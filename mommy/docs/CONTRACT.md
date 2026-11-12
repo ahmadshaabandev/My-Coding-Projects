@@ -19,6 +19,8 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
   - strict: word by word;
   - contextual: is the meaning right?
 - The Quran has its own module. It is always strict, and it uses no LLM and no synthetic voice.
+  A school text that quotes the Quran keeps its Quran parts under the same rules (hard
+  rule 4).
 - Languages: Arabic (`ar`), English (`en`), French (`fr`). Children are 6-18 years old.
 
 ## Hard rules (apply to every file)
@@ -30,13 +32,31 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
    LLM. The LLM only reads images, judges meaning in contextual mode, and words feedback.
 3. Handwriting is read blind. The LLM is never shown the expected text when it reads a
    child's handwriting. Code then compares, and the parent confirms.
-4. Quran:
+4. Quran (revised 2026-11-11 for Quran in school texts; the numbering of the rules is
+   unchanged, and the sub-rules below replace the earlier rule that a school text quoting
+   an ayah is refused):
    - The text comes only from the verbatim Tanzil files in `data/quran/`. Never generate,
      complete or "fix" ayat from a model or from memory.
-   - Quran checking is strict only. No LLM is involved in any Quran path, and Quran text
-     is never synthesised to speech.
-   - Feedback for the Quran uses fixed templates only.
+   - Quran checking is strict only (word by word). No LLM is involved in any Quran path or
+     with any Quran part of a school text (it never judges its meaning and never writes
+     feedback about it), and Quran text is never synthesised to speech.
+   - Feedback for the Quran, and for a mistake in a Quran part of a school text, uses
+     fixed templates only, quotes the word as it is in the mushaf, and is never spoken.
    - Show "Hafs (Tanzil)" and the Tanzil attribution and link.
+   - **Q1, a text that is Quran.** Leave out the framing formulas (قال تعالى, the
+     isti'adha, a basmala at the start or between two surahs, صدق الله العظيم) and the
+     surah and ayah labels (سورة الإخلاص, (1), [البقرة: 255]). If what remains is one or
+     more whole ayat in mushaf order, the text is Quran: the general endpoints refuse it
+     (`422 quran_text`) and the client sends the child to the Quran section (the parent
+     to a Quran task).
+   - **Q2, a school text that includes Quran** (a lesson quoting an ayah or part of one,
+     a text starting with the basmala, a sentence with a short ayah inside, a partial
+     ayah on its own) is a school text with **Quran parts**. The server finds the parts
+     from the text in every endpoint and never takes them from a client
+     (`guard.find_quran_parts`). A Quran part is recited and written against the mushaf
+     words (never the typed ones), is never read by the synthetic voice (in a dictation
+     a grown-up reads it from the mushaf text), and makes the text word-by-word only (no
+     recitation by meaning).
 5. Privacy (children's data):
    - Audio and images are processed in memory and never written to disk. They are never
      logged; log only sizes and timings.
@@ -92,12 +112,16 @@ mommy/
   backend/mommy/
     __init__.py
     config.py   textnorm.py   align.py   phrases.py   feedback.py
-    quran.py    asr.py        tts.py     llm.py       app.py
+    quran.py    guard.py      asr.py     tts.py       llm.py       app.py
   web/
     index.html  app.js  recorder.js  styles.css
+    rewards.js  family.js     the tasks and rewards (docs/REWARDS.md): pure logic, and the family UI
   tests/        pytest; run with:  cd mommy && .venv/bin/python -m pytest -q
   tests/arabic_school_sentences.txt   ordinary Arabic sentences that measure the Quran guards (tests/test_quran_guard.py)
-  tests/web/    browser smoke test (Node.js + Playwright Chromium): node tests/web/smoke.cjs
+  tests/quran_parts_texts.txt         lessons, Quran texts, partial ayat and misquotes that measure the Quran parts (tests/test_quran_parts.py)
+  tests/quran_fixtures.py             fills the placeholders of both fixtures from Tanzil (no Quran word is typed in them)
+  tests/web/    Node.js tests of the web client (see tests/web/README.md): rewards.test.cjs (web/rewards.js in
+                Node), smoke.cjs and family.cjs (headless Chromium through Playwright, fake API)
 ```
 
 `tests/conftest.py` puts `mommy/backend` on `sys.path`. Imports look like
@@ -166,7 +190,9 @@ def tokenize(text: str, lang: Lang) -> list[str]
 # Splits on whitespace and punctuation. Keeps the original surface forms (unnormalised),
 # drops tokens that normalise to nothing (standalone pause marks). For French, keeps
 # elisions as one token ("l'école"); keeps . , : and the Arabic decimal and thousands
-# separators inside numbers ("3,5", "12:30").
+# separators inside numbers ("3,5", "12:30"). Extra: an apostrophe, a hyphen (- U+2010
+# U+2011 U+2212) or the Arabic letter mark U+061C between two Arabic letters splits the
+# token (Arabic has no elision: "قل-هو" is two words, as the reader hears them).
 def token_spans(text: str, lang: Lang) -> list[tuple[int, int]]   # extra: character spans of tokenize()
 def has_arabic(text: str) -> bool; def is_arabic_char(c: str) -> bool   # extra
 # Speech only (extra), used by align.speech_joins and recitation_key:
@@ -217,7 +243,7 @@ def align(expected: list[str], heard: list[str], key: Callable[[str], str]) -> l
 # the most matched expected words wins ("the skipped, cat matched, now added" beats "the
 # heard as cat, cat heard as now"); remaining ties are broken from the start of the text,
 # preferring match, then sub, then del, then ins. key() normalises a token for comparison.
-def align_with_joins(expected, heard, key, *, max_pieces=3, extra_joins=None) -> list[Op]   # extra
+def align_with_joins(expected, heard, key, *, max_pieces=3, extra_joins=None, rigid=None) -> list[Op]   # extra
 # Speech only: an expected word equal to 2..3 heard tokens joined (or the reverse) is a
 # match at no cost; extra_joins = (join_heard, join_exp) adds caller equivalences
 # {(i, j): [k, ...]} (expected[i] ~ heard[j:j+k], expected[i:i+k] ~ heard[j]), and
@@ -225,6 +251,9 @@ def align_with_joins(expected, heard, key, *, max_pieces=3, extra_joins=None) ->
 # (expected[i:i+a] ~ heard[j:j+b]): one move, matched as a whole or not at all, whose
 # ops pair the words in order (the last expected word takes the remaining heard words,
 # or the remaining expected words share the last heard word).
+# rigid (extra): expected indices in no split or joined word (the Quran words of a school
+# text); they match one heard token by key, or through the caller's extra_joins.
+def without_rigid(joins, rigid) -> (join_heard, join_exp, blocks)   # extra: speech_joins minus every entry touching rigid
 Joins = Mapping[tuple[int, int], Sequence[int]]; Blocks = Mapping[tuple[int, int], Sequence[tuple[int, int]]]   # extra
 def speech_joins(expected, heard, lang) -> tuple[dict, dict, dict]   # extra: (join_heard, join_exp, blocks)
 # A number in digits matches the same number in 1..3 words on the other side (0..100,
@@ -269,6 +298,7 @@ SAY_AGAIN_ERROR_RATE = 0.6; STOPPED_MIN_WORDS = 2; MAX_JOINED_PIECES = 3   # ext
 
 ```python
 def split_phrases(text: str, lang: Lang, max_words: int = 6) -> list[str]
+def split_phrase_spans(text, lang, max_words=6) -> list[tuple[str, tuple[int, int]]]   # extra: each phrase and the characters it came from
 # Dictation chunks: split on sentence punctuation (. ! ? ؟ ، ؛ , ; : … ۔) and blank lines,
 # then cap each chunk at max_words in pieces of near-equal length (13 words -> 5+4+4).
 # Never splits inside a word or a number (3,5), nor after a common abbreviation or a
@@ -297,14 +327,23 @@ def for_result(result, lang, age, seed=0, *, activity=None) -> str   # extra
 # unreadable. Unreadable words are never pointed out.
 def quran_feedback(kind: str, expected_word: str | None) -> str
 # Arabic only, fixed respectful wording, never quoting beyond the given word, neutral for
-# a boy or a girl (no imperative). kind: correct, mistakes/mistake (= sub), sub, del,
-# ins, stopped, unclear. For example: "أحسنت، بارك الله فيك." when correct;
-# "تنبيه: «<word>»" for a mistake; "أحسنت فيما تلوت، وتوقفت التلاوة قبل «<word>»." when
+# a boy or a girl (no imperative, no ـك ending). kind: correct, mistakes/mistake (= sub),
+# sub, del, ins, stopped, unclear. For example: "أحسنت، بارك الله في هذه التلاوة." when
+# correct; "تنبيه: «<word>»" for a mistake; "تنبيه: سقطت من التلاوة كلمة «<word>»." for
+# a skipped word; "أحسنت فيما تلوت، وتوقفت التلاوة قبل «<word>»." when
 # the child stopped early; "لم تتّضح التلاوة جيدًا. هيا نعيدها مرة أخرى." when unclear
 # (too quiet, too short or far from the ayat: the Quran screen shows no other hint, so it
 # says the recitation did not come through, not that it was wrong). Shown as text only,
 # never spoken.
 QURAN_CORRECT; QURAN_UNCLEAR   # extra
+def quran_part_feedback(kind, mushaf_word, lang, activity="recitation") -> str   # extra
+# A mistake inside a Quran part of a school text (Q2), in ar/en/fr, for "recitation" or
+# "dictation": kind sub (mistakes), del, ins, stopped. Fixed, respectful wording that
+# quotes only the given word, the word as it is in the mushaf (the Uthmani display
+# word); neutral for a girl or a boy (no imperative, no ـك, هيا + "we"; French without
+# "tu"). For example "في الآية الكريمة كلمة تحتاج إلى انتباه: «<word>». هيا نقرؤها مرة أخرى." and, in a dictation, "تنبيه في
+# كتابة الآية الكريمة: نقصت كلمة «<word>»."; 'A word of the noble ayah was left out:
+# "<word>".' Never written by Claude, never spoken (the API marks it feedback_is_quran).
 ```
 
 Use a warm parent-like tone with short sentences, adapted to age: playful for 6-9, plain for
@@ -370,6 +409,21 @@ class Quran:
     # consecutive tokens (speech keys), EVERYDAY_AYAT left out
     # locate(..., *, min_score=None) (extra): a word sequence whose share of words found in the Quran at all is
     # below min_score is not searched (no candidate of it could reach that score); the candidates that do are unchanged
+    # extra, the primitives of guard.find_quran_parts:
+    def framing_spans(self, tokens) -> list[tuple[int, int, bool]]   # framing formulas: (start, end, closing); strip_framing uses it
+    def exact_matches(self, tokens, min_words, *, exclude_formulas=False) -> list[tuple[int, int, int]]
+    # every place of a run of >= min_words (3+) consecutive Quran words: (start, end, g), maximal at its place;
+    # quran_runs is the union of these spans (same result as before, measured on 641 texts)
+    def global_position(self, surah, ayah, word=0) -> int; def location(self, g) -> (surah, ayah, match word)
+    # g: the Simple-Clean words of the whole Quran in one sequence, one unused position after each surah
+    def ayah_bounds(self, g) -> (first, end); def surah_bounds(self, g) -> (first, end)
+    def words_at(self, g_lo, g_hi) -> list[str]; def keys_at(self, g_lo, g_hi) -> list[str]   # verbatim words / speech keys
+    def word_groups(self, g_lo, g_hi) -> list[dict]   # {g: (first, end), surah, ayah, display: (first, last), complete}
+    # the display (Uthmani) words that spell the match words (one-to-one, يا أيها -> one word, or one -> several)
+    def display_slice(self, surah, ayah, first, last) -> str   # display words cut verbatim from the line (pause marks kept)
+    def surah_name_at(self, tokens, i) -> int   # tokens from i that spell a surah's Arabic name (Tanzil metadata), or 0
+    def muqattaat_joins(self, g_lo, n, heard_keys) -> {(i, j): [k]}   # the disjoined letters said by name, as check accepts them
+CLOSING_FRAMING_FORMULAS = ("صدق الله العظيم",)   # extra: closes a quotation; the other framing formulas open one
 EVERYDAY_FORMULAS   # extra: بسم الله, الحمد لله, سبحان الله, إن شاء الله, ما شاء الله, لا إله إلا الله, لا حول ولا قوة إلا بالله,
                     # لا قوة إلا بالله, حسبنا الله ونعم الوكيل, توكلت على الله, الله أكبر, أستغفر الله
 EVERYDAY_AYAT       # extra: (surah, ayah) of 8 three-word ayat that are everyday Arabic: 15:93, 26:101, 74:18, 74:30,
@@ -399,6 +453,127 @@ Checking (`check`):
   those positions only. The letters are read from the Tanzil word; only the letter names
   are in the code.
 - A child who stops early gets `stopped_at` and the "stopped" feedback.
+
+### guard.py (extra: Quran in the texts of the general endpoints)
+
+The guards moved here from `app.py` (which re-exports them, with their constants), and the
+Quran parts of a school text (hard rule 4, Q1 and Q2).
+
+```python
+QURAN_GUARD_MIN_WORDS = 4; QURAN_GUARD_MIN_SCORE = 0.9; QURAN_GUARD_RUN_WORDS = 5
+QURAN_GUARD_FRAMED_RUN_WORDS = 3; QURAN_GUARD_FRAMED_GAP_WORDS = 4   # framed runs: the formula's neighbourhood
+QURAN_GUARD_CONTEXTUAL_RUN_WORDS = 4; QURAN_GUARD_CONTAINED_AYAH_WORDS = 3
+NEAR_EXTEND_MAX_WORDS = 8; NEAR_GAP_WORDS = 3; NEAR_MIN_MATCHED = 4; NEAR_MAX_SCOPE_WORDS = 60
+SHORT_MISREAD_WORDS = 4; FIT_BAND = 6; CHUNK_MAX_WORDS = 6
+GuardMode = Literal["strict", "contextual", "dictation"]
+QURAN_TEXT_MESSAGE; QURAN_MEANING_MESSAGE
+def looks_like_quran(text, quran) -> bool            # building block of the voice and meaning guards
+def is_whole_ayah(text, quran) -> bool; def contains_short_ayah(text, quran) -> bool
+def is_quran_phrase(text, quran) -> bool             # the voice (/api/tts): also near_short_ayat, clitic_ayat and joined words
+def looks_like_quran_for_meaning(text, quran) -> bool   # contextual mode (plus: any Quran part), with the same additions
+def near_short_ayat(quran, keys, context=None) -> list[tuple[int, int, int, int]]   # extra: a short ayah with one OCR-like error
+def clitic_ayat(quran, tokens) -> list[tuple[int, int, int, int]]   # extra: a short ayah whose first word carries و/ف
+def is_everyday_formula(text, quran) -> bool        # extra: the words are exactly one of EVERYDAY_FORMULAS
+SOFT_JOIN_MAX_WORDS = 8                              # extra: a voice phrase joined with its neighbour (step 4)
+# The voice and meaning guards also test the text with every character that is not a
+# letter, a mark or a digit, and every tatweel, turned into a space (words joined by a
+# tatweel or a zero-width character).
+def dictation_speaks_quran(text, lang, quran) -> bool   # the earlier phrase guard, kept for the measured tables
+def framed_runs(quran, tokens, anchors) -> list[tuple[int, int, int]]
+def is_misread(typed_key, mushaf_key) -> bool         # one letter changed, dropped or added (two from six letters), not a clitic
+def find_quran_parts(text, lang, quran) -> QuranAnalysis   # THE function: deterministic, from the text alone
+def quran_writing_ops(expected, alternatives, written, lang, *, strict_tashkeel=False) -> list[Op]
+@dataclass(frozen=True)
+class QuranPart: start: int; end: int; g_lo: int; g_hi: int; rule: str
+# tokens start..end-1 (textnorm.tokenize) stand for the Quran words g_lo..g_hi-1 (one surah);
+# rule: ayah | run | framed | contained | located | near
+@dataclass
+class QuranAnalysis:
+    text; lang; spans; parts: list[QuranPart]; is_quran: bool (Q1); uthmani_outside: bool; voice_safe: bool
+    refused -> bool                         # is_quran or uthmani_outside: the general endpoints answer 422 quran_text
+    quran_range() -> {"surah", "from", "to"} | None   # Q1 ayat that are one range of one surah
+    mushaf_words(part) -> (uthmani, clean, clean_display); chunks(part) -> [(uthmani, clean)]
+    differences(part) -> [Op]; replacement(part) -> str; mushaf_text() -> str
+    dictation_plan() -> [{"phrase", "reader": "voice" | "grown_up", "read_text", "part"}]
+    expected() -> ExpectedWords             # tokens, quran {exp index: (part, g)}, display, ranges, alternatives
+    check_recitation(heard_text) -> (CheckResult, ExpectedWords)
+    check_writing(written_text, *, strict_tashkeel=False) -> (CheckResult, ExpectedWords)
+    parts_json(submitted=None, *, lead=0) -> list[dict]   # the API form (see the HTTP API)
+```
+
+How `find_quran_parts` finds the parts (all on speech keys, with the framing formulas and
+the ayah numbers between words left out, as `strip_framing` does for the guards):
+
+1. The rules already built, with their place in the Quran: runs of 5 Quran words
+   (`exact_matches`), framed runs of 3 in the formula's neighbourhood (`framed_runs`),
+   whole short ayat of 3 or 4 words inside the text (`contained_ayat`, without
+   `EVERYDAY_AYAT`), the text or a line that is exactly a whole ayah (`whole_ayah`), and
+   the 90% rule of `locate` on the text, each line and each sentence. `EVERYDAY_FORMULAS`
+   stay ordinary words in the framed and contained rules, and under the 90% rule: words
+   that are exactly an everyday formula (`لا إله إلا الله`, `حسبنا الله ونعم الوكيل`) are not
+   placed by it (the decision of 2026-11-11).
+2. Overlapping candidates: the longest wins; candidates on the same diagonal (the same
+   Quran words) are merged.
+3. Near match, for an ayah with a changed, dropped or misread word: a part is completed to
+   the start or end of an ayah it covers in part when at most 8 ayah words are missing
+   and the typed words there differ from them by one edit (two from six words on; a
+   changed word must be a misread, `is_misread`; the last ayah word must be matched or
+   misread, so a partial quote is not "completed" with words the text does not have);
+   two parts of one surah are joined across at most 3 words on each side with one edit
+   (or as many misread words as the gap); a whole ayah is located (`locate`, top 3) in a
+   sentence or line of at most 60 words holding a run of 3 not yet inside a part of whole
+   ayat, with at least 4 words found and one changed, dropped or misread word (two from
+   ten words on); and a whole ayah of 4 words is found with 3 of them in a row and the
+   first or last one misread.
+   *Extra* (`near_short_ayat`, `Quran.near_ayat`): a whole ayah of 3 to 7 words with one
+   word misread (`is_misread`; in an ayah of 3 words, a mushaf word of 2 letters only
+   counts next to a framing formula or inside quotation marks or brackets) or one inner
+   word dropped (ayat of 4 words or more), every other word exact, the everyday ayat left
+   out; it is a `near` part, so its difference is reported and fixed. *Extra*
+   (`clitic_ayat`): a whole short ayah (3 or 4 words, or the phrase exactly an ayah) whose
+   first word carries a leading و or ف (`وقل هو الله أحد`): the part is the ayah's other
+   words, the first word stays with the sentence whose conjunction it carries.
+4. The dictation phrases of the text around the parts (`split_phrase_spans`) are checked
+   with `is_quran_phrase`. *Extra:* a phrase the voice refuses only softly (it is exactly
+   an everyday formula, or it is refused only by the 90% rule or as exactly an everyday
+   or two-word ayah, while its sentence as a whole is not refused: the cut isolated an
+   everyday phrase such as `هذا من فضل ربي،` or `ونراه قريبا`) is joined with the phrase
+   before it, else the one after it, or takes 1 to 3 words from it, when the joined
+   phrase has at most `SOFT_JOIN_MAX_WORDS` (8) words and the voice guard accepts every
+   phrase that results; only a formula may join another sentence. Every phrase still
+   refused is searched with the rules of steps 1 and 3 until none is left (`voice_safe`
+   stays True on the fixtures and on random mixes; words joined only by a tatweel or a
+   zero-width character, which the voice refuses through the joined-words test and the
+   finder cannot place, give False, and dictation is refused). A text that is nothing but
+   an everyday formula has no neighbour, so that formula is a part.
+5. Q1: without framing formulas, ayah numbers and labels (سورة + a surah name from the
+   Tanzil metadata, with في or من before it; a surah name followed by a number; الآية +
+   a number), every word is inside a part, every such part is whole ayat, and the parts
+   other than a basmala follow each other in mushaf order.
+6. A word in the Uthmani script outside every part (it cannot be placed in the mushaf)
+   makes the text refused as Quran text, as before.
+
+Comparisons inside a part:
+
+- **Differences from the mushaf** (`differences`, `quran_writing_ops`): the dictation key
+  (`writing_key`), with the Uthmani spelling of each complete display group as an
+  alternative. Diacritics and the Uthmani or standard spelling do not count; a changed
+  letter, a missing hamza (أ/ا, ؤ/و), ة/ه, ى/ي and a missing or extra word do.
+- **The mushaf text** (`replacement`, `mushaf_text`): word-level edits that put the mushaf
+  word in place of each difference, in the script closest to what was typed (Uthmani when
+  the typed part uses the Uthmani script, else the Simple-Clean spelling); a dropped word
+  replaces a `[?]` mark at its place. Words that already agree, labels and punctuation are
+  kept, so the result equals the text when nothing differs, and analysing it again finds
+  no difference.
+- **Recitation** (`check_recitation`): the expected words are the typed words outside the
+  parts and the mushaf (Simple-Clean) words of each part. Outside, every speech tolerance
+  of `check_recitation`; inside (`rigid`), what `Quran.check` accepts: speech keys, no
+  split or joined words, no numbers by value, the disjoined letters said by name.
+- **Dictation** (`check_writing`): the same expected words; a Quran word is accepted in
+  its Simple-Clean spelling or its Uthmani spelling (through the dictation key, with
+  `strict_tashkeel` as asked), and in nothing else; every other word as before.
+- **Reading chunks** (`chunks`): per ayah, at most 6 display words, near-equal, cut
+  verbatim from the Uthmani line (pause marks between words kept); never across an ayah.
 
 ### asr.py
 
@@ -514,6 +689,13 @@ ClaudeBrain:
   256 KB, JSON 256 KB).
 - Uploads are read into memory and never saved: Starlette's spool-to-disk threshold is
   raised above the largest body accepted.
+- Line breaks: a browser sends the line breaks of a form field as `\r\n`, while a
+  textarea's value holds `\n`. Every multipart text field (`expected_text`,
+  `written_text`, `heard_text`) and every text a reader returns (`/api/page/read` `text`
+  and `notes`, the `read_text` of a photo) has its line breaks turned into `\n` first, so
+  `read_text` and the offsets of `quran_parts` refer to the text the client holds. (A
+  dictation typed on two lines could never be confirmed: its `read_text` came back with
+  `\r\n` and always looked edited.) JSON bodies are taken as sent.
 - Every image is decoded and re-encoded server-side as a new JPEG: turned upright from
   its EXIF orientation, reduced to 2000 px on the long edge, without any metadata (EXIF,
   XMP, IPTC, ICC, comments, PNG text, trailing data). At most 4096 x 4096 pixels (50 MP
@@ -525,43 +707,57 @@ ClaudeBrain:
   no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors
   'none'`; every `/api/*` response has `Cache-Control: no-store`.
 - Text checks on the general endpoints (recite, dictation, phrases, TTS, text check), in
-  this order: 400 `empty_text`, 400 `bad_text` (a lone UTF-16 surrogate), 400
-  `text_too_long`, 400 `unreadable_text` (the text has `[?]` marks: the parent types the
+  this order: 400 `bad_text` (a lone UTF-16 surrogate), 400 `text_too_long` (over
+  20,000 characters; checked before the words, so a text that is too long and has no
+  word is `text_too_long`), 400 `empty_text`, 400 `text_too_long` (over 3,000 words),
+  400 `unreadable_text` (the text has `[?]` marks: the parent types the
   missing words first), 422 `quran_text` (the Quran guard of the use, below), 422
   `lang_mismatch` (most letters Arabic and `lang` is not `ar`, or `lang` is `ar` and
   there is no Arabic letter: the recogniser would translate the speech, and a voice
   cannot read the other script).
-- Quran text is refused on the general endpoints (`422 quran_text`). Framing formulas
-  (قال تعالى, صدق الله العظيم, the isti'adha, ...) are left out first. Each use of a text
-  has its guard (`app.py`):
-  - **Word by word** (`/api/recite/check` strict, `/api/dictation/check`;
-    `looks_like_quran`): the text is in Uthmani script, holds a run of 5 consecutive
-    words found consecutively in the Quran (3 next to a framing formula), or has at
-    least 4 words of which 90% are found in order at one place. Ordinary school
-    sentences and a text that starts with the basmala are accepted.
-  - **By meaning** (`/api/recite/check` contextual; `looks_like_quran_for_meaning`): the
-    word-by-word guard, plus a run of 4 consecutive Quran words that does not pass
-    through an everyday formula (`quran.EVERYDAY_FORMULAS`), plus the contained-ayah
-    rule on the whole text. The brain never judges the meaning of an ayah: a text with
-    the basmala or another whole ayah of 3 or 4 words is recited word by word only.
-  - **The voice** (`/api/tts`; `is_quran_phrase`): the word-by-word guard, a phrase that
-    is exactly a whole ayah of 2 words or more, or the **contained-ayah rule**: a phrase
-    that holds, as consecutive words, a whole ayah of K = 3 or 4 words (`قل هو الله أحد`
-    followed by a name; a longer ayah is a run of 5). The 8 three-word ayat of
-    `quran.EVERYDAY_AYAT`, which are everyday Arabic ("in it are valuable books"), do
-    not count inside a longer phrase; two-word ayat such as ثم نظر are ordinary Arabic
-    and are refused only as a phrase of their own.
-  - **Dictation** (`/api/dictation/phrases`, `/api/text/check` mode `dictation`;
-    `dictation_speaks_quran`): the word-by-word guard on the whole text (a plain
-    `422 quran_text`), then the voice guard on every phrase of `split_phrases` and on
-    every non-empty line of the text (the splitter joins the lines of a paragraph, so
-    the basmala on a line of its own without a full stop reaches the phrases glued to
-    the next word), and the contained-ayah rule on the text's words as a whole (a short
-    ayah cut between two phrases by the six-word cap is still spoken, one phrase after
-    the other). A failure there gives `"scope": "phrase"` in the `422 quran_text` body:
-    the text may still be recited word by word, but not read out. `/api/dictation/phrases`
-    and `/api/text/check` in mode `dictation` run the same function, so confirming a text
-    and starting its dictation always agree.
+- Quran in the texts of the general endpoints (hard rule 4; `guard.py`). Every endpoint
+  that takes a text runs `guard.find_quran_parts` on it (the client's view of the parts
+  is never used), then:
+  - **A text that is Quran (Q1)**, or one with a word in the Uthmani script outside its
+    Quran parts, gets `422 {"error": "quran_text", "message", "quran_range"?}` in every
+    mode of every general endpoint. `quran_range` (`{"surah", "from", "to"}`) is there
+    when the ayat are one range of one surah, for opening the Quran section or a Quran
+    task on it. Without the Tanzil text only the script test is possible (a text in the
+    Uthmani script is refused).
+  - **A school text with Quran parts (Q2)** is accepted word by word (`/api/recite/check`
+    strict, `/api/dictation/check`) and for dictation (`/api/dictation/phrases`, a
+    grown-up reads each part); refused by meaning (`/api/recite/check` contextual, and
+    `/api/text/check` mode `contextual`: `422 {"error": "quran_text", "message":
+    QURAN_MEANING_MESSAGE, "reason": "meaning"}`, no scope; extra: the `reason` tells it
+    from a text that is Quran, so a client says "word by word only", never "the Quran
+    section"). `/api/text/check` and `/api/page/read` list its parts.
+  - **The voice** (`/api/tts`; `is_quran_phrase`, as built, plus the review fixes: a
+    short ayah with one misread or dropped word, `near_short_ayat`; a short ayah after a
+    leading و/ف, `clitic_ayat`; and words joined by a hyphen, an apostrophe, the Arabic
+    letter mark, a tatweel or a zero-width character, tested apart): `looks_like_quran` (the
+    Uthmani script; a run of 5 consecutive Quran words; a run of 3 in a framing
+    formula's neighbourhood: it starts at most 4 words after an opening formula or ends
+    at most 4 words before صدق الله العظيم, and does not pass through an everyday
+    formula; at least 4 words of which 90% are found in order at one place), a phrase
+    that is exactly a whole ayah of 2 words or more, or the **contained-ayah rule** (a
+    whole ayah of K = 3 or 4 words among the phrase's words; the 8 `EVERYDAY_AYAT` do not
+    count inside a longer phrase, and two-word ayat such as ثم نظر count only as a phrase
+    of their own). The dictation client never sends a Quran part to `/api/tts`; a client
+    bug still cannot make the voice read one.
+  - **By meaning** (`looks_like_quran_for_meaning`, unchanged, plus any Quran part): the
+    voice's `looks_like_quran`, a run of 4 consecutive Quran words that does not pass
+    through an everyday formula, the contained-ayah rule on the whole text, or a Quran
+    part. The brain never receives a text with Quran words to judge.
+  - The **framed rule** used to fire on a run of 3 anywhere once a framing formula was
+    anywhere in the text (a sentence holding the isti'adha made إن شاء الله elsewhere
+    "Quran"); it now counts only in the formula's neighbourhood, with the everyday
+    formulas left out there. On the measured fixture this changes no count.
+  - The **`"scope": "phrase"` refusal is gone.** A text whose phrase or line is, or holds,
+    a whole ayah (the basmala on a line of its own, a short ayah inside a sentence) is a
+    Q2 text: that phrase is a Quran part, read by a grown-up. The safety net
+    `QuranAnalysis.voice_safe` (a phrase the voice would refuse and no part found in it)
+    would give a plain `422 quran_text` in mode `dictation`; it never fires on the
+    fixtures or on random mixes (`tests/test_quran_parts.py`).
 - The thresholds were measured on `tests/arabic_school_sentences.txt`: 324 ordinary
   Arabic sentences that are not quotations (sentences of the other tests, the app's own
   feedback, meaning and UI strings, everyday religious formulas in sentences, ordinary
@@ -601,29 +797,134 @@ ClaudeBrain:
   positive in contextual mode (0 of 324) and refuses the 10 quotations of 17 that the
   runs of 4 miss, so it applies there too.
 
-  The dictation guard refuses 6 ordinary sentences (the `[split]` section): the
-  splitter makes one of their phrases exactly a whole ayah (ونراه قريبا., فيها كتب قيمة.)
-  or four Quran words in order (لا إله إلا الله), which `/api/tts` already refused, so
-  their dictation stopped at that phrase before; it is now refused when the text is
-  confirmed. The word-by-word guard refuses none of the 341 sentences.
-- Speed (4 CPUs): `/api/text/check` on a 1000-word Arabic text takes about 60-75 ms in
-  every mode (the word-by-word guard about 8 ms, the dictation guard about 45 ms, the
-  same as the voice guard over all its phrases); `/api/dictation/phrases` about 60-75 ms
-  on the same text.
+  The earlier dictation guard (`dictation_speaks_quran`) refuses 6 ordinary sentences
+  (the `[split]` section): the plain splitter makes one of their phrases exactly a whole
+  ayah (ونراه قريبا., فيها كتب قيمة.), an everyday formula or four Quran words in order
+  (لا إله إلا الله), which `/api/tts` refuses on its own. Since the review fixes (RL-5) the
+  dictation joins such a phrase with a neighbouring one that the voice accepts (step 4 of
+  `find_quran_parts`), so these 6 sentences have no Quran part, are dictated by the voice
+  and can be recited by meaning: contextual mode refuses 2 of the 324 (the 2
+  `[quranic]` ones). The word-by-word guard refuses none of the 341 sentences.
+- **The Quran parts, measured** (Q3; `tests/test_quran_parts.py` on
+  `tests/arabic_school_sentences.txt` and `tests/quran_parts_texts.txt`, where every
+  Quran word comes from a Tanzil placeholder and every misquote is made by code):
+
+  | Fixture | Texts | found ordinary | found Q2 | found Q1 |
+  |---|---|---|---|---|
+  | ordinary sentences (`[ordinary]`, `[quranic]`) | 318 | 318 | 0 | 0 |
+  | ordinary sentences with a phrase the voice refuses alone (`[split]`) | 6 | 6 | 0 | 0 |
+  | sentences quoting a short ayah (`[quotes]`) | 17 | 0 | 17 | 0 |
+  | lessons quoting ayat (framed or not, basmala, ranges, «» and ﴿﴾, Uthmani, numbered) | 35 | 0 | 35 | 0 |
+  | partial ayat on their own | 12 | 0 | 12 | 0 |
+  | lessons with one misquoted ayah | 20 | 0 | 20 | 0 |
+  | misquoted short ayat in unframed sentences, and a two-word ayah (`[hard]`) | 6 | 1 | 5 | 0 |
+  | whole ayat and ranges, with framing, labels, numbers, Uthmani (Q1) | 22 | 0 | 0 | 22 |
+  | whole ayat with one misquote (Q1) | 8 | 0 | 0 | 8 |
+
+  - All 102 placeholders of the lessons, Q1, partial and misquote sections are found
+    with their exact reference (surah, ayah range, and word range for partial ayat), as
+    one part each; no text has a part that is not a placeholder.
+  - Near match: of the 28 misquotes (15 changed letters, 7 dropped words, 6 missing
+    hamzas), 28 are found with exactly their difference reported (recall 28/28). The 92
+    texts that quote correctly report no difference, and each misquote reports only its
+    own (precision 28/28). The `[hard]` section is found 5 times in 6, each with exactly
+    its edit (a changed letter in 112:1, 96:1, 103:2 and 1:5, a dropped word in 114:1, all
+    unframed); the two-word ayah inside a sentence stays ordinary text, by design.
+  - Short ayat with one OCR-like error (`near_short_ayat`, measured on Juz' Amma: every
+    ayah of 3 or more words, at every word position, in "درسنا اليوم آية جديدة. … ثم
+    شرحها المعلم."; an identical ayah elsewhere counts as found). Before the review fixes
+    (RL-1) 57% were found framed with a changed letter, 4 of 426 three-word ayat.
+
+    | Juz' Amma sweep | framed (قال تعالى:) | unframed |
+    |---|---|---|
+    | one changed letter (1,773 texts) | 1,767 (99.7%) | 1,742 (98.3%) |
+    | one dropped inner word (1,031 texts) | 1,021 (99.0%) | 1,026 (99.5%) |
+
+    The misses are a 3-word ayah whose changed word has 2 letters (ثم, إن, عن) outside a
+    framing formula or quotation marks, and a few where an overlapping exact run with the
+    next word of the sentence wins. Precision: `near_short_ayat` finds nothing in the 324
+    ordinary sentences, in 5,000 random pairs of them, or in the 1,096 Arabic strings of
+    the app and its tests; `clitic_ayat` (a short ayah after و/ف) likewise. Two words left
+    of a three-word ayah (a dropped word) and a misquote with two errors are not found.
+    `tests/test_quran_parts.py` (`TestShortAyatWithOneError`) asserts at least 97% on a
+    sweep with one word position per ayah, framed and unframed.
+  - No ordinary sentence gains a part beyond the earlier guards: the 324 have none. Of
+    3,000 random pairs of ordinary sentences, 1 gains a part, already flagged before by
+    the word-by-word guard, whose run of 5 crosses the sentence end and is 14:38-39
+    verbatim (2 more had a part before RL-5: a phrase cut that isolated an everyday ayah).
+  - The dictation invariant (every phrase `is_quran_phrase` refuses is read by a
+    grown-up; the voice phrases and the grown-up chunks give the expected words of the
+    check in order) holds on every fixture text and on 150 random mixes of ordinary
+    sentences with whole ayat, ranges and partial ayat, framed or not; 120 random whole
+    ayat of 3 words or more (not an everyday ayah) put between two ordinary sentences
+    are all inside a part.
+- Speed (4 CPUs, measured again after the review fixes, 2026-11-12; median of 7 after
+  one warm-up). The review fixes (short ayat with one error, ayat after و/ف, joined
+  words, soft joins of the voice phrases) had made the search slower than first
+  measured; a profile showed half of the voice-phrase tests and a quarter of the
+  `locate` calls were repeats within one analysis, so `find_quran_parts` now keeps
+  those answers for the length of one call (`_PHRASE_MEMO`, `_Finder.locate`; the parts
+  are unchanged on the 847 texts of the fixtures and random mixes, and
+  `test_one_analysis_tests_each_phrase_and_scope_once` holds it).
+
+  | text (Arabic) | `find_quran_parts` in-process | `/api/text/check` strict / contextual / dictation | `/api/dictation/phrases` |
+  |---|---|---|---|
+  | 1000 words of `[ordinary]` sentences, no part | about 78 ms (117 ms without the memo) | 125 / 125 / 133 ms | 129 ms |
+  | 1001 words: the same with 21 quoted ayat (`قال تعالى:`) | about 170 ms (234 ms) | 208 / 201 (422) / 214 ms | 218 ms |
+  | the 35 `[lessons]`, 863 words, 36 parts | about 155 ms (175 ms) | 189 / 165 (422) / 202 ms | 230 ms |
+
+  The real server is `run.sh` with Whisper, Piper and the Tanzil text loaded, idle (load
+  0.3-0.7). Beyond `find_quran_parts`, `/api/text/check` runs the by-meaning guard
+  (`looks_like_quran_for_meaning`) on the whole text for its `contextual` answer, about
+  33 ms on 1000 words. Before Quran parts the same requests took about 60-75 ms; the
+  strict word-by-word guard alone takes about 6-8 ms. An English text of 1000 words
+  takes about 13 ms (no Arabic: no Quran search).
 
 | Method & path | Request | Response |
 |---|---|---|
 | GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable) |
-| POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `contains_quran`, `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
-| POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`) | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again`. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
-| POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str]}`; extra: the dictation guard (above): a phrase or line the voice may not speak, or a whole short ayah in the text, gives `422 {"error": "quran_text", "message", "scope": "phrase"}` (checked before `lang_mismatch`). A text of punctuation only gives `{"phrases": []}`. |
-| POST `/api/text/check` (extra) | JSON `{"text", "lang": "ar"\|"en"\|"fr", "mode"?: "strict"\|"contextual"\|"dictation"}` (`mode` defaults to `strict`) | `{"ok": true, "words": n, "dictation": bool, "contextual": bool}`. The checks of `/api/recite/check` in its order (`empty_text`, `bad_text`, `text_too_long`, `unreadable_text`, `quran_text`, `lang_mismatch`, same bodies), with the Quran guard of `mode`: in mode `dictation` a phrase or line failure is `422 quran_text` with `"scope": "phrase"`, a whole-text failure has no scope. `words`: the words of the cleaned text (`textnorm.tokenize`). `dictation`: false when the dictation guard would refuse the text; `contextual`: false when the by-meaning guard would (each is true in its own mode). One call in mode `strict` tells "Confirm text" whether the text can be recited word by word (the call succeeded), by meaning and dictated. No recogniser, voice or brain is used, so it works when they are unavailable. `503 quran_unavailable` when the Tanzil text is missing and the text has Arabic letters (the answer vouches for every mode; the other endpoints then fall back to the script test). Body limit 256 KB, Host and Origin checks as everywhere. Example: `{"text": "ذهب الولد إلى المدرسة", "lang": "ar"}` -> `{"ok": true, "words": 4, "dictation": true, "contextual": true}`; the basmala on a line of its own followed by a sentence -> `{"ok": true, "words": n, "dictation": false, "contextual": false}`; the same in mode `dictation` -> `422 {"error": "quran_text", "message", "scope": "phrase"}`. |
+| POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
+| POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`) | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again`; strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
+| POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str], "readers": ["voice"\|"grown_up"], "read_text": [null\|str], "parts": [null\|int], "quran_parts": [part]}` (extra: all but `phrases`; the four lists have one entry per phrase). The voice reads a `voice` phrase (`/api/tts`, slow). A `grown_up` phrase is a chunk of a Quran part (at most 6 display words, never across an ayah): `read_text` is its fully vowelled Uthmani text (verbatim Tanzil) for a grown-up to read aloud, `phrase` the same words in Simple-Clean spelling (what the child writes; never sent to `/api/tts`), `parts` the index of its part in `quran_parts`. A text with no Arabic or no Quran part gives `split_phrases` with every reader `voice`. Q1 gives `422 quran_text` with no scope (and `quran_range` when one range). The `"scope": "phrase"` refusal is gone. A text of punctuation only gives `{"phrases": [], ...}` with empty lists. Example: `"الصبر مفتاح الفرج. قال تعالى: " + 2:153 + " ثم شرح المعلم الآية."` -> phrases `["الصبر مفتاح الفرج.", "قال تعالى:", <2:153 display words 1-5, in Simple-Clean words (6 words: يا أيها is one Uthmani word)>, <display words 6-10>, "ثم شرح المعلم الآية."]`, readers `["voice", "voice", "grown_up", "grown_up", "voice"]`, read_text `[null, null, <Uthmani display words 1-5>, <Uthmani display words 6-10>, null]`, parts `[null, null, 0, 0, null]`. |
+| POST `/api/text/check` (extra) | JSON `{"text", "lang": "ar"\|"en"\|"fr", "mode"?: "strict"\|"contextual"\|"dictation"}` (`mode` defaults to `strict`; any other field is ignored, the parts are never taken from the client) | `{"ok": true, "words": n, "dictation": bool, "contextual": bool, "quran_parts": [part], "mushaf_text": str}`. The checks of `/api/recite/check` in its order (`bad_text`, `text_too_long` by characters, `empty_text`, `text_too_long` by words, `unreadable_text`, `quran_text`, `lang_mismatch`, same bodies; a body that is not JSON gives `422 invalid_field` "The body is not valid JSON."). A text that is Quran (Q1) gives `422 quran_text` in every mode (with `quran_range` when one range of one surah); mode `contextual` also refuses a Q2 text and the by-meaning guard (`QURAN_MEANING_MESSAGE`); mode `dictation` refuses nothing more (no `scope` any more). `words`: the words of the cleaned text (`textnorm.tokenize`). `dictation`: true (a grown-up reads the Quran parts; false only from the never-seen safety net). `contextual`: false when the text has a Quran part or the by-meaning guard refuses it (true in its own mode). `quran_parts`: see below. `mushaf_text`: the submitted text with every Quran part that differs from the mushaf replaced by the mushaf words, in the script closest to what was typed; equal to the submitted text when nothing differs. No recogniser, voice or brain is used. `503 quran_unavailable` when the Tanzil text is missing and the text has Arabic letters. Body limit 256 KB, Host and Origin checks as everywhere. Examples: `{"text": "ذهب الولد إلى المدرسة", "lang": "ar"}` -> `{"ok": true, "words": 4, "dictation": true, "contextual": true, "quran_parts": [], "mushaf_text": "ذهب الولد إلى المدرسة"}`; the basmala on a line of its own followed by a sentence -> `dictation: true, contextual: false`, one part (1:1, rule `ayah`); 112:1-4 with or without قال تعالى / صدق الله العظيم -> `422 {"error": "quran_text", "message", "quran_range": {"surah": 112, "from": 1, "to": 4}}`; a lesson quoting 2:153 whose 7th word was typed with ض for ص -> one part with `differences: [{"op": "sub", "typed": <typed word>, "mushaf": <Uthmani word>, "mushaf_clean": <Simple-Clean word>, "index": 6, "token": <token index>}]`, `rule: "near"`, and a `mushaf_text` with the Simple-Clean word in its place. |
 | POST `/api/tts` | JSON `{"text","lang","slow":bool}` | `audio/wav`. 503 if TTS unavailable. 400 if text is empty or longer than 400 characters, or has nothing to pronounce. Extra: header `X-Speech-Check: passed\|failed\|skipped`: slow speech is transcribed back, unprompted, up to 2 takes, and must say exactly the phrase (`check_recitation`: numbers in digits match words, Arabic number words match by value). |
-| POST `/api/dictation/check` | multipart: `expected_text`, `lang`, `age`, and either `image` (photo of the child's paper) or `written_text` (parent typed it); extra: optional `strict_tashkeel` (bool) | `{"read_text","source":"claude"\|"typed","uncertain_words","result":CheckResult,"feedback","needs_parent_confirmation":true}`; extra: `legible`; `uncertain_words` includes `"[?]"` when a word could not be read. With an image and an offline brain, or when Claude reads nothing: 501 `needs_manual`. |
+| POST `/api/dictation/check` | multipart: `expected_text`, `lang`, `age`, and either `image` (photo of the child's paper) or `written_text` (parent typed it); extra: optional `strict_tashkeel` (bool) | `{"read_text","source":"claude"\|"typed","uncertain_words","result":CheckResult,"feedback","needs_parent_confirmation":true}`; extra: `legible`, `feedback_is_quran` and `quran_parts` (as for `/api/recite/check` strict); in a Q2 text a Quran part is checked against its mushaf words (not the typed ones), and a Quran word is accepted in its Simple-Clean or its Uthmani spelling (through the dictation key: diacritics only with `strict_tashkeel`) and in nothing else (a missing hamza is a mistake); every other word is checked as before; Q1 gives `422 quran_text`; `uncertain_words` includes `"[?]"` when a word could not be read. With an image and an offline brain, or when Claude reads nothing: 501 `needs_manual`. |
 | GET `/api/quran/surahs` | – | `{"surahs":[{number,name_ar,ayah_count, extra: name_translit, name_en}],"riwaya":"hafs","attribution","source_url":"https://tanzil.net"}`; extra: `licence` |
 | GET `/api/quran/ayat?surah=&from=&to=` | – | `{"ayat":[{surah,ayah,display,display_words}],"attribution"}`; extra: `riwaya`, `source_url`. At most 50 ayat per request. |
 | POST `/api/quran/check` | multipart: `audio`, `surah`, `from`, `to` | `{"heard_text","ops","verdict","say_again","first_error","feedback"}`; extra: the other keys of `Quran.check` (`words`, `tolerated`, `stopped_at`, `n_expected`, `n_errors`, `word_accuracy`), `quality`, `riwaya`, `attribution`, `source_url`. The feedback comes from `feedback.quran_feedback` only. |
 | POST `/api/quran/locate` | multipart: `audio` or `heard_text`, optional `surah` | `{"heard_text","candidates":[{surah,ayah,word_index,score,display_preview, extra: match_word_index}]}`; extra: `say_again`, `quality` |
+
+A **Quran part** (`quran_parts` of `/api/text/check`, `/api/page/read`,
+`/api/dictation/phrases`, `/api/recite/check` strict and `/api/dictation/check`) is:
+
+```js
+{
+  "start": 5, "end": 15,                 // token span in textnorm.tokenize(text, lang)
+  "chars": [31, 79], "utf16": [31, 79],  // offsets in the text as sent: code points, and UTF-16 units for JavaScript's slice
+  "surah": 2, "ayah_from": 153, "ayah_to": 153,
+  "word_from": 0, "word_to": 10,         // Simple-Clean words of ayah_from .. of ayah_to (word_to exclusive)
+  "whole": true,                         // the part is whole ayat
+  "rule": "near",                        // ayah | run | framed | contained | located | near
+  "uthmani": ["…"],                      // the mushaf words: display (Uthmani) ...
+  "clean": ["…"],                        // ... Simple-Clean ...
+  "clean_display": ["…"],                // ... and, for each Simple-Clean word, the display word(s) that spell it
+  "differences": [                       // sub | del (typed and token null) | ins (mushaf null; index: the mushaf word after it)
+    {"op": "sub", "typed": "…", "mushaf": "…", "mushaf_clean": "…", "index": 6, "token": 11}
+  ],
+  "replacement": "…",                    // text[chars] with the differences replaced by the mushaf words
+  "chunks": ["…", "…"],                  // the grown-up's reading chunks: vowelled Uthmani, verbatim
+  "exp_start": 5, "exp_end": 15          // where the mushaf words sit among a check's expected words (result.ops exp_index)
+}
+```
+
+Differences ignore diacritics and the
+Uthmani or standard spelling; a changed letter, a missing hamza and a missing or extra
+word count. A check always uses the mushaf words of a part, so a child is never
+corrected towards a misquoted ayah. The feedback about a mistake in a part is
+`feedback.quran_part_feedback` (fixed templates, quoting the mushaf word): when any
+mistake of a result lies in a Quran part, the brain is not called for that result at all
+(a first mistake outside the parts gets the ordinary template), so Claude never receives
+a Quran word to write about.
 
 Serialise `CheckResult` and `Op` with `dataclasses.asdict`. Static files: mount `web/` at
 `/`, with `index.html` as the default (the mount leaves `/api/*` to the API, so a wrong
@@ -634,26 +935,73 @@ which configures the `mommy` loggers (level `MOMMY_LOG_LEVEL`, default INFO).
 
 ## Web client (vanilla HTML/CSS/JS, no frameworks, no CDN)
 
-- Classic scripts (`recorder.js` sets `window.MommyRecorder`; `app.js` is one IIFE), a
+- Classic scripts loaded with `defer` in this order: `recorder.js` (`window.MommyRecorder`),
+  `rewards.js` (`window.MommyRewards`, the pure logic of tasks and rewards),
+  `family.js` (`window.MommyFamily`, the family UI) and `app.js` (one IIFE,
+  `window.MommyApp`; see `docs/REWARDS.md` for the hooks between the last two), a
   CSP meta tag (`default-src 'self'`; the AudioWorklet is loaded from a `blob:` URL), and
   relative API URLs (`api/health`, ...). It special-cases the error codes `needs_manual`
-  and `quran_text` (with `scope: "phrase"`: the text is confirmed for reciting only), and
-  shows its own localized message for `text_too_long`, `empty_text`, `bad_text`,
-  `unreadable_text` and `lang_mismatch`, never the server's English message.
+  and `quran_text` (a text that is Quran: the Quran section, or a Quran task, preset to
+  `quran_range` when the body has one), and shows its own localized message for
+  `text_too_long`, `empty_text`, `bad_text`, `unreadable_text` and `lang_mismatch`,
+  never the server's English message. The server no longer sends `scope: "phrase"`.
+  Extra: a `quran_text` with `"reason": "meaning"` (contextual mode refused a school
+  text with Quran words) is "recited word by word only", never "this text is from the
+  Quran" with the Quran-section button; a task by meaning with such a text cannot be
+  recorded, the child is told a grown-up changes it, and the task's details offer
+  "Recite word by word".
+- **Quran parts of a school text (Q2; built from the server's answers, never computed
+  in the browser).** Prepare's "Confirm text", task creation and the page reader show
+  the parts (`quran_parts`) to the parent with their reference; where a part has
+  `differences`, the parent sees them (the typed word against the mushaf word in its
+  standard spelling, the changed letters marked, then its Uthmani form; a missing word
+  after the word before it; each reference with the part's first two and last two
+  mushaf words) and can take the mushaf text in one tap (`mushaf_text` for all parts, or `replacement` at `utf16` for one).
+  `contextual: false` disables "The meaning" with a localized reason (Quran words are
+  recited word by word only); a recite task with such a text is word by word only (and
+  is saved only with the mushaf words where the typed ones differ: the child reads the
+  text); a dictation task with it is allowed and uses the grown-up step. The child's
+  Recite card shows `mushaf_text` where it differs from the typed text (the check
+  expects the mushaf words); the typed text stays in the grown-up's box.
+  - Dictation: for a `voice` phrase the app calls `/api/tts` as before. For a
+    `grown_up` phrase it never calls `/api/tts`: it asks for a grown-up (wording that
+    fits a mother or a father: الكبار, أحد الوالدين), shows `read_text` (vowelled
+    Uthmani, in the Quran font) after a tap, and hides it again when the grown-up taps
+    to go on, before the child writes. Repeat on such a phrase asks the grown-up again
+    and never calls the voice. The child's line ("Let's ask a grown-up to read this
+    part", no Quran word in it) is also said once by the voice, in the child's language,
+    when the step starts (fetched once per dictation).
+  - The voice never reads the text as a model (Recite has no such button; its "Listen"
+    only speaks the feedback). For a text with Quran parts a note tells the grown-up to
+    read it aloud, and feedback with `feedback_is_quran` is never spoken ("Listen" is
+    hidden).
+  - Results: `quran_parts[].exp_start`/`exp_end` say which `result.ops` are Quran words
+    (their `expected` is the Simple-Clean mushaf word; `clean_display` gives the Uthmani
+    word to show). Feedback with `feedback_is_quran: true` is shown as text only and
+    never sent to `/api/tts`.
 - `split_phrases` joins the lines of a paragraph, so a line that is a whole ayah (the
   basmala on a line of its own, without a full stop) would reach the voice glued to the
-  next word. The server checks every line itself (the dictation guard), so
-  `/api/text/check` (Prepare's "Confirm text" and task creation, `docs/REWARDS.md`) and
-  `/api/dictation/phrases` answer for the lines too: the client no longer needs to send
-  the lines again as paragraphs. A `quran_text` refusal of a dictation phrase by
-  `/api/tts` (the text itself was accepted) also rules out dictation for that text: the
-  dictation goes back to its start, where the disabled button says why, never "this
-  text is from the Quran" with a button to the Quran section.
-- **Start screen:**
-  - the AI disclosure;
+  next word. The server finds such a line as a Quran part (a grown-up reads it), so
+  `/api/text/check` and `/api/dictation/phrases` answer for the lines too: the client
+  does not send the lines again as paragraphs. `/api/tts` still refuses every Quran
+  phrase (`422 quran_text`); if that ever happens during a dictation, that phrase becomes
+  a grown-up step showing the phrase as written (there is no mushaf text for it) and the
+  dictation goes on; never "this text is from the Quran" with a button to the Quran
+  section. "Confirm text" and the task form keep a page read's Quran parts after an
+  `unreadable_text` refusal, so "Use the mushaf text" fills a `[?]` inside an ayah.
+- **Start screen** (the family setup on a first run, then "Who is learning?"; see
+  `docs/REWARDS.md`):
+  - the AI disclosure, at the start of every session;
   - a parent consent checkbox (camera and microphone; images sent to Claude when it is
-    configured);
-  - a child profile with nickname, age band and language, kept in `localStorage` only.
+    configured), stored in the family document (`parent.consentAt`, `aiConsentAt`) and
+    changed in the parent area (Settings);
+  - the parent PIN (a child lock) and the children (nickname, age band, language,
+    avatar), in one family document kept in `localStorage` (`mommy.data.v2`) on this
+    device only.
+- **Parent area** (behind the PIN; locked again when left, when the page is hidden and
+  after 3 minutes without use): To review (Confirm, and "Not yet" with a note), Tasks
+  (with Details and "Confirm anyway"), Rewards, Children, and Settings (PIN change,
+  parent language, delete all data).
 - **Parent: "Prepare a page".** Take a photo or upload one (resized in the browser to
   2000 px JPEG), then `/api/page/read`. The parent sees an editable textarea with the
   result, or an empty one in offline mode, and must press "Confirm text". Pasting or

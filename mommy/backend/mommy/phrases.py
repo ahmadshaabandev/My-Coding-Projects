@@ -54,10 +54,17 @@ def split_phrases(text: str, lang: Lang, max_words: int = 6) -> list[str]:
 
     Raises ValueError when ``max_words`` is smaller than 1.
     """
+    return [phrase for phrase, _ in split_phrase_spans(text, lang, max_words)]
+
+
+def split_phrase_spans(text: str, lang: Lang, max_words: int = 6) -> list[tuple[str, tuple[int, int]]]:
+    """:func:`split_phrases` with where each phrase comes from: ``[(phrase, (start,
+    end))]``, where ``text[start:end]`` is the stretch the phrase was made from (the
+    phrase is that stretch with its whitespace collapsed)."""
     if max_words < 1:
         raise ValueError("max_words must be at least 1")
     spans = token_spans(text, lang)
-    phrases: list[str] = []
+    phrases: list[tuple[str, tuple[int, int]]] = []
     for start, end in _chunks(text, lang, spans):
         chunk_spans = [(a, b) for a, b in spans if a >= start and b <= end]
         if not chunk_spans:
@@ -65,7 +72,7 @@ def split_phrases(text: str, lang: Lang, max_words: int = 6) -> list[str]:
         for piece_start, piece_end in _cap(text, start, end, chunk_spans, max_words):
             phrase = " ".join(text[piece_start:piece_end].split())
             if phrase:
-                phrases.append(phrase)
+                phrases.append((phrase, (piece_start, piece_end)))
     return phrases
 
 
@@ -170,4 +177,4 @@ def _cap(
     return pieces
 
 
-__all__ = ["SENTENCE_PUNCTUATION", "split_phrases"]
+__all__ = ["SENTENCE_PUNCTUATION", "split_phrase_spans", "split_phrases"]

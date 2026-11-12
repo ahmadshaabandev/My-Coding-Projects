@@ -1109,6 +1109,152 @@ fieldset {
   font-size: 1.55rem;
 }
 
+/* ------------------------------------------- Quran parts of a school text */
+/* The Quran parts the server found (Prepare, the task form): references, what they
+   mean for each activity, the differences from the mushaf, "Use the mushaf text". */
+.quran-parts {
+  margin: 4px 0 14px;
+  padding: 12px 14px;
+  border: 2px solid var(--notice-border);
+  border-radius: var(--radius-small);
+  background: var(--notice-bg);
+}
+
+.quran-parts:focus {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.qp-title {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+
+.qp-refs {
+  margin: 0 0 6px;
+  padding-inline-start: 1.3em;
+  font-weight: 600;
+}
+
+.qp-note {
+  margin: 0 0 8px;
+}
+
+.qp-diffs {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--notice-border);
+}
+
+.qp-diff-title {
+  margin: 0 0 4px;
+  font-weight: 700;
+}
+
+.qp-diff-list {
+  margin: 0 0 6px;
+  padding-inline-start: 1.3em;
+}
+
+.qp-diff-list li {
+  margin: 4px 0;
+}
+
+.qp-typed {
+  font-family: var(--font-ar);
+  font-weight: 700;
+  color: var(--sub-fg);
+}
+
+.qp-mushaf {
+  font-family: var(--font-quran);
+  font-size: 1.3em;
+  line-height: 1.6;
+}
+
+.qp-use {
+  width: 100%;
+  margin-top: 6px;
+}
+
+/* ------------------------------------------- the grown-up step of a dictation */
+/* A chunk of a Quran part is read by a grown-up, never by the voice: the child asks for
+   a grown-up, who shows the mushaf text, reads it aloud and hides it again. */
+.grownup {
+  margin: 10px 0 14px;
+}
+
+.gu-ask {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  font-size: 1.3rem;
+  font-weight: 800;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--primary);
+}
+
+.gu-ask .icon {
+  width: 48px;
+  height: 48px;
+  padding: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--notice-border);
+  background: var(--notice-bg);
+}
+
+.gu-box {
+  padding: 12px;
+  border: 2px dashed var(--notice-border);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+.gu-why {
+  margin: 0 0 12px;
+}
+
+.gu-reveal {
+  margin-top: 12px;
+}
+
+.gu-text {
+  margin: 0 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+.gu-text.quran-text {
+  font-size: 2rem;
+  line-height: 2.4;
+}
+
+.gu-text .qg {
+  white-space: nowrap;
+}
+
+.gu-plain {
+  font-size: 1.45rem;
+  font-weight: 600;
+}
+
+.gu-plain[lang="ar"] {
+  font-family: var(--font-ar);
+  font-size: 1.6rem;
+}
+
+.gu-source {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-align: end;
+}
+
 /* ---------------------------------------------------------------- Quran */
 .quran-card {
   padding-top: 12px;
@@ -1775,8 +1921,245 @@ fieldset {
 .task-form h3:focus,
 .child-form h3:focus,
 .psec h2:focus,
+.rw-block h3:focus,
+.sub-form h4:focus,
 .shortcut:focus {
   outline: none;
+}
+
+/* A count after a section label: what waits for the parent there. */
+.psec-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.7em;
+  height: 1.7em;
+  margin-inline-start: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--badge-border);
+  border-radius: 999px;
+  background: var(--badge-bg);
+  color: var(--badge-fg);
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+/* The one line about praise and surprises (Rewards). */
+.help-line {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-inline-start: 4px solid var(--celebrate-border);
+  border-radius: 6px;
+  background: var(--celebrate-bg);
+  font-weight: 600;
+}
+
+h4 {
+  font-size: 1rem;
+  line-height: 1.25;
+  margin: 0 0 0.5rem;
+}
+
+/* A block inside a parent section (Rewards, Settings). */
+.rw-block {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.rw-block > .btn {
+  margin-bottom: 4px;
+}
+
+.danger-zone h3 {
+  color: var(--danger);
+}
+
+/* A small form opened in place: the note of "Not yet", a goal, a surprise, a correction. */
+.sub-form {
+  margin: 10px 0 4px;
+  padding: 12px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+.sub-form .btn-row {
+  margin-bottom: 0;
+}
+
+.review-notes {
+  margin: 0 0 12px;
+}
+
+.review-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-weight: 800;
+  min-width: 0;
+}
+
+.review-avatar {
+  flex: none;
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.stat-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stat-list li {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.95rem;
+}
+
+.ptask .improve,
+.ptask .detail-line {
+  margin: 4px 0;
+}
+
+/* The details of a task (Tasks): figures, the text, the actions of its state. */
+.ptask-detail {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.detail-text {
+  max-height: 9em;
+  overflow: auto;
+  margin: 6px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  white-space: pre-wrap;
+}
+
+.btn[aria-expanded="true"] {
+  background: var(--notice-bg);
+}
+
+/* The star jar of the child chosen in Rewards. */
+.jar-box {
+  padding: 12px 14px;
+  border: 2px solid var(--celebrate-border);
+  border-radius: var(--radius-small);
+  background: var(--celebrate-bg);
+}
+
+.jar-box .jar {
+  font-size: 1.3rem;
+}
+
+.jar-box p:last-child {
+  margin: 0;
+}
+
+.goal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.goal-emoji {
+  flex: none;
+  font-size: 1.9rem;
+  line-height: 1;
+}
+
+.goal-name {
+  font-weight: 700;
+  min-width: 0;
+}
+
+.goal-enough {
+  color: var(--match-fg);
+  font-weight: 700;
+}
+
+.goal-item.is-given {
+  border-style: dashed;
+}
+
+/* History of the stars, newest first. A correction down is plain text, never red. */
+.ledger {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ledger li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.ledger-delta {
+  flex: none;
+  min-width: 3.2em;
+  font-weight: 800;
+}
+
+.ledger-delta.is-plus {
+  color: var(--match-fg);
+}
+
+.ledger-what {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.ledger-when {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* A surprise on the child's home: shown once, big and happy. */
+.surprise {
+  text-align: center;
+  animation: pop-in 0.35s ease-out;
+}
+
+.surprise .big-emoji {
+  display: block;
+  margin: 2px auto 6px;
+  font-size: 3.4rem;
+  line-height: 1.1;
+}
+
+/* Opacity and a small slide only: the card keeps its size (and its button its 44 px). */
+@keyframes pop-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }
 
 /* The PIN dialog (native <dialog>: focus stays inside, Escape cancels). */
@@ -1854,6 +2237,10 @@ fieldset {
     font-size: 1.65rem;
   }
 
+  .gu-text.quran-text {
+    font-size: 1.8rem;
+  }
+
   .card {
     padding: 14px;
   }
@@ -1867,4 +2254,88 @@ fieldset {
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Review fixes ---------------------------------------------------------------------- */
+
+/* UX-07: a word in a segmented choice never breaks in the middle ("Dictati|on"). */
+.segmented .seg-title {
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: manual;
+}
+
+@media (max-width: 400px) {
+  .segmented-3 .seg-body {
+    padding-inline: 8px;
+  }
+  .segmented-3 .seg-title {
+    font-size: 0.95rem;
+  }
+  /* The tick of the chosen tile on its own line, so the label keeps its width. */
+  .segmented-3 .seg input:checked + .seg-body .seg-title::before {
+    display: block;
+  }
+}
+
+@media (max-width: 380px) {
+  #tf-pass {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* UX-19: the tanzil.net link is a full touch target. */
+.attr-run a {
+  display: inline-block;
+  min-height: 44px;
+  padding-block: 11px;
+}
+
+/* UX-04: the child's line on a dictation with Quran parts. */
+.gu-child {
+  margin: 0 0 12px;
+  font-size: 1.2rem;
+  font-weight: 800;
+  text-align: center;
+  color: var(--primary);
+}
+
+/* UX-05: the letters that differ from the mushaf. */
+.qp-quote mark {
+  background: var(--notice-bg);
+  color: inherit;
+  border-bottom: 2px solid var(--primary);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.qp-snippet {
+  font-family: var(--quran-font, inherit);
+}
+
+/* UX-08: an error under the field that caused it. */
+.field-error {
+  margin: 4px 0 0;
+}
+
+/* UX-09: a confirmation in place of the buttons. */
+.inline-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.inline-confirm p {
+  flex: 1 1 100%;
+  margin: 0;
+  font-weight: 600;
+}
+
+.parent-reset {
+  margin-inline: 0;
+}
+
+.task-quran-line {
+  margin: 4px 0 0;
 }

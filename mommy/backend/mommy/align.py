@@ -62,7 +62,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping, Sequence
+from typing import Any, Callable, Collection, Literal, Mapping, Sequence
 
 import numpy as np
 
@@ -159,6 +159,7 @@ def align_with_joins(
     *,
     max_pieces: int = MAX_JOINED_PIECES,
     extra_joins: tuple[Joins, Joins] | tuple[Joins, Joins, Blocks] | None = None,
+    rigid: Collection[int] | None = None,
 ) -> list[Op]:
     """Like :func:`align`, but a word split or joined differently counts as a match.
 
@@ -179,12 +180,39 @@ def align_with_joins(
     b`` the remaining expected words all point to the last heard word, as for the joins
     above. See :func:`speech_joins`.
 
+    ``rigid`` lists expected indices that take no part in the joins found here (the
+    split and joined words): such a word matches one heard token with an equal key, or
+    through ``extra_joins``, which the caller gives for it (the Quran words of a school
+    text: compared as :meth:`mommy.quran.Quran.check` compares them). The caller leaves
+    them out of its own equivalences (see :func:`without_rigid`).
+
     Use this for speech only: in dictation, writing ``peut être`` for ``peut-être`` is a
     spelling mistake. The key should already ignore hyphens and apostrophes.
     """
     if max_pieces < 1:
         raise ValueError("max_pieces must be at least 1")
-    return _align(expected, heard, key, max_pieces=max_pieces, extra_joins=extra_joins)
+    return _align(expected, heard, key, max_pieces=max_pieces, extra_joins=extra_joins, rigid=rigid)
+
+
+def without_rigid(
+    joins: tuple[Joins, Joins, Blocks], rigid: Collection[int]
+) -> tuple[dict[tuple[int, int], list[int]], dict[tuple[int, int], list[int]], dict[tuple[int, int], list[tuple[int, int]]]]:
+    """``(join_heard, join_exp, blocks)`` (as from :func:`speech_joins`) without every
+    equivalence that involves an expected index in ``rigid``."""
+    rigid = set(rigid)
+    join_heard, join_exp, blocks = joins
+    jh = {pos: list(ks) for pos, ks in join_heard.items() if pos[0] not in rigid}
+    je: dict[tuple[int, int], list[int]] = {}
+    for (i, j), ks in join_exp.items():
+        kept = [k for k in ks if not rigid.intersection(range(i, i + k))]
+        if kept:
+            je[(i, j)] = kept
+    bl: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for (i, j), sizes in blocks.items():
+        kept_sizes = [(a, b) for a, b in sizes if not rigid.intersection(range(i, i + a))]
+        if kept_sizes:
+            bl[(i, j)] = kept_sizes
+    return jh, je, bl
 
 
 def _align(
@@ -194,6 +222,7 @@ def _align(
     *,
     max_pieces: int,
     extra_joins: tuple[Joins, Joins] | tuple[Joins, Joins, Blocks] | None = None,
+    rigid: Collection[int] | None = None,
 ) -> list[Op]:
     exp_keys = [key(t) for t in expected]
     heard_keys = [key(t) for t in heard]
@@ -204,7 +233,7 @@ def _align(
     exp_ids = np.array([ids.setdefault(k, len(ids)) for k in exp_keys], dtype=np.int64)
     heard_ids = np.array([ids.setdefault(k, len(ids)) for k in heard_keys], dtype=np.int64)
 
-    join_heard, join_exp = _find_joins(exp_keys, heard_keys, max_pieces)
+    join_heard, join_exp = _find_joins(exp_keys, heard_keys, max_pieces, frozenset(rigid or ()))
     blocks: dict[tuple[int, int], list[tuple[int, int]]] = {}
     if extra_joins is not None:
         extra_heard, extra_exp = extra_joins[0], extra_joins[1]
@@ -298,13 +327,14 @@ def _align(
 
 
 def _find_joins(
-    exp_keys: list[str], heard_keys: list[str], max_pieces: int
+    exp_keys: list[str], heard_keys: list[str], max_pieces: int, rigid: frozenset[int] = frozenset()
 ) -> tuple[dict[tuple[int, int], list[int]], dict[tuple[int, int], list[int]]]:
     """Find the joined matches allowed by :func:`align_with_joins`.
 
     Returns two maps from ``(i, j)`` to piece counts ``k``: in the first, expected[i]
     equals heard[j:j+k] joined; in the second, expected[i:i+k] joined equals heard[j].
-    Since keys are non-empty, at most one ``k`` fits each ``(i, j)`` here.
+    Since keys are non-empty, at most one ``k`` fits each ``(i, j)`` here. Expected
+    indices in ``rigid`` are in no join.
     """
     join_heard: dict[tuple[int, int], list[int]] = {}
     join_exp: dict[tuple[int, int], list[int]] = {}
@@ -327,8 +357,12 @@ def _find_joins(
             for k in range(2, max_pieces + 1):
                 if start + k > len(pieces) or not all(pieces[start : start + k]):
                     break
+                if swap and rigid and rigid.intersection(range(start, start + k)):
+                    break
                 joined = "".join(pieces[start : start + k])
                 for other in at.get(joined, ()):
+                    if not swap and other in rigid:
+                        continue
                     target[(start, other) if swap else (other, start)] = [k]
     return join_heard, join_exp
 
@@ -663,5 +697,6 @@ __all__ = [
     "result_summary",
     "speech_joins",
     "tokenize_written",
+    "without_rigid",
     "writing_key",
 ]

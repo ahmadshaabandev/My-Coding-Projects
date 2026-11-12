@@ -350,11 +350,12 @@
 الليل والنهار يتعاقبان كل يوم.
 
 [split]
-# Ordinary sentences that the phrase splitter cuts so that one phrase is exactly a whole
-# ayah, or four Quran words in order. That phrase was already refused by the voice
-# before the contained-ayah rule (/api/tts), so dictation is refused for these texts
-# (scope "phrase"); they are accepted word by word and by meaning, and the
-# contained-ayah rule does not fire on them.
+# Ordinary sentences that the plain phrase splitter cuts so that one phrase is exactly a
+# whole ayah (an everyday ayah or a two-word one), an everyday formula, or four Quran
+# words in order. The voice refuses that phrase on its own (/api/tts), so the dictation
+# joins it with a neighbouring phrase the voice accepts (guard._join_soft_phrases): the
+# sentences stay ordinary text with no Quran part, and the contained-ayah rule does not
+# fire on them.
 لا إله إلا الله محمد رسول الله.
 الحمد لله الذي هدانا إلى هذا الطريق.
 الصيف بعيد، ونراه قريبا.

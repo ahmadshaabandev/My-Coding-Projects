@@ -48,12 +48,18 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
   and texts sent to the Claude API, and only after the parent ticks the consent box. The
   Batch and Files APIs are never used.
 - **Consent first.** A parent must tick a consent box before the camera or microphone is
-  used. The child profile (nickname, age band, language) is kept in the browser's
-  `localStorage` only; there are no accounts.
+  used. The family document (the children's nicknames, age bands and languages, their
+  tasks, stars and rewards, the consent and the hashed parent PIN) is kept in the
+  browser's `localStorage` (`mommy.data.v2`) on this device only; there are no accounts.
+  It holds scores, never recordings, photos or what the child said.
 - **Quran.** Text comes only from the verbatim Tanzil files in `data/quran/`. No AI
   model and no synthetic voice is used on any Quran path, and feedback uses fixed
-  templates. The general endpoints refuse Quran text (`422 quran_text`) and point to the
-  Quran section.
+  templates. A text that *is* Quran (whole ayat, framing formulas and labels left out)
+  is refused by the general endpoints (`422 quran_text`) and belongs to the Quran
+  section. A school text that *includes* Quran keeps its **Quran parts**, which the
+  server finds itself: they are checked word by word against the mushaf, read by a
+  grown-up (never the voice) in a dictation, never judged by meaning, and their mistakes
+  get fixed template feedback that is never written by Claude.
 
 ## Quick start
 
@@ -101,6 +107,32 @@ library works too:
 sudo apt install libespeak-ng1          # instead of the wheel
 ```
 
+## Tasks and rewards
+
+A parent gives each child study tasks and rewards (the full spec and every decision made
+while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
+
+- **Setting it up.** On the first run the start screen is the family setup: the AI
+  disclosure, the consent box, the parent PIN (typed twice) and the first child
+  (nickname, age band, language, avatar). After that, every session starts on "Who is
+  learning?", with a small "For parents" button. In the parent area (behind the PIN) a
+  parent adds children, creates tasks (recite, dictation or Quran, with a pass level,
+  stars and an optional reward), reviews the tasks a child passed ("Confirm", or "Not
+  yet" with a note), sets star goals, gives surprises, and changes the settings. A task
+  is only marked done, and its stars and reward unlocked, when a grown-up confirms it.
+- **The PIN is a child lock, not security.** It keeps the parent area for the grown-ups
+  on a shared device: after 5 wrong tries it pauses (30 seconds, doubling up to 15
+  minutes), "Forgot the PIN?" asks a multiplication question for grown-ups (wrong
+  answers count toward the same pause) and keeps the old PIN until a new one is saved,
+  and the parent area then shows that the PIN was reset. The parent area locks again
+  when it is left, when the app goes to the background and after 3 minutes without use.
+  Anyone who can open the browser's developer tools can read or change the data.
+- **The data stays in this browser on this device.** Everything is one document in
+  `localStorage`; nothing about tasks or rewards is sent to the server. Another browser,
+  another device or a private window has its own (empty) data. **Clearing the browser's
+  data for this site deletes it** (the children, tasks, stars and rewards), and so does
+  "Delete all data on this device" in the parent area's Settings.
+
 ## Offline mode
 
 With no Claude configuration the app runs fully offline:
@@ -108,6 +140,9 @@ With no Claude configuration the app runs fully offline:
 - the parent types the page text and what the child wrote (a photo of the child's
   writing gets `501 needs_manual`);
 - contextual mode uses a content-word overlap heuristic, marked `"approximate": true`;
+  Prepare and the task form say so under the mode choice ("Without the online AI, the
+  meaning check is only approximate."), except for a text with Quran words, which is
+  recited word by word only;
 - feedback comes from fixed, age-adapted templates in each language.
 
 If the Whisper or Piper files are missing, `/api/health` says so and the UI hides those
@@ -151,7 +186,9 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
   and `reasons` (why the recogniser or the voices are unavailable).
 - `/api/recite/check` returns a top-level `say_again`; results carry
   `say_again_reason` (`empty` or `error_rate`), `stopped_at_exp_index` (where the child
-  stopped early) and `n_unreadable`. `/api/page/read` returns `contains_quran`,
+  stopped early) and `n_unreadable`. `/api/page/read` returns `contains_quran`
+  (decided by the server from the text read: true for a page that is Quran, false for a
+  school page that quotes ayat), `quran_parts`, `mushaf_text`, `quran_range`,
   `unreadable_marks` (`[?]` where a word could not be read) and, when Claude failed,
   `brain_error`; `/api/dictation/check` returns `legible`, accepts an optional
   `strict_tashkeel` field, and lists `[?]` in `uncertain_words` when a written word
@@ -173,21 +210,54 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
 - `POST /api/text/check` (`{"text", "lang", "mode"?}`, mode `strict` by default,
   `contextual` or `dictation`) runs the text checks of the recite and dictation
   endpoints, in their order and with their error codes, without audio, voice or AI, and
-  answers `{"ok": true, "words": n, "dictation": bool, "contextual": bool}`: one call
-  tells "Confirm text" and task creation whether the text can be recited word by word,
-  by meaning, and dictated. It answers `503 quran_unavailable` only when the Tanzil
+  answers `{"ok": true, "words": n, "dictation": bool, "contextual": bool,
+  "quran_parts": [...], "mushaf_text": str}`: one call tells "Confirm text" and task
+  creation whether the text can be recited word by word, by meaning, and dictated, and
+  where its Quran parts are. It answers `503 quran_unavailable` only when the Tanzil
   text is missing and the text is Arabic.
-- Quran text sent to a general endpoint (recite, dictation, TTS, text check) is refused
-  with `422 quran_text`. Framing formulas (قال تعالى, صدق الله العظيم, ...) are left out,
-  then the text is refused when it is in Uthmani script, holds a run of 5 consecutive
-  words found consecutively in the Quran (3 next to a framing formula, so a quoted ayah
-  inside a school text is caught), or has at least 4 words found almost entirely (90%)
-  in order at one place. A TTS phrase or dictation phrase that is a whole ayah of 2
-  words or more is refused too; `/api/dictation/phrases` then adds `"scope": "phrase"`,
-  and the web client confirms such a text (for example a school text with the basmala
-  on a line of its own) for reciting only. If the voice still refuses a dictation
-  phrase, the dictation goes back to its start with the same reason (never "this text
-  is from the Quran").
+- Quran in school texts (`backend/mommy/guard.py`, numbers in `docs/CONTRACT.md`):
+  - A text that **is** Quran: once the framing formulas (قال تعالى, صدق الله العظيم, the
+    isti'adha, a basmala at the start) and the surah and ayah labels (سورة الإخلاص, (1),
+    [البقرة: 255]) are left out, what remains is whole ayat in mushaf order. Every
+    general endpoint refuses it with `422 quran_text`, with `quran_range` (`{surah, from,
+    to}`) when it is one range of one surah. So does a word in the Uthmani script that
+    cannot be placed in the mushaf.
+  - A school text that **includes** Quran (a lesson quoting an ayah or part of one, a
+    text starting with the basmala, a short ayah inside a sentence, a partial ayah on
+    its own) is accepted. `/api/text/check`, `/api/page/read`, `/api/dictation/phrases`,
+    `/api/recite/check` (strict) and `/api/dictation/check` return its `quran_parts`:
+    token span, character offsets (also in UTF-16 units), reference, mushaf words in
+    Uthmani and Simple-Clean, differences from the mushaf, reading chunks. The server
+    recomputes them from the text every time; a client's list is never used.
+  - The parts are found with the guard rules (runs of 5 Quran words, runs of 3 next to a
+    framing formula, whole ayat, whole short ayat of 3-4 words inside a sentence, the
+    90% `locate` rule on the text, its lines and its sentences) and a near match for an
+    ayah with a changed, dropped or misread word (one-letter OCR errors, a missing
+    hamza). The parent sees the differences, and `mushaf_text` (or a part's
+    `replacement`) puts the mushaf words back in one tap; diacritics and the Uthmani or
+    standard spelling are not differences.
+  - Recitation compares a Quran part with the mushaf words exactly as `/api/quran/check`
+    does (no numbers by value, no joined words, letters of the disjoined openings by
+    name), and the rest of the text with the usual speech tolerances. Recitation by
+    meaning is refused for such a text (`contextual: false`).
+  - Dictation: `/api/dictation/phrases` also returns `readers` (`voice` or `grown_up`),
+    `read_text` (the vowelled Uthmani chunk a grown-up reads aloud) and `parts`; a Quran
+    part is cut into its own chunks of at most six words, never across an ayah. The
+    child's writing of a Quran word is accepted in its Uthmani or Simple-Clean spelling
+    only. The checks always use the mushaf words, so a child is never corrected towards
+    a misquoted ayah. The `"scope": "phrase"` refusal is gone.
+  - Feedback about a mistake inside a Quran part comes from fixed, respectful templates
+    that quote the mushaf word (`feedback_is_quran: true`: shown, never spoken). When a
+    result has any mistake in a Quran part, Claude is not called for its feedback at
+    all, so it never receives a Quran word to write about.
+  - `/api/tts` still refuses Quran (a whole ayah, a contained short ayah, a run of Quran
+    words) and now also a short ayah with one misread or dropped word, a short ayah whose
+    first word carries و or ف, and Quran words joined by a hyphen, an apostrophe, a
+    tatweel or an invisible character. A refusal by meaning says so (`"reason":
+    "meaning"`): the text can be recited word by word. The framed-run rule now counts only next to its formula
+    (it starts at most four words after قال تعالى or ends at most four before صدق الله
+    العظيم) and leaves the everyday formulas out there: a sentence with the isti'adha no
+    longer makes إن شاء الله elsewhere count as Quran.
 - Contained-ayah rule: the voice also refuses a phrase that holds a whole ayah of 3 or
   4 words among other words (`قل هو الله أحد` followed by a name, a sentence ending
   with `مالك يوم الدين`), so a short ayah is never spoken inside a sentence. Two-word
@@ -201,12 +271,7 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
   الله, إن شاء الله, لا إله إلا الله, ...), and a whole ayah of 3 or 4 words anywhere in
   the text, because the meaning of Quran text is never judged by AI. On the 324
   sentences, runs of 3, 4 and 5 refuse 35, 8 and 0 (22, 2 and 0 with the formulas left
-  out); a text that holds the basmala is therefore recited word by word only.
-- Dictation checks every phrase and every line of the text, and the text's words as a
-  whole for a short ayah, on the server: `/api/dictation/phrases` and `/api/text/check`
-  in mode `dictation` share one rule, so the basmala on a line of its own without a full
-  stop, which the phrase splitter glues to the next words, gives `scope: "phrase"` at
-  both, and the client no longer needs to send the lines again.
+  out).
 
 What counts as the same word:
 
@@ -255,8 +320,21 @@ What counts as the same word:
 
 The suite covers every module and every endpoint (fakes for speech and Claude, the real
 Quran text). Integration tests with the real Whisper and Piper models skip cleanly when
-the models are missing. The web client has a separate smoke test that needs Node.js and
-Playwright with Chromium: `node tests/web/smoke.cjs` (see `tests/web/README.md`).
+the models are missing. The Quran guards and the Quran parts are measured on two
+fixtures, `tests/arabic_school_sentences.txt` and `tests/quran_parts_texts.txt`, whose
+Quran words all come from Tanzil placeholders filled by `tests/quran_fixtures.py` (no
+Quran word is typed in them; misquotes are made by code). The web client has three
+test files of its own, which need Node.js (the browser ones also Playwright with
+Chromium) and start no backend (see `tests/web/README.md`):
+
+```sh
+node tests/web/rewards.test.cjs   # web/rewards.js in Node: tasks, stars, goals, PIN, validation
+node tests/web/smoke.cjs          # the screens through a fake API, Quran in school texts, wording checks
+node tests/web/family.cjs         # the family UI: setup, parent area, tasks, rewards, PIN, storage
+```
+
+`smoke.cjs` also compares the fake API's Quran parts with the server's
+`guard.find_quran_parts` through `.venv/bin/python` when it is there.
 
 ## Limitations
 
@@ -279,6 +357,21 @@ Playwright with Chromium: `node tests/web/smoke.cjs` (see `tests/web/README.md`)
     word: it does not judge tajwid or pronunciation beyond what the recogniser writes.
   - The Quran module needs review by qualified religious scholars before any public
     release.
+  - The Quran parts of a school text are found by measured rules, not by reading the
+    text. A short ayah (3 to 7 words) with one changed letter or one dropped inner word is
+    found framed or not (measured on every such ayah of Juz' Amma at every word position:
+    99.7% framed and 98.3% unframed with a changed letter, 99.0% and 99.5% with a dropped
+    word; no hit on the ordinary sentences, 5,000 random pairs of them or the app's Arabic
+    strings). Not found: a three-word ayah whose changed word has two letters, outside a
+    framing formula or quotation marks; a three-word ayah with a dropped word; two errors
+    in one short ayah; a two-word ayah inside a sentence. Such a text is used as ordinary
+    text, and only the voice guard (which refuses a misquoted short ayah on its own)
+    stands between it and the voice. Everyday formulas (لا إله إلا الله, حسبنا الله ونعم
+    الوكيل, ...) stay ordinary words: a dictation joins a formula the voice refuses on its
+    own with a neighbouring phrase; only a text that is nothing but a formula has it read
+    by a grown-up. On 3,000 random pairs of ordinary sentences, 1 gained a part (a run of
+    5 Quran words across the sentence end). Texts with Quran are measured on
+    `tests/quran_parts_texts.txt` (102 quotations and 28 misquotes, all found).
   - The Quran-text guard on the general endpoints is a heuristic. Its thresholds and
     the everyday formulas and ayat it leaves out were measured on a fixture of 341
     sentences (`tests/arabic_school_sentences.txt`); an ordinary sentence that uses
@@ -348,7 +441,8 @@ mommy/
   docs/CONTRACT.md             module boundaries, HTTP API, hard rules
   data/quran/                  verbatim Tanzil text and metadata (read-only)
   models/                      git-ignored: downloaded models
-  backend/mommy/               config, textnorm, align, phrases, feedback, quran, asr, tts, llm, app
-  web/                         index.html, app.js, recorder.js, styles.css
-  tests/                       pytest suite; tests/web/ has the browser smoke test
+  backend/mommy/               config, textnorm, align, phrases, feedback, quran, guard, asr, tts, llm, app
+  web/                         index.html, app.js, recorder.js, styles.css, rewards.js (tasks and
+                               rewards logic), family.js (the family UI)
+  tests/                       pytest suite; tests/web/ has the web client's tests
 ```

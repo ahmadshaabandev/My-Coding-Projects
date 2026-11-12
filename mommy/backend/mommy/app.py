@@ -21,16 +21,18 @@ Flows
   ``feedback.quran_feedback``. No Quran endpoint touches the brain or the synthesizer
   (hard rule 4).
 
-The general endpoints also refuse Quran text (``422 quran_text``): a passage of the
-Quran is checked only by the Quran section, against the verbatim Tanzil text, and is
-never given to the LLM or spoken by the voice. Each use of a text has its guard:
-:func:`looks_like_quran` word by word, :func:`looks_like_quran_for_meaning` when the
-brain judges the meaning, :func:`is_quran_phrase` for what the voice speaks, and
-:func:`dictation_speaks_quran` for a dictation (``scope: "phrase"``). They refuse a text
-whose script does not match the chosen language (``422 lang_mismatch``) and a text with
-``[?]`` marks where a page reader could not read a word (``400 unreadable_text``).
-``POST /api/text/check`` runs those checks alone (no audio, voice or brain) and says
-which uses of the text are possible.
+Quran in the texts of the general endpoints (:mod:`mommy.guard`): a text that *is*
+Quran (Q1) is refused (``422 quran_text``) and belongs to the Quran section; a school
+text that *includes* Quran (Q2) is used with its Quran parts, which the server finds
+from the text in every endpoint (:func:`mommy.guard.find_quran_parts`): recited word by
+word against the mushaf words, dictated with a grown-up reading each part, never judged
+by meaning (contextual mode refuses it), never spoken by the voice (``/api/tts`` keeps
+:func:`is_quran_phrase`), and a mistake in a part gets fixed template feedback without
+the brain. The endpoints also refuse a text whose script does not match the chosen
+language (``422 lang_mismatch``) and a text with ``[?]`` marks where a page reader could
+not read a word (``400 unreadable_text``). ``POST /api/text/check`` runs those checks
+alone (no audio, voice or brain), says which uses of the text are possible and lists the
+Quran parts.
 
 Privacy (hard rule 5)
 ---------------------
@@ -96,23 +98,35 @@ from starlette.routing import Match, Mount
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__, feedback
-from .align import (
-    UNREADABLE,
-    CheckResult,
-    check_recitation,
-    check_writing,
-    has_unreadable,
-    result_summary,
-    tokenize_written,
-)
+from .align import UNREADABLE, CheckResult, has_unreadable, recitation_key, result_summary, tokenize_written
 from .asr import ASRUnavailable, SherpaWhisper, Transcriber, audio_quality, decode_wav, wav_duration
 from .config import DEFAULT_ALLOWED_HOSTS, Settings, load_settings
 from .feedback import AgeBand
 from .llm import VERDICTS, Brain, OfflineBrain, make_brain, meaning_feedback
-from .phrases import split_phrases
+from .guard import (
+    QURAN_GUARD_CONTAINED_AYAH_WORDS,
+    QURAN_GUARD_CONTEXTUAL_RUN_WORDS,
+    QURAN_GUARD_FRAMED_GAP_WORDS,
+    QURAN_GUARD_FRAMED_RUN_WORDS,
+    QURAN_GUARD_MIN_SCORE,
+    QURAN_GUARD_MIN_WORDS,
+    QURAN_GUARD_RUN_WORDS,
+    QURAN_MEANING_MESSAGE,
+    QURAN_TEXT_MESSAGE,
+    ExpectedWords,
+    GuardMode,
+    QuranAnalysis,
+    contains_short_ayah,
+    dictation_speaks_quran,
+    find_quran_parts,
+    is_quran_phrase,
+    is_whole_ayah,
+    looks_like_quran,
+    looks_like_quran_for_meaning,
+)
 from .quran import N_SURAHS, RIWAYA, SOURCE_URL, Quran
 from .textnorm import LANGUAGES, Lang, has_arabic, is_arabic_char, tokenize
-from .tts import PiperTTS, QuranTextRefused, Synthesizer, TTSUnavailable, is_quranic_script, synthesize_verified
+from .tts import PiperTTS, QuranTextRefused, Synthesizer, TTSUnavailable, synthesize_verified
 
 log = logging.getLogger(__name__)
 
@@ -175,39 +189,6 @@ MAX_BODY_BYTES = max(BODY_LIMITS.values())
 #: Syntheses tried for slow (dictation) speech until the recogniser hears the phrase.
 SPEECH_CHECK_ATTEMPTS = 2
 
-#: :func:`looks_like_quran`: a text of at least this many words...
-QURAN_GUARD_MIN_WORDS = 4
-#: ...whose words are found, in order, at one place of the Quran at least this share;
-QURAN_GUARD_MIN_SCORE = 0.9
-#: or that holds this many consecutive words found consecutively in the Quran;
-QURAN_GUARD_RUN_WORDS = 5
-#: or, next to a framing formula (قال تعالى, صدق الله العظيم), this many.
-QURAN_GUARD_FRAMED_RUN_WORDS = 3
-#: Contextual mode (the meaning is judged by the brain): also a run of this many
-#: consecutive Quran words, everyday formulas left out (:data:`mommy.quran.EVERYDAY_FORMULAS`).
-QURAN_GUARD_CONTEXTUAL_RUN_WORDS = 4
-#: A phrase the voice would speak, and a text judged by meaning, may not contain a whole
-#: ayah of this many words or more (up to :data:`mommy.quran.SHORT_AYAH_MAX_WORDS`;
-#: longer ayat are runs of QURAN_GUARD_RUN_WORDS). Two-word ayat such as ثم نظر are
-#: ordinary Arabic and are refused only as a phrase of their own.
-QURAN_GUARD_CONTAINED_AYAH_WORDS = 3
-
-#: The Quran guard of a text check: word-by-word recitation (and the dictation check),
-#: recitation judged by meaning, or dictation (the voice reads the text out).
-GuardMode = Literal["strict", "contextual", "dictation"]
-
-QURAN_TEXT_MESSAGE = (
-    "This text is from the Quran. Please use the Quran section: it checks recitation "
-    "against the verbatim Tanzil text, without AI and without a synthetic voice."
-)
-#: The dictation guard, ``scope: "phrase"``: the text may be recited word by word, but a
-#: phrase or line of it is or holds a whole ayah (often the basmala on a line of its own),
-#: which is never spoken.
-QURAN_PHRASE_MESSAGE = (
-    "A phrase of this text is or holds a whole ayah of the Quran, which is never read out by "
-    "the synthetic voice, so the text cannot be used for dictation. It can still be recited."
-)
-
 LangField = Literal["ar", "en", "fr"]
 AgeField = Literal["6-9", "10-13", "14-18"]
 
@@ -239,10 +220,10 @@ class ApiError(StarletteHTTPException):
     raised while the request body is being read (see :class:`RequestGuardMiddleware`).
     """
 
-    def __init__(self, status_code: int, code: str, message: str, *, extra: dict[str, str] | None = None) -> None:
+    def __init__(self, status_code: int, code: str, message: str, *, extra: dict[str, Any] | None = None) -> None:
         super().__init__(status_code=status_code, detail=message)
         self.code = code
-        #: Extra fields of the error body (``scope`` of a ``quran_text`` refusal).
+        #: Extra fields of the error body (``quran_range`` of a ``quran_text`` refusal).
         self.extra = dict(extra or {})
 
 
@@ -260,7 +241,7 @@ _DEFAULT_CODES: dict[int, str] = {
 
 
 def error_response(
-    status_code: int, code: str, message: str, headers: dict[str, str] | None = None, extra: dict[str, str] | None = None
+    status_code: int, code: str, message: str, headers: dict[str, str] | None = None, extra: dict[str, Any] | None = None
 ) -> JSONResponse:
     """The JSON error body of the contract (plus any ``extra`` fields)."""
     return UTF8JSONResponse({**(extra or {}), "error": code, "message": message}, status_code=status_code, headers=headers)
@@ -279,6 +260,8 @@ async def _validation_error(request: Request, exc: Exception) -> Response:
     assert isinstance(exc, RequestValidationError)
     missing: list[str] = []
     invalid: list[str] = []
+    if any(err.get("type") == "json_invalid" for err in exc.errors()):
+        return error_response(422, "invalid_field", "The body is not valid JSON.")
     for err in exc.errors():
         loc = [str(p) for p in err.get("loc", ()) if p not in ("body", "query", "path", "header", "cookie")]
         name = ".".join(loc) or "body"
@@ -533,8 +516,34 @@ def _clean_text(value: str, field: str, lang: Lang | None = None) -> str:
     return text
 
 
+def _lead(value: str) -> int:
+    """The characters :func:`_clean_text` strips from the start of a field."""
+    return len(value) - len(value.lstrip())
+
+
+def _quran_fields(analysis: QuranAnalysis, submitted: str) -> dict[str, Any]:
+    """``quran_parts`` and ``mushaf_text`` of a response, with offsets into the text as the
+    client sent it (``submitted``, of which the analysis saw the stripped text)."""
+    lead = _lead(submitted)
+    mushaf = analysis.mushaf_text() if analysis.parts else analysis.text
+    return {
+        "quran_parts": analysis.parts_json(submitted, lead=lead),
+        "mushaf_text": submitted[:lead] + mushaf + submitted[lead + len(analysis.text) :],
+    }
+
+
+def _lines(text: str) -> str:
+    """``text`` with every line break as ``\\n``. A browser sends the line breaks of a form
+    field as ``\\r\\n`` while a textarea's value holds ``\\n``: with this, what a form
+    endpoint echoes (``read_text``) and the offsets of its Quran parts refer to the text
+    the client holds, as for the JSON endpoints."""
+    return text.replace("\r\n", "\n").replace("\r", "\n") if "\r" in text else text
+
+
 def _scrub(text: str) -> str:
-    """Model output with any lone surrogate replaced by U+FFFD (it cannot be encoded)."""
+    """Model output with any lone surrogate replaced by U+FFFD (it cannot be encoded), and
+    its line breaks as ``\\n`` (:func:`_lines`)."""
+    text = _lines(text)
     if any("\ud800" <= c <= "\udfff" for c in text):
         return "".join("\ufffd" if "\ud800" <= c <= "\udfff" else c for c in text)
     return text
@@ -660,131 +669,6 @@ def _quality_unclear(quality: dict) -> bool:
     return bool(quality.get("too_quiet") or quality.get("too_short"))
 
 
-def _guard_tokens(text: str, quran: Quran | None) -> tuple[Quran, list[str], bool] | None:
-    """``(quran, tokens, framed)`` for the data-based Quran tests: the words of ``text``
-    without framing formulas (:meth:`mommy.quran.Quran.strip_framing`), or None when there
-    is nothing to test (no Tanzil text, or no Arabic letter)."""
-    if quran is None or not has_arabic(text):
-        return None
-    tokens, framed = quran.strip_framing(text)
-    return quran, tokens, framed
-
-
-def _quran_passage(quran: Quran, tokens: list[str], framed: bool) -> bool:
-    """The data-based part of :func:`looks_like_quran`, on the words without framing."""
-    if quran.quran_runs(tokens, QURAN_GUARD_RUN_WORDS):
-        return True
-    if framed and quran.quran_runs(tokens, QURAN_GUARD_FRAMED_RUN_WORDS):
-        return True
-    if len(tokens) < QURAN_GUARD_MIN_WORDS:
-        return False
-    best = quran.locate(" ".join(tokens), top_k=1, min_score=QURAN_GUARD_MIN_SCORE)
-    return bool(best) and best[0]["score"] >= QURAN_GUARD_MIN_SCORE
-
-
-def looks_like_quran(text: str, quran: Quran | None) -> bool:
-    """True when ``text`` is, or contains, a passage of the Quran.
-
-    Framing formulas (``قال تعالى``, ``صدق الله العظيم``, the isti'adha, ...; see
-    :data:`mommy.quran.FRAMING_FORMULAS`) are left out first. Then the text is Quran when:
-
-    * it is written in the Uthmani Quranic script (:func:`mommy.tts.is_quranic_script`);
-    * it holds a run of :data:`QURAN_GUARD_RUN_WORDS` (5) consecutive words found
-      consecutively in the Quran (:meth:`mommy.quran.Quran.quran_runs`), wherever it
-      sits: a school text that quotes an ayah is refused;
-    * next to a framing formula, such a run of :data:`QURAN_GUARD_FRAMED_RUN_WORDS` (3);
-    * it has at least :data:`QURAN_GUARD_MIN_WORDS` words and at least
-      :data:`QURAN_GUARD_MIN_SCORE` of them are found, in order, at one place
-      (:meth:`mommy.quran.Quran.locate`, first 40 words): an ayah with a word changed.
-
-    An ordinary sentence that shares a few words with an ayah is not refused, and nor
-    is a text that starts with the basmala. Without the Quran data only the script test
-    is possible. This is the guard of word-by-word recitation (strict mode).
-    """
-    if is_quranic_script(text):
-        return True
-    found = _guard_tokens(text, quran)
-    return found is not None and _quran_passage(*found)
-
-
-def is_whole_ayah(text: str, quran: Quran | None) -> bool:
-    """True when ``text`` (framing formulas left out) is exactly one ayah of two words or
-    more (``الله الصمد``)."""
-    found = _guard_tokens(text, quran)
-    return found is not None and found[0].whole_ayah(found[1]) is not None
-
-
-def contains_short_ayah(text: str, quran: Quran | None) -> bool:
-    """True when the words of ``text`` (framing formulas left out) hold, one after the
-    other, a whole ayah of :data:`QURAN_GUARD_CONTAINED_AYAH_WORDS` (3) or 4 words
-    (:meth:`mommy.quran.Quran.contained_ayat`), wherever it sits: ``قل هو الله أحد``
-    followed by a name, a sentence ending with a three-word ayah. The everyday ayat of
-    :data:`mommy.quran.EVERYDAY_AYAT` do not count, and nor do two-word ayat (ثم نظر)."""
-    found = _guard_tokens(text, quran)
-    return found is not None and bool(found[0].contained_ayat(found[1], QURAN_GUARD_CONTAINED_AYAH_WORDS))
-
-
-def is_quran_phrase(text: str, quran: Quran | None) -> bool:
-    """True when the voice may not speak ``text`` (``/api/tts``, a dictation phrase):
-    :func:`looks_like_quran`, a phrase that is exactly a whole ayah of two words or more
-    (:func:`is_whole_ayah`), or a phrase that contains a whole short ayah
-    (:func:`contains_short_ayah`)."""
-    if is_quranic_script(text):
-        return True
-    found = _guard_tokens(text, quran)
-    if found is None:
-        return False
-    q, tokens, _ = found
-    return (
-        q.whole_ayah(tokens) is not None
-        or bool(q.contained_ayat(tokens, QURAN_GUARD_CONTAINED_AYAH_WORDS))
-        or _quran_passage(*found)
-    )
-
-
-def looks_like_quran_for_meaning(text: str, quran: Quran | None) -> bool:
-    """The Quran guard of contextual mode, where the brain judges the meaning of the text:
-    :func:`looks_like_quran`, or a run of :data:`QURAN_GUARD_CONTEXTUAL_RUN_WORDS` (4)
-    consecutive Quran words that does not pass through an everyday formula
-    (:data:`mommy.quran.EVERYDAY_FORMULAS`), or a whole short ayah inside the text
-    (:func:`contains_short_ayah`)."""
-    if is_quranic_script(text):
-        return True
-    found = _guard_tokens(text, quran)
-    if found is None:
-        return False
-    q, tokens, _ = found
-    return (
-        bool(q.quran_runs(tokens, QURAN_GUARD_CONTEXTUAL_RUN_WORDS, exclude_formulas=True))
-        or bool(q.contained_ayat(tokens, QURAN_GUARD_CONTAINED_AYAH_WORDS))
-        or _quran_passage(*found)
-    )
-
-
-def dictation_speaks_quran(text: str, lang: Lang, quran: Quran | None) -> bool:
-    """True when a dictation of ``text`` would make the voice speak Quran text, although
-    the whole text passed :func:`looks_like_quran` (the ``scope: "phrase"`` refusal).
-
-    Checked with :func:`is_quran_phrase`: every phrase of :func:`split_phrases` and every
-    non-empty line of the text (the splitter joins the lines of a paragraph, so the
-    basmala on a line of its own without a full stop is glued to the next words), and
-    the text's words as a whole for a whole short ayah (:func:`contains_short_ayah`),
-    which the splitter may cut between two phrases that are each spoken.
-    """
-    if contains_short_ayah(text, quran):
-        return True
-    whole = text.strip()
-    if is_whole_ayah(whole, quran):
-        return True
-    seen = {whole}  # the whole text already passed looks_like_quran and the two tests above
-    for part in [*split_phrases(text, lang), *(line.strip() for line in text.splitlines())]:
-        if part and part not in seen:
-            seen.add(part)
-            if is_quran_phrase(part, quran):
-                return True
-    return False
-
-
 # ---------------------------------------------------------------------------
 # The application
 # ---------------------------------------------------------------------------
@@ -834,25 +718,36 @@ def create_app(
             raise ApiError(503, "quran_unavailable", "The Quran text could not be loaded on this server.")
         return quran
 
-    def quran_guard(text: str, lang: Lang, mode: GuardMode) -> None:
+    def quran_guard(analysis: QuranAnalysis, text: str, mode: GuardMode) -> None:
         """422 ``quran_text`` when the text may not be used in ``mode``.
 
-        strict: :func:`looks_like_quran`; contextual: :func:`looks_like_quran_for_meaning`;
-        dictation: :func:`looks_like_quran` on the whole text, then
-        :func:`dictation_speaks_quran`, which is refused with ``scope: "phrase"`` (the text
-        may still be recited word by word).
+        Every mode refuses a text that is Quran (Q1, :func:`mommy.guard.find_quran_parts`),
+        with ``quran_range`` when its ayat are one range of one surah, and a text with
+        Uthmani script outside its Quran parts. Contextual mode also refuses a school text
+        with Quran parts (Q2) and the by-meaning guard (:func:`looks_like_quran_for_meaning`):
+        the brain never judges the meaning of Quran words. A dictation of a Q2 text has a
+        grown-up read its Quran parts, so mode ``dictation`` refuses nothing more, unless
+        the safety net :attr:`mommy.guard.QuranAnalysis.voice_safe` is False.
         """
-        if (looks_like_quran_for_meaning if mode == "contextual" else looks_like_quran)(text, quran):
+        if analysis.refused:
+            ref = analysis.quran_range()
+            raise ApiError(422, "quran_text", QURAN_TEXT_MESSAGE, extra={"quran_range": ref} if ref else None)
+        if mode == "contextual" and (analysis.parts or looks_like_quran_for_meaning(text, quran)):
+            # "reason": "meaning" tells this refusal (a school text with Quran words, which
+            # can be recited word by word) from a text that is Quran (Q1).
+            raise ApiError(422, "quran_text", QURAN_MEANING_MESSAGE, extra={"reason": "meaning"})
+        if mode == "dictation" and not analysis.voice_safe:
             raise ApiError(422, "quran_text", QURAN_TEXT_MESSAGE)
-        if mode == "dictation" and dictation_speaks_quran(text, lang, quran):
-            raise ApiError(422, "quran_text", QURAN_PHRASE_MESSAGE, extra={"scope": "phrase"})
 
-    def check_expected(text: str, lang: Lang, field: str, mode: GuardMode = "strict") -> None:
+    def check_expected(text: str, lang: Lang, field: str, mode: GuardMode = "strict") -> QuranAnalysis:
         """The checks of a text a child is to say, write or hear (after :func:`_clean_text`):
-        ``[?]`` marks, the Quran guard of ``mode``, then the language."""
+        ``[?]`` marks, the Quran guard of ``mode``, then the language. Returns the text's
+        Quran analysis, recomputed from the text itself."""
         _refuse_unreadable(text, field)
-        quran_guard(text, lang, mode)
+        analysis = find_quran_parts(text, lang, quran)
+        quran_guard(analysis, text, mode)
         _refuse_lang_mismatch(text, lang, field)
+        return analysis
 
     class decoding:
         """One of the :data:`MAX_CONCURRENT_DECODES` slots for a big decode (503 when
@@ -885,20 +780,60 @@ def create_app(
         timings = {"bytes": n_bytes, "decode_s": decoded - started, "asr_s": time.perf_counter() - decoded}
         return heard, quality, timings
 
-    def word_feedback(result: CheckResult, lang: Lang, age: AgeBand, activity: str) -> str:
-        """Feedback worded by the brain, or the template when it fails or says nothing."""
+    def word_feedback(
+        result: CheckResult, lang: Lang, age: AgeBand, activity: str, expected: ExpectedWords | None = None
+    ) -> tuple[str, bool]:
+        """``(feedback, is_quran)``: the brain's wording, or the template when it fails or says
+        nothing. When a mistake lies in a Quran part (``expected.quran``), the brain is not
+        called at all, so it never receives a Quran word: a first mistake there gets the
+        fixed Quran-part template quoting the mushaf word (``is_quran`` True: shown, never
+        spoken), any other first mistake the ordinary template."""
         template = feedback.for_result(result, lang, age, activity=activity)
         if result.n_unreadable and result.n_errors == result.n_unreadable:
-            return template  # only words the reader could not read: not the child's mistakes
+            return template, False  # only words the reader could not read: not the child's mistakes
+        if expected is not None and expected.quran:
+            errors = [(k, op) for k, op in enumerate(result.ops) if op.kind != "match" and op.heard != UNREADABLE]
+
+            def where(k: int, op: Any) -> int | None:
+                if op.exp_index is not None:
+                    return op.exp_index
+                later = next((o.exp_index for o in result.ops[k + 1 :] if o.exp_index is not None), None)
+                if later is not None:
+                    return later
+                return next((o.exp_index for o in reversed(result.ops[:k]) if o.exp_index is not None), None)
+
+            if any(where(k, op) in expected.quran for k, op in errors):
+                if result.say_again or not errors:
+                    return template, False
+                k, first = errors[0]
+                index = where(k, first)
+                if index not in expected.quran:
+                    return template, False
+                kind = "stopped" if first.kind == "del" and index == result.stopped_at_exp_index else first.kind
+                return feedback.quran_part_feedback(kind, expected.display[index], lang, activity), True
         summary = result_summary(result)
         summary["activity"] = activity
+        heard = [e["heard"] for e in summary["errors"] if e.get("heard")]
+        if heard and is_quran_phrase(" ".join(heard), quran):
+            return template, False  # the child said Quran words: the brain never gets them
+        if expected is not None and expected.quran:
+            # A text with Quran parts: a word the child added (an ayah said on past the end
+            # of the text) or a word of a part said elsewhere is a Quran word, so the brain
+            # never gets it; a mistake outside the parts keeps the word heard.
+            part_keys = {recitation_key(expected.tokens[i], lang) for i in expected.quran}
+            summary["errors"] = [
+                {**e, "heard": None}
+                if e.get("heard") and (e["kind"] == "ins" or recitation_key(e["heard"], lang) in part_keys)
+                else e
+                for e in summary["errors"]
+            ]
         try:
             text = brain.word_feedback(summary, lang, age)
         except Exception as exc:
             log.warning("word_feedback failed (%s); using the template", type(exc).__name__)
-            return template
+            return template, False
         text = " ".join(text.split()) if isinstance(text, str) else ""
-        return text or template
+        return text or template, False
 
     def judge(expected: str, heard: str, lang: Lang, age: AgeBand) -> dict:
         """The brain's meaning judgement, or the offline heuristic when it fails."""
@@ -974,15 +909,25 @@ def create_app(
         text = _scrub(page.get("text")) if isinstance(page.get("text"), str) else ""
         read_lang = page.get("lang") if page.get("lang") in LANGUAGES else lang
         failed = "error" in page or getattr(brain, "name", None) != "claude"
+        written = tokenize_written(text, read_lang or "en")
+        contains_quran = bool(page.get("contains_quran", False))
+        quran_fields: dict[str, Any] = {"quran_parts": [], "mushaf_text": text, "quran_range": None}
+        if quran is not None and has_arabic(text) and len(text) <= MAX_TEXT_CHARS and len(written) <= MAX_TEXT_WORDS:
+            # The server decides, from the text read: a page that is Quran (Q1) keeps the
+            # "page is Quran" answer; a school page with Quran parts (Q2) is read as usual.
+            analysis = find_quran_parts(text.strip(), read_lang or "ar", quran)
+            contains_quran = analysis.refused
+            quran_fields = {**_quran_fields(analysis, text), "quran_range": analysis.quran_range()}
         out: dict[str, Any] = {
             "text": text,
             "lang": read_lang,
             "notes": _scrub(page.get("notes")) if isinstance(page.get("notes"), str) else "",
             "source": "offline" if failed else "claude",
             "needs_manual": bool(page.get("needs_manual")) or not text.strip(),
-            "contains_quran": bool(page.get("contains_quran", False)),
+            "contains_quran": contains_quran,
             # [?] marks where the reader could not read a word; the parent types them.
-            "unreadable_marks": sum(1 for t in tokenize_written(text, read_lang or "en") if t == UNREADABLE),
+            "unreadable_marks": sum(1 for t in written if t == UNREADABLE),
+            **quran_fields,
         }
         if "error" in page:
             out["brain_error"] = str(page["error"])
@@ -1001,20 +946,26 @@ def create_app(
     ) -> dict[str, Any]:
         """Check a recitation: word by word (strict) or by meaning (contextual)."""
         started = time.perf_counter()
+        expected_text = _lines(expected_text)
         expected = _clean_text(expected_text, "expected_text", lang)
-        check_expected(expected, lang, "expected_text", mode)
+        analysis = check_expected(expected, lang, "expected_text", mode)
         require_asr()
         heard, quality, timings = listen(audio, lang)
 
         if mode == "strict":
-            result = check_recitation(expected, heard, lang)
+            # A Quran part is compared with its mushaf words as the Quran check does; the
+            # rest of the text keeps the speech tolerances (mommy.guard).
+            result, words = analysis.check_recitation(heard)
+            text, is_quran = word_feedback(result, lang, age, "recitation", words)
             out: dict[str, Any] = {
                 "mode": "strict",
                 "heard_text": heard,
                 "result": dataclasses.asdict(result),
-                "feedback": word_feedback(result, lang, age, "recitation"),
+                "feedback": text,
                 "quality": quality,
                 "say_again": result.say_again,
+                "feedback_is_quran": is_quran,
+                "quran_parts": analysis.parts_json(expected_text, lead=_lead(expected_text)),
             }
         else:
             if _quality_unclear(quality) or not tokenize(heard, lang):
@@ -1057,15 +1008,22 @@ def create_app(
     def dictation_phrases(body: PhrasesRequest) -> dict[str, Any]:
         """Cut the text into the phrases read out one at a time.
 
-        The Quran guard is that of ``/api/text/check`` in mode ``dictation``: a text that
-        passed :func:`looks_like_quran` (it can be recited and checked) can still hold a
-        phrase the voice may not speak, such as the basmala on its own line; that gives
-        ``scope: "phrase"``, which tells the client that only dictation is refused.
+        A text that is Quran (Q1) is refused (``422 quran_text``). In a school text with
+        Quran parts (Q2) every part is cut apart, in chunks like the other phrases, and is
+        read by a grown-up (``readers``), from the vowelled mushaf text (``read_text``);
+        the voice reads only the other phrases. The parts are found from the text here.
         """
         text = _clean_text(body.text, "text")  # punctuation only still gives {"phrases": []}
         _check_words(text, "text", body.lang)
-        check_expected(text, body.lang, "text", "dictation")
-        return {"phrases": split_phrases(text, body.lang)}
+        analysis = check_expected(text, body.lang, "text", "dictation")
+        plan = analysis.dictation_plan()
+        return {
+            "phrases": [p["phrase"] for p in plan],
+            "readers": [p["reader"] for p in plan],
+            "read_text": [p["read_text"] for p in plan],
+            "parts": [p["part"] for p in plan],
+            "quran_parts": analysis.parts_json(body.text, lead=_lead(body.text)),
+        }
 
     @app.post("/api/text/check")
     def text_check(body: TextCheckRequest) -> dict[str, Any]:
@@ -1085,17 +1043,19 @@ def create_app(
             # The general endpoints fall back to the script test without the Tanzil text;
             # this answer vouches for every mode, which needs the text itself.
             raise ApiError(503, "quran_unavailable", "The Quran text could not be loaded, so the text cannot be checked.")
-        quran_guard(text, body.lang, mode)
+        analysis = find_quran_parts(text, body.lang, quran)
+        quran_guard(analysis, text, mode)
         _refuse_lang_mismatch(text, body.lang, "text")
         out = {
             "ok": True,
             "words": len(tokenize(text, body.lang)),
-            "dictation": mode == "dictation" or not dictation_speaks_quran(text, body.lang, quran),
-            "contextual": mode == "contextual" or not looks_like_quran_for_meaning(text, quran),
+            "dictation": analysis.voice_safe,
+            "contextual": mode == "contextual" or not (analysis.parts or looks_like_quran_for_meaning(text, quran)),
+            **_quran_fields(analysis, body.text),
         }
         log.info(
-            "text/check %s %s: %d chars, %d words, %.3f s",
-            mode, body.lang, len(text), out["words"], time.perf_counter() - started,
+            "text/check %s %s: %d chars, %d words, %d Quran parts, %.3f s",
+            mode, body.lang, len(text), out["words"], len(analysis.parts), time.perf_counter() - started,
         )
         return out
 
@@ -1157,8 +1117,10 @@ def create_app(
     ) -> dict[str, Any]:
         """Check what the child wrote, from a photo (read blind) or typed by the parent."""
         started = time.perf_counter()
+        expected_text = _lines(expected_text)
+        written_text = _lines(written_text) if written_text is not None else None
         expected = _clean_text(expected_text, "expected_text", lang)
-        check_expected(expected, lang, "expected_text")
+        analysis = check_expected(expected, lang, "expected_text")
         data = _read_upload(image, MAX_IMAGE_BYTES, "image") if image is not None else b""
         if data and written_text is not None:
             raise ApiError(422, "invalid_request", "Send either image or written_text, not both.")
@@ -1201,15 +1163,19 @@ def create_app(
         if has_unreadable(read_text) and UNREADABLE not in uncertain:
             uncertain.append(UNREADABLE)  # a word the reader could not read: the parent checks it
 
-        result = check_writing(expected, read_text, lang, strict_tashkeel=strict_tashkeel)
+        # A Quran word is accepted in its mushaf spellings only (mommy.guard).
+        result, words = analysis.check_writing(read_text, strict_tashkeel=strict_tashkeel)
+        text, is_quran = word_feedback(result, lang, age, "dictation", words)
         out = {
             "read_text": read_text,
             "source": source,
             "uncertain_words": uncertain,
             "legible": legible,
             "result": dataclasses.asdict(result),
-            "feedback": word_feedback(result, lang, age, "dictation"),
+            "feedback": text,
             "needs_parent_confirmation": True,
+            "feedback_is_quran": is_quran,
+            "quran_parts": analysis.parts_json(expected_text, lead=_lead(expected_text)),
         }
         log.info(
             "dictation/check %s: source %s, image %d bytes, %.2f s", lang, source, len(data), time.perf_counter() - started
@@ -1291,7 +1257,7 @@ def create_app(
             require_asr()
             heard, quality, _ = listen(audio, "ar")
         elif heard_text is not None:
-            heard = heard_text.strip()
+            heard = _lines(heard_text).strip()
             _check_chars(heard, "heard_text")
         else:
             raise ApiError(422, "missing_field", "Missing field: audio or heard_text.")
@@ -1373,6 +1339,7 @@ __all__ = [
     "clean_image",
     "contains_short_ayah",
     "create_app",
+    "find_quran_parts",
     "dictation_speaks_quran",
     "error_response",
     "is_quran_phrase",
@@ -1381,4 +1348,14 @@ __all__ = [
     "looks_like_quran",
     "looks_like_quran_for_meaning",
     "text_script",
+    "QURAN_GUARD_CONTAINED_AYAH_WORDS",
+    "QURAN_GUARD_CONTEXTUAL_RUN_WORDS",
+    "QURAN_GUARD_FRAMED_GAP_WORDS",
+    "QURAN_GUARD_FRAMED_RUN_WORDS",
+    "QURAN_GUARD_MIN_SCORE",
+    "QURAN_GUARD_MIN_WORDS",
+    "QURAN_GUARD_RUN_WORDS",
+    "QURAN_MEANING_MESSAGE",
+    "QURAN_TEXT_MESSAGE",
+    "GuardMode",
 ]

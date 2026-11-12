@@ -22,6 +22,22 @@ This spec adds to `docs/CONTRACT.md`. Every hard rule there still applies.
    back ("try again").
 4. **Several children per device**, each with their own nickname, age band, language,
    avatar, tasks, star jar and rewards.
+5. **Quran in school texts (2026-11-11).** A text that *is* Quran (Q1: once the framing
+   formulas, a basmala at the start and the surah and ayah labels are left out, what
+   remains is whole ayat in mushaf order) belongs to the Quran section and to Quran
+   tasks: recitation only, word by word against the Tanzil text. A school text that
+   *includes* Quran (Q2: a lesson quoting an ayah or part of one, a text starting with
+   the basmala, a short ayah inside a sentence) is a normal school text with **Quran
+   parts**, which the server finds itself (`docs/CONTRACT.md`, hard rule 4):
+   - it can be recited **word by word only** (never by meaning), its Quran parts checked
+     against the mushaf words;
+   - it can be **dictated**: the synthetic voice never reads a Quran part; the dictation
+     stops at each one and **a grown-up reads it aloud** from the vowelled mushaf text,
+     shown after a tap and hidden again before the child writes;
+   - where the typed text differs from the mushaf, the parent sees the differences and
+     can put the mushaf words in with one tap;
+   - feedback about a mistake in a Quran part comes from fixed templates, quotes the
+     mushaf word, and is shown, never spoken.
 
 ## Product rules
 
@@ -30,8 +46,12 @@ This spec adds to `docs/CONTRACT.md`. Every hard rule there still applies.
   range and looking/from memory. Never offer "the meaning" for Quran anywhere.
 - A recite or dictation task's text is validated when the parent creates it, with the
   same server checks as Prepare's "Confirm text" (`quran_text`, `lang_mismatch`,
-  `unreadable_text`, `text_too_long`, empty text). Quran text cannot become a recite or
-  dictation task; the parent is told to create a Quran task instead.
+  `unreadable_text`, `text_too_long`, empty text). A text that is Quran (Q1) cannot
+  become a recite or dictation task; the parent is told to create a Quran task instead,
+  and is offered one on the ayat of the text when they are one range. A school text that
+  includes Quran (Q2, decision 5) can: a recite task with it is word by word only ("the
+  meaning" is disabled, with the reason), and a dictation task with it is allowed and
+  runs with the grown-up step for its Quran parts.
 - **Rewards and motivation** (research basis: Deci, Koestner & Ryan, 1999, *Psychological
   Bulletin* 125(6): promised rewards for doing or finishing a task lower children's later
   free-choice motivation; specific positive feedback raises it; unexpected rewards do not
@@ -151,7 +171,9 @@ storage, `now` passed in):
   (backoff: after 5 failures lock for 30 s, doubling to at most 15 min). A PIN is 4 to 6
   digits; Arabic-Indic digits typed are accepted. This is a child lock, not security: the
   UI never claims more. "Forgot PIN" resets the PIN after a parental gate (a multiplication
-  question written in words in the parent's language) and keeps all data.
+  question written in words in the parent's language) and keeps all data. (As built: the
+  old PIN stays until the new one is saved, wrong gate answers count toward the same
+  pause, and the reset is shown in the parent area; see the last section.)
 
 ## Web client
 
@@ -257,14 +279,14 @@ Tabs or sections:
 
 The first half of "Web client" is built: loading and hooks, Prepare's "Confirm text" on
 `/api/text/check`, first run and start, the PIN dialog, the child's home, the task
-runner, the dictation shortcut, and the parent area's Children and Tasks sections. To
-review, Rewards and most of Settings are real sections with a placeholder, for the next
-step. Where this differs from the text above, or the text left a choice open:
+runner, the dictation shortcut, and the parent area's Children and Tasks sections (To
+review, Rewards and the rest of Settings came in the second half, below). Where this
+differs from the text above, or the text left a choice open:
 
 - **Consent is stored** (`parent.consentAt`, `parent.aiConsentAt`), as the data model
   says, instead of being asked again each session. One consent box sets both (its notice
   names what goes to Claude when Claude is configured). It is in the family setup and in
-  the parent area under Settings (the only live control there for now). The AI
+  the parent area under Settings. The AI
   disclosure is still shown at the start of every session: on the setup or on "Who is
   learning?", which every session starts with (never straight on a child's screen).
 - **Languages.** The child's screens (home, Prepare, Recite, Dictation, Quran) are in
@@ -281,17 +303,23 @@ step. Where this differs from the text above, or the text left a choice open:
   of the parent area asks for a new PIN (twice); consent is ticked in Settings (v1 never
   stored it).
 - **Prepare.** "Confirm text" sends `{text, lang, mode: "strict"}` once. `dictation:
-  false` rules out dictation (the existing reason, `error_quran_phrase`); `contextual:
-  false` disables "The meaning", selects "Word by word" and shows why. The second,
-  line-by-line `/api/dictation/phrases` request is gone. `words: 0` is "no words".
+  false` rules out dictation (since decision 5 only the server's safety net, with the
+  reason `error_quran_unmarked`); `contextual: false` disables "The meaning", selects
+  "Word by word" and shows why. The second, line-by-line `/api/dictation/phrases`
+  request is gone. `words: 0` is "no words".
 - **Task form.** The text is checked in the mode of the task: `strict` or `contextual`
   for recite, `dictation` for dictation. When `contextual` refuses with `quran_text`, one
   more check in `strict` tells "Quran text: create a Quran task" from "Quran words (the
-  basmala): word by word only". An edit that keeps the text, language and mode is not
+  basmala): word by word only" (`dictation` likewise tells it from the server's safety
+  net; see the last section for decision 5). An edit that keeps the text, language and mode is not
   checked again (it was checked when saved). Offline (no answer) says so and keeps the
   form; nothing is saved without a successful check. A page photo goes through the same
   reader as Prepare, with its review notes; a page with Quran text points to a Quran
-  task (no button to the child's Quran screen from the parent area).
+  task (no button to the child's Quran screen from the parent area; since decision 5, a
+  button that turns the form into a Quran task on the page's ayat). Without the online
+  AI (`brain: "offline"`), a recite task shows "Without the online AI, the meaning check
+  is only approximate." under the mode choice, as Prepare does, while "The meaning" can
+  be chosen (not for a text with Quran words).
 - **Quran task title.** The default title is the surah name and range in the child's
   language ("سورة الإخلاص ١–٤", "Al-Ikhlaas 1–4"), since the child reads it.
 - **Task runner.** Only To do tasks have "Start". The free-practice page is kept aside
@@ -313,3 +341,261 @@ step. Where this differs from the text above, or the text left a choice open:
   a notice; a document that needed repairs is copied there too and used repaired, with a
   notice. A full storage (`QuotaExceededError`) and blocked storage (private mode) are
   shown in a notice; the session goes on in memory.
+
+## Decisions and deviations recorded while building the web client (second half)
+
+The second half is built: To review, the details of a task with "Confirm anyway",
+Rewards and the rest of Settings, with the child's home showing what they change. Where
+this differs from the text above, or the text left a choice open:
+
+- **The parent area opens where something waits**: on To review when a task waits for a
+  grown-up, else on Tasks (on Settings without consent, as before). The labels of To
+  review and Rewards carry a count: tasks waiting, and task rewards to give.
+- **To review.** Each task shows the child (avatar and nickname), the task (kind, title,
+  pass level), the best and the last result, the number of tries, when it became ready,
+  and the improvement line when it is greater than 0. A result is the share of words
+  right as a percentage, which never rounds up to 100 below a perfect score; for "the
+  meaning" it is the last verdict in words. The two notes (the app can mishear; no
+  recordings, so ask the child to show you) stand above the queue while it has tasks;
+  the empty state says that a task the app has not passed can still be confirmed in its
+  details. "Not yet: try again" opens an optional note in place (at most 120
+  characters); the child sees it on the task card ("💬 Note: …") and the attempts stay.
+- **"Confirm anyway" is in the details of a task** (Tasks, "Details"), for any task to
+  do: one the app never passed (with the mishearing note), or one to do again after "Not
+  yet" or an edit (worded so). The details also show the dates, the text (or the surah,
+  the ayat and looking/from memory), the reciting mode, the figures, the note, how the
+  task was confirmed and the state of its reward, with Confirm and "Not yet" for a task
+  waiting and "Given" for an unlocked reward. One task's details are open at a time.
+- **Tasks and Rewards show the same child**: choosing a child in one chooses it in the
+  other.
+- **Rewards.** The one-line help about praise and surprises moved from the top of the
+  parent area into Rewards, where rewards are given. Goals: the open ones cheapest first,
+  then the given ones with their date; "Give" appears only when the jar covers the cost
+  (otherwise "Still needed: N"); a goal can be removed, given or not (the history keeps
+  its amounts). The stars of a goal start at 10 and accept Arabic-Indic digits. A
+  surprise is a picture and a text, at any time; "Not seen yet" lists the surprises the
+  child has not opened. "Adjust stars" asks for a reason (the text above says "with a
+  reason"; rewards.js would accept none), offers "Add stars" or "Take stars away", and a
+  correction larger than the jar stops at zero and says so; its hint says that stars are
+  never taken away for a try that did not work. The history shows the newest ten entries
+  and "Show all (N)"; a correction down is written in the normal text colour, never red.
+- **The child's side shows no loss.** The jar shows its new number after a correction or
+  a goal given; the reasons are only in the parent's history. (A later step could show
+  the goals received on the Done shelf.) The surprise card fades in with a small slide
+  (its size never changes; no motion with reduced motion) and is shown once.
+- **Settings.** "Change the PIN" uses the PIN dialog: the current PIN (a wrong one counts
+  toward the pause, like any PIN entry), then the new one twice; "Forgot the PIN?" works
+  there too. The parent's language switches the parent area and the PIN dialog at once;
+  status lines written in the old language are cleared; each child keeps their own
+  language. "Delete all data on this device" asks twice in place ("Continue", then
+  "Delete everything"), then removes `mommy.data.v2`, `mommy.profile.v1` and every
+  `mommy.data.v2.corrupt.*` copy (no other key), forgets the session, empties the setup
+  form (in the grown-ups' language) and starts the first-run setup with a notice. Another
+  tab gets the `storage` event and does the same. If the browser refuses the removal,
+  nothing is forgotten and the parent is told.
+- **Status lines that hold a name or a reward** are built with `<bdi>` for the text people
+  typed, so a French title or an Arabic name keeps its direction in any language.
+
+## Decisions and deviations recorded while building Quran in school texts (web client)
+
+Decision 5 is built in the web client on the server's answers (`quran_parts`,
+`mushaf_text`, `quran_range`, `readers`, `read_text`, `feedback_is_quran`); the browser
+never looks for Quran words itself. Where this differs from the text above, or the text
+left a choice open:
+
+- **Prepare, "Confirm text".** One `/api/text/check` request (mode strict), as before.
+  A text with Quran parts is confirmed with "It includes words of the Quran", and a note
+  under the text lists each part's reference (surah and ayah, "part of it" for a partial
+  ayah; Arabic-Indic digits in the Arabic UI) and says what that means: checked word by
+  word against the mushaf, "The meaning" not available, and in a dictation a grown-up
+  reads them aloud because the voice never reads the Quran. "The meaning" is disabled
+  with the reason and "Word by word" chosen; dictation stays available. The note comes
+  from the server's answer for the text in the box, and goes away when the text changes.
+- **Differences from the mushaf.** Each one is listed as the typed word and the mushaf
+  word (a changed word), a missing word, or an extra word; vowel marks and the Uthmani or
+  standard spelling never count. One button, "Use the mushaf text", puts the server's
+  `mushaf_text` in the box (only the differing words change) and confirms it again at
+  once; the note then says the mushaf words were put in. A text with differences is
+  still confirmed as typed: the checks use the mushaf words anyway, and (since the
+  review fixes) the child's Recite card shows the mushaf words. A page photo shows
+  the same note right after it is read (its `mushaf_text` also fills a `[?]` where the
+  reader dropped a word of an ayah). A page that is Quran keeps its "page is Quran"
+  message, and its button opens the Quran section on its ayat.
+- **A text that is Quran (Q1)** is refused as before; with `quran_range` the "Go to the
+  Quran section" button opens the Quran section on that surah and range (saved as the
+  child's Quran choice, as when the child picks it).
+- **Recite.** For a text with Quran parts the mode is word by word (the selector is on
+  Prepare, and a task's mode is locked as before), and a note for the grown-up says that
+  the Quran words are checked as written in the mushaf and that the app's voice never
+  reads them, so a grown-up can read the text aloud first. The app has no "read the text
+  aloud as a model" button: the recite screen's "Listen" only speaks the feedback, so Q2g
+  holds by construction. Feedback with `feedback_is_quran` (it quotes a mushaf word) is
+  shown as text, never played and never sent to `/api/tts`: "Listen" is hidden and a line
+  says so. The same holds for the dictation result.
+- **Dictation, the grown-up step.** For a `grown_up` phrase the app never calls
+  `/api/tts`. The card shows the part number as usual and, in large type for the child,
+  "Let's ask a grown-up to read this part" (هيا نطلب من أحد الكبار قراءة هذا الجزء), with
+  a box "For the grown-up" that explains why and has one big button, "Show the Quran
+  words". The vowelled Uthmani chunk then appears, verbatim, in the Quran screen's font
+  and size and with its line breaks (a pause mark stays with its word), with "Hafs –
+  Tanzil" under it and "Done reading". "Done reading" removes the words from the page,
+  frees "Next" and says "Now let's write it, then press Next". "Next" waits for "Done
+  reading", as it waits for the voice. "Repeat" asks the grown-up again (the words hidden,
+  the button back) and never calls the voice. Focus moves to "Show the Quran words" when
+  the step starts, to "Done reading" when the words show and to "Next" afterwards; the
+  child's line is a polite live region; everything works with the keyboard. Leaving the
+  screen hides the words. The dictation's start screen says, before it starts, that a
+  grown-up will be asked to read the Quran parts.
+- **The voice's safety net.** If `/api/tts` ever refuses a phrase as `quran_text` (Quran
+  words the server did not mark as a part), that phrase becomes a grown-up step (also
+  when it was being fetched ahead) and the dictation goes on; the grown-up is shown the
+  phrase as written (there is no mushaf text for it), with wording that does not call it
+  the mushaf. The old "back to the start of the dictation" is gone. The server's other
+  safety net, `"dictation": false` at "Confirm text" or a `quran_text` refusal from
+  `/api/dictation/phrases` for a text the server checked, still rules out the dictation
+  with the reason next to the disabled button; the `"scope": "phrase"` paths are removed
+  (the server no longer sends them).
+- **Tasks.** The text is checked in the mode of the task, as before. A recite task by
+  meaning whose text has Quran parts is refused once with the reason; "The meaning" is
+  then disabled and "Word by word" chosen, and the next "Save" saves it. A dictation
+  task with Quran parts is saved, and the saved message says that a grown-up reads them.
+  Differences from the mushaf are shown in the form before the first save (the form does
+  not close on them): "Use the mushaf text" puts the mushaf words in and saves (the new
+  text is checked first), or, for a dictation task only since the review fixes, a second
+  "Save" keeps the text as typed (a recite task needs the mushaf text). A text that is
+  Quran gets "Create a Quran task with these ayat" when the server gave its range (new
+  tasks only; the kind of a task never changes): the form becomes a Quran task on that
+  surah and range. A page photo in the form shows the same note and differences ("Use
+  the mushaf text" then only fixes the text: nothing is saved before "Save").
+- **The task runner** asks `/api/text/check` for the text of a recite or dictation task
+  when it starts (a task keeps only its text), so the notes for the grown-up show before
+  the first result; the dictation's phrases and every check result carry the parts too,
+  so a failed request changes nothing else.
+
+## Decisions and deviations recorded while building the logic (`web/rewards.js`)
+
+Where `web/rewards.js` differs from the text above, or the text left a choice open:
+
+- **Errors are thrown.** `createTask` returns `{doc, task}` or throws
+  `RewardsError('bad_input', …)` with `field` set to the form field, rather than
+  returning `{error}`; every mutator throws a `RewardsError` with a stable code
+  (`not_found`, `bad_state`, `bad_input`, `insufficient_stars`, `locked`,
+  `unavailable`) and changes nothing when it throws. `validateDoc` never throws and
+  returns `{ok, doc, repaired, errors}` (`repaired` lists each repair; `errors` only the
+  reasons a document is rejected).
+- **Two additions to the data model.** A ledger reason `'carry'`: with the 200-entry
+  cap, the oldest entries are folded into one `carry` entry at the start whose delta is
+  their sum, so the balance always equals the sum of the ledger. A ledger `note` (null,
+  or 1 to 80 characters on `adjust` entries only) holds the reason given under "Adjust
+  stars".
+- **`'unavailable'`** is the code when SubtleCrypto or `getRandomValues` is missing (a
+  page that is not a secure context, such as a LAN address over http). `verifyPin`
+  resolves with code `'locked'` instead of throwing while the PIN pauses.
+- **Pass rules, read literally.** For strict recite and dictation, "all words right"
+  (`minAccuracy: 1`) is met when `word_accuracy` is 1, so an extra (inserted) word still
+  passes; for Quran, `minAccuracy: 1` means `n_errors === 0`, so an insertion fails. A
+  Quran attempt is accepted only from `/api/quran/check` (it has `first_error`), and a
+  Quran check result never counts for a recite or dictation task (review fix RL-8).
+- **Choices.** Ids are 16 base36 characters from `crypto.getRandomValues`. The default
+  pass level is all words right and the default stars 2; the avatars are a fixed list of
+  16 and the reward pictures of 20. Every mutator takes `now`. `updateTask` works only on
+  tasks to do or waiting; archiving an archived task is `bad_state`; marking a surprise
+  seen twice changes nothing. `childSummary` does not use `now` (no countdowns). A v1
+  profile without a nickname is named after its avatar.
+
+## Decisions and deviations recorded while fixing the review findings (2026-11-12)
+
+Two reviews (UX and logic) of the tasks and rewards and of Quran in school texts were
+resolved. Where the result differs from the text above, or the text left a choice open:
+
+- **"Forgot the PIN?" never leaves the family without a PIN** (UX-01, RL-4). The gate is
+  a two-digit number times a one-digit number, still written in words ("forty-seven times
+  eight"; in Arabic "سبعة وأربعين في ثمانية") and answered in digits. A wrong answer
+  counts toward the same pause as a wrong PIN, and "Forgot the PIN?" is hidden while the
+  PIN pauses. A right answer does not remove the PIN: the old PIN works until the new
+  one is saved, so Cancel keeps it (`setPinRecord` replaces it in one step; `clearPin`
+  is no longer used by the app). The document records `parent.pinResetAt` (a new field;
+  a document saved before it reads as null), and the parent area shows "The PIN was
+  reset on <date>. If it was not you, please choose a new PIN in Settings." until a
+  grown-up hides it (`dismissPinReset`). A migrated v1 family, which has no PIN yet,
+  answers the same gate before creating its first PIN (the text above says it is only
+  asked to create one); `validateDoc` therefore keeps a pause on a document without a
+  PIN, and still clears it with an invalid PIN record.
+- **The parent area locks by itself** (UX-02): when the page is hidden (another app, the
+  screen off) and after 3 minutes without a tap or a key, it closes on "Who is learning?";
+  a line under its title says so.
+- **Two tabs never overwrite each other** (RL-3). Saving is compare-and-swap: before an
+  operation, a tab takes the stored document when another tab saved since it last read
+  or wrote, runs the operation on it, then draws the screen again. The PIN check is split
+  (`checkPin` hashes, `applyPinCheck` records the outcome on the document as it is after
+  the hash), so a slow phone's check keeps what another tab saved, and failures made at
+  the same time in several tabs all count.
+- **Irreversible actions ask in place first** (UX-09): "Archive" and a goal's "Remove"
+  show a question with the action and "Keep it" (no undo, which could restore an older
+  document over another tab's change). The button that marks a reward given reads "Mark
+  as given" (تسجيل التقديم), not "Given" (UX-10).
+- **The child never reads a misquoted ayah** (UX-03). A recite task whose Quran words
+  differ from the mushaf is saved only with the mushaf text ("Use the mushaf text"); a
+  second "Save" no longer keeps the typed words for a recite task (it still does for a
+  dictation, whose Quran words the child never sees: a grown-up reads the mushaf text).
+  The default title of such a dictation is made from the mushaf words. In free practice,
+  and for a task saved earlier with a misquote, the Recite card shows the server's
+  `mushaf_text`; the typed text stays in the grown-up's box.
+- **One message for two problems** (UX-06): a recite task by meaning whose Quran words
+  also differ from the mushaf gets one message that says both, and the focus goes to the
+  note under the text.
+- **The saved text's Quran parts are known when it is edited or looked at** (UX-17). The
+  edit form and the task's details show the parts of the saved text ("The meaning" is off
+  from the start); the server's answer is kept for the session (filled when a task is
+  saved, else asked once).
+- **A task by meaning whose text has Quran words** (RL-6; saved before the rule, or
+  before a finder improvement) cannot be recorded: the child is told "Let's ask a
+  grown-up to change this task", and its details offer "Recite word by word" (the task's
+  mode becomes word by word, its pass level stays). The server marks a refusal by meaning
+  with `"reason": "meaning"`, so the client never words it as "this text is from the
+  Quran" with the Quran-section button.
+- **The grown-up step for a child who cannot read yet** (UX-04). The voice says the
+  child's line ("Let's ask a grown-up to read this part") once when the step starts, in
+  the child's language; it holds no Quran word, and the Quran words never go to the voice.
+  Repeat asks the grown-up again without the voice: the product owner's rule says Repeat
+  on a Quran part never calls the voice, so the reviewer's "speak the ask line again on
+  Repeat" was not followed. "Show the words of the Quran" is an outline button, so the
+  child's eye goes to the ask line (a press-and-hold was not added: it is harder for a
+  grown-up with a screen reader). The grown-up text asks to show the words "where only
+  you can see them". A dictation task whose text has Quran parts says "Let's do this one
+  with a grown-up" on the child's To-do card and on the dictation's start.
+- **Differences from the mushaf** (UX-05) are shown against the standard spelling with
+  the changed letters marked, then the Uthmani form; a missing word says after which
+  word; each reference shows the part's first two and last two mushaf words.
+- **A dictation is checked on paper** (UX-13): the details of a dictation the app has not
+  passed say "If you have checked your child's paper yourself…", and a dictation waiting
+  for review says "Please look at the paper before confirming".
+- **Wording.** "The meaning" off now gives the reason: the app never judges the meaning
+  of the Quran (UX-11). The page message fires only for a page that is ayat of the Quran
+  only, and says so (UX-14). The child's praise line has the Arabic number forms (one,
+  two, 3 to 10, 11 or more) and the review labels agree ("أفضل نتيجة"، "آخر نتيجة")
+  (UX-15). Older strings shown on every session were brought to the wording policy: the
+  Arabic disclosure and consent texts (no ـك ending, no naming of which parent), and a
+  consent sentence that fits a family with several children (UX-16). French uses
+  no-break spaces before : ; ! ? and inside « » (a smoke check keeps it so), and the
+  child-facing French is "nous" throughout (UX-12). The Arabic feedback about a word of a
+  Quran part says what to do ("… هيا نقرؤها مرة أخرى") (UX-18).
+- **Layout** (UX-07, UX-08, UX-19): a word in a segmented choice never breaks in the
+  middle and the pass levels go to one column below 380 px; a setup error stands under
+  its field, which points to it (`aria-invalid`, `aria-describedby`); the tanzil.net
+  link is a full touch target.
+- **Quran in school texts, on the server** (RL-1, RL-2, RL-5, RL-7; see
+  `docs/CONTRACT.md`, guard.py). A short ayah with one misread or dropped word is found
+  framed or not; Quran words joined by a hyphen, an apostrophe or the Arabic letter mark
+  are separate words, and the voice also refuses words joined by a tatweel or an
+  invisible character and a short ayah after و/ف. The everyday formulas stay ordinary
+  words whatever the commas: a dictation joins a formula the voice refuses on its own
+  with a neighbouring phrase (only a text that is nothing but a formula has it read by a
+  grown-up), so the `[split]` sentences can again be recited by meaning. A word the child
+  adds past a text with Quran parts, or a word of a part said elsewhere, never reaches
+  Claude.
+- **Not done:** a Q1 text that lost its last word to OCR, framed and alone, stays a Q2
+  text (a partial ayah on its own is Q2 by the product owner's decision, and the two
+  cannot be told apart); a three-word ayah with a dropped word or a two-letter changed
+  word outside a framing formula, and a misquote with two errors, are not found
+  (measured in `docs/CONTRACT.md`).

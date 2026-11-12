@@ -144,6 +144,9 @@ FRAMING_FORMULAS: tuple[str, ...] = (
     "قوله تعالى",
     ISTIADHA,
 )
+#: The framing formulas that close a quotation (they follow the ayah); the others open
+#: one (the ayah follows them). See :meth:`Quran.framing_spans`.
+CLOSING_FRAMING_FORMULAS: tuple[str, ...] = ("صدق الله العظيم",)
 
 #: Everyday formulas whose words are also a few consecutive words of the Quran (said
 #: before a meal, on good news, as a promise). The contextual-mode run rule
@@ -188,6 +191,15 @@ EVERYDAY_AYAT: tuple[tuple[int, int], ...] = (
 #: is a run of five Quran words, which the general guard already refuses.
 SHORT_AYAH_MAX_WORDS = 4
 
+#: Longest ayah, in words, that :meth:`Quran.near_ayat` looks for with one word changed or
+#: dropped (an OCR-like misquote of a short ayah). Longer ayat with one such word keep a
+#: run of three or more exact words on each side, which the near match of the finder
+#: (``mommy.guard``) completes.
+NEAR_AYAH_MAX_WORDS = 7
+#: Shortest ayah :meth:`Quran.near_ayat` looks for with a dropped word: the words left
+#: must be three or more.
+NEAR_AYAH_MIN_DROP_WORDS = 4
+
 #: Penalty per extra word of a merged step in :func:`build_word_map`.
 MERGE_PENALTY = 0.25
 #: Largest number of words merged into one in :func:`build_word_map`.
@@ -207,6 +219,7 @@ PREVIEW_WORDS = 8
 
 _SEPARATOR = -1  # word id between surahs: never matches
 _UNKNOWN = -2  # heard word id for a word that does not occur in the Quran
+_WILDCARD = "\x00"  # a word of any key, in the signatures of near_ayat
 _HASH_BASE = np.uint64(0x9E3779B97F4A7C15)
 
 
@@ -733,6 +746,11 @@ class Quran:
             self._ayat[key] = Ayah(key[0], key[1], display, match, display_words, match_words, word_map)
         self._build_index()
         self._framing_keys = [[_speech_key(w) for w in f.split()] for f in FRAMING_FORMULAS]
+        self._framing_closing = [f in CLOSING_FRAMING_FORMULAS for f in FRAMING_FORMULAS]
+        # Surah names (Tanzil metadata), by the speech keys of their words.
+        self._surah_names: dict[tuple[str, ...], int] = {
+            tuple(_speech_key(w) for w in tokenize(info.name_ar, "ar")): info.number for info in self._surah_info
+        }
         self._formula_keys = [[_speech_key(w) for w in tokenize(f, "ar")] for f in EVERYDAY_FORMULAS]
         # Whole ayat of two words or more, by their speech keys (see whole_ayah).
         self._ayah_by_keys: dict[tuple[str, ...], tuple[int, int]] = {}
@@ -851,6 +869,7 @@ class Quran:
             loc_ayah.append(0)
             loc_word.append(-1)
         self._vocab = vocab
+        self._keys_by_id: list[str] = list(vocab)  # ids are given in insertion order
         self._ids = np.array(ids, dtype=np.int64)
         self._words = words
         self._loc_surah = np.array(loc_surah, dtype=np.int32)
@@ -1372,27 +1391,45 @@ class Quran:
         pause marks between the words it keeps stay where they are. It ends with the
         ayah: words of the next ayah are never run into it.
         """
+        count = len(self._ayat[(surah, ayah)].display_words)
+        if not 0 <= word < count:
+            return ""
+        return self.display_slice(surah, ayah, word, min(word + PREVIEW_WORDS, count) - 1)
+
+    def display_slice(self, surah: int, ayah: int, first: int, last: int) -> str:
+        """Display words ``first..last`` (inclusive) of an ayah, cut verbatim from its
+        Uthmani line at word boundaries: the pause marks between the words kept stay where
+        they are, and nothing else is added or changed. ValueError for a bad range."""
         display = self._ayat[(surah, ayah)].display
         spans = [m.span() for m in re.finditer(r"\S+", display) if not is_pause_mark_token(m.group())]
-        if not 0 <= word < len(spans):
-            return ""
-        last = min(word + PREVIEW_WORDS, len(spans)) - 1
-        return display[spans[word][0] : spans[last][1]]
+        if not 0 <= first <= last < len(spans):
+            raise ValueError(f"display words {first}..{last} are not in ayah {surah}:{ayah}")
+        return display[spans[first][0] : spans[last][1]]
 
     # -- Quran text in other texts (the general endpoints' guard) ---------------
+
+    def framing_spans(self, tokens: Sequence[str]) -> list[tuple[int, int, bool]]:
+        """The framing formulas (:data:`FRAMING_FORMULAS`) among ``tokens`` (speech keys):
+        ``[(start, end, closing)]`` token spans in text order, ``closing`` for a formula
+        that follows the ayah it frames (:data:`CLOSING_FRAMING_FORMULAS`). The formulas
+        are matched in the order of :data:`FRAMING_FORMULAS` and never overlap."""
+        keys = [_speech_key(t) for t in tokens]
+        drop = [False] * len(keys)
+        found: list[tuple[int, int, bool]] = []
+        for formula, closing in zip(self._framing_keys, self._framing_closing):
+            f = len(formula)
+            for i in range(len(keys) - f + 1):
+                if keys[i : i + f] == formula and not any(drop[i : i + f]):
+                    drop[i : i + f] = [True] * f
+                    found.append((i, i + f, closing))
+        return sorted(found)
 
     def strip_framing(self, text: str) -> tuple[list[str], bool]:
         """The tokens of ``text`` without framing formulas (:data:`FRAMING_FORMULAS`,
         such as ``قال تعالى`` or ``صدق الله العظيم``), and whether one was found."""
         tokens = tokenize(text or "", "ar")
-        keys = [_speech_key(t) for t in tokens]
-        drop = [False] * len(tokens)
-        for formula in self._framing_keys:
-            f = len(formula)
-            for i in range(len(keys) - f + 1):
-                if keys[i : i + f] == formula and not any(drop[i : i + f]):
-                    drop[i : i + f] = [True] * f
-        return [t for t, d in zip(tokens, drop) if not d], any(drop)
+        drop = {i for start, end, _ in self.framing_spans(tokens) for i in range(start, end)}
+        return [t for i, t in enumerate(tokens) if i not in drop], bool(drop)
 
     def _formula_mask(self, keys: Sequence[str]) -> list[bool]:
         """For each key, whether it belongs to an everyday formula (:data:`EVERYDAY_FORMULAS`)."""
@@ -1415,30 +1452,161 @@ class Quran:
         Quran, so no run passes through a formula."""
         if not NGRAM_MIN <= min_words <= NGRAM_MAX:
             raise ValueError(f"min_words must be from {NGRAM_MIN} to {NGRAM_MAX}")
+        spans: list[tuple[int, int]] = []
+        for a, b, _ in sorted(self.exact_matches(tokens, min_words, exclude_formulas=exclude_formulas)):
+            if spans and a <= spans[-1][1]:
+                spans[-1] = (spans[-1][0], max(spans[-1][1], b))
+            else:
+                spans.append((a, b))
+        return spans
+
+    def exact_matches(
+        self, tokens: Sequence[str], min_words: int, *, exclude_formulas: bool = False
+    ) -> list[tuple[int, int, int]]:
+        """Every place where ``tokens`` hold a run of at least ``min_words`` (3 or more)
+        consecutive words found consecutively in the Quran (speech keys, Simple-Clean
+        text): ``[(start, end, g)]`` with the token span and the global position ``g`` of
+        its first Quran word (a match-word index of the whole Quran, see
+        :meth:`location`). Each run is maximal at its place: it cannot be made longer on
+        either side there. A run found at several places (a repeated passage) is listed
+        once per place. ``exclude_formulas`` is as for :meth:`quran_runs`. Runs never
+        cross a surah boundary."""
+        if min_words < NGRAM_MIN:
+            raise ValueError(f"min_words must be at least {NGRAM_MIN}")
+        n = min(min_words, NGRAM_MAX)
         keys = [_speech_key(t) for t in tokens]
         ids = np.array([self._vocab.get(k, _UNKNOWN) for k in keys], dtype=np.int64)
         if exclude_formulas and len(ids):
             ids[np.array(self._formula_mask(keys), dtype=bool)] = _UNKNOWN
         if len(ids) < min_words:
             return []
-        starts = np.flatnonzero(_clean_windows(ids, min_words))
+        starts = np.flatnonzero(_clean_windows(ids, n))
         if not len(starts):
             return []
-        query = _window_hashes(ids, min_words)[starts]
-        sorted_hashes, positions = self._ngrams[min_words]
+        query = _window_hashes(ids, n)[starts]
+        sorted_hashes, positions = self._ngrams[n]
         left = np.searchsorted(sorted_hashes, query, side="left")
         right = np.searchsorted(sorted_hashes, query, side="right")
-        span = np.arange(min_words)
-        spans: list[tuple[int, int]] = []
-        for h, lo, hi in zip(starts, left, right):
+        span = np.arange(n)
+        hits: dict[int, set[int]] = {}
+        for h, lo, hi in zip(starts.tolist(), left.tolist(), right.tolist()):
+            if lo == hi:
+                continue
             pos = positions[lo:hi]
-            if len(pos) and np.any(np.all(self._ids[pos[:, None] + span] == ids[h + span], axis=1)):
-                a, b = int(h), int(h) + min_words
-                if spans and a <= spans[-1][1]:
-                    spans[-1] = (spans[-1][0], b)
-                else:
-                    spans.append((a, b))
-        return spans
+            ok = pos[np.all(self._ids[pos[:, None] + span] == ids[h + span], axis=1)]
+            if len(ok):
+                hits[h] = set(ok.tolist())
+
+        # Chain the windows: window h at position p continues window h - 1 at p - 1.
+        found: list[tuple[int, int, int]] = []
+
+        def close(origin: tuple[int, int], last: int) -> None:
+            h0, p0 = origin
+            if last - h0 + n >= min_words:
+                found.append((h0, last + n, p0))
+
+        active: dict[int, tuple[int, int]] = {}  # position at the last window -> chain origin
+        last_h = -2
+        for h in sorted(hits):
+            here = hits[h]
+            follows = last_h == h - 1
+            nxt = {p: (active.get(p - 1) if follows else None) or (h, p) for p in here}
+            for p, origin in active.items():
+                if not (follows and p + 1 in here):
+                    close(origin, last_h)
+            active, last_h = nxt, h
+        for origin in active.values():
+            close(origin, last_h)
+        return sorted(found)
+
+    # -- positions (global match-word indexes) ---------------------------------
+
+    def global_position(self, surah: int, ayah: int, word: int = 0) -> int:
+        """The global position of match word ``word`` of an ayah (see :meth:`location`)."""
+        self._check_range(surah, ayah, ayah)
+        count = len(self._ayat[(surah, ayah)].match_words)
+        if not 0 <= word <= count:
+            raise ValueError(f"ayah {surah}:{ayah} has {count} words")
+        return self._ayah_start[(surah, ayah)] + word
+
+    def location(self, g: int) -> tuple[int, int, int]:
+        """``(surah, ayah, match word index)`` of a global position: the match (Simple-Clean)
+        words of the whole Quran in one sequence, with one unused position after each
+        surah, as :meth:`exact_matches` and :meth:`locate` count them."""
+        if not 0 <= g < len(self._ids) or self._ids[g] == _SEPARATOR:
+            raise ValueError(f"no Quran word at position {g}")
+        return self._location(g)
+
+    def ayah_bounds(self, g: int) -> tuple[int, int]:
+        """``(first, end)`` global positions of the ayah that holds position ``g``."""
+        surah, ayah, _ = self.location(g)
+        start = self._ayah_start[(surah, ayah)]
+        return start, start + len(self._ayat[(surah, ayah)].match_words)
+
+    def surah_bounds(self, g: int) -> tuple[int, int]:
+        """``(first, end)`` global positions of the surah that holds position ``g``."""
+        return self._surah_range[self.location(g)[0]]
+
+    def words_at(self, g_lo: int, g_hi: int) -> list[str]:
+        """The verbatim Simple-Clean words at global positions ``g_lo..g_hi - 1`` (one surah)."""
+        self._check_span(g_lo, g_hi)
+        return list(self._words[g_lo:g_hi])
+
+    def keys_at(self, g_lo: int, g_hi: int) -> list[str]:
+        """The speech keys of :meth:`words_at`."""
+        self._check_span(g_lo, g_hi)
+        return [self._keys_by_id[i] for i in self._ids[g_lo:g_hi].tolist()]
+
+    def word_groups(self, g_lo: int, g_hi: int) -> list[dict[str, Any]]:
+        """The display (Uthmani) words of the match words ``g_lo..g_hi - 1``, in order.
+
+        Each group is ``{"g": (first, end), "surah", "ayah", "display": (first, last),
+        "complete": bool}``: match words ``first..end - 1`` and the display words
+        ``first..last`` (inclusive) of that ayah that spell them. A group is one match
+        word and one display word, several match words written as one display word
+        (the vocative ``يا أيها``), or one match word written as several display words.
+        ``complete`` is False when the display word also spells a match word outside the
+        span (the span starts or ends inside it)."""
+        self._check_span(g_lo, g_hi)
+        groups: list[dict[str, Any]] = []
+        g = g_lo
+        while g < g_hi:
+            surah, ayah, m = self._location(g)
+            a = self._ayat[(surah, ayah)]
+            d = a.word_map[m]
+            m_end = m + 1  # match words that share display word d
+            while m_end < len(a.match_words) and a.word_map[m_end] == d:
+                m_end += 1
+            d_last = (a.word_map[m_end] - 1) if m_end < len(a.match_words) else len(a.display_words) - 1
+            m_first = m
+            while m_first > 0 and a.word_map[m_first - 1] == d:
+                m_first -= 1
+            start = self._ayah_start[(surah, ayah)]
+            end = min(start + m_end, g_hi)
+            groups.append({
+                "g": (g, end), "surah": surah, "ayah": ayah, "display": (d, max(d, d_last)),
+                "complete": m_first == m and end == start + m_end,
+            })
+            g = end
+        return groups
+
+    def surah_name_at(self, tokens: Sequence[str], i: int) -> int:
+        """The number of tokens from ``tokens[i]`` that spell a surah's Arabic name (as in
+        the Tanzil metadata, compared by speech keys), or 0."""
+        for n in (2, 1):
+            if i + n <= len(tokens) and tuple(_speech_key(t) for t in tokens[i : i + n]) in self._surah_names:
+                return n
+        return 0
+
+    def muqattaat_joins(self, g_lo: int, n: int, heard_keys: Sequence[str]) -> dict[tuple[int, int], list[int]]:
+        """The disjoined letters recited by name, as :meth:`check` accepts them, for the
+        match words ``g_lo..g_lo + n - 1``: ``{(i, j): [k]}`` where word ``i`` of the span
+        matches heard keys ``j..j + k - 1`` (``extra_joins`` of :func:`mommy.align.align_with_joins`)."""
+        return self._muqattaat_joins(g_lo, n, heard_keys)
+
+    def _check_span(self, g_lo: int, g_hi: int) -> None:
+        if not 0 <= g_lo < g_hi <= len(self._ids) or bool(np.any(self._ids[g_lo:g_hi] == _SEPARATOR)):
+            raise ValueError(f"positions {g_lo}..{g_hi - 1} are not words of one surah")
 
     def whole_ayah(self, tokens: Sequence[str]) -> tuple[int, int] | None:
         """``(surah, ayah)`` when ``tokens`` are exactly the words of one ayah of at least
@@ -1446,6 +1614,63 @@ class Quran:
         if len(tokens) < 2:
             return None
         return self._ayah_by_keys.get(tuple(_speech_key(t) for t in tokens))
+
+    def _near_index(self) -> tuple[dict[tuple[str, ...], list[tuple[int, int, int]]], dict[tuple[str, ...], list[tuple[int, int, int]]]]:
+        """``(masked, dropped)``: every whole ayah of 3..:data:`NEAR_AYAH_MAX_WORDS` words
+        (the everyday ayat left out) under each of its words replaced by a wildcard, and
+        (from :data:`NEAR_AYAH_MIN_DROP_WORDS` words on) under each of its inner words
+        removed: signature -> ``[(surah, ayah, word index)]``. Built on first use."""
+        index = getattr(self, "_near_signatures", None)
+        if index is not None:
+            return index
+        masked: dict[tuple[str, ...], list[tuple[int, int, int]]] = {}
+        dropped: dict[tuple[str, ...], list[tuple[int, int, int]]] = {}
+        everyday = set(EVERYDAY_AYAT)
+        for (surah, ayah), a in self._ayat.items():
+            n = len(a.match_words)
+            if not 3 <= n <= NEAR_AYAH_MAX_WORDS or (surah, ayah) in everyday:
+                continue
+            keys = tuple(_speech_key(w) for w in a.match_words)
+            for i in range(n):
+                masked.setdefault(keys[:i] + (_WILDCARD,) + keys[i + 1 :], []).append((surah, ayah, i))
+                if n >= NEAR_AYAH_MIN_DROP_WORDS and 0 < i < n - 1:
+                    dropped.setdefault(keys[:i] + keys[i + 1 :], []).append((surah, ayah, i))
+        self._near_signatures = (masked, dropped)
+        return self._near_signatures
+
+    def near_ayat(self, keys: Sequence[str], max_words: int = NEAR_AYAH_MAX_WORDS) -> list[tuple[int, int, int, int, str, int]]:
+        """Whole ayat of 3..``max_words`` words found in the speech keys ``keys`` with
+        exactly one word that differs, or one inner word missing (an OCR-like misquote):
+        ``[(start, end, surah, ayah, kind, index)]`` in token order. ``kind`` "sub":
+        ``keys[start + index]`` stands where the ayah has another word, and every other
+        word is equal; "del": the ayah's word ``index`` is missing from
+        ``keys[start:end]``, every other word is equal. Exact whole ayat are not listed,
+        and nor are the everyday ayat (:data:`EVERYDAY_AYAT`). Whether the differing word
+        can be a misread one is the caller's decision."""
+        masked, dropped = self._near_index()
+        found: list[tuple[int, int, int, int, str, int]] = []
+        n = len(keys)
+        keys = tuple(keys)
+        for start in range(n):
+            for size in range(3, min(max_words, n - start) + 1):
+                window = keys[start : start + size]
+                for i in range(size):
+                    for surah, ayah, idx in masked.get(window[:i] + (_WILDCARD,) + window[i + 1 :], ()):
+                        if idx == i and self._near_key(surah, ayah, i) != window[i]:
+                            found.append((start, start + size, surah, ayah, "sub", i))
+            for size in range(NEAR_AYAH_MIN_DROP_WORDS - 1, min(max_words - 1, n - start) + 1):
+                for surah, ayah, idx in dropped.get(keys[start : start + size], ()):
+                    found.append((start, start + size, surah, ayah, "del", idx))
+        return found
+
+    def _near_key(self, surah: int, ayah: int, i: int) -> str:
+        return _speech_key(self._ayat[(surah, ayah)].match_words[i])
+
+    def is_everyday_formula(self, tokens: Sequence[str]) -> bool:
+        """True when ``tokens`` are exactly the words of one everyday formula of
+        :data:`EVERYDAY_FORMULAS` (speech keys)."""
+        keys = [_speech_key(t) for t in tokens]
+        return any(keys == f for f in self._formula_keys)
 
     def contained_ayat(self, tokens: Sequence[str], min_words: int) -> list[tuple[int, int, int, int]]:
         """Whole ayat of ``min_words`` (at least 2) to :data:`SHORT_AYAH_MAX_WORDS` words
@@ -1481,6 +1706,7 @@ class Quran:
 __all__ = [
     "ATTRIBUTION",
     "Ayah",
+    "CLOSING_FRAMING_FORMULAS",
     "EVERYDAY_AYAT",
     "EVERYDAY_FORMULAS",
     "FRAMING_FORMULAS",
@@ -1491,6 +1717,8 @@ __all__ = [
     "N_SURAHS",
     "Quran",
     "RIWAYA",
+    "NEAR_AYAH_MAX_WORDS",
+    "NEAR_AYAH_MIN_DROP_WORDS",
     "SHORT_AYAH_MAX_WORDS",
     "SOURCE_URL",
     "SurahInfo",

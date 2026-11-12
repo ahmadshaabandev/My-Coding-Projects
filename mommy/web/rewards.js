@@ -113,7 +113,7 @@
 
   // Allowed keys of each stored object (anything else is dropped by validateDoc).
   const DOC_KEYS = ['version', 'createdAt', 'updatedAt', 'parent', 'children', 'activeChildId', 'tasks', 'jar', 'surprises'];
-  const PARENT_KEYS = ['pin', 'failedAttempts', 'lockedUntil', 'consentAt', 'aiConsentAt', 'uiLang'];
+  const PARENT_KEYS = ['pin', 'failedAttempts', 'lockedUntil', 'pinResetAt', 'consentAt', 'aiConsentAt', 'uiLang'];
   const PIN_KEYS = ['salt', 'hash', 'iterations'];
   const CHILD_KEYS = ['id', 'nickname', 'age', 'lang', 'avatar', 'createdAt', 'quran'];
   const CHILD_QURAN_KEYS = ['surah', 'from', 'to', 'juzAmma'];
@@ -479,6 +479,7 @@
         pin: null,
         failedAttempts: 0,
         lockedUntil: null,
+        pinResetAt: null,
         consentAt: null,
         aiConsentAt: null,
         uiLang: LANGS.includes(o.uiLang) ? o.uiLang : 'en',
@@ -867,6 +868,8 @@
     }
     if (task.kind !== 'recite' && task.kind !== 'dictation') return null;
     if (result.mode === 'contextual' || 'judgement' in result) return null;
+    // A /api/quran/check response (its own keys) is never a school task's result.
+    if (hasOwn(result, 'first_error') || hasOwn(result, 'tolerated') || hasOwn(result, 'words')) return null;
     // A recite response (it has mode) is not a dictation result, nor the reverse (read_text).
     if (task.kind === 'dictation' ? 'mode' in result : 'read_text' in result) return null;
     const core = isPlainObject(result.result) ? result.result : result;
@@ -1328,7 +1331,35 @@
     return d;
   }
 
-  /** Removes the PIN ("Forgot PIN" after the parental gate); all other data stays. */
+  /**
+   * Replaces the PIN with a record made by hashPin (synchronous: hash first, then apply
+   * this to the document as it is after the await, so that a change another tab saved
+   * meanwhile is kept). Clears the backoff. opts.reset marks a new PIN made after
+   * "Forgot PIN" (parent.pinResetAt = now, until dismissPinReset); otherwise
+   * pinResetAt is kept. Throws bad_input(record) for a record hashPin would not make.
+   */
+  function setPinRecord(doc, record, now, opts) {
+    assertDoc(doc);
+    checkNow(now);
+    const ok = isPlainObject(record) && Object.keys(record).every((k) => PIN_KEYS.includes(k)) &&
+      vPin(record, () => { throw new RewardsError('bad_input', 'not a PIN record', 'record'); }) !== null;
+    if (!ok) fail('bad_input', 'not a PIN record made by hashPin', 'record');
+    const d = begin(doc, now);
+    d.parent.pin = { salt: record.salt, hash: record.hash, iterations: record.iterations };
+    d.parent.failedAttempts = 0;
+    d.parent.lockedUntil = null;
+    if (opts && opts.reset === true) d.parent.pinResetAt = now;
+    return d;
+  }
+
+  /** The grown-ups saw the notice that the PIN was reset: pinResetAt becomes null. */
+  function dismissPinReset(doc, now) {
+    const d = begin(doc, now);
+    d.parent.pinResetAt = null;
+    return d;
+  }
+
+  /** Removes the PIN; all other data stays. (The app replaces a forgotten PIN with setPinRecord instead, so the old PIN stays until a new one is set.) */
   function clearPin(doc, now) {
     const d = begin(doc, now);
     d.parent.pin = null;
@@ -1373,23 +1404,20 @@
   }
 
   /**
-   * Checks the parent PIN. Resolves to {ok: true, doc} or {ok: false, code: 'wrong_pin'
-   * | 'locked', doc, lockedUntil?, retryInMs?, attemptsLeft?}; save the returned doc.
-   * After 5 failures each failure locks for 30 s, doubling up to 15 min; the state is in
-   * the document. While locked it resolves at once with code 'locked' and never hashes.
-   * Rejects with 'bad_state' when no PIN is set, 'bad_input' for a malformed PIN.
+   * The hashing step of a PIN check, without the document's backoff change. Resolves at
+   * once, without hashing, to {locked: true, lockedUntil, retryInMs} while locked; else
+   * to {locked: false, match: boolean, hash} (hash: the stored record it was compared
+   * with). Apply it with applyPinCheck to the document as it is AFTER the await.
+   * Rejects with 'bad_state' when no PIN is set or the record is damaged, 'bad_input'
+   * for a malformed PIN (not a failure), 'unavailable' without SubtleCrypto.
    */
-  async function verifyPin(doc, pin, now) {
+  async function checkPin(doc, pin, now) {
     assertDoc(doc);
     checkNow(now);
     if (!doc.parent.pin) fail('bad_state', 'no PIN is set', 'pin');
     const nowMs = isoMs(now);
     const ls = lockState(doc.parent, nowMs);
-    if (ls.ms > 0) {
-      const d = ls.repaired ? begin(doc, now) : clone(doc);
-      if (ls.repaired) d.parent.lockedUntil = new Date(ls.until).toISOString();
-      return { ok: false, code: 'locked', doc: d, lockedUntil: d.parent.lockedUntil, retryInMs: ls.ms };
-    }
+    if (ls.ms > 0) return { locked: true, lockedUntil: new Date(ls.until).toISOString(), retryInMs: ls.ms };
     const digits = normalizePin(pin);
     if (!digits) fail('bad_input', 'a PIN is 4 to 6 digits', 'pin');
     const rec = doc.parent.pin;
@@ -1397,13 +1425,32 @@
     const want = b64ToBytes(rec.hash);
     if (!salt || !want || !Number.isInteger(rec.iterations)) fail('bad_state', 'the stored PIN is damaged', 'pin');
     const got = await pbkdf2(digits, salt, rec.iterations);
-    if (sameBytes(got, want)) {
+    return { locked: false, match: sameBytes(got, want), hash: rec.hash };
+  }
+
+  /**
+   * Records the outcome of checkPin in `doc` (synchronous), or a wrong answer to the
+   * parental gate ({match: false} with no hash). Returns {ok: true, doc} or {ok: false,
+   * code: 'wrong_pin', doc, attemptsLeft, lockedUntil?, retryInMs?}; and {ok: false,
+   * code: 'stale', doc} when the PIN was changed since checkPin read it (check again).
+   * A failure counts on the document as it is now, so failures made at the same time in
+   * several tabs all count. After 5 failures each one locks for 30 s, doubling up to 15 min.
+   */
+  function applyPinCheck(doc, check, now) {
+    assertDoc(doc);
+    checkNow(now);
+    if (!isPlainObject(check) || typeof check.match !== 'boolean') fail('bad_input', 'not a PIN check', 'check');
+    if (check.hash !== undefined && (!doc.parent.pin || doc.parent.pin.hash !== check.hash)) {
+      return { ok: false, code: 'stale', doc: clone(doc) };
+    }
+    if (check.match) {
       if (doc.parent.failedAttempts === 0 && doc.parent.lockedUntil === null) return { ok: true, doc: clone(doc) };
       const d = begin(doc, now);
       d.parent.failedAttempts = 0;
       d.parent.lockedUntil = null;
       return { ok: true, doc: d };
     }
+    const nowMs = isoMs(now);
     const d = begin(doc, now);
     const p = d.parent;
     p.failedAttempts = Math.min(1000, p.failedAttempts + 1);
@@ -1419,6 +1466,28 @@
     return out;
   }
 
+  /**
+   * Checks the parent PIN (checkPin then applyPinCheck on the same document). Resolves
+   * to {ok: true, doc} or {ok: false, code: 'wrong_pin' | 'locked', doc, lockedUntil?,
+   * retryInMs?, attemptsLeft?}; save the returned doc. While locked it resolves at once
+   * with code 'locked' and never hashes. Rejects with 'bad_state' when no PIN is set,
+   * 'bad_input' for a malformed PIN. In the app, call checkPin and apply the result to
+   * the document as it is after the await (another tab may have saved meanwhile).
+   */
+  async function verifyPin(doc, pin, now) {
+    assertDoc(doc);
+    checkNow(now);
+    if (!doc.parent.pin) fail('bad_state', 'no PIN is set', 'pin');
+    const ls = lockState(doc.parent, isoMs(now));
+    if (ls.ms > 0) {
+      const d = ls.repaired ? begin(doc, now) : clone(doc);
+      if (ls.repaired) d.parent.lockedUntil = new Date(ls.until).toISOString();
+      return { ok: false, code: 'locked', doc: d, lockedUntil: d.parent.lockedUntil, retryInMs: ls.ms };
+    }
+    const check = await checkPin(doc, pin, now);
+    return applyPinCheck(doc, check, now);
+  }
+
   // ===========================================================================
   // validateDoc: repair or reject a stored document (never throws)
   // ===========================================================================
@@ -1426,7 +1495,7 @@
   function vKeys(obj, allowed, path, note, special) {
     for (const k of Object.keys(obj)) {
       if (allowed.includes(k)) continue;
-      note(`${path}.${k}`, (special && special[k]) || 'unknown field, dropped');
+      note(`${path}.${k}`, (special && hasOwn(special, k) && special[k]) || 'unknown field, dropped');
     }
   }
 
@@ -1520,11 +1589,14 @@
       p = {};
     }
     vKeys(p, PARENT_KEYS, 'parent', note);
-    const pin = vPin(p.pin === undefined ? null : p.pin, note);
+    const rawPin = p.pin === undefined ? null : p.pin;
+    const pin = vPin(rawPin, note);
     let failedAttempts = vInt(p.failedAttempts, 0, 1000, 0, 'parent.failedAttempts', note);
     let lockedUntil = vNullableIso(p.lockedUntil === undefined ? null : p.lockedUntil, 'parent.lockedUntil', note);
-    if (!pin && (failedAttempts !== 0 || lockedUntil !== null)) {
-      note('parent', 'no PIN: backoff cleared');
+    // Without a PIN the backoff counts wrong answers to the parental gate (before the
+    // first PIN of a migrated family); a removed, invalid PIN record takes its backoff along.
+    if (!pin && rawPin !== null && (failedAttempts !== 0 || lockedUntil !== null)) {
+      note('parent', 'invalid PIN: backoff cleared');
       failedAttempts = 0;
       lockedUntil = null;
     }
@@ -1532,6 +1604,8 @@
       pin,
       failedAttempts,
       lockedUntil,
+      // A missing pinResetAt (documents saved before it existed) is read as null, no repair.
+      pinResetAt: p.pinResetAt === undefined ? null : vNullableIso(p.pinResetAt, 'parent.pinResetAt', note),
       consentAt: vNullableIso(p.consentAt === undefined ? null : p.consentAt, 'parent.consentAt', note),
       aiConsentAt: vNullableIso(p.aiConsentAt === undefined ? null : p.aiConsentAt, 'parent.aiConsentAt', note),
       uiLang: vEnum(p.uiLang, LANGS, 'en', 'parent.uiLang', note),
@@ -2060,7 +2134,11 @@
     isValidPin,
     hashPin,
     setPin,
+    setPinRecord,
+    dismissPinReset,
     clearPin,
+    checkPin,
+    applyPinCheck,
     verifyPin,
     pinStatus,
   });

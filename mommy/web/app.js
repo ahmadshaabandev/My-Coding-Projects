@@ -24,6 +24,10 @@
  *   - The microphone and camera stay disabled until a parent ticks the consent box.
  *   - Quran text is shown exactly as the server sends it (verbatim Tanzil). Quran
  *     feedback is shown as text only and is never sent to speech synthesis.
+ *   - A school text that includes Quran (docs/CONTRACT.md, hard rule 4, Q2) keeps the
+ *     Quran parts the server found in it (this file never looks for Quran words): they
+ *     are recited word by word only, a grown-up reads them in a dictation (their chunks
+ *     are never sent to /api/tts), and feedback that quotes them is never spoken.
  */
 (function () {
   'use strict';
@@ -34,6 +38,10 @@
 
   const STRINGS = {
     en: {
+      dict_quran_child: 'Let’s do this one with a grown-up.',
+      task_needs_change: 'Let’s ask a grown-up to change this task: it has words of the Quran, which are recited word by word.',
+      error_quran_meaning: 'This text has words of the Quran, so it is recited word by word only: the app never judges the meaning of the Quran.',
+      quran_diff_del_after: 'missing word after {prev}: {mushaf}',
       doc_title: 'Mommy — AI reading tutor',
       skip: 'Skip to content',
       badge: 'AI tutor — not a person',
@@ -57,7 +65,7 @@
       age_14_18: '14–18 years',
       ui_lang: 'Language',
       consent_title: 'For the parent',
-      consent_label: "I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.",
+      consent_label: 'I am the parent or guardian of the children who use Mommy on this device. I allow Mommy to use the microphone and the camera.',
       consent_privacy: 'Recordings and photos are checked in memory and never saved.',
       consent_claude: 'Some things are sent to Claude, an AI service made by Anthropic: photos of pages and of handwriting, so that it can read them; the page text and a transcript of what your child says (in “The meaning” mode), so that it can judge the meaning; and the words your child got wrong, so that it can word the feedback. The recordings themselves are not sent.',
       consent_offline: 'Offline mode: nothing leaves this computer, and you type the texts yourself.',
@@ -85,7 +93,19 @@
       page_read_ok: 'Done. Please check the text carefully and correct it if needed.',
       page_needs_manual: 'The page could not be read automatically. Please type or paste the text.',
       page_notes: 'Note: {notes}',
-      page_has_quran: 'This page seems to contain Quran text. Please practise the Quran in the Quran section.',
+      page_has_quran: 'This page seems to be ayat of the Quran only. Please practise them in the Quran section.',
+      quran_parts_title: 'Words of the Quran in this text',
+      quran_parts_note: 'They are checked word by word against the mushaf, and “The meaning” is not available for this text. In a dictation, the app stops at them and asks a grown-up to read them aloud: its voice never reads the Quran.',
+      quran_ref_ayah: 'Surah {name}, ayah {a}',
+      quran_ref_ayat: 'Surah {name}, ayat {a}–{b}',
+      quran_ref_partial: '{ref} (part of it)',
+      quran_diff_title: 'Typed differently from the mushaf:',
+      quran_diff_sub: 'typed {typed}, in the mushaf {clean} ({mushaf})',
+      quran_diff_del: 'missing word: {mushaf}',
+      quran_diff_ins: 'extra word: {typed}',
+      quran_diff_hint: 'Vowel marks and the spelling of the mushaf do not count as differences. The checks always use the words of the mushaf.',
+      use_mushaf: 'Use the mushaf text',
+      mushaf_used: 'The words of the mushaf were put into the text.',
       photo_bad: "I couldn't open this picture. Please try a JPEG or PNG photo.",
       page_text_label: 'Page text',
       page_text_ph: 'Type or paste the text here…',
@@ -95,13 +115,14 @@
       mode_contextual: 'The meaning',
       mode_contextual_hint: 'Own words are fine if the meaning is right.',
       mode_contextual_offline: 'Without the online AI, the meaning check is only approximate.',
-      mode_meaning_off: '“The meaning” is not available for this text: it has words of the Quran (for example the basmala), so it is recited word by word.',
+      mode_meaning_off: '“The meaning” is not available for this text: it has words of the Quran, and the app never judges the meaning of the Quran. They are checked word by word.',
       confirm_text: 'Confirm text',
       checking_text: 'Checking the text…',
       text_confirmed: 'Text confirmed. Your child can now recite it or do a dictation.',
       text_confirmed_ar: 'Text confirmed. It is written in Arabic, so its language was set to Arabic.',
+      text_confirmed_quran: 'Text confirmed. It includes words of the Quran: see the note under the text.',
       text_not_arabic: 'This text is not written in Arabic. Please choose the language of the text.',
-      text_confirmed_no_dictation: 'Text confirmed for reciting. It cannot be used for dictation: part of it is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud.',
+      text_confirmed_no_dictation: 'Text confirmed for reciting. It cannot be used for dictation: the voice found words of the Quran in it that the app could not mark for a grown-up to read.',
       text_empty: 'Please type or paste some text first.',
       text_changed: 'The text has changed. Press “Confirm text” again.',
       go_recite: 'Go to Recite',
@@ -124,6 +145,8 @@
       say_again: 'Say that again',
       listen: 'Listen',
       press_listen: 'Press “Listen” to hear it.',
+      recite_quran_note: 'This text has words of the Quran. They are checked word by word, as written in the mushaf. The app’s voice never reads them: to let your child hear the text first, please read it aloud yourself.',
+      feedback_not_spoken: 'This message quotes the Quran, so it is shown and not spoken.',
       too_quiet: 'I could hardly hear you. Come a little closer and speak up.',
       too_short: 'That was very short. Press the button, read the whole text, then press it again.',
       score: 'Words right: {ok} of {n}',
@@ -157,6 +180,16 @@
       show_phrase: 'Show the words (grown-up)',
       hide_phrase: 'Hide the words',
       no_phrases: 'There is nothing to dictate in this text.',
+      dict_quran_intro: 'This text has words of the Quran. When the dictation reaches them, it stops and asks a grown-up to read them aloud: the app’s voice never reads the Quran. Please stay close.',
+      gu_ask: 'Let’s ask a grown-up to read this part.',
+      gu_ask_again: 'Let’s ask the grown-up to read it again.',
+      gu_why: 'This part is from the Quran, and the app’s voice never reads the Quran. Please show the words where only you can see them, read them aloud slowly, then press “Done reading”: the words are hidden again before your child writes.',
+      gu_why_plain: 'The voice cannot read this part. Please show the words, read them aloud as they are written, then press “Done reading”.',
+      gu_show: 'Show the words of the Quran',
+      gu_show_plain: 'Show the words',
+      gu_done: 'Done reading',
+      gu_write: 'Now let’s write it, then press “Next”.',
+      gu_write_last: "Now let’s write it, then press “I've finished”.",
       dict_check_title: 'Check the writing',
       dict_check_intro: "Take a photo of your child's paper, or type exactly what they wrote — mistakes included.",
       written_label: 'What your child wrote',
@@ -203,7 +236,7 @@
       error_too_big: 'That is too big for me. Please try something shorter or smaller.',
       error_unavailable: 'This is not available right now.',
       error_quran_text: 'This text is from the Quran. Please practise it in the Quran section.',
-      error_quran_phrase: 'Part of this text is an ayah of the Quran (for example the basmala), and the app never reads the Quran aloud, so this text cannot be used for dictation. It can still be recited.',
+      error_quran_unmarked: 'This text cannot be used for dictation: the voice found words of the Quran in it that the app could not mark for a grown-up to read. It can still be recited word by word.',
       error_unreadable_text: 'Some words could not be read and are marked [?]. Please type them in place of [?] first.',
       error_lang_mismatch: 'This text is not in the language chosen. Please choose the language of the text.',
       error_text_too_long: 'This text is too long. Please use a shorter text.',
@@ -212,6 +245,10 @@
     },
 
     fr: {
+      dict_quran_child: 'Faisons celle-ci avec un adulte.',
+      task_needs_change: 'Demandons à un adulte de modifier cette tâche : elle contient des mots du Coran, qui se récitent mot à mot.',
+      error_quran_meaning: 'Ce texte contient des mots du Coran : il se récite seulement mot à mot, car l’application ne juge jamais le sens du Coran.',
+      quran_diff_del_after: 'mot manquant après {prev} : {mushaf}',
       doc_title: 'Mommy — tuteur de lecture IA',
       skip: 'Aller au contenu',
       badge: 'Tuteur IA — pas une personne',
@@ -221,10 +258,10 @@
       nav_recite: 'Réciter',
       nav_dictation: 'Dictée',
       nav_quran: 'Coran',
-      start_title: 'Bonjour ! Je suis Mommy.',
+      start_title: 'Bonjour ! Je suis Mommy.',
       start_lead: "Je t'aide à t'entraîner à lire à voix haute et à faire des dictées.",
       disclosure_title: 'Bon à savoir',
-      disclosure_text: "Mommy est un programme informatique (une IA). Ce n'est pas une personne, ni ta maman ou ton papa. Mommy peut se tromper : un adulte doit rester tout près.",
+      disclosure_text: "Mommy est un programme informatique (une IA). Ce n'est pas une personne, ni ta maman ou ton papa. Mommy peut se tromper : un adulte doit rester tout près.",
       profile_title: "Profil de l'enfant",
       profile_note: 'Enregistré uniquement sur cet appareil.',
       nickname: 'Surnom',
@@ -235,18 +272,18 @@
       age_14_18: '14 à 18 ans',
       ui_lang: 'Langue',
       consent_title: 'Pour le parent',
-      consent_label: "Je suis parent de cet enfant ou j'en ai la responsabilité légale. J'autorise Mommy à utiliser le micro et l'appareil photo.",
+      consent_label: 'Je suis parent des enfants qui utilisent Mommy sur cet appareil, ou j’en ai la charge. J’autorise Mommy à utiliser le micro et l’appareil photo.',
       consent_privacy: 'Les enregistrements et les photos sont traités en mémoire et ne sont jamais enregistrés.',
-      consent_claude: "Certaines données sont envoyées à Claude, un service d'IA d'Anthropic : les photos de pages et d'écriture, pour qu'il puisse les lire ; le texte de la page et une transcription de ce que dit votre enfant (en mode « Le sens »), pour qu'il juge le sens ; et les mots où votre enfant a fait une erreur, pour qu'il rédige le message. Les enregistrements eux-mêmes ne sont pas envoyés.",
-      consent_offline: 'Mode hors ligne : rien ne quitte cet ordinateur, et vous tapez les textes vous-même.',
+      consent_claude: "Certaines données sont envoyées à Claude, un service d'IA d'Anthropic : les photos de pages et d'écriture, pour qu'il puisse les lire ; le texte de la page et une transcription de ce que dit votre enfant (en mode « Le sens »), pour qu'il juge le sens ; et les mots où votre enfant a fait une erreur, pour qu'il rédige le message. Les enregistrements eux-mêmes ne sont pas envoyés.",
+      consent_offline: 'Mode hors ligne : rien ne quitte cet ordinateur, et vous tapez les textes vous-même.',
       start_button: 'On commence',
       consent_needed: "Un parent doit cocher la case d'accord dans l'espace parents (Réglages) avant d'utiliser le micro ou l'appareil photo.",
-      consent_needed_ai: "La vérification utilise l'IA en ligne : un parent doit d'abord cocher la case d'accord dans l'espace parents (Réglages).",
-      server_down: "Je n'arrive pas à joindre le serveur Mommy. Est-il lancé ?",
+      consent_needed_ai: "La vérification utilise l'IA en ligne : un parent doit d'abord cocher la case d'accord dans l'espace parents (Réglages).",
+      server_down: "Je n'arrive pas à joindre le serveur Mommy. Est-il lancé ?",
       checking_server: 'Vérification du serveur…',
       retry: 'Réessayer',
-      no_asr: "L'écoute n'est pas disponible : le modèle de reconnaissance vocale n'est pas installé.",
-      no_tts: "La voix n'est pas disponible : le modèle de synthèse vocale n'est pas installé. Un adulte peut lire à voix haute.",
+      no_asr: "L'écoute n'est pas disponible : le modèle de reconnaissance vocale n'est pas installé.",
+      no_tts: "La voix n'est pas disponible : le modèle de synthèse vocale n'est pas installé. Un adulte peut lire à voix haute.",
       no_brain: "La lecture des photos demande l'IA en ligne, qui n'est pas configurée. Tapez ou collez le texte.",
       no_quran: "Le texte du Coran n'est pas disponible sur ce serveur.",
       no_mic_support: "Ce navigateur ne peut pas enregistrer ici. Utilisez un navigateur récent, en https ou sur localhost.",
@@ -254,7 +291,7 @@
       mic_missing: "Je n'ai pas trouvé de micro.",
       parent_tag: "Pour l'adulte",
       prep_title: 'Préparer une page',
-      prep_intro: 'Prenez la page en photo, ou tapez ou collez le texte. Vérifiez-le, puis appuyez sur « Valider le texte ».',
+      prep_intro: 'Prenez la page en photo, ou tapez ou collez le texte. Vérifiez-le, puis appuyez sur « Valider le texte ».',
       text_lang: 'Langue du texte',
       take_photo: 'Prendre une photo',
       choose_photo: 'Choisir une photo',
@@ -262,8 +299,20 @@
       reading_page: 'Lecture de la page…',
       page_read_ok: "C'est fait. Vérifiez bien le texte et corrigez-le si besoin.",
       page_needs_manual: "La page n'a pas pu être lue automatiquement. Tapez ou collez le texte.",
-      page_notes: 'Remarque : {notes}',
-      page_has_quran: 'Cette page semble contenir un texte du Coran. Pour le Coran, utilisez la section Coran.',
+      page_notes: 'Remarque : {notes}',
+      page_has_quran: 'Cette page semble ne contenir que des âyât du Coran. Pour les réciter, utilisez la section Coran.',
+      quran_parts_title: 'Des mots du Coran dans ce texte',
+      quran_parts_note: 'Ils sont vérifiés mot à mot d’après le mushaf, et « Le sens » n’est pas possible pour ce texte. Dans une dictée, l’application s’arrête sur eux et demande à un adulte de les lire à voix haute : sa voix ne lit jamais le Coran.',
+      quran_ref_ayah: 'Sourate {name}, âyah {a}',
+      quran_ref_ayat: 'Sourate {name}, âyât {a} à {b}',
+      quran_ref_partial: '{ref} (une partie)',
+      quran_diff_title: 'Écrit autrement que dans le mushaf :',
+      quran_diff_sub: 'écrit {typed}, dans le mushaf {clean} ({mushaf})',
+      quran_diff_del: 'mot manquant : {mushaf}',
+      quran_diff_ins: 'mot en trop : {typed}',
+      quran_diff_hint: 'Les voyelles et l’orthographe du mushaf ne comptent pas comme des différences. Les vérifications utilisent toujours les mots du mushaf.',
+      use_mushaf: 'Prendre le texte du mushaf',
+      mushaf_used: 'Les mots du mushaf ont été mis dans le texte.',
       photo_bad: "Je n'arrive pas à ouvrir cette image. Essayez une photo JPEG ou PNG.",
       page_text_label: 'Texte de la page',
       page_text_ph: 'Tapez ou collez le texte ici…',
@@ -273,24 +322,25 @@
       mode_contextual: 'Le sens',
       mode_contextual_hint: 'Ses propres mots, si le sens est juste.',
       mode_contextual_offline: "Sans l'IA en ligne, la vérification du sens est seulement approximative.",
-      mode_meaning_off: '« Le sens » n’est pas possible pour ce texte : il contient des mots du Coran (par exemple la basmala), il se récite donc mot à mot.',
+      mode_meaning_off: '« Le sens » n’est pas possible pour ce texte : il contient des mots du Coran, et l’application ne juge jamais le sens du Coran. Ils sont vérifiés mot à mot.',
       confirm_text: 'Valider le texte',
       checking_text: 'Vérification du texte…',
       text_confirmed: 'Texte validé. Votre enfant peut maintenant le réciter ou faire une dictée.',
-      text_confirmed_ar: "Texte validé. Il est écrit en arabe : sa langue a été réglée sur l'arabe.",
+      text_confirmed_ar: "Texte validé. Il est écrit en arabe : sa langue a été réglée sur l'arabe.",
+      text_confirmed_quran: 'Texte validé. Il contient des mots du Coran : voir la note sous le texte.',
       text_not_arabic: "Ce texte n'est pas écrit en arabe. Choisissez la langue du texte.",
-      text_confirmed_no_dictation: "Texte validé pour la récitation. Il ne peut pas servir à une dictée : une partie est un verset du Coran (par exemple la basmala), et l'application ne lit jamais le Coran à voix haute.",
+      text_confirmed_no_dictation: 'Texte validé pour la récitation. Il ne peut pas servir à une dictée : la voix y a trouvé des mots du Coran que l’application n’a pas pu marquer pour qu’un adulte les lise.',
       text_empty: "Tapez ou collez d'abord un texte.",
-      text_changed: 'Le texte a changé. Appuyez de nouveau sur « Valider le texte ».',
+      text_changed: 'Le texte a changé. Appuyez de nouveau sur « Valider le texte ».',
       go_recite: 'Aller à Réciter',
       go_dictation: 'Aller à Dictée',
       recite_title: 'Réciter',
-      hello_name: 'Coucou {name} !',
-      hello_anon: 'Coucou !',
+      hello_name: 'Coucou {name} !',
+      hello_anon: 'Coucou !',
       need_page: "Demande d'abord à un adulte de préparer une page.",
       open_prepare: 'Préparer une page',
       recite_intro: 'Lis le texte à voix haute. Appuie sur le gros bouton pour commencer, et appuie encore quand tu as fini.',
-      mode_is: 'Mode : {mode}',
+      mode_is: 'Mode : {mode}',
       rec_start: 'Démarrer',
       rec_stop: "J'ai fini",
       rec_wait: 'Patiente…',
@@ -301,19 +351,21 @@
       heard_label: "Ce que j'ai entendu",
       say_again: 'Redis-le',
       listen: 'Écouter',
-      press_listen: 'Appuie sur « Écouter » pour l’entendre.',
+      press_listen: 'Appuie sur « Écouter » pour l’entendre.',
+      recite_quran_note: 'Ce texte contient des mots du Coran. Ils sont vérifiés mot à mot, tels qu’ils sont écrits dans le mushaf. La voix de l’application ne les lit jamais : pour que votre enfant entende d’abord le texte, lisez-le-lui à voix haute.',
+      feedback_not_spoken: 'Ce message cite le Coran : il est affiché, pas lu à voix haute.',
       too_quiet: "Je t'entends à peine. Approche-toi un peu et parle plus fort.",
       too_short: "C'était très court. Appuie sur le bouton, lis tout le texte, puis appuie encore.",
-      score: 'Mots justes : {ok} sur {n}',
+      score: 'Mots justes : {ok} sur {n}',
       legend_match: 'juste',
       legend_sub: 'entendu autrement',
       legend_sub_written: 'écrit autrement',
       legend_del: 'oublié',
       legend_ins: 'mot en plus',
-      sr_heard: 'entendu :',
-      sr_written: 'écrit :',
+      sr_heard: 'entendu :',
+      sr_written: 'écrit :',
       sr_skipped: 'oublié',
-      sr_extra: 'mot en plus :',
+      sr_extra: 'mot en plus :',
       verdict_same_meaning: 'Même sens',
       verdict_nearly: 'Presque le même sens',
       verdict_partly: 'En partie',
@@ -327,14 +379,24 @@
       dict_start: 'Commencer la dictée',
       preparing: 'Je me prépare…',
       phrase_n: 'Morceau {i} sur {n}',
-      voice_unclear: "La voix n'est peut-être pas claire pour ce morceau. Appuyez sur « Répéter » pour l'entendre à nouveau, ou montrez les mots.",
-      press_repeat: 'Appuie sur « Répéter » pour l’entendre.',
+      voice_unclear: "La voix n'est peut-être pas claire pour ce morceau. Appuyez sur « Répéter » pour l'entendre à nouveau, ou montrez les mots.",
+      press_repeat: 'Appuie sur « Répéter » pour l’entendre.',
       repeat: 'Répéter',
       next: 'Suivant',
       finish: "J'ai fini",
       show_phrase: 'Montrer les mots (adulte)',
       hide_phrase: 'Cacher les mots',
       no_phrases: "Il n'y a rien à dicter dans ce texte.",
+      dict_quran_intro: 'Ce texte contient des mots du Coran. Quand la dictée y arrive, elle s’arrête et demande à un adulte de les lire à voix haute : la voix de l’application ne lit jamais le Coran. Restez tout près, s’il vous plaît.',
+      gu_ask: 'Demandons à un adulte de lire ce morceau.',
+      gu_ask_again: 'Demandons à l’adulte de le relire.',
+      gu_why: 'Ce morceau vient du Coran, et la voix de l’application ne lit jamais le Coran. Affichez les mots en les gardant pour vous, lisez-les lentement à voix haute, puis appuyez sur « Lecture terminée » : les mots sont cachés avant que l’enfant écrive.',
+      gu_why_plain: 'La voix ne peut pas lire ce morceau. Montrez les mots, lisez-les à voix haute tels qu’ils sont écrits, puis appuyez sur « Lecture terminée ».',
+      gu_show: 'Montrer les mots du Coran',
+      gu_show_plain: 'Montrer les mots',
+      gu_done: 'Lecture terminée',
+      gu_write: 'Maintenant, écrivons-le, puis appuyons sur « Suivant ».',
+      gu_write_last: 'Maintenant, écrivons-le, puis appuyons sur « J\'ai fini ».',
       dict_check_title: "Vérifier l'écriture",
       dict_check_intro: "Prenez la feuille en photo, ou tapez exactement ce que l'enfant a écrit, fautes comprises.",
       written_label: "Ce que l'enfant a écrit",
@@ -346,9 +408,9 @@
       parent_review_intro: "L'IA peut mal lire l'écriture. Corrigez le texte ci-dessous si besoin et revérifiez, puis validez.",
       illegible: "L'écriture était difficile à lire. Vérifiez-la bien.",
       read_text_label: 'Ce qui a été lu',
-      uncertain: 'Mots incertains : {words}',
+      uncertain: 'Mots incertains : {words}',
       recheck: 'Revérifier avec ce texte',
-      review_stale: 'Vous avez modifié le texte. Appuyez sur « Revérifier avec ce texte » avant de valider.',
+      review_stale: 'Vous avez modifié le texte. Appuyez sur « Revérifier avec ce texte » avant de valider.',
       confirm_result: 'Valider le résultat',
       dict_result_title: 'Ta dictée',
       new_dictation: 'Nouvelle dictée',
@@ -358,16 +420,16 @@
       from_ayah: 'De l’âyah',
       to_ayah: 'À l’âyah',
       range_capped: '50 âyât au maximum à la fois.',
-      quran_mode: 'Comment veux-tu réciter ?',
+      quran_mode: 'Comment veux-tu réciter ?',
       mode_looking: 'En regardant',
       mode_memory: 'De mémoire',
       riwaya: 'Hafs – Tanzil',
-      quran_text_hidden: 'Le texte est caché. Récite de mémoire !',
-      hint: 'Indice : mot suivant',
+      quran_text_hidden: 'Le texte est caché. Récite de mémoire !',
+      hint: 'Indice : mot suivant',
       hint_none: "Il n'y a plus de mots.",
       quran_rec: 'Réciter',
       loading: 'Chargement…',
-      where_am_i: 'Où en suis-je ?',
+      where_am_i: 'Où en suis-je ?',
       where_stop: 'Stop et chercher',
       only_this_surah: 'Chercher seulement dans cette sourate',
       locating: "Je cherche l'endroit…",
@@ -381,7 +443,7 @@
       error_too_big: "C'est trop gros pour moi. Essaie avec quelque chose de plus court ou de plus petit.",
       error_unavailable: "Ce n'est pas disponible pour le moment.",
       error_quran_text: 'Ce texte vient du Coran. Entraînez-vous dans la section Coran.',
-      error_quran_phrase: "Une partie de ce texte est un verset du Coran (par exemple la basmala), et l'application ne lit jamais le Coran à voix haute : ce texte ne peut donc pas servir à une dictée. Il peut toujours être récité.",
+      error_quran_unmarked: 'Ce texte ne peut pas servir à une dictée : la voix y a trouvé des mots du Coran que l’application n’a pas pu marquer pour qu’un adulte les lise. Il peut toujours être récité mot à mot.',
       error_unreadable_text: "Certains mots n'ont pas pu être lus et sont marqués [?]. Tapez-les d'abord à la place de [?].",
       error_lang_mismatch: "Ce texte n'est pas dans la langue choisie. Choisissez la langue du texte.",
       error_text_too_long: 'Ce texte est trop long. Utilisez un texte plus court.',
@@ -390,6 +452,10 @@
     },
 
     ar: {
+      dict_quran_child: 'هيا ننجز هذه المهمة مع أحد الكبار.',
+      task_needs_change: 'هيا نطلب من أحد الكبار تعديل هذه المهمة: فيها كلمات من القرآن الكريم تُسمَّع كلمةً بكلمة.',
+      error_quran_meaning: 'في هذا النص كلمات من القرآن الكريم، فيُسمَّع كلمةً بكلمة فقط، لأن التطبيق لا يحكم أبدًا على معاني القرآن الكريم.',
+      quran_diff_del_after: 'كلمة ناقصة بعد {prev}: {mushaf}',
       doc_title: 'Mommy — معلّم قراءة بالذكاء الاصطناعي',
       skip: 'الانتقال إلى المحتوى',
       badge: 'معلّم ذكاء اصطناعي — ليس إنسانًا',
@@ -400,9 +466,9 @@
       nav_dictation: 'إملاء',
       nav_quran: 'القرآن',
       start_title: 'مرحبًا! أنا Mommy.',
-      start_lead: 'أساعدك على التدرّب على القراءة بصوت عالٍ وعلى الإملاء.',
+      start_lead: 'هيا نتدرّب على القراءة بصوت عالٍ وعلى الإملاء.',
       disclosure_title: 'معلومة مهمّة',
-      disclosure_text: 'Mommy برنامج حاسوبي (ذكاء اصطناعي)، وليس إنسانًا، وليس أمّك أو أباك. قد يخطئ، لذلك ينبغي أن يبقى أحد الكبار قريبًا منك.',
+      disclosure_text: 'Mommy برنامج حاسوبي (ذكاء اصطناعي)، وليس إنسانًا، وليس أحد الوالدين. قد يخطئ، لذلك ينبغي أن يبقى أحد الكبار قريبًا.',
       profile_title: 'ملف الطفل',
       profile_note: 'يُحفظ على هذا الجهاز فقط.',
       nickname: 'الاسم المستعار',
@@ -413,9 +479,9 @@
       age_14_18: '١٤–١٨ سنة',
       ui_lang: 'اللغة',
       consent_title: 'لوليّ الأمر',
-      consent_label: 'أنا أحد والدَي هذا الطفل أو وليّ أمره، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.',
+      consent_label: 'أنا أحد والدَي الأطفال الذين يستخدمون Mommy على هذا الجهاز أو وليّ أمرهم، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.',
       consent_privacy: 'تُعالَج التسجيلات والصور في الذاكرة ولا تُحفظ أبدًا.',
-      consent_claude: 'تُرسَل بعض البيانات إلى Claude، وهي خدمة ذكاء اصطناعي من شركة Anthropic: صور الصفحات والكتابة لقراءتها، ونص الصفحة ونسخة مكتوبة مما يقوله طفلك (في طريقة «المعنى») للحكم على المعنى، والكلمات التي أخطأ فيها طفلك لصياغة الملاحظات. أمّا التسجيلات الصوتية نفسها فلا تُرسَل.',
+      consent_claude: 'تُرسَل بعض البيانات إلى Claude، وهي خدمة ذكاء اصطناعي من شركة Anthropic: صور الصفحات والكتابة لقراءتها، ونص الصفحة ونسخة مكتوبة مما يقوله الطفل (في طريقة «المعنى») للحكم على المعنى، والكلمات التي أخطأ فيها الطفل لصياغة الملاحظات. أمّا التسجيلات الصوتية نفسها فلا تُرسَل.',
       consent_offline: 'وضع بلا اتصال: لا يخرج شيء من هذا الحاسوب، وتُكتب النصوص يدويًا.',
       start_button: 'لنبدأ',
       consent_needed: 'يجب أولًا وضع علامة في خانة الموافقة في قسم الكبار (الإعدادات) قبل استخدام الميكروفون أو الكاميرا.',
@@ -441,7 +507,19 @@
       page_read_ok: 'تمّ. يُرجى مراجعة النص بعناية وتصحيحه إن لزم.',
       page_needs_manual: 'تعذّرت قراءة الصفحة تلقائيًا. يُرجى كتابة النص أو لصقه.',
       page_notes: 'ملاحظة: {notes}',
-      page_has_quran: 'يبدو أن هذه الصفحة تحتوي على نص من القرآن الكريم. يُرجى التدرّب على تلاوته في قسم القرآن الكريم.',
+      page_has_quran: 'يبدو أن هذه الصفحة آيات من القرآن الكريم فقط. يُرجى التدرّب على تلاوتها في قسم القرآن الكريم.',
+      quran_parts_title: 'كلمات من القرآن الكريم في هذا النص',
+      quran_parts_note: 'تُراجَع هذه الكلمات كلمةً بكلمة وفق المصحف، ولا يُتاح «المعنى» لهذا النص. وفي الإملاء يتوقّف التطبيق عندها ويطلب من أحد الكبار قراءتها بصوت مسموع، فصوته لا يقرأ القرآن الكريم أبدًا.',
+      quran_ref_ayah: 'سورة {name}، الآية {a}',
+      quran_ref_ayat: 'سورة {name}، الآيات {a}–{b}',
+      quran_ref_partial: '{ref} (جزء منها)',
+      quran_diff_title: 'كُتب بشكل مختلف عمّا في المصحف:',
+      quran_diff_sub: 'كُتب {typed}، وفي المصحف {clean} ({mushaf})',
+      quran_diff_del: 'كلمة ناقصة: {mushaf}',
+      quran_diff_ins: 'كلمة زائدة: {typed}',
+      quran_diff_hint: 'لا تُعدّ الحركات ولا رسم المصحف اختلافًا، ويُعتمد في التحقّق دائمًا على كلمات المصحف.',
+      use_mushaf: 'استخدام نص المصحف',
+      mushaf_used: 'وُضعت كلمات المصحف في النص.',
       photo_bad: 'لم أستطع فتح هذه الصورة. يُرجى تجربة صورة بصيغة JPEG أو PNG.',
       page_text_label: 'نص الصفحة',
       page_text_ph: 'يُرجى كتابة النص أو لصقه هنا…',
@@ -451,20 +529,21 @@
       mode_contextual: 'المعنى',
       mode_contextual_hint: 'يمكن استخدام كلمات أخرى إذا كان المعنى صحيحًا.',
       mode_contextual_offline: 'من دون الذكاء الاصطناعي عبر الإنترنت، يكون التحقّق من المعنى تقريبيًا فقط.',
-      mode_meaning_off: '«المعنى» غير متاح لهذا النص: فيه كلمات من القرآن الكريم (مثل البسملة)، لذلك يُسمَّع كلمة بكلمة.',
+      mode_meaning_off: '«المعنى» غير متاح لهذا النص: فيه كلمات من القرآن الكريم، والتطبيق لا يحكم أبدًا على معاني القرآن الكريم، فتُراجَع كلمةً بكلمة.',
       confirm_text: 'تأكيد النص',
       checking_text: 'جارٍ التحقّق من النص…',
       text_confirmed: 'تمّ تأكيد النص. يمكن الآن تسميعه أو كتابته إملاءً.',
       text_confirmed_ar: 'تمّ تأكيد النص. وبما أنه مكتوب بالعربية، فقد ضُبطت لغته على العربية.',
+      text_confirmed_quran: 'تمّ تأكيد النص. وفيه كلمات من القرآن الكريم، كما هو مبيَّن تحت النص.',
       text_not_arabic: 'هذا النص غير مكتوب بالعربية. يُرجى اختيار لغة النص.',
-      text_confirmed_no_dictation: 'تمّ تأكيد النص للتسميع. لا يمكن استخدامه في الإملاء: جزء منه آية من القرآن الكريم (مثل البسملة)، والتطبيق لا يقرأ القرآن الكريم بصوت مسموع أبدًا.',
+      text_confirmed_no_dictation: 'تمّ تأكيد النص للتسميع. لا يمكن استخدامه في الإملاء: وجد الصوت فيه كلمات من القرآن الكريم تعذّر تحديدها ليقرأها أحد الكبار.',
       text_empty: 'يُرجى كتابة نص أو لصقه أولًا.',
       text_changed: 'تغيّر النص. يُرجى الضغط على «تأكيد النص» مرة أخرى.',
       go_recite: 'الانتقال إلى التسميع',
       go_dictation: 'الانتقال إلى الإملاء',
       recite_title: 'التسميع',
       hello_name: 'أهلًا يا {name}!',
-      hello_anon: 'أهلًا بك!',
+      hello_anon: 'أهلًا وسهلًا!',
       need_page: 'هيا نطلب من أحد الكبار تحضير صفحة أولًا.',
       open_prepare: 'تحضير صفحة',
       recite_intro: 'هيا نقرأ النص بصوت عالٍ! نضغط الزر الكبير للبدء، ثم نضغطه مرة أخرى عند الانتهاء.',
@@ -480,7 +559,9 @@
       say_again: 'المحاولة مرة أخرى',
       listen: 'استماع',
       press_listen: 'هيا نضغط «استماع» لنسمعه.',
-      too_quiet: 'بالكاد أسمعك. هيا نقترب قليلًا ونتكلّم بصوت أعلى.',
+      recite_quran_note: 'في هذا النص كلمات من القرآن الكريم، وهي تُراجَع كلمةً بكلمة كما هي في المصحف. وصوت التطبيق لا يقرؤها أبدًا، فلسماع النص قبل التسميع يُرجى قراءته بصوت مسموع.',
+      feedback_not_spoken: 'هذه الملاحظة تقتبس من القرآن الكريم، لذلك تُعرَض مكتوبةً ولا تُقرأ بالصوت.',
+      too_quiet: 'الصوت منخفض جدًا. هيا نقترب قليلًا ونتكلّم بصوت أعلى.',
       too_short: 'كان ذلك قصيرًا جدًا. هيا نضغط الزر، ونقرأ النص كله، ثم نضغطه مرة أخرى.',
       score: 'الكلمات الصحيحة: {ok} من {n}',
       legend_match: 'صحيحة',
@@ -513,14 +594,24 @@
       show_phrase: 'إظهار الكلمات (للكبار)',
       hide_phrase: 'إخفاء الكلمات',
       no_phrases: 'لا يوجد في هذا النص شيء للإملاء.',
+      dict_quran_intro: 'في هذا النص كلمات من القرآن الكريم. عندما يصل الإملاء إليها يتوقّف ويطلب من أحد الكبار قراءتها بصوت مسموع، فصوت التطبيق لا يقرأ القرآن الكريم أبدًا. يُرجى البقاء بالقرب.',
+      gu_ask: 'هيا نطلب من أحد الكبار قراءة هذا الجزء.',
+      gu_ask_again: 'هيا نطلب من أحد الكبار قراءته مرة أخرى.',
+      gu_why: 'هذا الجزء من القرآن الكريم، وصوت التطبيق لا يقرأ القرآن الكريم أبدًا. يُرجى إظهار الكلمات بعيدًا عن نظر الطفل، وقراءتها ببطء بصوت مسموع، ثم الضغط على «انتهاء القراءة»، فتُخفى الكلمات قبل الكتابة.',
+      gu_why_plain: 'لا يستطيع الصوت قراءة هذا الجزء. يُرجى إظهار الكلمات وقراءتها بصوت مسموع كما هي مكتوبة، ثم الضغط على «انتهاء القراءة».',
+      gu_show: 'إظهار كلمات القرآن الكريم',
+      gu_show_plain: 'إظهار الكلمات',
+      gu_done: 'انتهاء القراءة',
+      gu_write: 'هيا نكتبه الآن، ثم نضغط «التالي».',
+      gu_write_last: 'هيا نكتبه الآن، ثم نضغط «انتهيت».',
       dict_check_title: 'تصحيح الكتابة',
-      dict_check_intro: 'يُرجى تصوير ورقة طفلك، أو كتابة ما كُتب عليها كما هو تمامًا، بما في ذلك الأخطاء.',
+      dict_check_intro: 'يُرجى تصوير ورقة الطفل، أو كتابة ما كُتب عليها كما هو تمامًا، بما في ذلك الأخطاء.',
       written_label: 'ما كُتب على الورقة',
       check_writing: 'التحقّق',
       reading_writing: 'جارٍ قراءة الخط…',
       written_empty: 'يُرجى كتابة ما كُتب على الورقة، أو التقاط صورة لها.',
       needs_manual_writing: 'قراءة الخط تحتاج إلى الذكاء الاصطناعي عبر الإنترنت. يُرجى كتابة ما كُتب على الورقة.',
-      parent_review_title: 'يُرجى المراجعة قبل عرض النتيجة على طفلك',
+      parent_review_title: 'يُرجى المراجعة قبل عرض النتيجة على الطفل',
       parent_review_intro: 'قد يخطئ الذكاء الاصطناعي في قراءة الخط. يُرجى تصحيح النص أدناه إن لزم وإعادة التحقّق، ثم التأكيد.',
       illegible: 'كان الخط صعب القراءة. يُرجى مراجعته بعناية.',
       read_text_label: 'ما تمّت قراءته',
@@ -528,7 +619,7 @@
       recheck: 'إعادة التحقّق بهذا النص',
       review_stale: 'تغيّر النص. يُرجى الضغط على «إعادة التحقّق بهذا النص» قبل التأكيد.',
       confirm_result: 'تأكيد النتيجة',
-      dict_result_title: 'إملاؤك',
+      dict_result_title: 'نتيجة الإملاء',
       new_dictation: 'إملاء جديد',
       quran_title: 'القرآن الكريم',
       juz_amma_only: 'جزء عمّ فقط (السور ٧٨–١١٤)',
@@ -559,7 +650,7 @@
       error_too_big: 'هذا كبير جدًا عليّ. يُرجى تجربة شيء أقصر أو أصغر.',
       error_unavailable: 'هذا غير متاح الآن.',
       error_quran_text: 'هذا النص من القرآن الكريم. يُرجى التدرّب عليه في قسم القرآن الكريم.',
-      error_quran_phrase: 'جزء من هذا النص آية من القرآن الكريم (مثل البسملة)، والتطبيق لا يقرأ القرآن الكريم بصوت مسموع أبدًا، لذلك لا يمكن استخدام هذا النص في الإملاء، ولكن يمكن تسميعه.',
+      error_quran_unmarked: 'لا يمكن استخدام هذا النص في الإملاء: وجد الصوت فيه كلمات من القرآن الكريم تعذّر تحديدها ليقرأها أحد الكبار. ولكن يمكن تسميعه كلمةً بكلمة.',
       error_unreadable_text: 'تعذّرت قراءة بعض الكلمات، وهي معلَّمة بـ [?]. يُرجى كتابتها مكان [?] أولًا.',
       error_lang_mismatch: 'هذا النص ليس باللغة المختارة. يُرجى اختيار لغة النص.',
       error_text_too_long: 'هذا النص طويل جدًا. يُرجى استخدام نص أقصر.',
@@ -593,10 +684,10 @@
    */
   const GATES = {
     'prep-photo': ['server', 'brain', 'consent'],
-    'recite-rec': ['server', 'asr', 'consent', 'mic'],
+    'recite-rec': ['server', 'asr', 'consent', 'mic', 'task-meaning'],
     'recite-tts': ['server', 'tts'],
-    // 'dictation': the confirmed text has a phrase that is a whole ayah (often the
-    // basmala on its own line), which the voice never reads: it can only be recited.
+    // 'dictation': the voice would meet Quran words the server could not mark as a Quran
+    // part (a safety net: the server's "dictation": false): the text can only be recited.
     'dict-start': ['server', 'dictation'],
     // A typed check is worded by Claude when it is configured: that needs the consent.
     'dict-check': ['server', 'ai-consent'],
@@ -624,9 +715,12 @@
     childId: null,
     // langChosen: the parent picked the text language (or a photo set it); until then it
     // follows the interface language. confirmToken drops a confirmation overtaken by an edit.
-    // noDictation: the server refused the confirmed text for dictation (a phrase is a whole
-    // ayah); it lasts until the text is changed or confirmed again. noMeaning: the text has
-    // Quran words, so it may not be recited by meaning (/api/text/check "contextual": false).
+    // noDictation: the server refused the confirmed text for dictation (the voice found Quran
+    // words outside the Quran parts: a safety net the server keeps); it lasts until the text
+    // is changed or confirmed again. noMeaning: the text has Quran words, so it may not be
+    // recited by meaning (/api/text/check "contextual": false). quran: the Quran parts the
+    // server found in the text ({parts, mushafText, text, mushafUsed}), null when it found
+    // none or has not answered. checked: the server checked the text when it was confirmed.
     page: emptyPage(defaultLang()),
     // The task being done (family.js: startTask), or null in free practice:
     // { kind, screen, quran: {surah, from, to, memory} | null, onResult, onLeave, saved }.
@@ -640,6 +734,11 @@
     dictation: {
       stage: 'intro',
       phrases: [],
+      // Per phrase: 'voice' (/api/tts reads it) or 'grown_up' (a chunk of a Quran part, or a
+      // phrase the voice refused: a grown-up reads it, never the voice), and the vowelled
+      // mushaf text the grown-up reads (null: the phrase as written).
+      readers: [],
+      readText: [],
       index: 0,
       audio: new Map(), // phrase index -> Promise of {blob, check}: the synthetic voice (not child data)
       result: null,
@@ -797,32 +896,44 @@
     setStatusAction(node, null);
   }
 
-  /** opts: {error, detail, action}; action 'quran' adds a button to the Quran section. */
+  /**
+   * opts: {error, detail, action, range}; action 'quran' adds a button to the Quran
+   * section, which opens on `range` ({surah, from, to}) when there is one.
+   */
   function setStatus(node, key, vars, opts) {
     const o = opts || {};
     setT(node, key, vars, o.detail);
     node.classList.toggle('is-error', !!o.error);
-    setStatusAction(node, o.action || null);
+    setStatusAction(node, o.action || null, o.range || null);
   }
 
   /** The button shown right after a status line (only 'quran' exists), or none. */
-  function setStatusAction(node, action) {
+  function setStatusAction(node, action, range) {
     const next = node.nextElementSibling;
     const current = next && next.classList.contains('status-action') ? next : null;
     if (!action) {
       if (current) current.remove();
       return;
     }
+    const btn = current || el('button', { type: 'button', class: 'btn btn-small status-action' });
+    btn.dataset.range = range ? JSON.stringify(range) : '';
     if (current) return;
-    const btn = el('button', { type: 'button', class: 'btn btn-small status-action' });
     setT(btn, 'go_quran');
-    btn.addEventListener('click', () => go('quran'));
+    btn.addEventListener('click', () => {
+      let r = null;
+      try {
+        r = btn.dataset.range ? quranRangeOf(JSON.parse(btn.dataset.range)) : null;
+      } catch (e) {
+        r = null;
+      }
+      openQuranAt(r);
+    });
     node.after(btn);
   }
 
   function showError(node, err) {
     const info = errorInfo(err);
-    setStatus(node, info.key, null, { error: true, action: info.action });
+    setStatus(node, info.key, null, { error: true, action: info.action, range: info.range });
   }
 
   function onlyText(s) {
@@ -849,7 +960,7 @@
   }
 
   function emptyPage(lang) {
-    return { text: '', lang: lang || 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0, noDictation: false, noMeaning: false };
+    return { text: '', lang: lang || 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0, noDictation: false, noMeaning: false, noMeaningTask: false, quran: null, checked: false };
   }
 
   /** The Quran screen state of the child changed: family.js stores it (not during a task). */
@@ -893,6 +1004,7 @@
       }
     }
     renderLegends();
+    for (const box of $$('.quran-parts')) if (box.__qp) renderQuranParts(box, box.__qp.info, box.__qp.opts);
     updateConsentExtra();
     updateHello();
     updateReciteModeLabel();
@@ -917,16 +1029,30 @@
   // ===========================================================================
 
   class ApiError extends Error {
-    constructor(status, code, message, scope) {
+    constructor(status, code, message, quranRange, reason) {
       super(message || code);
       this.name = 'ApiError';
       this.status = status;
       this.code = code;
       this.serverMessage = message || '';
-      // quran_text from api/dictation/phrases: 'phrase' when only a phrase is an ayah
-      // (the text may be recited, but not read out for dictation).
-      this.scope = scope || null;
+      // quran_text for a text that is Quran: {surah, from, to} when its ayat are one
+      // range of one surah (the Quran section, or a Quran task, can open on it).
+      this.quranRange = quranRange || null;
+      // quran_text with "reason": "meaning": a school text with Quran words refused by
+      // meaning only (it can be recited word by word), never a text that is Quran.
+      this.reason = reason === 'meaning' ? 'meaning' : null;
     }
+  }
+
+  /** {surah, from, to} from a server answer, or null when it is not a valid range. */
+  function quranRangeOf(r) {
+    if (!r || typeof r !== 'object') return null;
+    const surah = Number(r.surah);
+    const from = Number(r.from);
+    const to = Number(r.to);
+    if (!Number.isInteger(surah) || surah < 1 || surah > 114) return null;
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from || to - from + 1 > MAX_AYAT) return null;
+    return { surah, from, to };
   }
 
   /**
@@ -953,40 +1079,81 @@
     if (!res.ok) {
       let code = 'http_' + res.status;
       let message = '';
-      let scope = null;
+      let range = null;
+      let reason = null;
       try {
         const body = await res.json();
         if (body && typeof body.error === 'string') code = body.error;
         if (body && typeof body.message === 'string') message = body.message;
-        if (body && typeof body.scope === 'string') scope = body.scope;
+        if (body && code === 'quran_text') {
+          range = quranRangeOf(body.quran_range);
+          reason = body.reason === 'meaning' ? 'meaning' : null;
+        }
       } catch (e) {
         /* not JSON */
       }
-      throw new ApiError(res.status, code, message, scope);
+      throw new ApiError(res.status, code, message, range, reason);
     }
     if (o.as === 'response') return res;
     return o.as === 'blob' ? res.blob() : res.json();
   }
 
-  /** A refusal that rules out only dictation: a phrase of the text is a whole ayah. */
-  function isPhraseRefusal(err) {
-    return !!err && err.name === 'ApiError' && err.code === 'quran_text' && err.scope === 'phrase';
-  }
-
   /**
-   * /api/dictation/phrases for `text`. The server checks every phrase and every line of
-   * the text itself (a basmala on a line of its own gives quran_text with scope
-   * "phrase"), with the same rule as /api/text/check in mode "dictation".
+   * /api/dictation/phrases for `text`: {phrases, readers, read_text, parts, quran_parts}.
+   * The server finds the Quran parts of the text itself (a basmala on a line of its
+   * own, an ayah quoted in a lesson): their chunks have the reader "grown_up" and are
+   * never sent to /api/tts.
    */
   function dictationPhrases(text, lang) {
     return api('api/dictation/phrases', { json: { text, lang } });
   }
 
   /**
-   * POST /api/text/check: {ok, words, dictation, contextual} for a text in `mode`
-   * ('strict' by default, 'contextual' or 'dictation'), or an ApiError with the codes of
-   * the other endpoints (empty_text, bad_text, text_too_long, unreadable_text,
-   * quran_text with scope "phrase" in mode dictation, lang_mismatch).
+   * The Quran parts of a server answer (docs/CONTRACT.md, "Quran part"), kept as the
+   * server found them: the browser never looks for Quran words itself. Parts without a
+   * reference are dropped.
+   */
+  function quranPartsOf(list) {
+    if (!Array.isArray(list)) return [];
+    const words = (a) => (Array.isArray(a) ? a.filter((w) => typeof w === 'string') : []);
+    const int = (v) => (Number.isInteger(v) ? v : null);
+    const out = [];
+    for (const p of list) {
+      if (!p || typeof p !== 'object' || !Number.isInteger(p.surah) || !Number.isInteger(p.ayah_from)) continue;
+      out.push({
+        surah: p.surah,
+        ayahFrom: p.ayah_from,
+        ayahTo: Number.isInteger(p.ayah_to) ? p.ayah_to : p.ayah_from,
+        whole: p.whole === true,
+        uthmani: words(p.uthmani),
+        clean: words(p.clean),
+        cleanDisplay: words(p.clean_display),
+        chunks: words(p.chunks),
+        expStart: int(p.exp_start),
+        expEnd: int(p.exp_end),
+        differences: (Array.isArray(p.differences) ? p.differences : [])
+          .filter((d) => d && ['sub', 'del', 'ins'].includes(d.op))
+          .map((d) => ({
+            op: d.op,
+            typed: typeof d.typed === 'string' ? d.typed : '',
+            mushaf: typeof d.mushaf === 'string' ? d.mushaf : '',
+            mushafClean: typeof d.mushaf_clean === 'string' ? d.mushaf_clean : '',
+            index: int(d.index),
+            token: int(d.token),
+          })),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * POST /api/text/check: {ok, words, dictation, contextual, quranParts, mushafText} for
+   * a text in `mode` ('strict' by default, 'contextual' or 'dictation'), or an ApiError
+   * with the codes of the other endpoints (empty_text, bad_text, text_too_long,
+   * unreadable_text, quran_text, with quranRange for a text that is one range of ayat,
+   * lang_mismatch). quranParts: the Quran parts the server found (a school text that
+   * includes Quran); mushafText: the text with every part that differs from the mushaf
+   * replaced by the mushaf words (the text itself when nothing differs).
    */
   async function checkText(text, lang, mode) {
     const json = { text, lang, mode: mode === 'contextual' || mode === 'dictation' ? mode : 'strict' };
@@ -997,6 +1164,8 @@
       // A missing flag counts as "possible": the server refuses later if it is not.
       dictation: !(res && res.dictation === false),
       contextual: !(res && res.contextual === false),
+      quranParts: quranPartsOf(res && res.quran_parts),
+      mushafText: res && typeof res.mushaf_text === 'string' ? res.mushaf_text : text,
     };
   }
 
@@ -1017,8 +1186,10 @@
   function errorInfo(err) {
     if (err && err.name === 'ApiError') {
       if (err.status === 0) return { key: 'server_down' };
-      if (isPhraseRefusal(err)) return { key: 'error_quran_phrase' };
-      if (err.code === 'quran_text') return { key: ERROR_KEYS.quran_text, action: 'quran' };
+      // Refused by meaning only: a school text with Quran words, recited word by word.
+      if (err.code === 'quran_text' && err.reason === 'meaning') return { key: 'error_quran_meaning' };
+      // A text that is Quran: the Quran section, on its ayat when they are one range.
+      if (err.code === 'quran_text') return { key: ERROR_KEYS.quran_text, action: 'quran', range: err.quranRange || null };
       if (ERROR_KEYS[err.code]) return { key: ERROR_KEYS[err.code] };
       if (err.status === 413) return { key: 'error_too_big' };
       if (err.status === 503 || err.status === 501) return { key: 'error_unavailable' };
@@ -1073,7 +1244,10 @@
       else if (need === 'consent' && !state.consent) return 'consent_needed';
       else if (need === 'ai-consent' && h.brain === 'claude' && !state.aiConsent) return 'consent_needed_ai';
       else if (need === 'mic' && !(window.MommyRecorder && window.MommyRecorder.isSupported())) return 'no_mic_support';
-      else if (need === 'dictation' && state.page.noDictation) return 'error_quran_phrase';
+      else if (need === 'dictation' && state.page.noDictation) return 'error_quran_unmarked';
+      // A task by meaning whose text has Quran words (saved before the rule, or before a
+      // finder improvement): only a grown-up can change it (RL-6).
+      else if (need === 'task-meaning' && state.task && state.page.mode === 'contextual' && state.page.noMeaningTask) return 'task_needs_change';
     }
     return null;
   }
@@ -1144,9 +1318,13 @@
     }
   }
 
+  /**
+   * Without the online AI the meaning check is approximate: said under the mode choice,
+   * unless "The meaning" is ruled out for the confirmed text (it has Quran words).
+   */
   function updateOfflineNotes() {
     const offline = !!state.health && state.health.brain !== 'claude';
-    $('#mode-offline-note').hidden = !offline;
+    $('#mode-offline-note').hidden = !offline || (state.page.noMeaning && !state.task);
   }
 
   // ===========================================================================
@@ -1215,6 +1393,8 @@
     state.speechToken++; // feedback still being fetched is not played on another screen
     cancelRecording();
     player.stop();
+    // The words of a grown-up step are never left on show for later.
+    if (screen === 'dictation' && !$('#dict-gu-reveal').hidden) hideGrownUpText();
     if (state.hooks.leave) state.hooks.leave(screen);
   }
 
@@ -1619,6 +1799,7 @@
     state.page.confirmToken++;
     setNoDictation(false);
     setNoMeaning(false);
+    setPageQuran(null); // the parts were found in the old text
     setBusy($('#btn-confirm'), false);
     if (!state.page.confirmed) {
       if (status.dataset.i18n === 'checking_text') clearStatus(status);
@@ -1670,8 +1851,15 @@
       if (res.needs_manual || !text.trim()) setStatus(status, 'page_needs_manual');
       else if (res.notes) setStatus(status, 'page_read_ok', null, { detail: onlyText(res.notes) });
       else setStatus(status, 'page_read_ok');
-      // The Quran is practised in its own section, against the verbatim text.
-      if (res.contains_quran === true) setStatus(quranNote, 'page_has_quran', null, { action: 'quran' });
+      // A page that is Quran (the server decides, from the text read) is practised in the
+      // Quran section, against the verbatim text, on its ayat when they are one range. A
+      // school page that includes Quran is read as usual, with its Quran parts shown.
+      if (res.contains_quran === true) {
+        setStatus(quranNote, 'page_has_quran', null, { action: 'quran', range: quranRangeOf(res.quran_range) });
+      } else {
+        const parts = quranPartsOf(res.quran_parts);
+        if (parts.length) setPageQuran({ parts, mushafText: typeof res.mushaf_text === 'string' ? res.mushaf_text : text, text });
+      }
       $('#page-text').focus();
     } catch (err) {
       if (err && err.code === 'needs_manual') setStatus(status, 'page_needs_manual');
@@ -1711,30 +1899,34 @@
     const token = ++state.page.confirmToken;
     let noDictation = false;
     let noMeaning = false;
+    let checked = false;
+    let quran = null;
     setStatus(status, 'checking_text');
     setBusy(btn, true);
     try {
       // One check (mode strict) answers for the three uses: reciting word by word (the
-      // call succeeds), by meaning ("contextual") and dictation ("dictation"); the server
-      // checks every phrase and every line for dictation itself.
+      // call succeeds), by meaning ("contextual") and dictation ("dictation"), and lists
+      // the Quran parts the server found in the text (lines and phrases included).
       const res = await checkText(text, lang, 'strict');
       if (token !== state.page.confirmToken) return;
       if (res.words === 0) {
         refuseText(status, { key: 'error_no_words' });
         return;
       }
-      // A phrase that is a whole ayah (often the basmala on its own line) only rules out
-      // dictation, which would read it aloud, and recitation by meaning, which an AI would
-      // judge: the text can still be recited word by word.
+      // A school text that includes Quran: its Quran parts are recited word by word only
+      // (never judged by meaning) and read by a grown-up in a dictation. "dictation":
+      // false is the server's safety net (Quran words the voice would meet outside the
+      // parts): the text can then be recited only.
+      checked = true;
       noDictation = !res.dictation;
       noMeaning = !res.contextual;
+      if (res.quranParts.length) quran = { parts: res.quranParts, mushafText: res.mushafText, text };
     } catch (err) {
       if (token !== state.page.confirmToken) return;
-      // A refused text is not confirmed. If the server cannot be reached, the text is
-      // confirmed anyway: each activity reports the problem when it needs the server.
-      if (isPhraseRefusal(err)) {
-        noDictation = true;
-      } else if (err && err.name === 'ApiError' && err.status >= 400 && err.status < 500) {
+      // A refused text is not confirmed (a text that is Quran: the Quran section, on its
+      // ayat). If the server cannot be reached, the text is confirmed anyway: each
+      // activity reports the problem when it needs the server.
+      if (err && err.name === 'ApiError' && err.status >= 400 && err.status < 500) {
         refuseText(status, errorInfo(err));
         return;
       }
@@ -1743,6 +1935,7 @@
     }
     state.page.text = text;
     state.page.lang = lang;
+    state.page.checked = checked;
     setNoMeaning(noMeaning);
     const mode = $('input[name="mode"]:checked');
     state.page.mode = mode && mode.value === 'contextual' && !noMeaning ? 'contextual' : 'strict';
@@ -1752,11 +1945,49 @@
     resetDictation();
     renderLegends();
     clearStatus($('#prep-quran-note')); // it was about the page as read, before any edits
-    setStatus(status, noDictation ? 'text_confirmed_no_dictation' : switched ? 'text_confirmed_ar' : 'text_confirmed');
+    setPageQuran(quran);
+    let key = 'text_confirmed';
+    if (noDictation) key = 'text_confirmed_no_dictation';
+    else if (quran) key = 'text_confirmed_quran';
+    else if (switched) key = 'text_confirmed_ar';
+    setStatus(status, key);
     $('#prep-next').hidden = false;
     // A child screen opened meanwhile shows the new text.
     if (state.screen === 'recite') enterRecite();
     else if (state.screen === 'dictation') enterDictation();
+  }
+
+  /**
+   * The Quran parts the server found in the text of the page (null: none, or not known):
+   * the box under the text shows them on Prepare, and Recite and Dictation say what they
+   * mean for the child.
+   */
+  function setPageQuran(quran) {
+    state.page.quran = quran && quran.parts && quran.parts.length ? quran : null;
+    renderQuranParts($('#prep-quran'), state.page.quran, { lang: state.page.lang, onUseMushaf: useMushafText });
+  }
+
+  /** True when the text of the page has Quran parts (as far as the server said). */
+  function pageHasQuran() {
+    return !!(state.page.quran && state.page.quran.parts.length);
+  }
+
+  /**
+   * "Use the mushaf text": the text takes the mushaf words in place of the words that
+   * differ (the server's mushaf_text), and is checked and confirmed again at once.
+   */
+  async function useMushafText(mushaf) {
+    if (typeof mushaf !== 'string' || !mushaf.trim()) return;
+    $('#page-text').value = mushaf;
+    markUnconfirmed();
+    await confirmText();
+    if (state.page.quran) {
+      state.page.quran.mushafUsed = true;
+      setPageQuran(state.page.quran);
+    }
+    const box = $('#prep-quran');
+    if (!box.hidden) box.focus({ preventScroll: true });
+    else $('#page-text').focus({ preventScroll: true });
   }
 
   /** Dictation is ruled out for the confirmed text (or allowed again): the gate says why. */
@@ -1797,6 +2028,7 @@
       setT(why, null);
     }
     why.hidden = !off;
+    updateOfflineNotes();
   }
 
   /** The text in the textarea cannot be used: say why ({key, action}) and unconfirm it. */
@@ -1804,8 +2036,148 @@
     state.page.confirmed = false;
     setNoDictation(false);
     setNoMeaning(false);
+    // The Quran parts of a page read stay: its "Use the mushaf text" can still fill a
+    // [?] the reader left in an ayah (the text is refused for its [?] marks first).
     $('#prep-next').hidden = true;
-    setStatus(status, info.key, null, { error: true, action: info.action });
+    setStatus(status, info.key, null, { error: true, action: info.action, range: info.range });
+  }
+
+  // ===========================================================================
+  // Quran parts of a school text (found by the server; shown to the grown-up)
+  // ===========================================================================
+
+  /** The reference of a Quran part in the UI language: "Surah Al-Baqarah, ayah 153". */
+  function quranRef(part) {
+    const info = surahInfo(part.surah);
+    const name = info ? (uiLang() !== 'ar' && info.name_translit ? info.name_translit : info.name_ar) : fmtNum(part.surah);
+    const ref = part.ayahTo > part.ayahFrom
+      ? t('quran_ref_ayat', { name, a: part.ayahFrom, b: part.ayahTo })
+      : t('quran_ref_ayah', { name, a: part.ayahFrom });
+    return part.whole ? ref : t('quran_ref_partial', { ref });
+  }
+
+  /** A translated sentence as nodes: each {name} is filled with the node (or text) in `vars`. */
+  function tNodes(key, vars) {
+    const s = t(key);
+    const out = [];
+    let last = 0;
+    for (const m of s.matchAll(/\{(\w+)\}/g)) {
+      if (m.index > last) out.push(s.slice(last, m.index));
+      const v = vars && vars[m[1]];
+      out.push(v instanceof Node ? v : v === undefined ? m[0] : String(v));
+      last = m.index + m[0].length;
+    }
+    if (last < s.length) out.push(s.slice(last));
+    return out;
+  }
+
+  /** An Arabic word quoted inside a sentence of the UI: «word» (“word” in English). */
+  function quotedWord(word, cls) {
+    const [open, close] = uiLang() === 'en' ? ['“', '”'] : ['«', '»'];
+    const w = el('bdi', { class: cls, lang: 'ar', dir: 'rtl' }, word);
+    return el('span', { class: 'qp-quote' }, [open, w, close]);
+  }
+
+  /**
+   * A word with the letters that differ from `other` in <mark> (the common start and end
+   * stay plain): a changed letter stands out (UX-05).
+   */
+  function markedWord(word, other, cls) {
+    const a = Array.from(word);
+    const b = Array.from(other || '');
+    let lo = 0;
+    while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
+    let hi = 0;
+    while (hi < a.length - lo && hi < b.length - lo && a[a.length - 1 - hi] === b[b.length - 1 - hi]) hi++;
+    const [open, close] = uiLang() === 'en' ? ['“', '”'] : ['«', '»'];
+    const mid = a.slice(lo, a.length - hi).join('');
+    const w = el('bdi', { class: cls, lang: 'ar', dir: 'rtl' }, [a.slice(0, lo).join(''), mid ? el('mark', null, mid) : null, a.slice(a.length - hi).join('')]);
+    return el('span', { class: 'qp-quote' }, [open, w, close]);
+  }
+
+  /**
+   * One difference between the typed words and the mushaf, as a list item's nodes: a
+   * changed word against its standard spelling (the changed letters marked), then its
+   * Uthmani form; a missing word after the word before it (UX-05).
+   */
+  function diffNodes(d, part) {
+    if (d.op === 'sub') {
+      if (!d.mushafClean) return tNodes('quran_diff_sub', { typed: quotedWord(d.typed, 'qp-typed'), clean: quotedWord(d.mushaf, 'qp-mushaf'), mushaf: '' });
+      return tNodes('quran_diff_sub', {
+        typed: markedWord(d.typed, d.mushafClean, 'qp-typed'),
+        clean: markedWord(d.mushafClean, d.typed, 'qp-clean'),
+        mushaf: el('bdi', { class: 'qp-mushaf', lang: 'ar', dir: 'rtl' }, d.mushaf),
+      });
+    }
+    if (d.op === 'del') {
+      const prev = part && Number.isInteger(d.index) && d.index > 0 ? part.clean[d.index - 1] : null;
+      if (prev) return tNodes('quran_diff_del_after', { prev: quotedWord(prev, 'qp-prev'), mushaf: quotedWord(d.mushaf, 'qp-mushaf') });
+      return tNodes('quran_diff_del', { mushaf: quotedWord(d.mushaf, 'qp-mushaf') });
+    }
+    return tNodes('quran_diff_ins', { typed: quotedWord(d.typed, 'qp-typed') });
+  }
+
+  /** The part's first two and last two Uthmani words, to see which words were taken (UX-05). */
+  function partSnippet(part) {
+    const w = part.uthmani || [];
+    if (!w.length) return null;
+    const text = w.length <= 4 ? w.join(' ') : w.slice(0, 2).join(' ') + ' … ' + w.slice(-2).join(' ');
+    return quotedWord(text, 'qp-snippet');
+  }
+
+  /**
+   * Fill `box` (a .quran-parts element) with the Quran parts of a text: info = {parts,
+   * mushafText, text, mushafUsed} as the server gave them, or null to empty and hide it.
+   * It shows each part's reference, what the parts mean (word by word only, read by a
+   * grown-up in a dictation), the differences from the mushaf and, when there are some
+   * and opts.onUseMushaf is given, "Use the mushaf text" (onUseMushaf(mushafText)).
+   * opts.note === false leaves the explanation out. Repainted on a language change.
+   */
+  function renderQuranParts(box, info, opts) {
+    if (!box) return;
+    const o = opts || {};
+    const parts = info && Array.isArray(info.parts) ? info.parts : [];
+    box.textContent = '';
+    box.__qp = parts.length ? { info, opts: o } : null;
+    box.hidden = parts.length === 0;
+    if (!parts.length) return;
+    // The surah names come with the surah list; the numbers stand in until it is there.
+    if (!state.quran.surahs.length && state.health && state.health.quran) {
+      loadSurahs().then(() => {
+        if (box.__qp && box.__qp.info === info) renderQuranParts(box, info, o);
+      }).catch(() => {});
+    }
+    box.append(el('h3', { class: 'qp-title' }, t('quran_parts_title')));
+    const refs = el('ul', { class: 'qp-refs' });
+    for (const p of parts) refs.append(el('li', null, [quranRef(p), partSnippet(p) ? ' ' : null, partSnippet(p)]));
+    box.append(refs);
+    if (o.note !== false) box.append(el('p', { class: 'qp-note' }, t('quran_parts_note')));
+    const diffs = parts.flatMap((p) => (p.differences || []).map((d) => ({ d, p })));
+    if (diffs.length) {
+      const list = el('ul', { class: 'qp-diff-list' });
+      for (const { d, p } of diffs) list.append(el('li', null, diffNodes(d, p)));
+      const wrap = el('div', { class: 'qp-diffs' }, [el('p', { class: 'qp-diff-title' }, t('quran_diff_title')), list, el('p', { class: 'hint' }, t('quran_diff_hint'))]);
+      if (o.onUseMushaf && typeof info.mushafText === 'string' && info.mushafText.trim() && info.mushafText !== info.text) {
+        const btn = el('button', { type: 'button', class: 'btn btn-primary qp-use' }, [svgUse('i-book'), el('span', null, t('use_mushaf'))]);
+        btn.addEventListener('click', () => o.onUseMushaf(info.mushafText));
+        wrap.append(btn);
+      }
+      box.append(wrap);
+    }
+    if (info.mushafUsed) box.append(el('p', { class: 'status qp-done', role: 'status' }, t('mushaf_used')));
+  }
+
+  /** An icon of the sprite. */
+  function svgUse(id) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'icon');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const use = document.createElementNS(ns, 'use');
+    use.setAttribute('href', '#' + id);
+    svg.append(use);
+    return svg;
   }
 
   // ===========================================================================
@@ -1838,7 +2210,20 @@
     $('#recite-empty').hidden = ready;
     $('#recite-main').hidden = !ready;
     updateReciteModeLabel();
+    updateQuranNotes();
     if (ready && !$('#recite-text').childNodes.length) showPlainPage();
+  }
+
+  /**
+   * The notes for the grown-up on Recite and Dictation: the text has Quran parts, so it is
+   * recited word by word, the voice never reads it as a model, and in a dictation a
+   * grown-up reads the Quran parts. ("Listen" on Recite only ever speaks the feedback.)
+   */
+  function updateQuranNotes() {
+    const on = state.page.confirmed && pageHasQuran();
+    $('#recite-quran-note').hidden = !on;
+    $('#dict-quran-intro').hidden = !on;
+    $('#dict-quran-child').hidden = !on;
   }
 
   function updateReciteModeLabel() {
@@ -1848,12 +2233,29 @@
     setT(node, 'mode_is', { mode: t(modeKey) });
   }
 
+  /**
+   * The text the child reads: where the typed text differs from the mushaf (the server's
+   * mushaf_text), the mushaf words, since the check expects them (UX-03); the typed text
+   * stays only in the grown-up's edit box.
+   */
+  function readingText() {
+    const q = state.page.quran;
+    if (q && q.text === state.page.text && typeof q.mushafText === 'string' && q.mushafText.trim()) return q.mushafText;
+    return state.page.text;
+  }
+
   function showPlainPage() {
     const box = $('#recite-text');
-    box.textContent = state.page.text;
+    box.textContent = readingText();
     box.classList.add('plain');
     setTextLang(box, state.page.lang);
     $('#recite-legend').hidden = true;
+  }
+
+  /** The plain text on the Recite card again, when it shows (the parts came later). */
+  function refreshPlainPage() {
+    const box = $('#recite-text');
+    if (box.classList.contains('plain') && box.childNodes.length) showPlainPage();
   }
 
   function resetRecite() {
@@ -1881,6 +2283,12 @@
       res = await api('api/recite/check', { form });
     } catch (err) {
       if (state.task !== task) return;
+      if (task && isQuranRefusal(err) && err.reason === 'meaning' && state.page.mode === 'contextual') {
+        state.page.noMeaningTask = true; // a task by meaning with Quran words: a grown-up changes it
+        refreshGates();
+        setStatus(status, 'task_needs_change', null, { error: true });
+        return;
+      }
       showError(status, err);
       return;
     }
@@ -1961,13 +2369,23 @@
     heardNode.textContent = heard;
     setTextLang(heardNode, lang);
 
-    state.recite.lastFeedback = feedback ? { text: feedback, lang } : null;
+    // Feedback about a mistake in a Quran part quotes the mushaf word: it is shown as
+    // text and never sent to the voice (no "Listen", no automatic playback).
+    const fbQuran = res.feedback_is_quran === true;
+    state.recite.lastFeedback = feedback ? { text: feedback, lang, quran: fbQuran } : null;
     state.recite.feedbackBlob = null;
-    $('#recite-listen').hidden = !feedback;
+    $('#recite-listen').hidden = !feedback || fbQuran;
+    $('#recite-fb-quran').hidden = !(feedback && fbQuran);
+    // A task's text tells its Quran parts with the first result if the check at the start
+    // could not (the note for the grown-up then shows).
+    if (!state.page.quran) {
+      const parts = quranPartsOf(res.quran_parts);
+      if (parts.length) setPageQuran({ parts, mushafText: state.page.text, text: state.page.text });
+    }
     box.hidden = false;
     box.focus({ preventScroll: true });
     box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    if (feedback) playFeedback('recite', true);
+    if (feedback && !fbQuran) playFeedback('recite', true);
   }
 
   function fillIdeas(listSel, wrapSel, ideas, lang) {
@@ -1992,7 +2410,8 @@
     const fb = which === 'recite' ? state.recite.lastFeedback : state.dictation.result && state.dictation.result.feedback;
     const gate = which === 'recite' ? 'recite-tts' : 'dict-tts';
     const status = which === 'recite' ? $('#recite-status') : $('#dict-child-status');
-    if (!fb || !fb.text || !isOpen(gate) || fb.text.length > MAX_TTS_CHARS) return;
+    // Feedback that quotes the Quran (feedback_is_quran) is never spoken.
+    if (!fb || !fb.text || fb.quran || !isOpen(gate) || fb.text.length > MAX_TTS_CHARS) return;
     // The voice can take a second to arrive. By then the child may be recording again or
     // be on another screen, or a newer result may be shown: then it is not played.
     const token = state.speechToken;
@@ -2025,6 +2444,8 @@
     $('#dict-repeat').addEventListener('click', () => playPhrase(state.dictation.index, { repeat: true }));
     $('#dict-next').addEventListener('click', nextPhrase);
     $('#dict-show').addEventListener('click', togglePhrase);
+    $('#dict-gu-show').addEventListener('click', showGrownUpText);
+    $('#dict-gu-done').addEventListener('click', doneReading);
     for (const id of ['#dict-take', '#dict-choose']) {
       $(id).addEventListener('change', (e) => checkDictationPhoto(e.target));
     }
@@ -2062,6 +2483,7 @@
     const ready = state.page.confirmed;
     $('#dict-empty').hidden = ready;
     $('#dict-main').hidden = !ready;
+    updateQuranNotes();
     setDictStage(state.dictation.stage);
   }
 
@@ -2075,6 +2497,8 @@
     d.token++;
     state.speechToken++;
     d.phrases = [];
+    d.readers = [];
+    d.readText = [];
     d.index = 0;
     d.audio.clear();
     d.result = null;
@@ -2084,6 +2508,9 @@
     setPhraseLoading(false);
     setNextWaiting(false);
     $('#dict-unclear').hidden = true;
+    $('#dict-gu').hidden = true;
+    hideGrownUpText();
+    $('#dict-fb-quran').hidden = true;
     $('#dict-written').value = '';
     $('#dict-read-text').value = '';
     for (const id of ['#dict-intro-status', '#dict-speak-status', '#dict-check-status', '#dict-review-status', '#dict-child-status']) clearStatus($(id));
@@ -2105,9 +2532,12 @@
       res = await dictationPhrases(state.page.text, state.page.lang);
     } catch (err) {
       if (token !== state.page.confirmToken) return;
-      if (isPhraseRefusal(err)) {
-        // The same answer would come back on every press: the button stays disabled and
-        // the explanation next to it says why, until the text is changed or confirmed again.
+      if (isQuranRefusal(err) && state.page.checked && !err.quranRange) {
+        // The server checked this text when it was confirmed (it is not Quran text), so
+        // this is its safety net: the voice would meet Quran words it could not mark as a
+        // Quran part. The same answer would come back on every press: the button stays
+        // disabled and the explanation next to it says why, until the text is changed or
+        // confirmed again.
         clearStatus(status);
         setNoDictation(true);
         return;
@@ -2118,15 +2548,33 @@
       setBusy(btn, false);
     }
     if (token !== state.page.confirmToken) return; // confirming again cleared the status
-    const phrases = Array.isArray(res.phrases) ? res.phrases.filter((p) => typeof p === 'string' && p.trim()) : [];
+    // The four lists are parallel: a "grown_up" phrase is a chunk of a Quran part, read by
+    // a grown-up from read_text (the vowelled mushaf text), never sent to /api/tts.
+    const phrases = [];
+    const readers = [];
+    const readText = [];
+    (Array.isArray(res.phrases) ? res.phrases : []).forEach((p, i) => {
+      if (typeof p !== 'string' || !p.trim()) return;
+      const grown = Array.isArray(res.readers) && res.readers[i] === 'grown_up';
+      const rt = grown && Array.isArray(res.read_text) && typeof res.read_text[i] === 'string' && res.read_text[i].trim() ? res.read_text[i] : null;
+      phrases.push(p);
+      readers.push(grown ? 'grown_up' : 'voice');
+      readText.push(rt);
+    });
     if (!phrases.length) {
       setStatus(status, 'no_phrases', null, { error: true });
       return;
     }
     clearStatus(status);
+    if (!state.page.quran) {
+      const parts = quranPartsOf(res.quran_parts);
+      if (parts.length) setPageQuran({ parts, mushafText: state.page.text, text: state.page.text });
+    }
     const d = state.dictation;
     d.token++;
     d.phrases = phrases;
+    d.readers = readers;
+    d.readText = readText;
     d.audio.clear();
     d.index = 0;
     for (const id of ['#dict-written', '#dict-read-text']) setTextLang($(id), state.page.lang);
@@ -2140,9 +2588,15 @@
     setT($('#dict-counter'), 'phrase_n', { i: d.index + 1, n: d.phrases.length });
     const last = d.index >= d.phrases.length - 1;
     setT($('#dict-next-label'), last ? 'finish' : 'next');
+    const grown = d.readers[d.index] === 'grown_up';
     const phrase = $('#dict-phrase');
-    phrase.textContent = d.phrases[d.index] || '';
+    phrase.textContent = grown ? '' : d.phrases[d.index] || '';
     setTextLang(phrase, state.page.lang);
+    // A grown-up phrase has its own step: "Show the words" is the voice's helper only.
+    $('#dict-show').hidden = grown;
+    if (grown && !phrase.hidden) togglePhrase();
+    $('#dict-gu').hidden = !grown;
+    hideGrownUpText();
     clearStatus($('#dict-speak-status'));
     $('#dict-unclear').hidden = true;
   }
@@ -2176,6 +2630,8 @@
    */
   function speechFor(index, fresh) {
     const d = state.dictation;
+    // A phrase a grown-up reads (a Quran part) is never sent to the voice.
+    if (d.readers[index] !== 'voice') return Promise.reject(new Error('read by a grown-up'));
     if (!fresh && d.audio.has(index)) return d.audio.get(index);
     const token = d.token;
     const p = fetchSpeech(d.phrases[index], state.page.lang, true);
@@ -2193,7 +2649,12 @@
    */
   async function playPhrase(index, opts) {
     const d = state.dictation;
-    if (!d.phrases[index] || !isOpen('dict-play')) return;
+    if (!d.phrases[index]) return;
+    if (d.readers[index] === 'grown_up') {
+      askGrownUp(index, { again: !!(opts && opts.repeat) });
+      return;
+    }
+    if (!isOpen('dict-play')) return;
     const token = d.token;
     const playId = ++d.playId;
     const current = () => token === d.token && playId === d.playId;
@@ -2209,13 +2670,14 @@
       if (!current()) return;
       setPhraseLoading(false);
       setNextWaiting(false);
-      if (err && err.name === 'ApiError' && err.code === 'quran_text') {
-        // The text was confirmed (it is not Quran text), but the voice found an ayah in
-        // this phrase: the text can be recited, not dictated. Back to the start of the
-        // dictation, where the disabled button says why (not "this text is from the
-        // Quran" with a button to the Quran section).
-        resetDictation();
-        setNoDictation(true);
+      if (isQuranRefusal(err)) {
+        // The safety net: the voice found Quran words in this phrase that the server did
+        // not mark as a Quran part. The dictation goes on: a grown-up reads this phrase,
+        // from the words as written, and the voice is never asked for it again.
+        clearStatus(status);
+        toGrownUp(index);
+        showPhrase();
+        askGrownUp(index);
         return;
       }
       showError(status, err);
@@ -2241,7 +2703,149 @@
       return;
     }
     // While the child listens and writes, the next phrase is fetched.
-    if (token === d.token && index + 1 < d.phrases.length) speechFor(index + 1).catch(() => {});
+    if (token === d.token) prefetch(index + 1);
+  }
+
+  /** Fetch the voice of phrase `index` ahead (a phrase for the voice only). */
+  function prefetch(index) {
+    const d = state.dictation;
+    if (index >= d.phrases.length || d.readers[index] !== 'voice') return;
+    const token = d.token;
+    speechFor(index).catch((err) => {
+      // Refused as Quran: it becomes a grown-up step before the child reaches it.
+      if (token === d.token && isQuranRefusal(err)) toGrownUp(index);
+    });
+  }
+
+  function isQuranRefusal(err) {
+    return !!err && err.name === 'ApiError' && err.code === 'quran_text';
+  }
+
+  /** Phrase `index` is read by a grown-up from now on (the voice refused it). */
+  function toGrownUp(index) {
+    const d = state.dictation;
+    d.readers[index] = 'grown_up';
+    d.readText[index] = null;
+    d.audio.delete(index);
+  }
+
+  /**
+   * The grown-up step of phrase `index` (a chunk of a Quran part): no voice. The child is
+   * asked to call a grown-up; the grown-up shows the words, reads them aloud and presses
+   * "Done reading", which hides them before the child writes. Next waits until then.
+   * `again` (Repeat): the grown-up is asked again.
+   */
+  function askGrownUp(index, opts) {
+    const d = state.dictation;
+    if (index !== d.index || d.readers[index] !== 'grown_up') return;
+    d.playId++; // a voice still on its way for this phrase is not played
+    player.stop();
+    setPhraseLoading(false);
+    setNextWaiting(true);
+    const plain = !d.readText[index];
+    $('#dict-gu').hidden = false;
+    $('#dict-gu .gu-box').hidden = false;
+    setT($('#dict-gu-ask-text'), opts && opts.again ? 'gu_ask_again' : 'gu_ask');
+    setT($('#dict-gu-why'), plain ? 'gu_why_plain' : 'gu_why');
+    setT($('#dict-gu-show-label'), plain ? 'gu_show_plain' : 'gu_show');
+    hideGrownUpText();
+    clearStatus($('#dict-gu-status'));
+    $('#dict-gu-show').focus();
+    // A child who cannot read yet hears it too: the voice says the child's line once.
+    // Repeat never calls the voice (2026-11-11, Q2b), and the Quran words never go to it.
+    if (!(opts && opts.again)) speakAsk(index);
+    // The voice of the next phrase is fetched while the grown-up reads.
+    prefetch(index + 1);
+  }
+
+  /** The voice says "Let's ask a grown-up to read this part" (no Quran word in it). */
+  async function speakAsk(index) {
+    const d = state.dictation;
+    if (!isOpen('dict-tts')) return;
+    const lang = uiLang();
+    const text = t('gu_ask');
+    const playId = d.playId;
+    try {
+      if (!d.askSpeech || d.askSpeech.text !== text) {
+        const speech = await fetchSpeech(text, lang, false);
+        d.askSpeech = { text, blob: speech.blob };
+      }
+      if (d.playId !== playId || d.index !== index || state.screen !== 'dictation' || !$('#dict-gu-reveal').hidden) return;
+      await player.play(d.askSpeech.blob);
+    } catch (err) {
+      /* the line is on the screen */
+    }
+  }
+
+  /** The grown-up pressed "Show the Quran words": the mushaf text, large, as on the Quran screen. */
+  function showGrownUpText() {
+    const d = state.dictation;
+    if (d.readers[d.index] !== 'grown_up') return;
+    const rt = d.readText[d.index];
+    const box = $('#dict-gu-text');
+    box.textContent = '';
+    if (rt) {
+      box.className = 'gu-text quran-text';
+      setTextLang(box, 'ar');
+      box.append(quranLine(rt));
+    } else {
+      // The safety net: no mushaf text, so the phrase as it is written.
+      box.className = 'gu-text gu-plain';
+      setTextLang(box, state.page.lang);
+      box.textContent = d.phrases[d.index];
+    }
+    $('#dict-gu-source').hidden = !rt;
+    $('#dict-gu-reveal').hidden = false;
+    $('#dict-gu-show').hidden = true;
+    $('#dict-gu-show').setAttribute('aria-expanded', 'true');
+    $('#dict-gu-done').focus();
+  }
+
+  /** "Done reading": the words are hidden again before the child writes; Next is free. */
+  function doneReading() {
+    const d = state.dictation;
+    if (d.readers[d.index] !== 'grown_up') return;
+    hideGrownUpText();
+    $('#dict-gu .gu-box').hidden = true;
+    const last = d.index >= d.phrases.length - 1;
+    setT($('#dict-gu-ask-text'), last ? 'gu_write_last' : 'gu_write');
+    setNextWaiting(false);
+    $('#dict-next').focus();
+  }
+
+  /** The words of the grown-up step are hidden (and taken out of the page). */
+  function hideGrownUpText() {
+    $('#dict-gu-reveal').hidden = true;
+    $('#dict-gu-text').textContent = '';
+    $('#dict-gu-show').hidden = false;
+    $('#dict-gu-show').setAttribute('aria-expanded', 'false');
+  }
+
+  /**
+   * Verbatim Uthmani text, with the line breaks of the Quran screen: a pause mark stays on
+   * the line of the word before it. Only elements are added around the characters.
+   */
+  function quranLine(text) {
+    const line = el('span', { class: 'ayah' });
+    const parts = onlyText(text).split(/(\s+)/).filter(Boolean);
+    let group = null;
+    parts.forEach((part, i) => {
+      if (/^\s+$/.test(part)) {
+        if (group && parts[i + 1] !== undefined && isPauseMark(parts[i + 1])) group.append(part);
+        else {
+          line.append(part);
+          group = null;
+        }
+        return;
+      }
+      if (isPauseMark(part)) {
+        (group || line).append(part);
+        return;
+      }
+      group = el('span', { class: 'qg' }, el('span', { class: 'qw' }, part));
+      line.append(group);
+    });
+    return line;
   }
 
   function nextPhrase() {
@@ -2311,10 +2915,15 @@
     showDictationReview(res);
   }
 
-  /** True when "What was read" was edited after the result shown was computed. */
+  /**
+   * True when "What was read" was edited after the result shown was computed. Line breaks
+   * are compared as LF: a textarea's value holds LF, while a browser sends a form field
+   * with CRLF, which a server may echo in read_text (a two-line answer was never confirmed).
+   */
   function reviewIsStale() {
     const r = state.dictation.result;
-    return !!r && $('#dict-read-text').value.trim() !== onlyText(r.res.read_text).trim();
+    const lines = (s) => onlyText(s).replace(/\r\n?/g, '\n').trim();
+    return !!r && lines($('#dict-read-text').value) !== lines(r.res.read_text);
   }
 
   /** "Confirm result" only shows the child marks that match the text in the box. */
@@ -2330,7 +2939,8 @@
     const lang = state.page.lang;
     const result = res.result || {};
     const feedback = onlyText(res.feedback);
-    state.dictation.result = { res, feedback: feedback ? { text: feedback, lang } : null };
+    // feedback_is_quran: it quotes the mushaf word of a Quran part, so it is never spoken.
+    state.dictation.result = { res, feedback: feedback ? { text: feedback, lang, quran: res.feedback_is_quran === true } : null };
     state.dictation.feedbackBlob = null;
 
     const readText = $('#dict-read-text');
@@ -2360,7 +2970,9 @@
     const fb = $('#dict-child-feedback');
     fb.textContent = d.result.feedback ? d.result.feedback.text : '';
     setTextLang(fb, lang);
-    $('#dict-listen').hidden = !d.result.feedback;
+    const fbQuran = !!(d.result.feedback && d.result.feedback.quran);
+    $('#dict-listen').hidden = !d.result.feedback || fbQuran;
+    $('#dict-fb-quran').hidden = !fbQuran;
     clearTaskOutcome('dictation');
     setDictStage('child');
     $('#dict-main [data-stage="child"]').focus({ preventScroll: true });
@@ -2462,6 +3074,24 @@
       });
     }
     return surahsPromise;
+  }
+
+  /**
+   * Open the Quran section, on `range` ({surah, from, to}: the ayat of a text that is
+   * Quran, refused elsewhere) when there is one. A task's range never changes.
+   */
+  function openQuranAt(range) {
+    if (range && !state.task) {
+      const prefs = state.profile.quran;
+      prefs.surah = range.surah;
+      prefs.from = range.from;
+      prefs.to = range.to;
+      if (range.surah < JUZ_AMMA_FIRST) prefs.juzAmma = false;
+      state.quran.loaded = null;
+      saveProfile();
+      renderSurahOptions();
+    }
+    go('quran');
   }
 
   async function enterQuran() {
@@ -2943,6 +3573,7 @@
     const token = state.page.confirmToken + 1;
     state.page = emptyPage(state.profile.lang);
     state.page.confirmToken = token;
+    setPageQuran(null);
     $('#page-text').value = '';
     setPageLang(state.page.lang);
     const strict = $('input[name="mode"][value="strict"]');
@@ -3024,9 +3655,12 @@
         text: onlyText(spec.text),
         mode: kind === 'recite' && spec.mode === 'contextual' ? 'contextual' : 'strict',
         confirmed: true,
+        checked: true, // the server checked the text when the task was made
         langChosen: true,
         confirmToken: task.saved.page.confirmToken + 1,
       });
+      setPageQuran(null);
+      taskQuranParts(state.page);
       lockMode(state.page.mode);
       resetRecite();
       resetDictation();
@@ -3057,6 +3691,7 @@
     } else {
       state.page = task.saved.page;
       state.page.confirmToken += 2; // a confirmation still on its way is for another state
+      setPageQuran(state.page.quran);
       unlockMode(task.saved.mode);
       resetRecite();
       resetDictation();
@@ -3067,6 +3702,31 @@
     $('#task-banner').hidden = true;
     refreshGates();
     if (task.onLeave) task.onLeave();
+  }
+
+  /**
+   * The Quran parts of a task's text, asked from the server when the task starts (the
+   * task keeps only its text): Recite and Dictation then show their notes for the
+   * grown-up, and the dictation knows before it starts. Its phrases and the check
+   * results carry the parts too, so a failure here changes nothing else.
+   */
+  async function taskQuranParts(page) {
+    const token = page.confirmToken;
+    let res;
+    try {
+      res = await checkText(page.text, page.lang, 'strict');
+    } catch (err) {
+      return;
+    }
+    if (state.page !== page || page.confirmToken !== token) return;
+    if (res.quranParts.length) setPageQuran({ parts: res.quranParts, mushafText: res.mushafText, text: page.text });
+    if (!res.dictation) setNoDictation(true);
+    if (!res.contextual && page.mode === 'contextual') {
+      page.noMeaningTask = true;
+      refreshGates();
+    }
+    updateQuranNotes();
+    refreshPlainPage();
   }
 
   /** "Back to my tasks": end the task and show the child's home. */
@@ -3179,7 +3839,11 @@
     clearStatus,
     showError,
     errorInfo,
-    isPhraseRefusal,
+    // Quran parts of a school text (found by the server): the box with their references,
+    // the differences from the mushaf and "Use the mushaf text"
+    renderQuranParts,
+    quranPartsOf,
+    quranRangeOf,
     // server
     api,
     checkText,

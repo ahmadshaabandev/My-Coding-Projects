@@ -269,6 +269,10 @@
           <label for="page-text" data-i18n="page_text_label">Page text</label>
           <textarea id="page-text" rows="8" spellcheck="false" data-i18n-attr="placeholder:page_text_ph"></textarea>
         </div>
+        <!-- The Quran parts the server found in the text (a school text that includes
+             Quran): their references, what that means for each activity, the
+             differences from the mushaf and "Use the mushaf text" (app.js, renderQuranParts). -->
+        <div class="quran-parts" id="prep-quran" tabindex="-1" hidden></div>
 
         <fieldset class="segmented" id="mode-group">
           <legend data-i18n="mode_label">Reciting mode</legend>
@@ -281,8 +285,8 @@
             <span class="seg-body"><span class="seg-title" data-i18n="mode_contextual">The meaning</span><span class="seg-hint" data-i18n="mode_contextual_hint">Own words are fine if the meaning is right.</span></span>
           </label>
         </fieldset>
-        <!-- The confirmed text holds Quran words (its "contextual" flag is false): the
-             meaning is never judged by AI, so it is recited word by word only. -->
+        <!-- The confirmed text has Quran parts (its "contextual" flag is false): the
+             meaning of Quran words is never judged by AI, so it is recited word by word only. -->
         <p class="why" id="mode-meaning-why" role="status" aria-live="polite" hidden></p>
         <p class="hint" id="mode-offline-note" data-i18n="mode_contextual_offline" hidden>Without the online AI, the meaning check is only approximate.</p>
 
@@ -311,6 +315,11 @@
       <div id="recite-main" hidden>
         <p class="lead" data-i18n="recite_intro">Read the text aloud. Press the big button to start, and press it again when you finish.</p>
         <p class="chip" id="recite-mode-label"></p>
+        <!-- A text with Quran parts: checked word by word, and never read by the voice. -->
+        <div class="hint-parent" id="recite-quran-note" hidden>
+          <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
+          <p data-i18n="recite_quran_note">This text has words of the Quran. They are checked word by word, as written in the mushaf. The app’s voice never reads them: to let your child hear the text first, please read it aloud yourself.</p>
+        </div>
 
         <div class="card">
           <div class="words reading" id="recite-text"></div>
@@ -335,6 +344,7 @@
           <p class="verdict" id="recite-verdict" hidden></p>
           <p class="score" id="recite-score" hidden></p>
           <p class="feedback" id="recite-feedback"></p>
+          <p class="hint" id="recite-fb-quran" data-i18n="feedback_not_spoken" hidden>This message quotes the Quran, so it is shown and not spoken.</p>
           <p class="hint" id="recite-quality" hidden></p>
           <p class="hint" id="recite-limit" data-i18n="max_reached" hidden>That's the longest I can listen to (2 minutes).</p>
           <!-- What this result means for the task being done (family.js). -->
@@ -377,12 +387,18 @@
         <!-- Stage 1: intro -->
         <div class="card stage" data-stage="intro">
           <p class="lead" data-i18n="dict_intro">Get a pencil and paper. I will say the text slowly, one small piece at a time.</p>
+          <p class="gu-child" id="dict-quran-child" data-i18n="dict_quran_child" hidden>Let’s do this one with a grown-up.</p>
+          <div class="hint-parent" id="dict-quran-intro" hidden>
+            <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
+            <p data-i18n="dict_quran_intro">This text has words of the Quran. When the dictation reaches them, it stops and asks a grown-up to read them aloud: the app’s voice never reads the Quran. Please stay close.</p>
+          </div>
           <button type="button" class="btn btn-primary btn-wide" id="btn-dict-start" data-gate="dict-start">
             <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-speaker"/></svg>
             <span data-i18n="dict_start">Start the dictation</span>
           </button>
-          <!-- Why the dictation cannot start (a phrase of the text is a whole ayah). A live
-               region: the reason appears right after a press that the server refused. -->
+          <!-- Why the dictation cannot start (the voice found Quran words that the server
+               did not mark as a Quran part: a safety net). A live region: the reason
+               appears right after a press that the server refused. -->
           <p class="why" data-why="dict-start" role="status" aria-live="polite" hidden></p>
           <p class="status" id="dict-intro-status" role="status" aria-live="polite"></p>
         </div>
@@ -390,6 +406,32 @@
         <!-- Stage 2: one phrase at a time -->
         <div class="card stage" data-stage="speak" hidden>
           <p class="counter" id="dict-counter" aria-live="polite"></p>
+          <!-- A phrase a grown-up reads (a chunk of a Quran part, reader "grown_up"):
+               /api/tts is never called for it. The words are shown only after a tap and
+               hidden again by "Done reading", before the child writes. -->
+          <section class="grownup" id="dict-gu" aria-labelledby="dict-gu-ask" hidden>
+            <p class="gu-ask" id="dict-gu-ask">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>
+              <span id="dict-gu-ask-text" aria-live="polite"></span>
+            </p>
+            <div class="gu-box">
+              <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
+              <p class="gu-why" id="dict-gu-why"></p>
+              <button type="button" class="btn btn-wide" id="dict-gu-show" aria-expanded="false" aria-controls="dict-gu-reveal">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-book"/></svg>
+                <span id="dict-gu-show-label"></span>
+              </button>
+              <div class="gu-reveal" id="dict-gu-reveal" hidden>
+                <p class="gu-text" id="dict-gu-text" lang="ar" dir="rtl"></p>
+                <p class="gu-source" id="dict-gu-source" data-i18n="riwaya">Hafs – Tanzil</p>
+                <button type="button" class="btn btn-primary btn-wide" id="dict-gu-done">
+                  <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
+                  <span data-i18n="gu_done">Done reading</span>
+                </button>
+              </div>
+            </div>
+            <p class="status" id="dict-gu-status" role="status" aria-live="polite"></p>
+          </section>
           <div class="btn-row btn-row-big">
             <button type="button" class="btn btn-big" id="dict-repeat" data-gate="dict-play">
               <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-repeat"/></svg>
@@ -466,6 +508,7 @@
         <div class="card stage result" data-stage="child" hidden tabindex="-1">
           <h2 class="card-title" data-i18n="dict_result_title">Your dictation</h2>
           <p class="feedback" id="dict-child-feedback"></p>
+          <p class="hint" id="dict-fb-quran" data-i18n="feedback_not_spoken" hidden>This message quotes the Quran, so it is shown and not spoken.</p>
           <div class="words" id="dict-child-words"></div>
           <ul class="legend" data-legend="written"></ul>
           <div class="task-outcome" id="task-outcome-dictation" aria-live="polite" hidden></div>
@@ -591,20 +634,32 @@
     <section class="screen" id="screen-parent" data-screen="parent" aria-labelledby="parent-title" hidden>
       <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
       <h1 id="parent-title" data-i18n="fam_parent_title">Parent area</h1>
-      <p class="hint" data-i18n="fam_parent_help">Praise and surprises keep children wanting to learn; rewards work best for effort the child can see.</p>
+      <p class="hint hint-parent" id="parent-autolock" data-i18n="fam_parent_autolock">It locks after 3 minutes without use, and when the app is left.</p>
+      <div class="data-notice parent-reset" id="parent-reset-notice" role="status" hidden>
+        <p id="parent-reset-text"></p>
+        <button type="button" class="btn btn-small" id="parent-reset-ok" data-i18n="fam_dismiss">Hide this</button>
+      </div>
 
       <nav class="psec-nav" id="psec-nav" data-i18n-attr="aria-label:fam_parent_sections">
-        <button type="button" class="psec-tab" data-psec="review" data-i18n="fam_sec_review">To review</button>
+        <!-- The number after a label counts what waits for the parent there. -->
+        <button type="button" class="psec-tab" data-psec="review"><span data-i18n="fam_sec_review">To review</span><span class="psec-count" id="psec-count-review" hidden></span></button>
         <button type="button" class="psec-tab" data-psec="tasks" data-i18n="fam_sec_tasks">Tasks</button>
-        <button type="button" class="psec-tab" data-psec="rewards" data-i18n="fam_sec_rewards">Rewards</button>
+        <button type="button" class="psec-tab" data-psec="rewards"><span data-i18n="fam_sec_rewards">Rewards</span><span class="psec-count" id="psec-count-rewards" hidden></span></button>
         <button type="button" class="psec-tab" data-psec="children" data-i18n="fam_sec_children">Children</button>
         <button type="button" class="psec-tab" data-psec="settings" data-i18n="fam_sec_settings">Settings</button>
       </nav>
 
-      <!-- To review: the review queue (next step of the family UI). -->
+      <!-- To review: the tasks that reached their pass level, across children, oldest first.
+           Confirm, or "Not yet: try again" with an optional note for the child. -->
       <section class="psec card" data-psec="review" aria-labelledby="psec-review-h" hidden>
         <h2 id="psec-review-h" tabindex="-1" data-i18n="fam_sec_review">To review</h2>
-        <p class="hint placeholder" data-i18n="fam_placeholder">This section is being built.</p>
+        <p class="status" id="pr-status" role="status" aria-live="polite"></p>
+        <div class="review-notes" id="pr-notes" hidden>
+          <p class="hint-parent" data-i18n="fam_review_mishear">The app can mishear. If you heard your child do it, you can confirm anyway.</p>
+          <p class="hint-parent" data-i18n="fam_review_norec">The app keeps no recordings, so there is nothing to listen to afterwards. To hear it, ask your child to show you.</p>
+        </div>
+        <ul class="ptask-list review-list" id="pr-list"></ul>
+        <p class="hint review-empty" id="pr-empty" data-i18n="fam_review_empty" hidden>Nothing to review right now.</p>
       </section>
 
       <!-- Tasks: per child, create / edit / archive. -->
@@ -673,6 +728,8 @@
               <label for="tf-text" data-i18n="fam_tf_text">Text</label>
               <textarea id="tf-text" rows="6" spellcheck="false" data-i18n-attr="placeholder:page_text_ph"></textarea>
             </div>
+            <!-- The Quran parts the server found in the text (as on Prepare). -->
+            <div class="quran-parts" id="tf-quran" tabindex="-1" hidden></div>
           </div>
 
           <fieldset class="segmented" id="tf-mode">
@@ -686,6 +743,10 @@
               <span class="seg-body"><span class="seg-title" data-i18n="mode_contextual">The meaning</span><span class="seg-hint" data-i18n="mode_contextual_hint">Own words are fine if the meaning is right.</span></span>
             </label>
           </fieldset>
+          <!-- A text with Quran parts is recited word by word only: why "The meaning" is off. -->
+          <p class="why" id="tf-mode-why" role="status" aria-live="polite" hidden></p>
+          <!-- Without the online AI the meaning check is approximate (family.js, updateTaskOfflineNote). -->
+          <p class="hint" id="tf-mode-offline-note" data-i18n="mode_contextual_offline" hidden>Without the online AI, the meaning check is only approximate.</p>
 
           <div id="tf-quran-group" hidden>
             <p class="hint" data-i18n="fam_tf_quran_note">A Quran task is always checked word by word, against the verbatim Tanzil text.</p>
@@ -758,6 +819,8 @@
           </fieldset>
 
           <p class="status" id="tf-status" role="status" aria-live="polite"></p>
+          <!-- A text that is Quran: the form becomes a Quran task on its ayat. -->
+          <button type="button" class="btn btn-small tf-quran-action" id="tf-to-quran" data-i18n="fam_make_quran_task" hidden>Create a Quran task with these ayat</button>
           <div class="btn-row">
             <button type="submit" class="btn btn-primary" id="tf-save" data-i18n="fam_save">Save</button>
             <button type="button" class="btn" id="tf-cancel" data-i18n="fam_cancel">Cancel</button>
@@ -765,10 +828,115 @@
         </form>
       </section>
 
-      <!-- Rewards: star jar, goals, surprises (next step of the family UI). -->
+      <!-- Rewards, per child: the star jar and its history, task rewards to give, goals,
+           surprises and corrections. -->
       <section class="psec card" data-psec="rewards" aria-labelledby="psec-rewards-h" hidden>
         <h2 id="psec-rewards-h" tabindex="-1" data-i18n="fam_sec_rewards">Rewards</h2>
-        <p class="hint placeholder" data-i18n="fam_placeholder">This section is being built.</p>
+        <p class="help-line" data-i18n="fam_parent_help">Praise and surprises keep children wanting to learn; rewards work best for effort the child can see.</p>
+        <div class="field" id="prw-child-field">
+          <label for="prw-child" data-i18n="fam_tasks_of">Child</label>
+          <select id="prw-child"></select>
+        </div>
+        <p class="hint" id="prw-nochild" data-i18n="fam_tasks_nochild" hidden>Please add a child first, in the section “Children”.</p>
+        <p class="status" id="prw-status" role="status" aria-live="polite"></p>
+        <div id="prw-body">
+          <div class="jar-box">
+            <p class="jar" id="prw-balance"></p>
+            <p class="hint" id="prw-earned"></p>
+          </div>
+
+          <section class="rw-block" aria-labelledby="prw-give-h">
+            <h3 id="prw-give-h" tabindex="-1" data-i18n="fam_rw_to_give_h">Rewards to give</h3>
+            <ul class="ptask-list" id="prw-give-list"></ul>
+            <p class="hint" id="prw-give-empty" data-i18n="fam_rw_to_give_empty" hidden>No reward is waiting to be given.</p>
+          </section>
+
+          <section class="rw-block" aria-labelledby="prw-goals-h">
+            <h3 id="prw-goals-h" tabindex="-1" data-i18n="fam_goals_h">Goals of the star jar</h3>
+            <ul class="ptask-list" id="prw-goals"></ul>
+            <p class="hint" id="prw-goals-empty" data-i18n="fam_goals_empty" hidden>No goal yet.</p>
+            <button type="button" class="btn" id="prw-goal-add" data-i18n="fam_goal_add">Add a goal</button>
+            <form class="sub-form" id="gf" novalidate hidden aria-labelledby="gf-h">
+              <h4 id="gf-h" tabindex="-1" data-i18n="fam_goal_new">New goal</h4>
+              <div class="field">
+                <label for="gf-text" data-i18n="fam_tf_reward_text">The reward</label>
+                <input id="gf-text" type="text" maxlength="80" autocomplete="off" spellcheck="false" dir="auto" data-i18n-attr="placeholder:fam_tf_reward_ph">
+              </div>
+              <fieldset class="emoji-pick" id="gf-emojis" data-name="gf-emoji">
+                <legend data-i18n="fam_tf_reward_emoji">Picture of the reward</legend>
+              </fieldset>
+              <div class="field">
+                <label for="gf-cost" data-i18n="fam_goal_cost_label">Stars needed (1 to 500)</label>
+                <input id="gf-cost" type="text" inputmode="numeric" maxlength="4" autocomplete="off" spellcheck="false">
+              </div>
+              <p class="status" id="gf-status" role="status" aria-live="polite"></p>
+              <div class="btn-row">
+                <button type="submit" class="btn btn-primary" id="gf-save" data-i18n="fam_save">Save</button>
+                <button type="button" class="btn" id="gf-cancel" data-i18n="fam_cancel">Cancel</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="rw-block" aria-labelledby="prw-surprise-h">
+            <h3 id="prw-surprise-h" tabindex="-1" data-i18n="fam_surprise_h">Give a surprise</h3>
+            <p class="hint" data-i18n="fam_surprise_about">A surprise can come at any time, not only after a task. The child sees it once, on their home screen.</p>
+            <p class="hint" id="prw-unseen" hidden></p>
+            <button type="button" class="btn" id="prw-surprise-open" data-i18n="fam_surprise_h">Give a surprise</button>
+            <form class="sub-form" id="sf" novalidate hidden aria-labelledby="prw-surprise-h">
+              <div class="field">
+                <label for="sf-text" data-i18n="fam_surprise_text">The surprise</label>
+                <input id="sf-text" type="text" maxlength="80" autocomplete="off" spellcheck="false" dir="auto" data-i18n-attr="placeholder:fam_surprise_ph">
+              </div>
+              <fieldset class="emoji-pick" id="sf-emojis" data-name="sf-emoji">
+                <legend data-i18n="fam_tf_reward_emoji">Picture of the reward</legend>
+              </fieldset>
+              <p class="status" id="sf-status" role="status" aria-live="polite"></p>
+              <div class="btn-row">
+                <button type="submit" class="btn btn-primary" id="sf-save" data-i18n="fam_surprise_give">Give the surprise</button>
+                <button type="button" class="btn" id="sf-cancel" data-i18n="fam_cancel">Cancel</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="rw-block" aria-labelledby="prw-adjust-h">
+            <h3 id="prw-adjust-h" tabindex="-1" data-i18n="fam_adjust_h">Adjust stars</h3>
+            <p class="hint" data-i18n="fam_adjust_about">For a correction only.</p>
+            <button type="button" class="btn" id="prw-adjust-open" data-i18n="fam_adjust_h">Adjust stars</button>
+            <form class="sub-form" id="af" novalidate hidden aria-labelledby="prw-adjust-h">
+              <fieldset class="segmented segmented-inline">
+                <legend data-i18n="fam_adjust_way">Correction</legend>
+                <label class="seg">
+                  <input type="radio" name="af-way" value="add" checked>
+                  <span class="seg-body"><span class="seg-title" data-i18n="fam_adjust_add">Add stars</span></span>
+                </label>
+                <label class="seg">
+                  <input type="radio" name="af-way" value="take">
+                  <span class="seg-body"><span class="seg-title" data-i18n="fam_adjust_take">Take stars away</span></span>
+                </label>
+              </fieldset>
+              <div class="field">
+                <label for="af-n" data-i18n="fam_adjust_n">Number of stars (1 to 500)</label>
+                <input id="af-n" type="text" inputmode="numeric" maxlength="4" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="af-note" data-i18n="fam_adjust_note">Reason</label>
+                <input id="af-note" type="text" maxlength="80" autocomplete="off" spellcheck="false" dir="auto" data-i18n-attr="placeholder:fam_adjust_note_ph">
+              </div>
+              <p class="status" id="af-status" role="status" aria-live="polite"></p>
+              <div class="btn-row">
+                <button type="submit" class="btn btn-primary" id="af-save" data-i18n="fam_save">Save</button>
+                <button type="button" class="btn" id="af-cancel" data-i18n="fam_cancel">Cancel</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="rw-block" aria-labelledby="prw-history-h">
+            <h3 id="prw-history-h" tabindex="-1" data-i18n="fam_history_h">History of the stars</h3>
+            <ol class="ledger" id="prw-ledger"></ol>
+            <p class="hint" id="prw-ledger-empty" data-i18n="fam_history_empty" hidden>No stars yet.</p>
+            <button type="button" class="btn btn-small" id="prw-ledger-more" hidden></button>
+          </section>
+        </div>
       </section>
 
       <!-- Children: add, edit, remove (with a confirmation). -->
@@ -820,7 +988,7 @@
         </form>
       </section>
 
-      <!-- Settings: the consent box now; PIN, language and "delete all data" are the next step. -->
+      <!-- Settings: consent, the PIN, the parent's language, delete all data on this device. -->
       <section class="psec card" data-psec="settings" aria-labelledby="psec-settings-h" hidden>
         <h2 id="psec-settings-h" tabindex="-1" data-i18n="fam_sec_settings">Settings</h2>
         <p class="hint" data-i18n="fam_privacy_line">Everything here stays on this device.</p>
@@ -833,7 +1001,47 @@
           <p class="hint" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
           <p class="hint consent-extra"></p>
         </fieldset>
-        <p class="hint placeholder" data-i18n="fam_placeholder">This section is being built.</p>
+
+        <section class="rw-block" aria-labelledby="ps-pin-h">
+          <h3 id="ps-pin-h" data-i18n="fam_pin_legend">Parent PIN</h3>
+          <p class="hint" data-i18n="fam_pin_about">The PIN is a child lock: it keeps the parent area for the grown-ups. It has 4 to 6 digits.</p>
+          <p class="status" id="ps-pin-status" role="status" aria-live="polite"></p>
+          <button type="button" class="btn" id="ps-pin-change" data-i18n="fam_pin_change">Change the PIN</button>
+        </section>
+
+        <section class="rw-block" aria-labelledby="ps-lang-h">
+          <h3 id="ps-lang-h" data-i18n="fam_set_lang_h">Language of the parent area</h3>
+          <div class="field">
+            <select id="ps-lang" aria-labelledby="ps-lang-h">
+              <option value="en" lang="en">English</option>
+              <option value="fr" lang="fr">Français</option>
+              <option value="ar" lang="ar">العربية</option>
+            </select>
+          </div>
+          <p class="hint" data-i18n="fam_set_lang_hint">For the parent area and the PIN. Each child keeps their own language (in “Children”).</p>
+          <p class="status" id="ps-lang-status" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="rw-block danger-zone" aria-labelledby="ps-delete-h">
+          <h3 id="ps-delete-h" data-i18n="fam_set_delete_h">Delete all data on this device</h3>
+          <p class="hint" data-i18n="fam_set_delete_about">Deletes every child, task, star and reward, the PIN and the settings, on this device only.</p>
+          <p class="status" id="ps-delete-status" role="status" aria-live="polite"></p>
+          <button type="button" class="btn btn-danger-ghost" id="ps-delete" data-i18n="fam_delete">Delete all data</button>
+          <div class="confirm-box" id="ps-delete-1" tabindex="-1" hidden>
+            <p data-i18n="fam_delete_q1">Delete all the family data on this device? This cannot be undone.</p>
+            <div class="btn-row">
+              <button type="button" class="btn btn-danger" id="ps-delete-next" data-i18n="fam_continue">Continue</button>
+              <button type="button" class="btn" id="ps-delete-no1" data-i18n="fam_cancel">Cancel</button>
+            </div>
+          </div>
+          <div class="confirm-box" id="ps-delete-2" tabindex="-1" hidden>
+            <p data-i18n="fam_delete_q2">Last check: every child, task, star and reward, and the PIN, will be deleted.</p>
+            <div class="btn-row">
+              <button type="button" class="btn btn-danger" id="ps-delete-yes" data-i18n="fam_delete_final">Delete everything</button>
+              <button type="button" class="btn" id="ps-delete-no2" data-i18n="fam_cancel">Cancel</button>
+            </div>
+          </div>
+        </section>
       </section>
 
       <div class="btn-row">
