@@ -369,6 +369,18 @@ def is_loopback_host(name: str) -> bool:
         return False
 
 
+def is_online(settings: Settings) -> bool:
+    """True when the app may be used from another device (``/api/health`` ``online``):
+    the access gate is on (``settings.access_code``), or an allowed host is not a
+    loopback name or address (:func:`is_loopback_host`). False for the default local
+    run (``./run.sh``: loopback names only, no gate). The web client's privacy texts
+    follow it: online, recordings, photos and texts leave the device for this server."""
+    if getattr(settings, "access_code", None):
+        return True
+    hosts = getattr(settings, "allowed_hosts", DEFAULT_ALLOWED_HOSTS)
+    return any(not is_loopback_host(h.strip().lower().strip("[]")) for h in hosts)
+
+
 class HostOriginMiddleware:
     """Answers only to the allowed host names, and only same-origin writes to the API.
 
@@ -939,9 +951,12 @@ def create_app(
 
     # -- general ---------------------------------------------------------------
 
+    online = is_online(settings)
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        """Which components are available, so the UI can hide what cannot work."""
+        """Which components are available, so the UI can hide what cannot work, and
+        whether the app is online (so the UI says where the children's data goes)."""
         tts_ok = bool(getattr(tts, "available", False))
         tts_langs = getattr(tts, "languages", None)
         return {
@@ -949,6 +964,7 @@ def create_app(
             "tts": tts_ok,
             "brain": "claude" if getattr(brain, "name", None) == "claude" else "offline",
             "quran": quran is not None,
+            "online": online,
             "languages": list(LANGUAGES),
             "tts_languages": list(tts_langs) if tts_langs is not None else (list(LANGUAGES) if tts_ok else []),
             "asr_model": model if isinstance(model := getattr(transcriber, "model", None), str) else settings.asr_model,
@@ -1495,6 +1511,7 @@ __all__ = [
     "dictation_speaks_quran",
     "error_response",
     "is_loopback_host",
+    "is_online",
     "is_quran_phrase",
     "is_whole_ayah",
     "keep_uploads_in_memory",

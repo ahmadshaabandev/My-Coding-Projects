@@ -210,6 +210,7 @@ class TestWithoutCode:
         r = client.get("/api/health")
         responses.append(r)
         assert r.status_code == 200 and r.json()["asr"] is True
+        assert r.json()["online"] is False  # local: the client says that nothing leaves this computer
         r = client.post("/api/tts", json={"text": "Hello", "lang": "en"})
         responses.append(r)
         assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
@@ -460,7 +461,10 @@ class TestCodeAndCookie:
         for name in ("app.js", "recorder.js", "rewards.js", "family.js", "styles.css", "index.html"):
             r = client.get("/" + name, headers=SUBRESOURCE)
             assert r.status_code == 200 and r.content == (WEB / name).read_bytes()
-        assert client.get("/api/health").status_code == 200
+        r = client.get("/api/health")
+        # The gate is on: the app is online (here on a loopback name, as the image tested
+        # locally), so the client says that the data goes to this server.
+        assert r.status_code == 200 and r.json()["online"] is True
         r = client.post("/api/tts", json={"text": "Hello", "lang": "en"})
         assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
         assert r.headers["cache-control"] == "no-store"

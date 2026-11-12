@@ -62,7 +62,7 @@ from mommy.app import (
     looks_like_quran,
 )
 from mommy.asr import ASRUnavailable, FakeTranscriber, SherpaWhisper, Transcriber
-from mommy.config import Settings
+from mommy.config import Settings, load_settings
 from mommy.llm import Brain, ClaudeBrain, OfflineBrain
 from mommy.phrases import split_phrases
 from mommy.quran import Quran
@@ -396,6 +396,56 @@ class TestHealth:
         body = make_client(tts=tts).get("/api/health").json()
         assert body["tts"] is False and body["tts_languages"] == ["en", "fr"]
         assert body["reasons"]["tts"] == "ar voice files missing"
+
+    def test_local_run_is_not_online(self, make_client: Callable[..., TestClient]) -> None:
+        # ./run.sh: the default loopback names and no access gate, with or without Claude.
+        for brain in (FakeBrain(), OfflineBrain()):
+            body = make_client(brain=brain).get("/api/health").json()
+            assert body["online"] is False
+        # Every loopback spelling stays local.
+        for hosts, host in (
+            (("127.0.0.1", "localhost", "::1"), "127.0.0.1:8080"),
+            (("127.0.0.2", "app.localhost"), "app.localhost:8080"),
+            (("::1",), "[::1]:8080"),
+            (("LOCALHOST",), "localhost"),
+        ):
+            r = make_client(settings=make_settings(allowed_hosts=hosts)).get("/api/health", headers={"Host": host})
+            assert r.status_code == 200 and r.json()["online"] is False, hosts
+        assert app_mod.is_online(make_settings(allowed_hosts=("[::1]", " Localhost "))) is False
+
+    @pytest.mark.parametrize(
+        "hosts",
+        [
+            ("127.0.0.1", "localhost", "someone-mommy.hf.space"),  # a Space's host name next to the loopback ones
+            ("tutor.example.org",),  # a tunnel's host name
+            ("192.168.1.20",),  # a LAN address
+            ("10.0.0.5", "127.0.0.1"),
+            ("0.0.0.0",),
+            ("fe80::1",),
+            ("tutor.local",),
+        ],
+    )
+    def test_a_host_that_is_not_loopback_is_online(
+        self, make_client: Callable[..., TestClient], hosts: tuple[str, ...]
+    ) -> None:
+        client = make_client(settings=make_settings(allowed_hosts=hosts), brain=OfflineBrain())
+        host = f"[{hosts[0]}]" if ":" in hosts[0] else hosts[0]
+        r = client.get("/api/health", headers={"Host": host})
+        assert r.status_code == 200, r.text
+        assert r.json()["online"] is True and r.json()["brain"] == "offline"
+        assert app_mod.is_online(make_settings(allowed_hosts=hosts)) is True
+
+    def test_online_follows_the_settings_from_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for name in ("MOMMY_ALLOWED_HOSTS", "MOMMY_ACCESS_CODE", "MOMMY_REQUIRE_ACCESS_CODE"):
+            monkeypatch.delenv(name, raising=False)
+        assert app_mod.is_online(load_settings()) is False  # run.sh
+        monkeypatch.setenv("MOMMY_ALLOWED_HOSTS", " [::1] , LocalHost ")
+        assert app_mod.is_online(load_settings()) is False
+        monkeypatch.setenv("MOMMY_ALLOWED_HOSTS", "127.0.0.1,mommy.example.net")
+        assert app_mod.is_online(load_settings()) is True
+        monkeypatch.setenv("MOMMY_ALLOWED_HOSTS", "localhost")
+        monkeypatch.setenv("MOMMY_ACCESS_CODE", "k7m2p9q4r8s3")  # the gate on a loopback name: the image tested locally
+        assert app_mod.is_online(load_settings()) is True
 
 
 class TestHeadersAndStatic:
