@@ -85,6 +85,7 @@ Key `mommy.data.v2`, one JSON document. Every id is a random string from
     failedAttempts: 0, lockedUntil: null | iso,
     consentAt: null | iso,          // parent consent (existing consent box), moved here
     aiConsentAt: null | iso,        // existing Claude consent, moved here
+    aiConsentVersion: null | 1,     // (2026-11-12) the AI consent counts only with it: see the last section
     uiLang: 'ar' | 'en' | 'fr',     // the parent area language
   },
   children: [{
@@ -607,3 +608,74 @@ resolved. Where the result differs from the text above, or the text left a choic
   rewards and the PIN) stays in this browser, on this device." It is true in every way
   the app runs; online, the recordings, photos and texts go to the Mommy server, as the
   consent box under it says (`docs/CONTRACT.md`, "Start screen").
+
+## Decisions and deviations recorded while separating the AI consent (2026-11-12)
+
+The privacy audit after the online-privacy fix found that one checkbox set both
+`consentAt` and `aiConsentAt` whatever the brain was, so a parent could agree while the
+box said that nothing goes to an AI service, and that consent then covered Claude once
+the owner set it up (P1). Its three smaller findings were about wording (P3, P4, P5).
+
+- **The AI consent is a box of its own.** In the setup and in Settings, the general box
+  (microphone and camera) is followed by the lines of where the data goes and, only
+  while `/api/health` says `"brain": "claude"`, by the Claude notice (`consent_claude`)
+  and the AI box under it ("I agree that these things are sent to Claude."). The AI box
+  can be ticked only with the general one; unticking the general box in Settings
+  withdraws both, as before; the AI box alone withdraws only Claude. Ticking the general
+  box never gives the AI consent. Both boxes stay optional in the setup.
+- **Migration: old documents are asked again once.** A document saved before this change
+  cannot say whether its `aiConsentAt` was given under the Claude notice or while the
+  box said "Offline mode: nothing leaves this computer", so the safe reading was chosen:
+  the AI consent counts only with `parent.aiConsentVersion` set to 1 or more
+  (`AI_CONSENT_VERSION`, `hasAiConsent(doc)` in `rewards.js`; it also needs
+  `consentAt`). `updateParent(doc, {aiConsent: true})` records the time and the version
+  (a consent that already counts keeps its time; an old one gets a new time), refuses
+  without the general consent (`bad_state`), and `{consent: false}` or
+  `{aiConsent: false}` clears both fields. `validateDoc` reads a missing
+  `aiConsentVersion` as null without a repair (no notice for the parent) and keeps the
+  old `aiConsentAt`, which simply does not count; an invalid version, or a version
+  without a time, is cleared as a repair. A v1 profile's AI consent never counts either.
+  Version 1 means "ticked in its own box while its text was the Claude notice"; a later
+  change of what goes to Claude can raise the version, and every family is then asked
+  again.
+- **What waits for the AI consent.** While Claude is set up and the consent does not
+  count, every call whose server path can use Claude is gated in `app.js` (gate need
+  `ai-consent`): reading a page photo (Prepare and the task form), Recite in both modes
+  (Claude judges the meaning, and words the feedback of a word-by-word check from the
+  words the child got wrong), and the dictation check, typed or photographed (Claude
+  reads the handwriting and words the feedback). "Confirm text" (`/api/text/check`), the
+  dictation's voice, the grown-up step and the whole Quran section never use Claude and
+  keep working; so does the task runner (a task waits on its screen, with its banner).
+  Without Claude the general consent is enough, as before.
+- **Claude added while the page is open.** The page reads `/api/health` once at the
+  start; the owner may start the server again with Claude meanwhile. So, without the AI
+  consent, the client asks `/api/health` again right before each of those calls and
+  sends nothing if Claude is now set up: the status says "Nothing was sent.", the gate
+  closes with its reason and the consent texts change to the Claude notice. A recording
+  made in that moment is dropped.
+- **What the child and the parent see.** The child's screens (in the child's language)
+  say "Let's ask a grown-up to open the parent area and give their OK first." (هيا نطلب
+  من أحد الكبار فتح قسم الكبار والموافقة أولًا.), which names no service and no box. In the
+  parent area, behind the PIN, a prompt at the top ("Your OK for Claude") says what stays
+  off until the parent agrees, shows the Claude notice and a box of its own, and has
+  "Save" (which asks for the tick first) and "Not now" (hidden until the parent area is
+  opened again; never shown on Settings, which has the box). The task form's photo says
+  "Reading photos uses Claude: please give your OK for Claude in Settings first." The
+  parent area still opens on Settings when the general consent is missing.
+- **Wording (P3, P4, P5).** The family data line now says what is saved where and what
+  travels with each check, true in all four modes: "Your family's list (children, tasks,
+  stars, rewards and the PIN) is saved only in this browser, on this device. Each check
+  sends the text or the ayat to practise, the language and the child's age group to the
+  Mommy server, which does not keep them." (it replaces the line recorded in the
+  previous section; with Claude, the consent box says what also goes to Claude). Online
+  without Claude: "Nothing is sent to an outside AI service such as Claude, and you type
+  the texts yourself." (the server's own recogniser is not an outside service). Locally,
+  "never saved" and "not kept" now say whose storage they mean, and nothing about
+  Claude's: "Mommy handles the recordings and photos in memory and never saves them."
+  and "Photos are made smaller on this device, and Mommy does not keep them."; the
+  Claude notice itself is unchanged. The same in French and Arabic (Arabic: passive
+  forms, يُرجى + a verbal noun for the parent, هيا + "we" for the child, no ـك ending).
+- **Not done:** the server cannot be told to leave Claude out of one request, so with
+  Claude set up and no AI consent, Recite and the dictation check stay off rather than
+  falling back to the offline templates (that would need a change to `app.py`, which
+  this step did not own).

@@ -1,0 +1,41 @@
+# Caddy for the permanent link of an Oracle VM (compose.stable.yaml, ORACLE.md step 6).
+#
+# The site is the host name in MOMMY_PUBLIC_HOST, <public IP with dashes>.sslip.io (a
+# public DNS name that resolves to that address). Caddy gets its certificate from Let's
+# Encrypt by itself when it starts (through ports 80 and 443, which must be open), keeps
+# it in the caddy-data volume and renews it before it expires. Port 80 only redirects
+# to HTTPS. Every request goes to the app, which sets its own security headers and runs
+# the access gate.
+{
+	servers {
+		# HTTP/1.1 and HTTP/2. No HTTP/3: it would also need UDP port 443 open.
+		protocols h1 h2
+	}
+	# No access log (none is configured below). Caddy's own messages (certificates,
+	# errors) go to the container log, without the visitor's address and headers: an
+	# error about a request (the app restarting, say) keeps only its method, host and path.
+	log default {
+		output stderr
+		format filter {
+			wrap console
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers delete
+				request>tls delete
+			}
+		}
+	}
+}
+
+{$MOMMY_PUBLIC_HOST} {
+	reverse_proxy mommy:7860 {
+		transport http {
+			# An idle connection to the app is closed by Caddy first: the app closes its
+			# own after 75 s (scripts/space_start.sh), and a request sent on a connection
+			# being closed would fail.
+			keepalive 60s
+		}
+	}
+}

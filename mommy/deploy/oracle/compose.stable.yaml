@@ -1,0 +1,80 @@
+# The permanent link of an Oracle VM (deploy/oracle/setup.sh --stable, ORACLE.md step 6):
+# https://<public IP with dashes>.sslip.io/#code=<code>. Caddy answers on ports 80 and
+# 443 with a free Let's Encrypt certificate, which it gets and renews by itself, and
+# passes every request to the app. The quick tunnel is not started in this mode: Caddy
+# is the only way in.
+#
+# Used on top of compose.yaml and compose.oracle.yaml: setup.sh lists the three files in
+# mommy/.env (COMPOSE_FILE), with MOMMY_PUBLIC_HOST, the host name of the link. To go
+# back to the tunnel: bash deploy/oracle/setup.sh --tunnel.
+
+services:
+  mommy:
+    environment:
+      # The app answers to that one name (an exact entry, not a suffix) and to the VM
+      # itself (port 8080, open on 127.0.0.1 only, as in compose.yaml).
+      MOMMY_ALLOWED_HOSTS: "localhost,127.0.0.1,${MOMMY_PUBLIC_HOST:?MOMMY_PUBLIC_HOST is not set: run bash deploy/oracle/setup.sh --stable}"
+      # X-Forwarded-For (the visitor's address, which the access gate counts wrong codes
+      # by) and X-Forwarded-Proto (https, for the Secure cookie) are taken from Caddy
+      # only: its fixed address on the "edge" network below.
+      MOMMY_FORWARDED_ALLOW_IPS: "172.31.254.2"
+    networks:
+      default: {}
+      edge: {}
+
+  # Not started in this mode (a profile nobody turns on); setup.sh removes its container.
+  tunnel:
+    profiles: ["quick-tunnel"]
+
+  caddy:
+    # Caddy 2.11.9, pinned by the digest of its multi-platform index (linux/amd64 and
+    # linux/arm64, among others). To take a newer one: docker buildx imagetools inspect
+    # caddy:<version>, then replace the tag and the digest.
+    image: caddy:2.11.9@sha256:e40b94d0a43b5ff69cb20568d73f10c70703df7b0ffc2298eb3d723cdc9d0bd1
+    environment:
+      # The site name in the Caddyfile.
+      MOMMY_PUBLIC_HOST: "${MOMMY_PUBLIC_HOST:?MOMMY_PUBLIC_HOST is not set: run bash deploy/oracle/setup.sh --stable}"
+    ports:
+      # Every address: these are the ports the visitors (and Let's Encrypt) reach. Oracle
+      # lets them in only once they are open in the VCN security list (ORACLE.md, step 6)
+      # and in the VM's firewall (setup.sh --stable does that).
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/oracle/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and its key, kept across restarts (a new certificate at every
+      # start would soon hit Let's Encrypt's limits).
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      edge:
+        ipv4_address: 172.31.254.2
+    depends_on:
+      mommy:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # Caddy and the app only. A fixed subnet, so that Caddy's address (above) is known
+  # before it starts; other containers on it get addresses from ip_range, never .2.
+  edge:
+    ipam:
+      config:
+        - subnet: 172.31.254.0/28
+          ip_range: 172.31.254.8/29
+
+volumes:
+  caddy-data:
+  caddy-config:

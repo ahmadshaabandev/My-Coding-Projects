@@ -14,6 +14,12 @@
  * task rewards to give, goals, surprises, corrections), Children, and Settings (consent,
  * change the PIN, the parent's language, delete all data on this device).
  *
+ * Consent: the general box (microphone and camera) and, while Claude is set up, a box of
+ * its own under the Claude notice (the AI consent, R.hasAiConsent). A consent given
+ * while Claude was not set up, or saved before the AI consent had its own box, never
+ * covers Claude: until the parent ticks that box (the setup, Settings, or the prompt at
+ * the top of the parent area), app.js keeps every Claude call off.
+ *
  * Handshake (independent of the script order): this file sets window.MommyFamily =
  * {attach}; app.js calls attach(MommyApp) when it starts, and if app.js already ran,
  * this file attaches at once. attach() runs once.
@@ -168,7 +174,15 @@
       fam_sec_children: 'Children',
       fam_sec_settings: 'Settings',
       fam_parent_close: 'Close the parent area',
-      fam_privacy_line: 'The family data (children, tasks, stars, rewards and the PIN) stays in this browser, on this device.',
+      // What of the family's data reaches the server, true in every mode: the fields that
+      // web/app.js sends (api/recite/check, api/dictation/check, api/text/check, api/tts;
+      // api/quran/check sends numbers) and what backend/mommy/app.py logs.
+      fam_privacy_line: 'Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.',
+      fam_ai_title: 'Your OK for Claude',
+      fam_ai_lead: 'Mommy is set up to use Claude. Until you agree, reading photos and checking recitations and dictations stay off; the Quran section works without it.',
+      fam_ai_later: 'Not now',
+      fam_ai_tick_first: 'Please tick the box first, or choose “Not now”.',
+      fam_ai_saved: 'Thank you: Claude can now be used. This can be changed in Settings.',
       fam_tasks_of: 'Child',
       fam_tasks_nochild: 'Please add a child first, in the section “Children”.',
       fam_tasks_empty: 'No task yet.',
@@ -450,7 +464,12 @@
       fam_sec_children: 'Enfants',
       fam_sec_settings: 'Réglages',
       fam_parent_close: 'Fermer l’espace parents',
-      fam_privacy_line: 'Les données de la famille (enfants, tâches, étoiles, récompenses et code parent) restent dans ce navigateur, sur cet appareil.',
+      fam_privacy_line: 'La liste de votre famille (enfants, tâches, étoiles, récompenses et code parent) est enregistrée uniquement dans ce navigateur, sur cet appareil. Pour vérifier un texte ou le lire à voix haute, le serveur Mommy reçoit le texte et sa langue, et pour vérifier une récitation ou une dictée, aussi la tranche d’âge de l’enfant ; une vérification du Coran envoie à la place le numéro de la sourate et ceux des versets. Le serveur ne conserve ni les textes ni la tranche d’âge ; son journal note la langue, le type de vérification et les numéros des versets.',
+      fam_ai_title: 'Votre accord pour Claude',
+      fam_ai_lead: 'Mommy est configuré pour utiliser Claude. Tant que vous n’avez pas donné votre accord, la lecture des photos et la vérification des récitations et des dictées restent désactivées ; la partie Coran fonctionne sans lui.',
+      fam_ai_later: 'Plus tard',
+      fam_ai_tick_first: 'Veuillez d’abord cocher la case, ou choisir « Plus tard ».',
+      fam_ai_saved: 'Merci : Claude peut maintenant être utilisé. Ce choix se modifie dans Réglages.',
       fam_tasks_of: 'Enfant',
       fam_tasks_nochild: 'Ajoutez d’abord un enfant, dans la rubrique « Enfants ».',
       fam_tasks_empty: 'Pas encore de tâche.',
@@ -732,7 +751,12 @@
       fam_sec_children: 'الأطفال',
       fam_sec_settings: 'الإعدادات',
       fam_parent_close: 'إغلاق قسم الكبار',
-      fam_privacy_line: 'تبقى بيانات العائلة (الأطفال والمهام والنجوم والمكافآت ورمز الكبار) في هذا المتصفح على هذا الجهاز.',
+      fam_privacy_line: 'تُحفظ قائمة العائلة (الأطفال والمهام والنجوم والمكافآت ورمز الكبار) في هذا المتصفح فقط، على هذا الجهاز. وللتحقّق من نص أو قراءته بصوت مسموع يُرسَل النص ولغته إلى خادم Mommy، ومعهما الفئة العمرية للطفل عند التحقّق من التسميع أو الإملاء؛ أمّا التحقّق من القرآن فيُرسَل فيه رقم السورة وأرقام الآيات بدلًا منها. ولا يحفظ الخادم النصوص ولا الفئة العمرية، ويُدوَّن في سجلّه اللغة ونوع التحقّق وأرقام الآيات.',
+      fam_ai_title: 'الموافقة على Claude',
+      fam_ai_lead: 'أُعِدّ Mommy لاستخدام Claude. وإلى حين الموافقة تبقى قراءة الصور والتحقّق من التسميع والإملاء متوقّفة، أمّا قسم القرآن فيعمل من دونه.',
+      fam_ai_later: 'تأجيل',
+      fam_ai_tick_first: 'يُرجى أولًا وضع علامة في الخانة، أو اختيار «تأجيل».',
+      fam_ai_saved: 'شكرًا. يمكن الآن استخدام Claude، ويمكن تغيير هذا الاختيار في «الإعدادات».',
       fam_tasks_of: 'الطفل',
       fam_tasks_nochild: 'يُرجى إضافة طفل أولًا في قسم «الأطفال».',
       fam_tasks_empty: 'لا توجد مهام بعد.',
@@ -928,6 +952,7 @@
     rwForm: null, // {kind: 'goal' | 'surprise' | 'adjust', childId}: the open form of Rewards
     ledgerAll: false, // the whole history of the stars is shown (else the newest entries)
     deleting: 0, // "delete all data": 0, or the confirmation step shown (1, then 2)
+    aiPromptLater: false, // "Not now" on the AI consent prompt, until the parent area opens again
   };
 
   // ===========================================================================
@@ -1317,7 +1342,7 @@
 
   function syncApp() {
     const d = store.doc;
-    app.setConsent({ consent: !!(d && d.parent.consentAt), aiConsent: !!(d && d.parent.aiConsentAt) });
+    app.setConsent({ consent: !!(d && d.parent.consentAt), aiConsent: !!d && R.hasAiConsent(d) });
     const c = activeChild();
     app.setChild(c ? { id: c.id, nickname: c.nickname, age: c.age, lang: c.lang, quran: c.quran } : null);
     if (c && ['home', 'prepare', 'recite', 'dictation', 'quran'].includes(app.screen())) app.setUiLang(c.lang);
@@ -1432,6 +1457,9 @@
     $('#child-lang').addEventListener('change', () => {
       session.setupChildLangTouched = true;
     });
+    // The AI consent needs the general one: its box waits for the first one.
+    $('#consent').addEventListener('change', syncSetupAiBox);
+    syncSetupAiBox();
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       submitSetup();
@@ -1443,12 +1471,27 @@
     $('#setup-form').hidden = !!store.doc;
   }
 
+  /** True while /api/health says Claude is set up (the Claude notice and its box show). */
+  function claudeSetUp() {
+    const h = app.health();
+    return !!h && h.brain === 'claude';
+  }
+
+  /** The setup's AI box can be ticked only with the general box; unticking that one clears it. */
+  function syncSetupAiBox() {
+    const on = $('#consent').checked;
+    const ai = $('#ai-consent');
+    ai.disabled = !on;
+    if (!on) ai.checked = false;
+  }
+
   /** The setup form as on a first run (after "delete all data"), in the grown-ups' language. */
   function resetSetupForm(lang) {
     for (const id of ['#setup-lang', '#child-lang']) $(id).value = lang;
     for (const id of ['#setup-pin', '#setup-pin2', '#nickname']) $(id).value = '';
     $('#age').value = '6-9';
     $('#consent').checked = false;
+    syncSetupAiBox();
     renderEmojiPick($('#setup-avatars'), R.AVATARS, R.AVATARS[0]);
     app.clearStatus($('#setup-status'));
     $('#btn-start').disabled = false;
@@ -1499,6 +1542,9 @@
     }
     if (!nickname) return fail('fam_err_nickname', $('#nickname'));
     const consent = $('#consent').checked;
+    // The AI consent only from its own box, ticked while it stood under the Claude notice
+    // (shown only while /api/health says Claude is set up), and with the general one.
+    const aiConsent = consent && claudeSetUp() && $('#ai-consent').checked;
     app.setStatus(status, 'fam_saving');
     btn.disabled = true;
     let doc;
@@ -1506,7 +1552,7 @@
     try {
       const now = nowIso();
       doc = R.emptyDoc(now, { uiLang: session.setupLang });
-      doc = R.updateParent(doc, { consent, aiConsent: consent }, now);
+      doc = R.updateParent(doc, { consent, aiConsent }, now);
       doc = await R.setPin(doc, pin1, now);
       const r = R.addChild(doc, { nickname, age: $('#age').value, lang: $('#child-lang').value, avatar: pickedEmoji($('#setup-avatars')) }, now);
       doc = r.doc;
@@ -2106,6 +2152,8 @@
     const ok = await pinDialog('unlock');
     if (!ok) return;
     session.parentOpen = true;
+    session.aiPromptLater = false; // asked again each time the parent area opens
+    app.clearStatus($('#ai-prompt-done'));
     armParentIdle();
     // Without consent the microphone stays off: the box is in Settings. Otherwise the
     // tasks waiting for a grown-up come first.
@@ -2130,9 +2178,63 @@
     app.go(session.childId ? 'home' : 'who');
   }
 
+  /**
+   * The AI consent prompt at the top of the parent area: Claude is set up, the general
+   * consent is given, and the AI consent is not (never given, given while Claude was not
+   * set up, or saved before it had its own box). Not on Settings, which has the box, and
+   * not after "Not now" until the parent area is opened again.
+   */
+  function aiPromptWanted() {
+    const p = store.doc && store.doc.parent;
+    return !!p && !!p.consentAt && claudeSetUp() && !R.hasAiConsent(store.doc) && !session.aiPromptLater && session.section !== 'settings';
+  }
+
+  function renderAiPrompt() {
+    const box = $('#ai-prompt');
+    const show = aiPromptWanted();
+    if (show && box.hidden) {
+      $('#ai-prompt-check').checked = false;
+      app.clearStatus($('#ai-prompt-status'));
+    }
+    box.hidden = !show;
+  }
+
+  function saveAiPrompt() {
+    const status = $('#ai-prompt-status');
+    if (!$('#ai-prompt-check').checked) {
+      app.setStatus(status, 'fam_ai_tick_first', null, { error: true });
+      $('#ai-prompt-check').focus();
+      return;
+    }
+    // Only while the box stood under the Claude notice (the prompt shows only then).
+    if (!aiPromptWanted()) {
+      renderAiPrompt();
+      return;
+    }
+    try {
+      update((d, now) => R.updateParent(d, { aiConsent: true }, now));
+    } catch (err) {
+      app.setStatus(status, 'error_generic', null, { error: true });
+      return;
+    }
+    syncApp();
+    renderParent();
+    app.setStatus($('#ai-prompt-done'), 'fam_ai_saved');
+    const h = $('#screen-parent .psec:not([hidden]) h2');
+    if (h) h.focus();
+  }
+
+  function laterAiPrompt() {
+    session.aiPromptLater = true;
+    renderAiPrompt();
+    const h = $('#screen-parent .psec:not([hidden]) h2');
+    if (h) h.focus();
+  }
+
   function renderParent() {
     if (!store.doc) return;
     renderPinResetNotice();
+    renderAiPrompt();
     for (const tab of $$('#psec-nav .psec-tab')) {
       if (tab.dataset.psec === session.section) tab.setAttribute('aria-current', 'true');
       else tab.removeAttribute('aria-current');
@@ -2149,6 +2251,7 @@
   function showSection(name) {
     if (!PARENT_SECTIONS.includes(name)) return;
     if (name !== session.section) {
+      app.clearStatus($('#ai-prompt-done'));
       closeTaskForm();
       closeChildForm();
       hideRemoveConfirm();
@@ -2772,21 +2875,43 @@
 
   function renderSettings() {
     $('#settings-consent').checked = !!store.doc.parent.consentAt;
+    // The AI box (shown by app.js only while Claude is set up) needs the general consent.
+    $('#settings-ai-consent').checked = R.hasAiConsent(store.doc);
+    $('#settings-ai-consent').disabled = !store.doc.parent.consentAt;
     $('#ps-lang').value = store.doc.parent.uiLang;
     $('#ps-delete').hidden = session.deleting > 0;
     $('#ps-delete-1').hidden = session.deleting !== 1;
     $('#ps-delete-2').hidden = session.deleting !== 2;
   }
 
+  /**
+   * The general consent. Ticked: the microphone and camera, never Claude (that is the box
+   * under the Claude notice). Unticked: both consents are withdrawn, as before.
+   */
   function onSettingsConsent(e) {
     const on = e.target.checked;
     try {
-      update((d, now) => R.updateParent(d, { consent: on, aiConsent: on }, now));
+      update((d, now) => R.updateParent(d, { consent: on }, now));
     } catch (err) {
       e.target.checked = !on;
       return;
     }
     syncApp();
+    renderSettings();
+  }
+
+  /** The AI consent, from its own box under the Claude notice (shown only with Claude). */
+  function onSettingsAiConsent(e) {
+    const on = e.target.checked;
+    try {
+      if (on && !claudeSetUp()) throw new Error('the Claude notice is not shown');
+      update((d, now) => R.updateParent(d, { aiConsent: on }, now));
+    } catch (err) {
+      e.target.checked = !on;
+      return;
+    }
+    syncApp();
+    renderSettings();
   }
 
   /** Change the PIN: the current one, then the new one twice (the PIN dialog). */
@@ -3189,6 +3314,19 @@
     note.hidden = !(h && h.brain !== 'claude' && formKind() === 'recite' && !meaning.disabled);
   }
 
+  /**
+   * /api/health answered (at the start, or again before a Claude call): the task form's
+   * note, and the AI consent prompt and box of the parent area (Claude may have been set
+   * up, or turned off, since the page loaded).
+   */
+  function onHealth() {
+    updateTaskOfflineNote();
+    if (store.doc && app.screen() === 'parent') {
+      renderAiPrompt();
+      if (session.section === 'settings') renderSettings();
+    }
+  }
+
   function setRadio(name, value) {
     for (const r of $$('input[name="' + name + '"]')) r.checked = r.value === String(value);
   }
@@ -3491,6 +3629,9 @@
       renderPinResetNotice();
     });
     $('#settings-consent').addEventListener('change', onSettingsConsent);
+    $('#settings-ai-consent').addEventListener('change', onSettingsAiConsent);
+    $('#ai-prompt-save').addEventListener('click', saveAiPrompt);
+    $('#ai-prompt-later').addEventListener('click', laterAiPrompt);
     // Children
     $('#pc-add').addEventListener('click', () => openChildForm(null));
     $('#cf').addEventListener('submit', (e) => {
@@ -3602,7 +3743,7 @@
     });
     window.addEventListener('storage', onStorage);
     syncApp();
-    app.setHooks({ route, langFor, enter, leave, onQuranPrefs, onLanguage: redraw, onHealth: updateTaskOfflineNote });
+    app.setHooks({ route, langFor, enter, leave, onQuranPrefs, onLanguage: redraw, onHealth });
   }
 
   window.MommyFamily = Object.freeze({ attach });

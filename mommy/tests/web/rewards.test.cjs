@@ -179,7 +179,7 @@ test('emptyDoc: shape, now is required, and validateDoc repairs nothing', () => 
   const d = R.emptyDoc(at(0), { uiLang: 'fr' });
   assert.deepEqual(d, {
     version: 2, createdAt: at(0), updatedAt: at(0),
-    parent: { pin: null, failedAttempts: 0, lockedUntil: null, pinResetAt: null, consentAt: null, aiConsentAt: null, uiLang: 'fr' },
+    parent: { pin: null, failedAttempts: 0, lockedUntil: null, pinResetAt: null, consentAt: null, aiConsentAt: null, aiConsentVersion: null, uiLang: 'fr' },
     children: [], activeChildId: null, tasks: [], jar: {}, surprises: [],
   });
   assertClean(d);
@@ -300,12 +300,118 @@ test('children: update, setActiveChild and errors', () => {
   assert.equal(R.setActiveChild(d, null, at(6)).activeChildId, null);
   throwsCode(() => R.setActiveChild(d, 'nobody', at(6)), 'not_found');
   const p = R.updateParent(d, { uiLang: 'ar', consent: true, aiConsent: true }, at(7));
-  assert.deepEqual([p.parent.uiLang, p.parent.consentAt, p.parent.aiConsentAt], ['ar', at(7), at(7)]);
+  assert.deepEqual([p.parent.uiLang, p.parent.consentAt, p.parent.aiConsentAt, p.parent.aiConsentVersion], ['ar', at(7), at(7), R.AI_CONSENT_VERSION]);
   assert.equal(R.updateParent(p, { consent: true }, at(8)).parent.consentAt, at(7), 'the first consent time is kept');
-  assert.equal(R.updateParent(p, { aiConsent: false }, at(8)).parent.aiConsentAt, null);
+  assert.deepEqual(pick(R.updateParent(p, { aiConsent: false }, at(8)).parent), [at(7), null, null]);
   throwsCode(() => R.updateParent(d, { uiLang: 'de' }, at(8)), 'bad_input', 'uiLang');
   throwsCode(() => R.updateParent(d, { pin: null }, at(8)), 'bad_input', 'pin');
   assertClean(p);
+});
+
+const pick = (p) => [p.consentAt, p.aiConsentAt, p.aiConsentVersion];
+const V = R.AI_CONSENT_VERSION;
+
+test('AI consent: its own box, with a version; the general consent alone never covers Claude', () => {
+  const d = R.emptyDoc(at(0));
+  // 2: the Claude notice names the score, the language and the age group (version 1 did not).
+  assert.equal(R.AI_CONSENT_VERSION, 2);
+  // The general consent (microphone and camera) sets no AI consent.
+  const c = R.updateParent(d, { consent: true }, at(1));
+  assert.deepEqual(pick(c.parent), [at(1), null, null]);
+  assert.equal(R.hasAiConsent(c), false);
+  assertClean(c);
+  // The AI box: the time and the version; ticked again, the first time is kept.
+  const a = R.updateParent(c, { aiConsent: true }, at(2));
+  assert.deepEqual(pick(a.parent), [at(1), at(2), V]);
+  assert.equal(R.hasAiConsent(a), true);
+  assert.deepEqual(pick(R.updateParent(a, { aiConsent: true }, at(3)).parent), [at(1), at(2), V]);
+  assertClean(a);
+  // Both in one patch (the setup with Claude set up and both boxes ticked).
+  assert.deepEqual(pick(R.updateParent(d, { consent: true, aiConsent: true }, at(4)).parent), [at(4), at(4), V]);
+  // No AI consent without the general one.
+  throwsCode(() => R.updateParent(d, { aiConsent: true }, at(5)), 'bad_state', 'aiConsent');
+  throwsCode(() => R.updateParent(a, { consent: false, aiConsent: true }, at(5)), 'bad_state', 'aiConsent');
+  // Withdrawing the general consent withdraws both (Settings); the AI one alone, only it.
+  assert.deepEqual(pick(R.updateParent(a, { consent: false }, at(6)).parent), [null, null, null]);
+  assert.deepEqual(pick(R.updateParent(a, { consent: false, aiConsent: false }, at(6)).parent), [null, null, null]);
+  assert.deepEqual(pick(R.updateParent(a, { aiConsent: false }, at(6)).parent), [at(1), null, null]);
+  assert.equal(R.hasAiConsent(R.updateParent(a, { aiConsent: false }, at(6))), false);
+  // The language alone changes no consent.
+  assert.deepEqual(pick(R.updateParent(a, { uiLang: 'fr' }, at(7)).parent), [at(1), at(2), V]);
+  throwsCode(() => R.updateParent(a, { aiConsent: 'yes' }, at(7)), 'bad_input', 'aiConsent');
+  // hasAiConsent never throws on anything.
+  for (const x of [undefined, null, 1, 'doc', [], {}, { parent: null }, { parent: [] }]) assert.equal(R.hasAiConsent(x), false);
+});
+
+test('AI consent: an old document (aiConsentAt set with the general consent, no version) is asked again once', () => {
+  // What the app saved before the version existed: one box set both, whatever the brain.
+  const old = R.updateParent(R.emptyDoc(at(0)), { consent: true }, at(1));
+  old.parent.aiConsentAt = at(1);
+  delete old.parent.aiConsentVersion;
+  const v = R.validateDoc(old);
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.repaired, [], 'read as it is: no repair, so no notice for the parent');
+  assert.deepEqual(pick(v.doc.parent), [at(1), at(1), null]);
+  assert.equal(R.hasAiConsent(old), false);
+  assert.equal(R.hasAiConsent(v.doc), false);
+  // Asked again: the AI box gives a new time and the version.
+  const again = R.updateParent(v.doc, { aiConsent: true }, at(9));
+  assert.deepEqual(pick(again.parent), [at(1), at(9), V]);
+  assert.equal(R.hasAiConsent(again), true);
+  assertClean(again);
+  // Every other way of carrying an aiConsentAt without the version never counts either.
+  for (const version of [null, 0, -1, 1.5, '2', true]) {
+    const x = JSON.parse(JSON.stringify(again));
+    x.parent.aiConsentVersion = version;
+    assert.equal(R.hasAiConsent(x), false, String(version));
+  }
+  // A version without the general consent or without its time does not count.
+  const noConsent = JSON.parse(JSON.stringify(again));
+  noConsent.parent.consentAt = null;
+  assert.equal(R.hasAiConsent(noConsent), false);
+  // Repairs: an invalid version, and a version without a time, are cleared (a fixed point).
+  const bad = JSON.parse(JSON.stringify(again));
+  bad.parent.aiConsentVersion = 'one';
+  let r = repairs(bad);
+  hasRepair(r, /parent\.aiConsentVersion: invalid, cleared/);
+  assert.deepEqual(pick(r.doc.parent), [at(1), at(9), null]);
+  assert.equal(R.hasAiConsent(r.doc), false);
+  const noTime = JSON.parse(JSON.stringify(again));
+  noTime.parent.aiConsentAt = null;
+  r = repairs(noTime);
+  hasRepair(r, /parent\.aiConsentVersion: no AI consent time, cleared/);
+  assert.deepEqual(pick(r.doc.parent), [at(1), null, null]);
+  // A later version (a newer app) still counts and is kept.
+  const later = JSON.parse(JSON.stringify(again));
+  later.parent.aiConsentVersion = V + 1;
+  assertClean(later);
+  assert.equal(R.hasAiConsent(later), true);
+});
+
+test('AI consent: a consent of version 1 (the Claude notice without the score, language and age group) no longer counts, and is asked again', () => {
+  // Saved by the app while the notice was version 1: valid, kept as it is, but not enough.
+  const v1 = R.updateParent(R.emptyDoc(at(0)), { consent: true }, at(1));
+  v1.parent.aiConsentAt = at(2);
+  v1.parent.aiConsentVersion = 1;
+  const v = R.validateDoc(v1);
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.repaired, [], 'an older version is read without a repair (no notice for the parent)');
+  assert.deepEqual(pick(v.doc.parent), [at(1), at(2), 1]);
+  assert.equal(R.hasAiConsent(v.doc), false, 'given to a notice that left out the age group');
+  // Ticked again under the current notice: a new time and the current version.
+  const again = R.updateParent(v.doc, { aiConsent: true }, at(5));
+  assert.deepEqual(pick(again.parent), [at(1), at(5), V]);
+  assert.equal(R.hasAiConsent(again), true);
+  assertClean(again);
+  // Withdrawn: both fields go, whatever the version was.
+  assert.deepEqual(pick(R.updateParent(v.doc, { aiConsent: false }, at(6)).parent), [at(1), null, null]);
+  assert.deepEqual(pick(R.updateParent(v.doc, { consent: false }, at(6)).parent), [null, null, null]);
+  // Every version below the current one is refused; the current one and later ones count.
+  for (let version = 1; version <= V + 2; version++) {
+    const x = JSON.parse(JSON.stringify(again));
+    x.parent.aiConsentVersion = version;
+    assert.equal(R.hasAiConsent(x), version >= V, String(version));
+  }
 });
 
 test('removeChild: cascades to tasks, jar, goals, ledger and surprises; other children untouched', () => {
@@ -902,7 +1008,7 @@ test('migrateV1: the v1 profile becomes a v2 document with one child', () => {
   const d = R.migrateV1(v1, at(0), { newId: () => 'kid1' });
   assert.deepEqual(d, {
     version: 2, createdAt: at(0), updatedAt: at(0),
-    parent: { pin: null, failedAttempts: 0, lockedUntil: null, pinResetAt: null, consentAt: null, aiConsentAt: null, uiLang: 'fr' },
+    parent: { pin: null, failedAttempts: 0, lockedUntil: null, pinResetAt: null, consentAt: null, aiConsentAt: null, aiConsentVersion: null, uiLang: 'fr' },
     children: [{ id: 'kid1', nickname: 'Lina', age: '10-13', lang: 'fr', avatar: R.AVATARS[0], createdAt: at(0), quran: { surah: 2, from: 255, to: 257, juzAmma: false } }],
     activeChildId: 'kid1', tasks: [], jar: { kid1: { balance: 0, earned: 0, goals: [], ledger: [] } }, surprises: [],
   });
@@ -926,6 +1032,9 @@ test('migrateV1: the v1 profile becomes a v2 document with one child', () => {
   // Consent is carried over only when it was stored.
   assert.equal(R.migrateV1({ consentAt: at(-100), aiConsent: true }, at(0)).parent.consentAt, at(-100));
   assert.equal(R.migrateV1({ consentAt: at(-100), aiConsent: true }, at(0)).parent.aiConsentAt, at(0));
+  // A v1 AI consent has no version: it never covers Claude, the parent is asked.
+  assert.equal(R.migrateV1({ consentAt: at(-100), aiConsent: true }, at(0)).parent.aiConsentVersion, null);
+  assert.equal(R.hasAiConsent(R.migrateV1({ consentAt: at(-100), aiConsentAt: at(-90) }, at(0))), false);
   assert.equal(R.migrateV1({ consent: 'yes' }, at(0)).parent.consentAt, null);
   throwsCode(() => R.migrateV1(v1, 'now'), 'bad_input', 'now');
 });

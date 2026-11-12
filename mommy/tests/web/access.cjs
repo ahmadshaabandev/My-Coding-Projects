@@ -33,6 +33,9 @@ const CODE = 'k7m2p9q4r8s3';
 const WRONG = 'wrongcode234';
 const ARABIC_INDIC = (s) => s.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
 const LOCALES = { en: 'en-GB', fr: 'fr-FR', ar: 'ar' };
+// A text and an age group that must never reach the server log.
+const PRIVATE_TEXT = 'Le zèbre grignote doucement une pomme verte.';
+const PRIVATE_AGE = '10-13';
 
 // The app as build_default_app() makes it, with fakes for Whisper and Piper (no models
 // loaded), and the logging of the mommy loggers to stderr at DEBUG.
@@ -212,6 +215,21 @@ async function main() {
       await inApp(en.page);
       await onlineConsent(en.page, 'en');
       assert.deepEqual(en.problems, []);
+    });
+    // What the family data line (fam_privacy_line) says of the server, checked against
+    // the real app: the texts and the age group are not kept (the log is read at the end).
+    await check('en: a text check and a typed dictation check through the real app (their log lines are read at the end)', async () => {
+      const res = await en.page.evaluate(async ({ text, age }) => {
+        const t = await fetch('api/text/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, lang: 'fr', mode: 'strict' }) });
+        const form = new FormData();
+        form.append('expected_text', text);
+        form.append('lang', 'fr');
+        form.append('age', age);
+        form.append('written_text', text);
+        const d = await fetch('api/dictation/check', { method: 'POST', body: form });
+        return [t.status, d.status];
+      }, { text: PRIVATE_TEXT, age: PRIVATE_AGE });
+      assert.deepEqual(res, [200, 200]);
     });
     await check('en: a reload stays in, and so does a new tab', async () => {
       await en.page.goto(base + '/');
@@ -394,6 +412,13 @@ async function main() {
     assert.ok(!log.includes(CODE) && !log.includes(ARABIC_INDIC(CODE)), 'the code is in the server log');
     assert.ok(!log.includes(WRONG), 'a typed code is in the server log');
     assert.ok(cookieValue && !log.includes(cookieValue), 'the cookie is in the server log');
+  });
+  await check('the server log notes the language and the kind of check, never the text or the age group (fam_privacy_line)', async () => {
+    const log = app.out.text;
+    assert.match(log, /text\/check strict fr: /);
+    assert.match(log, /dictation\/check fr: /);
+    for (const word of PRIVATE_TEXT.split(/\s+/)) assert.ok(!log.includes(word.replace(/[.,]/g, '')), `"${word}" of the text is in the server log`);
+    assert.ok(!log.includes(PRIVATE_AGE), 'the age group is in the server log');
   });
   finish();
 }

@@ -1,0 +1,18 @@
+# Mommy on an Oracle Cloud "Always Free" VM (deploy/oracle/ORACLE.md): what differs
+# from compose.yaml, which is written for a laptop. Used in both link modes.
+#
+# deploy/oracle/setup.sh writes mommy/.env (no secrets in it), whose COMPOSE_FILE line
+# lists compose.yaml, this file and, for the permanent link, compose.stable.yaml. So
+# every "docker compose" command typed in mommy/ uses the same files as setup.sh.
+#
+# The models are loaded when the app starts (scripts/space_start.sh starts the app with
+# the access gate on, and the app then preloads every recogniser and voice). They stay
+# in memory, about 3.6 GB of the VM's 12 GB, which also keeps the VM from looking idle
+# to Oracle (ORACLE.md, "Staying free").
+
+services:
+  mommy:
+    environment:
+      # One speech-recognition thread per core: the Always Free A1 VM has 2 OCPUs
+      # (2 cores). setup.sh writes the VM's own count (1 to 4) into mommy/.env.
+      MOMMY_ASR_THREADS: "${MOMMY_ASR_THREADS:-2}"

@@ -46,8 +46,11 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
   scripts, no web fonts from CDNs. Putting it online is a separate, deliberate step,
   behind an access code ("Run it online" below).
 - **Claude is optional.** Only when it is configured are page photos, handwriting photos
-  and texts sent to the Claude API, and only after the parent ticks the consent box. The
-  Batch and Files APIs are never used.
+  and texts sent to the Claude API, and only after the parent ticks the AI consent box: a
+  box of its own under the notice of what goes to Claude, shown only while Claude is
+  configured. A consent given while Claude was not configured never covers it; until
+  that box is ticked, every feature that would use Claude stays off. The Batch and Files
+  APIs are never used.
 - **Consent first.** A parent must tick a consent box before the camera or microphone is
   used. The family document (the children's nicknames, age bands and languages, their
   tasks, stars and rewards, the consent and the hashed parent PIN) is kept in the
@@ -116,7 +119,8 @@ A parent gives each child study tasks and rewards (the full spec and every decis
 while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
 
 - **Setting it up.** On the first run the start screen is the family setup: the AI
-  disclosure, the consent box, the parent PIN (typed twice) and the first child
+  disclosure, the consent box (with Claude configured, also the AI consent box), the
+  parent PIN (typed twice) and the first child
   (nickname, age band, language, avatar). After that, every session starts on "Who is
   learning?", with a small "For parents" button. In the parent area (behind the PIN) a
   parent adds children, creates tasks (recite, dictation or Quran, with a pass level,
@@ -130,8 +134,12 @@ while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
   and the parent area then shows that the PIN was reset. The parent area locks again
   when it is left, when the app goes to the background and after 3 minutes without use.
   Anyone who can open the browser's developer tools can read or change the data.
-- **The data stays in this browser on this device.** Everything is one document in
-  `localStorage`; nothing about tasks or rewards is sent to the server. Another browser,
+- **The family data stays in this browser on this device.** Everything is one document
+  in `localStorage`, and the server stores none of it. What a check needs travels with
+  it: the text to practise (or the surah and ayat), its language and the child's age
+  band go to the Mommy server, which checks them in memory and keeps none of them (with
+  Claude configured and the AI consent given, the text and the age band also go to
+  Claude). Another browser,
   another device or a private window has its own (empty) data. **Clearing the browser's
   data for this site deletes it** (the children, tasks, stars and rewards), and so does
   "Delete all data on this device" in the parent area's Settings.
@@ -177,6 +185,37 @@ Other settings: `MOMMY_ASR_MODEL` (`turbo`, default, or `small`), `MOMMY_ASR_THR
 `MOMMY_ACCESS_CODE` (unset by default: no access gate; see the next section),
 `MOMMY_REQUIRE_ACCESS_CODE` (set in the container image: no start without a code),
 `MOMMY_LOG_LEVEL` (default `INFO`), `PORT` (default 8080).
+
+## Run it on your own computer and share it (Docker + Cloudflare)
+
+The free way to let a friend use the app from anywhere: Docker Desktop (Windows, macOS
+on Intel or Apple Silicon, or Docker on Linux) runs the same image as the Space below,
+and a free Cloudflare quick tunnel (an `https://<random words>.trycloudflare.com`
+address, no account) carries the HTTPS requests to it, behind the access code. In this
+folder:
+
+```sh
+docker compose up -d --build                           # start (the first build downloads the models)
+docker compose exec mommy python -m mommy.share_link   # the link to send: https://<name>.trycloudflare.com/#code=<code>
+```
+
+**[SELF_HOST.md](SELF_HOST.md)** has the exact steps for a non-expert (installing Docker
+Desktop, memory, getting the files, daily use, a new code, troubleshooting, what leaves
+the computer). The setup is `compose.yaml`: the app (`MOMMY_ACCESS_CODE_FILE`: the code
+is made at the first start and kept in a Docker volume; `MOMMY_ALLOWED_HOSTS` with the
+suffix entry `.trycloudflare.com`; its port only on `127.0.0.1:8080`, which asks for the
+same code) and `cloudflared`, pinned by digest, whose metrics server tells `share_link`
+the tunnel's address (it changes when the tunnel restarts; the code does not).
+`compose.test.yaml` is only for testing the kit without downloading the models (see its
+header). Local use with `./run.sh` does not change.
+
+**Always on, without your own computer: [deploy/oracle/ORACLE.md](deploy/oracle/ORACLE.md)**
+runs the same kit for free on an Oracle Cloud "Always Free" Ampere VM (Ubuntu 24.04,
+arm64), from signing up to the link, for Windows and Mac users: on the VM, one command,
+`bash ~/mommy-app/mommy/deploy/oracle/setup.sh`, installs Docker, starts Mommy and prints
+the link (the quick tunnel), and `--stable` switches to a permanent
+`https://<IP with dashes>.sslip.io` link served by Caddy with a Let's Encrypt
+certificate.
 
 ## Run it online (Hugging Face Spaces)
 
@@ -316,7 +355,7 @@ deleting the Space removes it.
   over HTTPS only. A restart of the Space keeps nothing.
 - **With Claude configured,** page photos, handwriting photos and texts also go from
   the Space to the Claude API, as they do from a local server, and only after the
-  parent's consent.
+  parent's AI consent (its own box, under the notice of what goes to Claude).
 - **The consent text adapts:** online (`/api/health` `"online": true`) it says that the
   recordings, photos and texts go to the Mommy server, never "nothing leaves this
   computer".
@@ -637,7 +676,12 @@ mommy/
   README.md  requirements.txt  requirements.lock  run.sh
   requirements-runtime.lock    the app's part of requirements.lock (no test tools): what the image installs
   Dockerfile  .dockerignore    the Hugging Face Space image (models downloaded at build time)
+  compose.yaml  SELF_HOST.md   the same image on one's own computer behind a Cloudflare quick tunnel
+  compose.test.yaml            testing that setup only (no models in the image; they are mounted)
+  .gitattributes               LF line endings for the scripts and build files on every checkout
   deploy/huggingface/          README.md (the Space card) and deploy.py (creates or updates the Space)
+  deploy/oracle/               ORACLE.md and setup.sh: the self-hosting kit on an Oracle Cloud Always Free VM;
+                               compose.oracle.yaml (both link modes), compose.stable.yaml and Caddyfile (the permanent link)
   scripts/download_models.sh   fetches the Whisper model(s) and Piper voices into models/ (sha256 checked)
   scripts/space_start.sh       the image's start command: checks the access code, runs uvicorn
   scripts/lock_requirements.py regenerates both lock files (development only)

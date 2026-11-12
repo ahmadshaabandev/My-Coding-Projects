@@ -65,6 +65,9 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
      which drops EXIF) before upload.
    - The UI shows that this is an AI, not a person, at the start of each session.
    - A parent must tick a consent box before the camera or microphone is used.
+   - (extra) Nothing goes to Claude before the parent ticks the AI consent box, which is
+     shown under the notice of what goes to Claude only while Claude is configured; a
+     consent given without that notice never covers Claude (see "Start screen").
    - (extra) Every sentence of the UI about where the data goes is true in each way the
      app runs: local or online (`/api/health` `online`), with or without Claude. Online,
      the consent box says that the child's voice recordings, the photos and the texts go
@@ -1325,29 +1328,48 @@ each language is still loaded on first use.
 - **Start screen** (the family setup on a first run, then "Who is learning?"; see
   `docs/REWARDS.md`):
   - the AI disclosure, at the start of every session;
-  - a parent consent checkbox (camera and microphone; images sent to Claude when it is
-    configured), stored in the family document (`parent.consentAt`, `aiConsentAt`) and
-    changed in the parent area (Settings);
+  - a parent consent checkbox (camera and microphone), stored in the family document
+    (`parent.consentAt`) and changed in the parent area (Settings); unticking it there
+    also withdraws the AI consent;
+  - (extra) while `/api/health` says `"brain": "claude"`, the AI consent: a box of its own
+    (`consent_ai_label`, "I agree that these things are sent to Claude.") right under the
+    Claude notice (`consent_claude`), which can be ticked only with the first box. Stored
+    as `parent.aiConsentAt` with `parent.aiConsentVersion` (`rewards.js`
+    `hasAiConsent`; a consent saved before the version existed never counts, see
+    `docs/REWARDS.md`). Until it is given, every call whose server path can use Claude
+    (`/api/page/read`, `/api/recite/check`, `/api/dictation/check`) is gated: the child's
+    screens say `consent_needed_ai` ("Let's ask a grown-up to open the parent area and
+    give their OK first."), the parent area `consent_needed_ai_parent`, and the parent
+    area shows a prompt behind the PIN (the Claude notice, the box, "Save", "Not now").
+    Without that consent the client asks `/api/health` again before such a call (the
+    server may have been started again with Claude) and sends nothing if Claude is now
+    set up ("Nothing was sent."). The Quran section, the dictation's voice and
+    `/api/text/check` never need it;
   - under the box, in the setup and in Settings (extra, `updatePrivacyTexts` in
     `app.js`, from `/api/health`), where the data goes, true in each way the app runs.
-    The first line: local, `consent_privacy` ("Recordings and photos are checked in
-    memory and never saved."); online, `consent_online` ("Online: your child's voice
-    recordings, the photos and the texts are sent over a secure connection to the Mommy
-    server that runs the app, where they are checked in memory and not kept."), or
-    without Claude `consent_online_no_photos` (the same without the photos: the photo
-    buttons need Claude). The second line: with Claude, `consent_claude` (what goes to
-    Claude, local or online); without it, `consent_offline` locally ("Offline mode:
-    nothing leaves this computer, and you type the texts yourself.") and
-    `consent_online_no_ai` online ("Nothing is sent to an AI service, and you type the
-    texts yourself."). The page counts as online when `/api/health` says `online`, and
-    also when it was not loaded from a loopback host (a tunnel that rewrites the `Host`
-    header, or the server not reached yet). Online, the photo note of Prepare and of the
-    task form is `photo_privacy_online` (sent to the Mommy server, which does not keep
-    them) and the label of an approximate meaning check `approximate_online` ("without
+    The first line: local, `consent_privacy` ("Mommy handles the recordings and photos
+    in memory and never saves them.": Mommy's storage, nothing said of Claude's); online,
+    `consent_online` ("Online: your child's voice recordings, the photos and the texts
+    are sent over a secure connection to the Mommy server that runs the app, where they
+    are checked in memory and not kept."), or without Claude `consent_online_no_photos`
+    (the same without the photos: the photo buttons need Claude). The second line: with
+    Claude, `consent_claude` (what goes to Claude, local or online), followed by the AI
+    consent box; without it, `consent_offline` locally ("Offline mode: nothing leaves
+    this computer, and you type the texts yourself.") and `consent_online_no_ai` online
+    ("Nothing is sent to an outside AI service such as Claude, and you type the texts
+    yourself.": the server's own recogniser is not an outside service). The page counts
+    as online when `/api/health` says `online`, and also when it was not loaded from a
+    loopback host (a tunnel that rewrites the `Host` header, or the server not reached
+    yet). The photo note of Prepare and of the task form is `photo_privacy` locally
+    ("Photos are made smaller on this device, and Mommy does not keep them.") and
+    `photo_privacy_online` online (sent to the Mommy server, which does not keep them);
+    the label of an approximate meaning check is `approximate_online` online ("without
     the online AI", never "offline");
   - the family data line, in the setup and in Settings, the same in every mode
-    (`fam_privacy_line`: "The family data (children, tasks, stars, rewards and the PIN)
-    stays in this browser, on this device.");
+    (`fam_privacy_line`: "Your family's list (children, tasks, stars, rewards and the
+    PIN) is saved only in this browser, on this device. Each check sends the text or the
+    ayat to practise, the language and the child's age group to the Mommy server, which
+    does not keep them.");
   - the parent PIN (a child lock) and the children (nickname, age band, language,
     avatar), in one family document kept in `localStorage` (`mommy.data.v2`) on this
     device only.

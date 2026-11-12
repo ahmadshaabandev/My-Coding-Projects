@@ -1,0 +1,3 @@
+# The Oracle VM reads these files as they are in the checkout: LF line endings on every
+# clone (the setup script and the compose files are already covered by ../../.gitattributes).
+Caddyfile            text eol=lf

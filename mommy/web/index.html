@@ -94,7 +94,7 @@
       <form class="card" id="setup-form" novalidate hidden>
         <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
         <h2 class="card-title" data-i18n="fam_setup_title">Family setup</h2>
-        <p class="hint" data-i18n="fam_privacy_line">The family data (children, tasks, stars, rewards and the PIN) stays in this browser, on this device.</p>
+        <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
         <div class="field">
           <label for="setup-lang" data-i18n="fam_parent_lang">Language for the grown-ups</label>
           <select id="setup-lang">
@@ -111,9 +111,15 @@
             <label for="consent" data-i18n="consent_label">I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.</label>
           </div>
           <!-- Where the recordings, photos and texts go, and what goes to Claude: set by app.js
-               (updatePrivacyTexts) from /api/health ("online", "brain"). -->
-          <p class="hint consent-privacy" id="consent-privacy" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
+               (updatePrivacyTexts) from /api/health ("online", "brain"). With Claude, the
+               Claude notice is followed by a box of its own (the AI consent, family.js),
+               which can be ticked only with the box above; app.js shows it only then. -->
+          <p class="hint consent-privacy" id="consent-privacy" data-i18n="consent_privacy">Mommy handles the recordings and photos in memory and never saves them.</p>
           <p class="hint consent-extra" id="consent-extra"></p>
+          <div class="check ai-consent" hidden>
+            <input type="checkbox" id="ai-consent" name="ai-consent" aria-describedby="consent-extra" disabled>
+            <label for="ai-consent" data-i18n="consent_ai_label">I agree that these things are sent to Claude.</label>
+          </div>
         </fieldset>
 
         <fieldset>
@@ -263,7 +269,7 @@
           </label>
         </div>
         <p class="why" id="why-prep-photo" data-why="prep-photo" hidden></p>
-        <p class="hint photo-privacy" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
+        <p class="hint photo-privacy" data-i18n="photo_privacy">Photos are made smaller on this device, and Mommy does not keep them.</p>
         <p class="status" id="prep-status" role="status" aria-live="polite"></p>
         <p class="status" id="prep-quran-note" role="status" aria-live="polite"></p>
 
@@ -642,6 +648,25 @@
         <button type="button" class="btn btn-small" id="parent-reset-ok" data-i18n="fam_dismiss">Hide this</button>
       </div>
 
+      <!-- The AI consent, asked when Claude is set up and the parent has not agreed to it
+           (never agreed, or a document saved before the AI consent had a box of its own):
+           the Claude notice and a box of its own. Not shown on Settings, which has the box. -->
+      <section class="card card-notice ai-prompt" id="ai-prompt" aria-labelledby="ai-prompt-h" hidden>
+        <h2 id="ai-prompt-h" tabindex="-1" data-i18n="fam_ai_title">Your OK for Claude</h2>
+        <p data-i18n="fam_ai_lead">Mommy is set up to use Claude. Until you agree, reading photos and checking recitations and dictations stay off; the Quran section works without it.</p>
+        <p class="hint" id="ai-prompt-claude" data-i18n="consent_claude"></p>
+        <div class="check">
+          <input type="checkbox" id="ai-prompt-check" aria-describedby="ai-prompt-claude">
+          <label for="ai-prompt-check" data-i18n="consent_ai_label">I agree that these things are sent to Claude.</label>
+        </div>
+        <p class="status" id="ai-prompt-status" role="status" aria-live="polite"></p>
+        <div class="btn-row">
+          <button type="button" class="btn btn-primary" id="ai-prompt-save" data-i18n="fam_save">Save</button>
+          <button type="button" class="btn" id="ai-prompt-later" data-i18n="fam_ai_later">Not now</button>
+        </div>
+      </section>
+      <p class="status" id="ai-prompt-done" role="status" aria-live="polite"></p>
+
       <nav class="psec-nav" id="psec-nav" data-i18n-attr="aria-label:fam_parent_sections">
         <!-- The number after a label counts what waits for the parent there. -->
         <button type="button" class="psec-tab" data-psec="review"><span data-i18n="fam_sec_review">To review</span><span class="psec-count" id="psec-count-review" hidden></span></button>
@@ -723,7 +748,7 @@
               </label>
             </div>
             <p class="why" data-why="prep-photo" hidden></p>
-            <p class="hint photo-privacy" data-i18n="photo_privacy">Photos are made smaller on this device and are not kept.</p>
+            <p class="hint photo-privacy" data-i18n="photo_privacy">Photos are made smaller on this device, and Mommy does not keep them.</p>
             <p class="status" id="tf-photo-status" role="status" aria-live="polite"></p>
             <p class="status" id="tf-quran-note" role="status" aria-live="polite"></p>
             <div class="field">
@@ -993,15 +1018,20 @@
       <!-- Settings: consent, the PIN, the parent's language, delete all data on this device. -->
       <section class="psec card" data-psec="settings" aria-labelledby="psec-settings-h" hidden>
         <h2 id="psec-settings-h" tabindex="-1" data-i18n="fam_sec_settings">Settings</h2>
-        <p class="hint" data-i18n="fam_privacy_line">The family data (children, tasks, stars, rewards and the PIN) stays in this browser, on this device.</p>
+        <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
         <fieldset class="consent">
           <legend data-i18n="consent_title">For the parent</legend>
           <div class="check">
             <input type="checkbox" id="settings-consent">
             <label for="settings-consent" data-i18n="consent_label">I am this child's parent or guardian. I allow Mommy to use the microphone and the camera.</label>
           </div>
-          <p class="hint consent-privacy" data-i18n="consent_privacy">Recordings and photos are checked in memory and never saved.</p>
-          <p class="hint consent-extra"></p>
+          <p class="hint consent-privacy" data-i18n="consent_privacy">Mommy handles the recordings and photos in memory and never saves them.</p>
+          <p class="hint consent-extra" id="settings-consent-extra"></p>
+          <!-- The AI consent (shown only while Claude is set up; it needs the box above). -->
+          <div class="check ai-consent" hidden>
+            <input type="checkbox" id="settings-ai-consent" aria-describedby="settings-consent-extra">
+            <label for="settings-ai-consent" data-i18n="consent_ai_label">I agree that these things are sent to Claude.</label>
+          </div>
         </fieldset>
 
         <section class="rw-block" aria-labelledby="ps-pin-h">

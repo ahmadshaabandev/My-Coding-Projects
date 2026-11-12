@@ -852,6 +852,13 @@ async function serverDown(browser, base) {
     fake.setHealthDown(false);
     await page.click('#btn-retry');
     await page.waitForSelector('#server-banner', { state: 'hidden' });
+    // The setup was made while the server could not say that Claude is set up, so the
+    // Claude notice and its box were not shown: the general consent does not cover Claude.
+    await page.waitForSelector('#why-recite-rec:not([hidden])');
+    assert.equal((await page.textContent('#why-recite-rec')).trim(), H.allStrings('en').consent_needed_ai);
+    assert.ok(await page.isDisabled('#recite-rec'));
+    await H.setConsent(page, true);
+    await page.click('#nav [data-go="recite"]');
     await page.waitForSelector('#recite-rec:not([disabled])');
     // The aborted health request is logged by the browser as a failed load; nothing else.
     const others = problems.filter((p) => !/Failed to load resource|ERR_CONNECTION_REFUSED/.test(p));
@@ -1969,9 +1976,15 @@ async function consentFlow(browser, base) {
     const en = await page.textContent('#consent-extra');
     assert.match(en, /photos of pages and of handwriting/);
     assert.match(en, /the page text and a transcript of what your child says/);
-    assert.match(en, /the words your child got wrong/);
+    assert.match(en, /the words your child got wrong, with the score/);
+    // V1: also what goes with them (llm.py: "Language: ... Age band: ...").
+    assert.match(en, /The language is sent with each of them, and your child’s age group with the meaning check and the feedback\./);
     await page.selectOption('#setup-lang', 'fr');
-    assert.match(await page.textContent('#consent-extra'), /une transcription de ce que dit votre enfant/);
+    const fr = await page.textContent('#consent-extra');
+    assert.match(fr, /une transcription de ce que dit votre enfant/);
+    assert.match(fr, /la tranche d'âge de votre enfant/);
+    await page.selectOption('#setup-lang', 'ar');
+    assert.match(await page.textContent('#consent-extra'), /والفئة العمرية للطفل/);
     await page.selectOption('#setup-lang', 'en');
   });
 
@@ -1986,7 +1999,8 @@ async function consentFlow(browser, base) {
     await page.waitForSelector('[data-stage="check"]:not([hidden])');
     await page.fill('#dict-written', 'The cat sat on the matt');
     assert.ok(await page.isDisabled('#btn-dict-check'));
-    assert.match(await page.textContent('[data-stage="check"] [data-why="dict-check"]'), /consent box/);
+    // The check stage is for the grown-up: what needs the OK, and where it is given (V4).
+    assert.equal((await page.textContent('[data-stage="check"] [data-why="dict-check"]')).trim(), H.allStrings('en').consent_needed_ai_grownup);
     assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-check"]'));
     assert.equal(fake.callsTo('/api/dictation/check').length, 0, 'nothing went to the server');
     await H.setConsent(page, true);
@@ -2083,6 +2097,169 @@ async function privacyFlow(browser, base) {
   await context.close();
 }
 
+/** The text of a node, trimmed. */
+async function textOf(page, sel) {
+  return ((await page.textContent(sel)) || '').trim();
+}
+
+/** The dictation of the confirmed page up to its check stage (the voice reads both phrases). */
+async function dictationToCheck(page) {
+  await page.click('#nav [data-go="dictation"]');
+  await page.click('#btn-dict-start');
+  await page.click('#dict-next');
+  await page.click('#dict-next');
+  await page.waitForSelector('[data-stage="check"]:not([hidden])');
+  await page.fill('#dict-written', 'The cat sat on the matt');
+}
+
+/**
+ * The AI consent (privacy audit P1) in the four ways the app runs. The setup's AI box is
+ * there only under the Claude notice and needs the general box; the general consent alone
+ * never covers Claude: with Claude set up, every call whose server path uses it stays off
+ * (the page photo, Recite, the typed dictation check) with a neutral line for the child,
+ * while "Confirm text", the dictation's voice and the Quran section work; without Claude
+ * the general consent is enough. The parent's prompt (behind the PIN) then opens them.
+ */
+async function aiConsentFlow(browser, base) {
+  const S = H.allStrings('en');
+  for (const mode of H.PRIVACY_MODES) {
+    const claude = mode.brain === 'claude';
+    const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(mode) });
+    await check(`AI consent, ${mode.name}: ${claude ? 'the general consent alone keeps every Claude call off; Confirm text, the voice and the Quran work' : 'the general consent is enough, and no AI box is shown'}`, async () => {
+      await page.goto(base + '/');
+      await page.waitForSelector('#consent-extra:not([hidden])');
+      assert.equal(await page.isVisible('#ai-consent'), claude, 'the AI box stands only under the Claude notice');
+      await H.setupFamily(page, { consent: true, aiConsent: false });
+      const doc = await H.storedDoc(page);
+      assert.ok(doc.parent.consentAt);
+      assert.deepEqual([doc.parent.aiConsentAt, doc.parent.aiConsentVersion], [null, null], 'the general consent never sets the AI one');
+      await confirmPageText(page, PAGE_TEXT);
+      assert.ok(await page.isDisabled('#prep-take'));
+      // Prepare is for the grown-up: it names Claude and where the OK is given (V4).
+      assert.equal(await textOf(page, '#why-prep-photo'), claude ? S.consent_needed_ai_grownup : S.no_brain);
+      assert.equal(await textOf(page, '#screen-prepare .photo-privacy'), S[mode.photo]);
+      await page.click('#prep-next [data-go="recite"]');
+      await page.waitForSelector('#screen-recite:not([hidden])');
+      assert.equal(await page.isDisabled('#recite-rec'), claude);
+      if (claude) {
+        assert.ok(await page.isVisible('#why-recite-rec'));
+        assert.equal(await textOf(page, '#why-recite-rec'), S.consent_needed_ai);
+        await H.shot(page, 'ai-consent-child-360-' + (mode.online ? 'online' : 'local'));
+      } else {
+        await record(page, '#recite-rec', 300);
+        await waitForCall(fake, '/api/recite/check', 1);
+        await page.waitForSelector('#recite-result:not([hidden])');
+      }
+      await dictationToCheck(page);
+      assert.equal(await page.isDisabled('#btn-dict-check'), claude);
+      if (claude) {
+        // The check stage is for the grown-up too; the photo and the typed check share the line.
+        assert.equal(await textOf(page, '[data-stage="check"] [data-why="dict-photo"]'), S.consent_needed_ai_grownup);
+        assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-photo"]'));
+        assert.equal(await textOf(page, '[data-stage="check"] [data-why="dict-check"]'), S.consent_needed_ai_grownup);
+        await H.shot(page, 'ai-consent-dict-check-360-' + (mode.online ? 'online' : 'local'));
+      } else {
+        await page.click('#btn-dict-check');
+        await waitForCall(fake, '/api/dictation/check', 1);
+      }
+      await page.click('#nav [data-go="quran"]');
+      await page.waitForSelector('#quran-text .ayah');
+      assert.ok(await page.isEnabled('#quran-rec'), 'the Quran section never uses Claude');
+      await record(page, '#quran-rec', 300);
+      await waitForCall(fake, '/api/quran/check', 1);
+      assert.ok(fake.callsTo('/api/tts').length > 0, 'the dictation voice was used');
+      assert.equal(fake.callsTo('/api/text/check').length, 1, '"Confirm text" was checked');
+      assert.equal(fake.callsTo('/api/recite/check').length, claude ? 0 : 1);
+      assert.equal(fake.callsTo('/api/dictation/check').length, claude ? 0 : 1);
+      assert.equal(fake.callsTo('/api/page/read').length, 0);
+      assert.deepEqual(problems, []);
+    });
+    if (claude) {
+      await check(`AI consent, ${mode.name}: the parent's prompt behind the PIN (the Claude notice and a box of its own) opens the Claude features`, async () => {
+        await H.openParent(page);
+        assert.ok(await page.isVisible('#ai-prompt'));
+        assert.equal(await textOf(page, '#ai-prompt-h'), S.fam_ai_title);
+        assert.equal(await textOf(page, '#ai-prompt-claude'), S.consent_claude);
+        assert.equal(await textOf(page, '#ai-prompt label[for="ai-prompt-check"]'), S.consent_ai_label);
+        assert.ok(!(await page.isChecked('#ai-prompt-check')));
+        await page.click('#ai-prompt-save');
+        assert.equal(await textOf(page, '#ai-prompt-status'), S.fam_ai_tick_first);
+        assert.equal((await H.storedDoc(page)).parent.aiConsentAt, null, 'nothing without the tick');
+        await page.check('#ai-prompt-check');
+        await page.click('#ai-prompt-save');
+        await page.waitForSelector('#ai-prompt', { state: 'hidden' });
+        assert.equal(await textOf(page, '#ai-prompt-done'), S.fam_ai_saved);
+        const d = await H.storedDoc(page);
+        assert.ok(d.parent.aiConsentAt);
+        assert.equal(d.parent.aiConsentVersion, require(path.join(WEB, 'rewards.js')).AI_CONSENT_VERSION);
+        await H.closeParent(page);
+        await page.click('#nav [data-go="dictation"]');
+        await page.waitForSelector('[data-stage="check"]:not([hidden])');
+        assert.ok(await page.isEnabled('#btn-dict-check'));
+        await page.click('#btn-dict-check');
+        await waitForCall(fake, '/api/dictation/check', 1);
+        await page.click('#nav [data-go="recite"]');
+        await page.waitForSelector('#recite-rec:not([disabled])');
+        await record(page, '#recite-rec', 300);
+        await waitForCall(fake, '/api/recite/check', 1);
+        await page.click('#nav [data-go="prepare"]');
+        assert.ok(await page.isEnabled('#prep-take'));
+        assert.deepEqual(problems, []);
+      });
+    }
+    await context.close();
+  }
+
+  // The owner sets up Claude while the page is open (the server is started again): the
+  // page still thinks the brain is offline. The check before each Claude call asks
+  // /api/health again, so nothing goes to Claude without the AI consent.
+  for (const mode of H.PRIVACY_MODES.filter((m) => m.brain !== 'claude')) {
+    const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(mode) });
+    await check(`AI consent, Claude added later while the page is open (${mode.name} at first): nothing is sent, the child is asked to fetch a grown-up, and the consent texts follow`, async () => {
+      await page.goto(base + '/');
+      await H.setupFamily(page, { consent: true });
+      await confirmPageText(page, PAGE_TEXT);
+      await page.click('#prep-next [data-go="recite"]');
+      await record(page, '#recite-rec', 300);
+      await waitForCall(fake, '/api/recite/check', 1);
+      await page.waitForSelector('#recite-result:not([hidden])');
+      fake.setHealth({ brain: 'claude' });
+      const health = fake.callsTo('/api/health').length;
+      await record(page, '#recite-rec', 300);
+      await waitForCall(fake, '/api/health', health + 1);
+      await page.waitForSelector('#recite-rec[disabled]');
+      assert.equal(await textOf(page, '#recite-status'), S.ai_not_sent);
+      assert.equal(await textOf(page, '#why-recite-rec'), S.consent_needed_ai);
+      assert.equal(fake.callsTo('/api/recite/check').length, 1, 'the second recording was never sent');
+      // The typed dictation check: the gate knows now.
+      await dictationToCheck(page);
+      assert.ok(await page.isDisabled('#btn-dict-check'));
+      assert.equal(fake.callsTo('/api/dictation/check').length, 0);
+      // The consent box of Settings now shows the Claude notice and its box (unticked).
+      await H.openParent(page);
+      assert.ok(await page.isVisible('#ai-prompt'), 'the prompt, at the top of the parent area');
+      await H.parentSection(page, 'settings');
+      assert.ok(await page.isHidden('#ai-prompt'), 'not on Settings, which has the box');
+      assert.equal(await textOf(page, '#settings-consent-extra'), S.consent_claude);
+      assert.ok(await page.isVisible('#settings-ai-consent'));
+      assert.ok(!(await page.isChecked('#settings-ai-consent')));
+      if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
+      await H.closeParent(page);
+      // A reload keeps it so.
+      await page.reload();
+      await page.waitForSelector('#screen-who:not([hidden])');
+      await page.click('#who-list .who-btn');
+      await confirmPageText(page, PAGE_TEXT);
+      await page.click('#prep-next [data-go="recite"]');
+      await page.waitForSelector('#why-recite-rec:not([hidden])');
+      assert.ok(await page.isDisabled('#recite-rec'));
+      assert.equal(fake.callsTo('/api/recite/check').length, 1);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+}
+
 /** recorder.js with a 1 s limit instead of 120 s, so the limit can be reached in a test. */
 function shortLimit() {
   let api;
@@ -2127,19 +2304,19 @@ async function limitFlow(browser, base) {
  */
 /** The privacy strings: every mode's keys in en, fr and ar, and what each one says. */
 function privacyStrings() {
-  const KEYS = ['consent_privacy', 'consent_offline', 'consent_claude', 'consent_online', 'consent_online_no_photos', 'consent_online_no_ai', 'photo_privacy', 'photo_privacy_online', 'approximate', 'approximate_online', 'fam_privacy_line'];
+  const KEYS = ['consent_privacy', 'consent_offline', 'consent_claude', 'consent_online', 'consent_online_no_photos', 'consent_online_no_ai', 'photo_privacy', 'photo_privacy_online', 'photo_privacy_claude', 'photo_privacy_online_claude', 'approximate', 'approximate_online', 'fam_privacy_line'];
   for (const lang of ['en', 'fr', 'ar']) {
     const S = H.allStrings(lang);
     for (const key of KEYS) assert.ok(S[key], `${lang}.${key}`);
     for (const mode of H.PRIVACY_MODES) for (const k of ['privacy', 'extra', 'photo', 'approx']) assert.ok(S[mode[k]], `${lang}.${mode[k]}`);
     // Online, the server is named, and no line says that the data stays here.
-    for (const key of ['consent_online', 'consent_online_no_photos', 'photo_privacy_online']) {
+    for (const key of ['consent_online', 'consent_online_no_photos', 'photo_privacy_online', 'photo_privacy_online_claude']) {
       assert.match(S[key], /Mommy/, `${lang}.${key}`);
       for (const local of H.localOnlySentences()) assert.ok(!S[key].includes(local), `${lang}.${key} holds "${local}"`);
     }
     // Arabic: no word ending in the suffix ـك (it addresses the parent as a man or a woman).
     if (lang === 'ar') {
-      for (const key of ['consent_online', 'consent_online_no_photos', 'consent_online_no_ai', 'photo_privacy_online', 'approximate_online', 'fam_privacy_line']) {
+      for (const key of ['consent_claude', 'consent_online', 'consent_online_no_photos', 'consent_online_no_ai', 'photo_privacy_online', 'photo_privacy_claude', 'photo_privacy_online_claude', 'approximate_online', 'fam_privacy_line']) {
         const words = S[key].replace(/[ً-ْ]/g, '').split(/[\s«»()،؛؟.,:!…]+/u);
         assert.deepEqual(words.filter((w) => /ك$/.test(w)), [], 'ar.' + key);
       }
@@ -2149,7 +2326,131 @@ function privacyStrings() {
   assert.match(en.consent_online, /voice recordings, the photos and the texts are sent over a secure connection to the Mommy server that runs the app, where they are checked in memory and not kept/);
   assert.doesNotMatch(en.consent_online_no_photos, /photo/, 'without Claude no photo is ever sent');
   assert.match(en.consent_online_no_photos, /voice recordings and the texts are sent over a secure connection/);
-  assert.match(en.fam_privacy_line, /children, tasks, stars, rewards and the PIN\) stays in this browser, on this device/);
+  // P3: the family line says what is saved (and where) and what travels with each check.
+  assert.match(en.fam_privacy_line, /^Your family’s list \(children, tasks, stars, rewards and the PIN\) is saved only in this browser, on this device\. /);
+  // V3: the language and the age group go with a school text, numbers with the Quran.
+  assert.match(en.fam_privacy_line, / the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead\. /);
+  // V2: what the server keeps out of its log, and what it notes there (backend/mommy/app.py).
+  assert.match(en.fam_privacy_line, /The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers\.$/);
+  for (const lang of ['en', 'fr', 'ar']) {
+    assert.doesNotMatch(H.allStrings(lang).fam_privacy_line, /does not keep them|keeps none|ne les conserve pas|لا يحفظها/, `${lang}: no blanket "not kept" (the log notes the language)`);
+  }
+  assert.match(H.allStrings('fr').fam_privacy_line, /son journal note la langue, le type de vérification et les numéros des versets\.$/);
+  assert.match(H.allStrings('ar').fam_privacy_line, /ويُدوَّن في سجلّه اللغة ونوع التحقّق وأرقام الآيات\.$/);
+  // V5: with Claude, the photo notes name where the photos go, and whose storage "not kept" is.
+  assert.equal(en.photo_privacy_claude, 'Photos are made smaller on this device, then sent to Claude to be read. Mommy does not keep them.');
+  assert.equal(en.photo_privacy_online_claude, 'Photos are made smaller on this device, then sent over a secure connection to the Mommy server, which does not keep them and passes them on to Claude to be read.');
+  // P4: online without Claude, no OUTSIDE AI service (the server's recogniser is an AI).
+  assert.equal(en.consent_online_no_ai, 'Nothing is sent to an outside AI service such as Claude, and you type the texts yourself.');
+}
+
+/**
+ * The strings of the AI consent and of the storage sentences (privacy audit P1, P3, P4,
+ * P5), in en, fr and ar: each says whose storage it means (Mommy's), none claims anything
+ * about Claude's; online without Claude, "no outside AI service such as Claude"; the
+ * child's line asks for a grown-up; the Arabic is neutral (no ـك, يُرجى for the parent,
+ * هيا for the child).
+ */
+function aiConsentStrings() {
+  const KEYS = ['consent_ai_label', 'consent_needed_ai', 'consent_needed_ai_parent', 'consent_needed_ai_grownup', 'ai_not_sent', 'fam_ai_title', 'fam_ai_lead', 'fam_ai_later', 'fam_ai_tick_first', 'fam_ai_saved'];
+  const GROWNUP = { en: /parent area \(Settings\)/, fr: /espace parents \(Réglages\)/, ar: /قسم الكبار \(الإعدادات\)/ };
+  const MOMMY_STORAGE = ['consent_privacy', 'photo_privacy', 'fam_privacy_line'];
+  const CLAUDE = { en: /such as Claude/, fr: /extérieur comme Claude/, ar: /خارجية مثل Claude/ };
+  const ASK = { en: /^Let’s ask a grown-up/, fr: /^Demandons d’abord à un adulte/, ar: /^هيا نطلب من أحد الكبار/ };
+  for (const lang of ['en', 'fr', 'ar']) {
+    const S = H.allStrings(lang);
+    for (const key of KEYS) assert.ok(S[key], `${lang}.${key}`);
+    // P5: "never saved" and "not kept" are Mommy's, and say nothing of Claude's retention.
+    for (const key of MOMMY_STORAGE) {
+      assert.match(S[key], /Mommy/, `${lang}.${key} says whose storage`);
+      assert.doesNotMatch(S[key], /Claude|Anthropic/, `${lang}.${key} claims nothing about Claude`);
+    }
+    assert.match(S.consent_online_no_ai, CLAUDE[lang], `${lang}.consent_online_no_ai`);
+    assert.match(S.consent_needed_ai, ASK[lang], `${lang}.consent_needed_ai`);
+    assert.doesNotMatch(S.consent_needed_ai, /Claude|consent|accord d|موافقة في خانة/, 'the child line names no service and no box');
+    assert.match(S.consent_ai_label, /Claude/, `${lang}.consent_ai_label`);
+    // V4: on a grown-up card, the line names Claude and where the OK is given.
+    assert.match(S.consent_needed_ai_grownup, /Claude/, `${lang}.consent_needed_ai_grownup`);
+    assert.match(S.consent_needed_ai_grownup, GROWNUP[lang], `${lang}.consent_needed_ai_grownup`);
+    // V5: the photo notes with Claude name it, and "not kept" is Mommy's, never Claude's.
+    for (const key of ['photo_privacy_claude', 'photo_privacy_online_claude']) {
+      assert.match(S[key], /Claude/, `${lang}.${key} says where the photos go`);
+      assert.match(S[key], /Mommy/, `${lang}.${key} says whose storage`);
+      assert.doesNotMatch(S[key], /Claude (does not|ne les|لا)|Anthropic/, `${lang}.${key} claims nothing about Claude's`);
+    }
+    // The AI box agrees to the Claude notice: no retention promise was added to it.
+    assert.doesNotMatch(S.consent_claude, /not kept|never saved|pas conserv|jamais enregistr|لا تُحفظ/, `${lang}.consent_claude`);
+    if (lang === 'ar') {
+      for (const key of KEYS.concat(MOMMY_STORAGE, ['consent_online_no_ai', 'photo_privacy_claude', 'photo_privacy_online_claude'])) {
+        const words = S[key].replace(/[ً-ْ]/g, '').split(/[\s«»()،؛؟.,:!…]+/u);
+        assert.deepEqual(words.filter((w) => /ك$/.test(w)), [], 'ar.' + key);
+      }
+      for (const key of ['consent_needed_ai_parent', 'consent_needed_ai_grownup', 'fam_ai_tick_first']) assert.match(S[key], /يُرجى/, 'ar.' + key);
+    }
+  }
+}
+
+/**
+ * The Claude notice (consent_claude) names everything the server sends to Claude (audit
+ * V1): every value that backend/mommy/llm.py puts into a Claude request is one of the
+ * known fields below, and each field is named in the notice in en, fr and ar. A new value
+ * in a prompt (a nickname, say) fails here until the notice names it.
+ */
+function claudeNoticeCoversPrompts() {
+  const src = fs.readFileSync(path.join(ROOT, 'backend', 'mommy', 'llm.py'), 'utf8');
+  const cls = src.slice(src.indexOf('class ClaudeBrain'), src.indexOf('# Factory'));
+  assert.ok(cls.length > 1000, 'the ClaudeBrain class was found');
+  // Each value put into a request, with the words that name it in the notice.
+  const FIELDS = {
+    image: { en: /photos of pages and of handwriting/, fr: /photos de pages et d'écriture/, ar: /صور الصفحات والكتابة/ },
+    lang: { en: /The language is sent with each of them/, fr: /La langue est envoyée avec chacun d'eux/, ar: /وتُرسَل اللغة مع كلٍّ منها/ },
+    age: { en: /your child’s age group with the meaning check and the feedback/, fr: /la tranche d'âge de votre enfant avec le jugement du sens et le message/, ar: /والفئة العمرية للطفل مع الحكم على المعنى والملاحظات/ },
+    expected_text: { en: /the page text/, fr: /le texte de la page/, ar: /ونص الصفحة/ },
+    heard_text: { en: /a transcript of what your child says/, fr: /une transcription de ce que dit votre enfant/, ar: /ونسخة مكتوبة مما يقوله الطفل/ },
+    summary: { en: /the words your child got wrong, with the score/, fr: /les mots où votre enfant a fait une erreur, avec le score/, ar: /والكلمات التي أخطأ فيها الطفل مع النتيجة/ },
+  };
+  // Interpolations of the request texts ("Language: {...}", "<heard_text>\n{...}"), and
+  // the image blocks: what each one carries.
+  const VALUE = {
+    'LANG_NAMES[lang_hint]': 'lang', lang_hint: 'lang', 'LANG_NAMES[lang]': 'lang', lang: 'lang', age: 'age',
+    'expected_text.strip()': 'expected_text', 'heard_text.strip()': 'heard_text',
+    'json.dumps(summary, ensure_ascii=False)': 'summary', hint: 'lang',
+  };
+  const seen = new Set();
+  for (const m of cls.matchAll(/\bf"([^"]*)"/g)) {
+    // An error message or a log line is not sent anywhere.
+    const line = cls.slice(cls.lastIndexOf('\n', m.index) + 1, m.index);
+    if (/\braise\b|\blog\./.test(line)) continue;
+    for (const v of m[1].matchAll(/\{([^}]+)\}/g)) {
+      assert.ok(VALUE[v[1]], `llm.py sends {${v[1]}} to Claude: name it in consent_claude and raise AI_CONSENT_VERSION`);
+      seen.add(VALUE[v[1]]);
+    }
+  }
+  if (/_image_block\(/.test(cls)) seen.add('image');
+  if (/compact_summary\(/.test(cls)) seen.add('summary');
+  assert.deepEqual([...seen].sort(), Object.keys(FIELDS).sort(), 'every known field is still sent (else the notice says too much)');
+  for (const lang of ['en', 'fr', 'ar']) {
+    const notice = H.allStrings(lang).consent_claude;
+    for (const [field, words] of Object.entries(FIELDS)) assert.match(notice, words[lang], `${lang}.consent_claude names ${field}`);
+  }
+}
+
+/**
+ * The AI consent is given to one text of the Claude notice (rewards.js AI_CONSENT_VERSION):
+ * its fingerprint in en, fr and ar (consent_claude and the box's label) is recorded here
+ * for the current version. Changing the notice without raising the version would let a
+ * consent given to the old text cover the new one; raise the version (every family is
+ * asked again) and record the new fingerprint.
+ */
+function claudeNoticeVersion() {
+  const R = require(path.join(WEB, 'rewards.js'));
+  const NOTICE = { 2: 'cf276ec2d2ec6daf5c3374414d316183ff8e074759b8fd7a37db47cdf9be9bee' };
+  const text = JSON.stringify(['en', 'fr', 'ar'].map((lang) => {
+    const S = H.allStrings(lang);
+    return [S.consent_claude, S.consent_ai_label];
+  }));
+  const hash = require('node:crypto').createHash('sha256').update(text).digest('hex');
+  assert.equal(hash, NOTICE[R.AI_CONSENT_VERSION], `the Claude notice of version ${R.AI_CONSENT_VERSION} changed: raise AI_CONSENT_VERSION and record ${hash}`);
 }
 
 function frenchTypography() {
@@ -2171,6 +2472,9 @@ async function main() {
   await check('ar: UI strings use no singular imperative or visibly gendered second-person form', arabicWording);
   await check('fr: a no-break space before : ; ! ? and inside « » (no plain space)', frenchTypography);
   await check('privacy strings: each way the app runs has its sentences in en, fr and ar; online ones name the server and never say the data stays here', privacyStrings);
+  await check('AI consent strings in en, fr and ar: Mommy\'s storage named, nothing claimed about Claude\'s, no outside AI service online, a neutral line for the child', aiConsentStrings);
+  await check('the Claude notice names every value llm.py sends to Claude (the language, the age group, the score...) in en, fr and ar', claudeNoticeCoversPrompts);
+  await check('the Claude notice has the fingerprint recorded for AI_CONSENT_VERSION (a change asks every family again)', claudeNoticeVersion);
 
   H.loadTanzil();
   console.log('# the fake Quran parts against the server\'s finder (Python)');
@@ -2209,6 +2513,8 @@ async function main() {
     await consentFlow(browser, base);
     console.log('# browser: privacy texts, local or online, with or without Claude');
     await privacyFlow(browser, base);
+    console.log('# browser: the AI consent, local or online, with or without Claude; Claude added later');
+    await aiConsentFlow(browser, base);
     console.log('# browser: length limit');
     await limitFlow(browser, base);
   } finally {

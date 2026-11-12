@@ -481,7 +481,19 @@ async function familyFlow(browser, base) {
     await page.click('#btn-start');
     assert.equal(await text(page, '#nickname-err'), 'Please type a nickname.');
     assert.equal(await page.evaluate(() => localStorage.getItem('mommy.data.v2')), null, 'nothing saved before the setup is complete');
+    // Claude is set up (the fake's default): the AI consent has a box of its own under the
+    // Claude notice, which waits for the general box.
+    assert.ok(await page.isVisible('#ai-consent'));
+    assert.ok(await page.isDisabled('#ai-consent'));
+    assert.equal(await page.getAttribute('#ai-consent', 'aria-describedby'), 'consent-extra');
+    assert.equal(await text(page, '#consent-extra'), H.allStrings('en').consent_claude);
     await page.check('#consent');
+    assert.ok(await page.isEnabled('#ai-consent'));
+    await page.check('#ai-consent');
+    await page.uncheck('#consent');
+    assert.ok(!(await page.isChecked('#ai-consent')) && (await page.isDisabled('#ai-consent')), 'unticking the general box clears the AI box');
+    await page.check('#consent');
+    await page.check('#ai-consent');
     await page.fill('#nickname', 'Salma');
     await page.selectOption('#age', '10-13');
     await page.check('#setup-avatars input >> nth=2');
@@ -499,6 +511,8 @@ async function familyFlow(browser, base) {
     assert.equal(doc.version, 2);
     assert.equal(doc.parent.pin.iterations, 150000);
     assert.ok(doc.parent.consentAt && doc.parent.aiConsentAt);
+    assert.equal(doc.parent.aiConsentVersion, R.AI_CONSENT_VERSION, 'given in the box under the Claude notice');
+    assert.ok(R.hasAiConsent(doc));
     assert.equal(doc.parent.uiLang, 'en');
     assert.deepEqual([doc.children.length, doc.children[0].nickname, doc.children[0].age, doc.children[0].lang, doc.children[0].avatar], [1, 'Salma', '10-13', 'en', '🦊']);
     assert.deepEqual(R.validateDoc(doc).repaired, []);
@@ -552,7 +566,7 @@ async function familyFlow(browser, base) {
     assert.ok(await page.isVisible('#prw-ledger-empty'));
     await H.parentSection(page, 'settings');
     assert.ok(await page.isChecked('#settings-consent'));
-    assert.equal(await text(page, '#screen-parent .psec[data-psec="settings"] .hint'), 'The family data (children, tasks, stars, rewards and the PIN) stays in this browser, on this device.');
+    assert.equal(await text(page, '#screen-parent .psec[data-psec="settings"] .hint'), H.allStrings('en').fam_privacy_line);
     assert.equal(await page.inputValue('#ps-lang'), 'en');
     for (const sel of ['#ps-pin-change', '#ps-delete']) assert.ok(await page.isVisible(sel), sel);
     assert.ok(await page.isHidden('#ps-delete-1'));
@@ -2288,6 +2302,344 @@ async function privacySettingsFlow(browser, base) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The AI consent (privacy audit P1): a box of its own under the Claude notice
+// ---------------------------------------------------------------------------
+
+/**
+ * A family saved before the AI consent had a box of its own: one box set both times,
+ * whatever the brain was (aiConsentAt, no aiConsentVersion). A recite task and a Quran
+ * task for one child, in the child's language `lang`; the grown-ups' language `uiLang`.
+ */
+async function oldConsentDoc(uiLang, lang) {
+  const now = '2026-11-10T10:00:00.000Z';
+  let d = R.emptyDoc(now, { uiLang });
+  d = R.updateParent(d, { consent: true }, now);
+  d = await R.setPin(d, PIN, now);
+  const r = R.addChild(d, { nickname: lang === 'ar' ? 'سامي' : 'Sami', lang, avatar: '🦉' }, now);
+  d = r.doc;
+  d = R.createTask(d, { childId: r.child.id, kind: 'recite', text: lang === 'ar' ? AR_TEXT : SUN_TEXT, lang, title: 'Sun' }, now).doc;
+  d = R.createTask(d, { childId: r.child.id, kind: 'quran', quran: { surah: 112, from: 1, to: 4, memory: false }, title: 'Al-Ikhlaas' }, now).doc;
+  // As the app saved it then: the time of the one box, and no version field.
+  d.parent.aiConsentAt = now;
+  delete d.parent.aiConsentVersion;
+  assert.deepEqual(R.validateDoc(d).repaired, [], 'an old document is read as it is');
+  assert.equal(R.hasAiConsent(d), false);
+  return d;
+}
+
+/** Wait until the page has the /api/health answer (the consent texts follow it). */
+async function healthKnown(page) {
+  await page.waitForFunction(() => !document.querySelector('#consent-extra').hidden);
+}
+
+/** The child's (only) task card's Start, from "Who is learning?" or the home. */
+async function startTask(page, title, screen) {
+  if (await page.isVisible('#screen-who')) await page.click('#who-list .who-btn');
+  await page.waitForSelector('#screen-home:not([hidden])');
+  await page.click(`#home-todo .task-card:has-text("${title}") .task-start`);
+  await page.waitForSelector(`#screen-${screen}:not([hidden])`);
+}
+
+async function aiConsentFlow(browser, base) {
+  const S = H.allStrings('en');
+  const parentShows = (doc) => [doc.parent.consentAt, doc.parent.aiConsentAt, doc.parent.aiConsentVersion === undefined ? null : doc.parent.aiConsentVersion];
+
+  // A document saved before the AI box, in the four ways the app runs.
+  for (const mode of H.PRIVACY_MODES) {
+    const claude = mode.brain === 'claude';
+    const old = await oldConsentDoc('en', 'en');
+    const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) }, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(old) } });
+    await check(`AI consent, ${mode.name}, a document saved before the AI box: ${claude ? 'its consent does not cover Claude (the recite task waits for a grown-up, the Quran task works) and the parent is asked' : 'nothing changes (the tasks work; no prompt and no AI box)'}`, async () => {
+      await page.goto(base + '/');
+      await page.waitForSelector('#screen-who:not([hidden])');
+      await healthKnown(page);
+      assert.ok(await page.isHidden('#data-notice'), 'read as it is: no repair notice');
+      await startTask(page, 'Sun', 'recite');
+      assert.equal(await page.isDisabled('#recite-rec'), claude);
+      if (claude) {
+        assert.ok(await page.isVisible('#why-recite-rec'));
+        assert.equal(await text(page, '#why-recite-rec'), S.consent_needed_ai);
+        assert.ok(await page.isVisible('#task-banner'), 'the task runner goes on');
+      } else {
+        await H.record(page, '#recite-rec', 300);
+        await H.waitForCall(fake, '/api/recite/check', 1);
+        await page.waitForSelector('#task-outcome-recite:not([hidden])');
+      }
+      await page.click('#task-leave');
+      // The Quran task never uses Claude: it works in every mode.
+      await startTask(page, 'Al-Ikhlaas', 'quran');
+      await page.waitForSelector('#quran-text .ayah[data-ayah="4"]');
+      assert.ok(await page.isEnabled('#quran-rec'));
+      fake.queueQuran('perfect');
+      await H.record(page, '#quran-rec', 300);
+      await H.waitForCall(fake, '/api/quran/check', 1);
+      await page.waitForSelector('#task-outcome-quran .celebrate');
+      await page.click('#task-leave');
+      await page.waitForSelector('#screen-home:not([hidden])');
+      await H.openParent(page);
+      assert.equal(await page.isVisible('#ai-prompt'), claude, 'the prompt at the top of the parent area');
+      await H.parentSection(page, 'settings');
+      assert.ok(await page.isHidden('#ai-prompt'), 'not on Settings');
+      assert.equal(await page.isVisible('#settings-ai-consent'), claude);
+      assert.ok(!(await page.isChecked('#settings-ai-consent')), 'the old consent is not shown as given');
+      assert.deepEqual(parentShows(await H.storedDoc(page)), [old.parent.consentAt, old.parent.aiConsentAt, null], 'kept as it was, never counted');
+      assert.equal(fake.callsTo('/api/recite/check').length, claude ? 0 : 1);
+      assert.deepEqual(problems, []);
+    });
+    if (claude) {
+      await check(`AI consent, ${mode.name}, the old document: the AI box of Settings counts at once, and the recite task records`, async () => {
+        await page.check('#settings-ai-consent');
+        const d = await H.storedDoc(page);
+        assert.equal(d.parent.aiConsentVersion, R.AI_CONSENT_VERSION);
+        assert.notEqual(d.parent.aiConsentAt, old.parent.aiConsentAt, 'a new time: the old one never counted');
+        assert.equal(d.parent.consentAt, old.parent.consentAt);
+        await H.closeParent(page);
+        await startTask(page, 'Sun', 'recite');
+        await page.waitForSelector('#recite-rec:not([disabled])');
+        await H.record(page, '#recite-rec', 300);
+        await H.waitForCall(fake, '/api/recite/check', 1);
+        await page.waitForSelector('#task-outcome-recite:not([hidden])');
+        await page.click('#task-leave');
+        await page.waitForSelector('#screen-home:not([hidden])');
+        await H.openParent(page);
+        assert.ok(await page.isHidden('#ai-prompt'), 'asked once');
+        await H.closeParent(page);
+        assert.deepEqual(problems, []);
+      });
+    }
+    await context.close();
+  }
+
+  // A consent of version 1: given to the Claude notice before it named the score, the
+  // language and the age group (audit V1). With Claude set up it no longer counts: the
+  // child is asked to fetch a grown-up, the dictation's check (a card for the grown-up)
+  // says what needs the OK and where, and the parent is asked again under the full notice.
+  for (const mode of H.PRIVACY_MODES.filter((m) => m.brain === 'claude')) {
+    const now = '2026-11-11T10:00:00.000Z';
+    let v1 = R.emptyDoc(now, { uiLang: 'en' });
+    v1 = R.updateParent(v1, { consent: true }, now);
+    v1 = await R.setPin(v1, PIN, now);
+    const r = R.addChild(v1, { nickname: 'Sami', lang: 'en', avatar: '🦉' }, now);
+    v1 = R.createTask(r.doc, { childId: r.child.id, kind: 'recite', text: SUN_TEXT, lang: 'en', title: 'Sun' }, now).doc;
+    v1 = R.createTask(v1, { childId: r.child.id, kind: 'dictation', text: SUN_TEXT, lang: 'en', title: 'Sun dictation' }, now).doc;
+    v1.parent.aiConsentAt = now;
+    v1.parent.aiConsentVersion = 1;
+    assert.deepEqual(R.validateDoc(v1).repaired, []);
+    const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) }, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(v1) } });
+    await check(`AI consent, ${mode.name}, a consent of version 1 (the notice without the age group): it no longer covers Claude; the grown-up card says where the OK is given; asked again under the full notice`, async () => {
+      await page.goto(base + '/');
+      await page.waitForSelector('#screen-who:not([hidden])');
+      await healthKnown(page);
+      assert.ok(await page.isHidden('#data-notice'), 'an older version is no repair');
+      await startTask(page, 'Sun', 'recite');
+      assert.ok(await page.isDisabled('#recite-rec'));
+      assert.equal(await text(page, '#why-recite-rec'), S.consent_needed_ai, "the child's line on the child's screen");
+      await page.click('#task-leave');
+      await startTask(page, 'Sun dictation', 'dictation');
+      await page.click('#btn-dict-start');
+      for (let i = 0; i < 2; i++) {
+        await page.waitForSelector('#dict-next:not([disabled])');
+        await page.click('#dict-next');
+      }
+      await page.waitForSelector('[data-stage="check"]:not([hidden])');
+      await page.fill('#dict-written', SUN_TEXT);
+      assert.ok(await page.isDisabled('#btn-dict-check'));
+      assert.ok(await page.isDisabled('#dict-take'));
+      assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-photo"]'));
+      assert.equal(await text(page, '[data-stage="check"] [data-why="dict-photo"]'), S.consent_needed_ai_grownup, 'a card for the grown-up: Claude, and where the OK is given');
+      assert.equal(await text(page, '[data-stage="check"] [data-why="dict-check"]'), S.consent_needed_ai_grownup);
+      await H.shot(page, 'ai-consent-v1-dict-check-en-360-' + (mode.online ? 'online' : 'local'));
+      await page.click('#task-leave');
+      await page.waitForSelector('#screen-home:not([hidden])');
+      await H.openParent(page);
+      await page.waitForSelector('#ai-prompt:not([hidden])');
+      assert.equal(await text(page, '#ai-prompt-claude'), S.consent_claude);
+      assert.match(S.consent_claude, /your child’s age group/);
+      await page.check('#ai-prompt-check');
+      await page.click('#ai-prompt-save');
+      await page.waitForSelector('#ai-prompt', { state: 'hidden' });
+      const d = await H.storedDoc(page);
+      assert.equal(d.parent.aiConsentVersion, R.AI_CONSENT_VERSION);
+      assert.ok(R.AI_CONSENT_VERSION > 1);
+      assert.notEqual(d.parent.aiConsentAt, now, 'a new time for the new text');
+      await H.closeParent(page);
+      await startTask(page, 'Sun dictation', 'dictation');
+      await page.click('#btn-dict-start');
+      for (let i = 0; i < 2; i++) {
+        await page.waitForSelector('#dict-next:not([disabled])');
+        await page.click('#dict-next');
+      }
+      await page.waitForSelector('[data-stage="check"]:not([hidden])');
+      await page.fill('#dict-written', SUN_TEXT);
+      await page.click('#btn-dict-check');
+      await H.waitForCall(fake, '/api/dictation/check', 1);
+      assert.equal(fake.callsTo('/api/recite/check').length, 0);
+      if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+
+  // Settings: the AI box needs the general one; withdrawing the general consent withdraws
+  // both, as before; the AI box alone withdraws only Claude. "Not now" on the prompt.
+  {
+    const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(H.PRIVACY_MODES[1]) });
+    await check('AI consent in Settings: its box needs the general one; unticking the general box withdraws both; the AI box alone only Claude; the task form photo says why; "Not now"', async () => {
+      await page.goto(base + '/');
+      await H.setupFamily(page, { consent: true, aiConsent: true });
+      let d = await H.storedDoc(page);
+      assert.equal(d.parent.aiConsentVersion, R.AI_CONSENT_VERSION);
+      await H.openParent(page);
+      assert.ok(await page.isHidden('#ai-prompt'), 'nothing to ask');
+      await H.parentSection(page, 'settings');
+      assert.ok(await page.isChecked('#settings-consent'));
+      assert.ok(await page.isChecked('#settings-ai-consent'));
+      assert.equal(await text(page, '#settings-consent-extra'), S.consent_claude);
+      assert.equal(await page.getAttribute('#settings-ai-consent', 'aria-describedby'), 'settings-consent-extra');
+      await page.uncheck('#settings-consent');
+      assert.deepEqual(parentShows(await H.storedDoc(page)), [null, null, null], 'both consents withdrawn');
+      assert.ok(!(await page.isChecked('#settings-ai-consent')));
+      assert.ok(await page.isDisabled('#settings-ai-consent'));
+      await page.check('#settings-consent');
+      d = await H.storedDoc(page);
+      assert.ok(d.parent.consentAt);
+      assert.deepEqual([d.parent.aiConsentAt, d.parent.aiConsentVersion], [null, null], 'the general box never gives the AI consent');
+      assert.ok(await page.isEnabled('#settings-ai-consent'));
+      assert.ok(!(await page.isChecked('#settings-ai-consent')));
+      // Elsewhere in the parent area, the prompt; the task form's photo is off, and says why.
+      await H.parentSection(page, 'tasks');
+      assert.ok(await page.isVisible('#ai-prompt'));
+      await page.click('#pt-new');
+      await page.waitForSelector('#tf:not([hidden])');
+      assert.ok(await page.isDisabled('#tf-take'));
+      assert.equal(await text(page, '#tf [data-why="prep-photo"]'), S.consent_needed_ai_parent);
+      await page.click('#tf-cancel');
+      // "Not now": hidden until the parent area is opened again.
+      await page.click('#ai-prompt-later');
+      assert.ok(await page.isHidden('#ai-prompt'));
+      await H.parentSection(page, 'children');
+      assert.ok(await page.isHidden('#ai-prompt'));
+      await H.closeParent(page);
+      await H.openParent(page);
+      assert.ok(await page.isVisible('#ai-prompt'), 'asked again when the parent area opens');
+      // The AI box alone.
+      await H.parentSection(page, 'settings');
+      await page.check('#settings-ai-consent');
+      assert.equal((await H.storedDoc(page)).parent.aiConsentVersion, R.AI_CONSENT_VERSION);
+      await page.uncheck('#settings-ai-consent');
+      d = await H.storedDoc(page);
+      assert.ok(d.parent.consentAt, 'the general consent stays');
+      assert.deepEqual([d.parent.aiConsentAt, d.parent.aiConsentVersion], [null, null]);
+      assert.equal(fake.callsTo('/api/page/read').length, 0);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+
+  // Claude added later: the family was set up without it; the owner sets it up and the
+  // page is loaded again. The general consent given then does not cover Claude.
+  for (const mode of H.PRIVACY_MODES.filter((m) => m.brain !== 'claude')) {
+    const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) });
+    await check(`AI consent, Claude added later (${mode.name} at first): the recite task waits for a grown-up, the parent's prompt opens it, and the attempt counts`, async () => {
+      await page.goto(base + '/');
+      await H.setupFamily(page, { consent: true });
+      assert.ok(await page.isHidden('#ai-consent'));
+      let d = await H.storedDoc(page);
+      assert.deepEqual([d.parent.aiConsentAt, d.parent.aiConsentVersion], [null, null]);
+      await H.openParent(page);
+      assert.ok(await page.isHidden('#ai-prompt'), 'no Claude: nothing to ask');
+      await H.parentSection(page, 'tasks');
+      await page.click('#pt-new');
+      await page.check('input[name="tf-kind"][value="recite"]', { force: true });
+      await page.fill('#tf-text', SUN_TEXT);
+      await page.fill('#tf-title', 'Sun');
+      await page.click('#tf-save');
+      await page.waitForSelector('#tf', { state: 'hidden' });
+      await H.closeParent(page);
+      fake.setHealth({ brain: 'claude' });
+      await page.reload();
+      await page.waitForSelector('#screen-who:not([hidden])');
+      await healthKnown(page);
+      await startTask(page, 'Sun', 'recite');
+      assert.ok(await page.isDisabled('#recite-rec'));
+      assert.equal(await text(page, '#why-recite-rec'), S.consent_needed_ai);
+      assert.ok(await page.isVisible('#task-banner'));
+      await page.click('#task-leave');
+      await page.waitForSelector('#screen-home:not([hidden])');
+      await H.openParent(page);
+      await page.waitForSelector('#ai-prompt:not([hidden])');
+      await page.check('#ai-prompt-check');
+      await page.click('#ai-prompt-save');
+      await page.waitForSelector('#ai-prompt', { state: 'hidden' });
+      d = await H.storedDoc(page);
+      assert.equal(d.parent.aiConsentVersion, R.AI_CONSENT_VERSION);
+      await H.closeParent(page);
+      await startTask(page, 'Sun', 'recite');
+      await page.waitForSelector('#recite-rec:not([disabled])');
+      fake.queueRecite(H.strictResult(SUN_TEXT, []));
+      await H.record(page, '#recite-rec', 300);
+      await H.waitForCall(fake, '/api/recite/check', 1);
+      await page.waitForSelector('#task-outcome-recite .celebrate');
+      d = await H.storedDoc(page);
+      assert.equal(d.tasks[0].status, 'ready');
+      if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+
+  // The prompt in English and in Arabic at 360 px (screenshots with MOMMY_SHOTS_DIR), and
+  // the child's line in the child's language.
+  for (const lang of ['en', 'ar']) {
+    const L = H.allStrings(lang);
+    const now = '2026-11-10T10:00:00.000Z';
+    let d = R.emptyDoc(now, { uiLang: lang });
+    d = R.updateParent(d, { consent: true }, now);
+    d = await R.setPin(d, PIN, now);
+    const r = R.addChild(d, { nickname: lang === 'ar' ? 'سلمى' : 'Salma', lang, avatar: '🦊' }, now);
+    d = R.createTask(r.doc, { childId: r.child.id, kind: 'recite', text: lang === 'ar' ? AR_TEXT : SUN_TEXT, lang, title: lang === 'ar' ? 'قراءة' : 'Sun' }, now).doc;
+    const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(H.PRIVACY_MODES[3]) }, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(d) } });
+    await check(`AI consent prompt in ${lang} at 360 px: the Claude notice and a box of its own, behind the PIN; the child's neutral line`, async () => {
+      await page.goto(base + '/');
+      await page.waitForSelector('#screen-who:not([hidden])');
+      await healthKnown(page);
+      await startTask(page, lang === 'ar' ? 'قراءة' : 'Sun', 'recite');
+      assert.equal(await text(page, '#why-recite-rec'), L.consent_needed_ai);
+      assert.equal(await page.getAttribute('html', 'dir'), lang === 'ar' ? 'rtl' : 'ltr');
+      await H.shot(page, `ai-consent-child-${lang}-360`);
+      await page.click('#task-leave');
+      await page.waitForSelector('#screen-home:not([hidden])');
+      await H.openParent(page);
+      await page.waitForSelector('#ai-prompt:not([hidden])');
+      assert.equal(await page.getAttribute('html', 'dir'), lang === 'ar' ? 'rtl' : 'ltr');
+      assert.equal(await text(page, '#ai-prompt-h'), L.fam_ai_title);
+      assert.equal(await text(page, '#ai-prompt > p:not(.hint):not(.status)'), L.fam_ai_lead);
+      assert.equal(await text(page, '#ai-prompt-claude'), L.consent_claude);
+      assert.equal(await text(page, '#ai-prompt label'), L.consent_ai_label);
+      assert.equal(await text(page, '#ai-prompt-save'), L.fam_save);
+      assert.equal(await text(page, '#ai-prompt-later'), L.fam_ai_later);
+      await H.noHorizontalScroll(page);
+      assert.deepEqual(await H.overflowing(page), []);
+      assert.deepEqual((await H.smallTargets(page)).filter((x) => x.includes('ai-prompt')), []);
+      await H.shotEl(page, '#ai-prompt', `ai-prompt-${lang}-360`);
+      await H.shot(page, `ai-prompt-${lang}-360-page`);
+      await page.click('#ai-prompt-save');
+      assert.equal(await text(page, '#ai-prompt-status'), L.fam_ai_tick_first);
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'ai-prompt-check');
+      await page.check('#ai-prompt-check');
+      await page.click('#ai-prompt-save');
+      await page.waitForSelector('#ai-prompt', { state: 'hidden' });
+      assert.equal(await text(page, '#ai-prompt-done'), L.fam_ai_saved);
+      assert.ok(R.hasAiConsent(await H.storedDoc(page)));
+      assert.deepEqual(await H.localSentencesShown(page), [], 'online: no local-only sentence');
+      assert.equal(fake.callsTo('/api/recite/check').length, 0);
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+}
+
 /** app.js and family.js find each other whatever the order of the script tags. */
 async function handshakeFlow(browser, base) {
   const { context, page, problems } = await H.newPage(browser, base, VIEW);
@@ -2340,6 +2692,8 @@ async function main() {
     await offlineTaskFormFlow(browser, base);
     console.log('# browser: privacy texts in Settings and the task form, local or online, with or without Claude');
     await privacySettingsFlow(browser, base);
+    console.log('# browser: the AI consent (old documents, Settings, Claude added later, the prompt in en and ar)');
+    await aiConsentFlow(browser, base);
     console.log('# browser: script order');
     await handshakeFlow(browser, base);
   } finally {

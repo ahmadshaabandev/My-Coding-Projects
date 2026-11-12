@@ -22,6 +22,13 @@
  *   - Photos are resized in the browser (long edge <= 2000 px) and re-encoded as JPEG,
  *     which drops EXIF metadata, before upload.
  *   - The microphone and camera stay disabled until a parent ticks the consent box.
+ *   - While Claude is set up (/api/health "brain": "claude"), every call whose server
+ *     path can use it (page and handwriting photos read, recitations and dictations
+ *     checked: Claude judges the meaning and words the feedback) waits for the parent's
+ *     AI consent, a box of its own under the Claude notice (family.js keeps it; a consent
+ *     given while Claude was not set up never covers it). Without that consent,
+ *     /api/health is asked again before such a call (the server may have been started
+ *     again with Claude since the page loaded).
  *   - Quran text is shown exactly as the server sends it (verbatim Tanzil). Quran
  *     feedback is shown as text only and is never sent to speech synthesis.
  *   - A school text that includes Quran (docs/CONTRACT.md, hard rule 4, Q2) keeps the
@@ -65,15 +72,26 @@
       ui_lang: 'Language',
       consent_title: 'For the parent',
       consent_label: 'I am the parent or guardian of the children who use Mommy on this device. I allow Mommy to use the microphone and the camera.',
-      consent_privacy: 'Recordings and photos are checked in memory and never saved.',
-      consent_claude: 'Some things are sent to Claude, an AI service made by Anthropic: photos of pages and of handwriting, so that it can read them; the page text and a transcript of what your child says (in “The meaning” mode), so that it can judge the meaning; and the words your child got wrong, so that it can word the feedback. The recordings themselves are not sent.',
+      consent_privacy: 'Mommy handles the recordings and photos in memory and never saves them.',
+      // The Claude notice: everything the server sends to Claude (backend/mommy/llm.py).
+      // The AI consent is given to this text: a change to it, in any language, raises
+      // AI_CONSENT_VERSION in rewards.js, and every family is asked again.
+      consent_claude: 'Some things are sent to Claude, an AI service made by Anthropic: photos of pages and of handwriting, so that it can read them; the page text and a transcript of what your child says (in “The meaning” mode), so that it can judge the meaning; and the words your child got wrong, with the score, so that it can word the feedback. The language is sent with each of them, and your child’s age group with the meaning check and the feedback. The recordings themselves are not sent.',
       consent_offline: 'Offline mode: nothing leaves this computer, and you type the texts yourself.',
       consent_online: 'Online: your child’s voice recordings, the photos and the texts are sent over a secure connection to the Mommy server that runs the app, where they are checked in memory and not kept.',
       consent_online_no_photos: 'Online: your child’s voice recordings and the texts are sent over a secure connection to the Mommy server that runs the app, where they are checked in memory and not kept.',
-      consent_online_no_ai: 'Nothing is sent to an AI service, and you type the texts yourself.',
+      consent_online_no_ai: 'Nothing is sent to an outside AI service such as Claude, and you type the texts yourself.',
+      // The AI consent: a box of its own under the Claude notice (setup, Settings, the
+      // parent area's prompt), shown only while Claude is set up.
+      consent_ai_label: 'I agree that these things are sent to Claude.',
       start_button: "Let's start",
       consent_needed: 'A parent must tick the consent box in the parent area (Settings) before the microphone or camera can be used.',
-      consent_needed_ai: 'Checking uses the online AI: a parent must first tick the consent box in the parent area (Settings).',
+      // Claude is set up but the parent has not agreed to it: neutral, for the child.
+      consent_needed_ai: 'Let’s ask a grown-up to open the parent area and give their OK first.',
+      consent_needed_ai_parent: 'Reading photos uses Claude: please give your OK for Claude in Settings first.',
+      // The same on a card for the grown-up outside the parent area (Prepare, the check of a dictation).
+      consent_needed_ai_grownup: 'This uses Claude: please give your OK for Claude in the parent area (Settings) first.',
+      ai_not_sent: 'Nothing was sent.',
       server_down: "I can't reach the Mommy server. Is it running?",
       checking_server: 'Checking the server…',
       retry: 'Try again',
@@ -90,8 +108,11 @@
       text_lang: 'Language of the text',
       take_photo: 'Take a photo',
       choose_photo: 'Choose a photo',
-      photo_privacy: 'Photos are made smaller on this device and are not kept.',
+      photo_privacy: 'Photos are made smaller on this device, and Mommy does not keep them.',
       photo_privacy_online: 'Photos are made smaller on this device, then sent over a secure connection to the Mommy server, which does not keep them.',
+      // With Claude set up (the photo buttons work only then): where the photos go.
+      photo_privacy_claude: 'Photos are made smaller on this device, then sent to Claude to be read. Mommy does not keep them.',
+      photo_privacy_online_claude: 'Photos are made smaller on this device, then sent over a secure connection to the Mommy server, which does not keep them and passes them on to Claude to be read.',
       reading_page: 'Reading the page…',
       page_read_ok: 'Done. Please check the text carefully and correct it if needed.',
       page_needs_manual: 'The page could not be read automatically. Please type or paste the text.',
@@ -276,15 +297,19 @@
       ui_lang: 'Langue',
       consent_title: 'Pour le parent',
       consent_label: 'Je suis parent des enfants qui utilisent Mommy sur cet appareil, ou j’en ai la charge. J’autorise Mommy à utiliser le micro et l’appareil photo.',
-      consent_privacy: 'Les enregistrements et les photos sont traités en mémoire et ne sont jamais enregistrés.',
-      consent_claude: "Certaines données sont envoyées à Claude, un service d'IA d'Anthropic : les photos de pages et d'écriture, pour qu'il puisse les lire ; le texte de la page et une transcription de ce que dit votre enfant (en mode « Le sens »), pour qu'il juge le sens ; et les mots où votre enfant a fait une erreur, pour qu'il rédige le message. Les enregistrements eux-mêmes ne sont pas envoyés.",
+      consent_privacy: 'Mommy traite les enregistrements et les photos en mémoire et ne les enregistre jamais.',
+      consent_claude: "Certaines données sont envoyées à Claude, un service d'IA d'Anthropic : les photos de pages et d'écriture, pour qu'il puisse les lire ; le texte de la page et une transcription de ce que dit votre enfant (en mode « Le sens »), pour qu'il juge le sens ; et les mots où votre enfant a fait une erreur, avec le score, pour qu'il rédige le message. La langue est envoyée avec chacun d'eux, et la tranche d'âge de votre enfant avec le jugement du sens et le message. Les enregistrements eux-mêmes ne sont pas envoyés.",
       consent_offline: 'Mode hors ligne : rien ne quitte cet ordinateur, et vous tapez les textes vous-même.',
       consent_online: 'En ligne : les enregistrements de la voix de votre enfant, les photos et les textes sont envoyés par une connexion sécurisée au serveur Mommy qui fait fonctionner l’application, où ils sont traités en mémoire et ne sont pas conservés.',
       consent_online_no_photos: 'En ligne : les enregistrements de la voix de votre enfant et les textes sont envoyés par une connexion sécurisée au serveur Mommy qui fait fonctionner l’application, où ils sont traités en mémoire et ne sont pas conservés.',
-      consent_online_no_ai: 'Rien n’est envoyé à un service d’IA, et vous tapez les textes vous-même.',
+      consent_online_no_ai: 'Rien n’est envoyé à un service d’IA extérieur comme Claude, et vous tapez les textes vous-même.',
+      consent_ai_label: 'J’accepte que ces données soient envoyées à Claude.',
       start_button: 'On commence',
       consent_needed: "Un parent doit cocher la case d'accord dans l'espace parents (Réglages) avant d'utiliser le micro ou l'appareil photo.",
-      consent_needed_ai: "La vérification utilise l'IA en ligne : un parent doit d'abord cocher la case d'accord dans l'espace parents (Réglages).",
+      consent_needed_ai: 'Demandons d’abord à un adulte d’ouvrir l’espace parents et de donner son accord.',
+      consent_needed_ai_parent: 'La lecture des photos utilise Claude : veuillez d’abord donner votre accord pour Claude dans Réglages.',
+      consent_needed_ai_grownup: 'Cela utilise Claude : veuillez d’abord donner votre accord pour Claude dans l’espace parents (Réglages).',
+      ai_not_sent: 'Rien n’a été envoyé.',
       server_down: "Je n'arrive pas à joindre le serveur Mommy. Est-il lancé ?",
       checking_server: 'Vérification du serveur…',
       retry: 'Réessayer',
@@ -301,8 +326,10 @@
       text_lang: 'Langue du texte',
       take_photo: 'Prendre une photo',
       choose_photo: 'Choisir une photo',
-      photo_privacy: 'Les photos sont réduites sur cet appareil et ne sont pas conservées.',
+      photo_privacy: 'Les photos sont réduites sur cet appareil, et Mommy ne les conserve pas.',
       photo_privacy_online: 'Les photos sont réduites sur cet appareil, puis envoyées par une connexion sécurisée au serveur Mommy, qui ne les conserve pas.',
+      photo_privacy_claude: 'Les photos sont réduites sur cet appareil, puis envoyées à Claude pour être lues. Mommy ne les conserve pas.',
+      photo_privacy_online_claude: 'Les photos sont réduites sur cet appareil, puis envoyées par une connexion sécurisée au serveur Mommy, qui ne les conserve pas et les transmet à Claude pour être lues.',
       reading_page: 'Lecture de la page…',
       page_read_ok: "C'est fait. Vérifiez bien le texte et corrigez-le si besoin.",
       page_needs_manual: "La page n'a pas pu être lue automatiquement. Tapez ou collez le texte.",
@@ -487,15 +514,19 @@
       ui_lang: 'اللغة',
       consent_title: 'لوليّ الأمر',
       consent_label: 'أنا أحد والدَي الأطفال الذين يستخدمون Mommy على هذا الجهاز أو وليّ أمرهم، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.',
-      consent_privacy: 'تُعالَج التسجيلات والصور في الذاكرة ولا تُحفظ أبدًا.',
-      consent_claude: 'تُرسَل بعض البيانات إلى Claude، وهي خدمة ذكاء اصطناعي من شركة Anthropic: صور الصفحات والكتابة لقراءتها، ونص الصفحة ونسخة مكتوبة مما يقوله الطفل (في طريقة «المعنى») للحكم على المعنى، والكلمات التي أخطأ فيها الطفل لصياغة الملاحظات. أمّا التسجيلات الصوتية نفسها فلا تُرسَل.',
+      consent_privacy: 'تُعالَج التسجيلات والصور في الذاكرة، ولا يحفظها Mommy أبدًا.',
+      consent_claude: 'تُرسَل بعض البيانات إلى Claude، وهي خدمة ذكاء اصطناعي من شركة Anthropic: صور الصفحات والكتابة لقراءتها، ونص الصفحة ونسخة مكتوبة مما يقوله الطفل (في طريقة «المعنى») للحكم على المعنى، والكلمات التي أخطأ فيها الطفل مع النتيجة لصياغة الملاحظات. وتُرسَل اللغة مع كلٍّ منها، والفئة العمرية للطفل مع الحكم على المعنى والملاحظات. أمّا التسجيلات الصوتية نفسها فلا تُرسَل.',
       consent_offline: 'وضع بلا اتصال: لا يخرج شيء من هذا الحاسوب، وتُكتب النصوص يدويًا.',
       consent_online: 'عبر الإنترنت: تُرسَل تسجيلات صوت الطفل والصور والنصوص من خلال اتصال آمن إلى خادم Mommy الذي يشغّل التطبيق، حيث تُعالَج في الذاكرة ولا تُحفظ.',
       consent_online_no_photos: 'عبر الإنترنت: تُرسَل تسجيلات صوت الطفل والنصوص من خلال اتصال آمن إلى خادم Mommy الذي يشغّل التطبيق، حيث تُعالَج في الذاكرة ولا تُحفظ.',
-      consent_online_no_ai: 'لا يُرسَل شيء إلى أي خدمة ذكاء اصطناعي، وتُكتب النصوص يدويًا.',
+      consent_online_no_ai: 'لا يُرسَل شيء إلى أي خدمة ذكاء اصطناعي خارجية مثل Claude، وتُكتب النصوص يدويًا.',
+      consent_ai_label: 'أوافق على إرسال هذه البيانات إلى Claude.',
       start_button: 'لنبدأ',
       consent_needed: 'يجب أولًا وضع علامة في خانة الموافقة في قسم الكبار (الإعدادات) قبل استخدام الميكروفون أو الكاميرا.',
-      consent_needed_ai: 'التحقّق يستخدم الذكاء الاصطناعي عبر الإنترنت: يجب أولًا وضع علامة في خانة الموافقة في قسم الكبار (الإعدادات).',
+      consent_needed_ai: 'هيا نطلب من أحد الكبار فتح قسم الكبار والموافقة أولًا.',
+      consent_needed_ai_parent: 'قراءة الصور تستخدم Claude: يُرجى أولًا تسجيل الموافقة على Claude في الإعدادات.',
+      consent_needed_ai_grownup: 'يُستخدَم Claude هنا: يُرجى أولًا تسجيل الموافقة على Claude في قسم الكبار (الإعدادات).',
+      ai_not_sent: 'لم يُرسَل شيء.',
       server_down: 'لا أستطيع الوصول إلى خادم Mommy. هل هو يعمل؟',
       checking_server: 'جارٍ التحقّق من الخادم…',
       retry: 'إعادة المحاولة',
@@ -512,8 +543,10 @@
       text_lang: 'لغة النص',
       take_photo: 'التقاط صورة',
       choose_photo: 'اختيار صورة',
-      photo_privacy: 'تُصغَّر الصور على هذا الجهاز ولا تُحفظ.',
+      photo_privacy: 'تُصغَّر الصور على هذا الجهاز، ولا يحفظها Mommy.',
       photo_privacy_online: 'تُصغَّر الصور على هذا الجهاز، ثم تُرسَل من خلال اتصال آمن إلى خادم Mommy الذي لا يحفظها.',
+      photo_privacy_claude: 'تُصغَّر الصور على هذا الجهاز، ثم تُرسَل إلى Claude لقراءتها، ولا يحفظها Mommy.',
+      photo_privacy_online_claude: 'تُصغَّر الصور على هذا الجهاز، ثم تُرسَل من خلال اتصال آمن إلى خادم Mommy الذي لا يحفظها ويمرّرها إلى Claude لقراءتها.',
       reading_page: 'جارٍ قراءة الصفحة…',
       page_read_ok: 'تمّ. يُرجى مراجعة النص بعناية وتصحيحه إن لزم.',
       page_needs_manual: 'تعذّرت قراءة الصفحة تلقائيًا. يُرجى كتابة النص أو لصقه.',
@@ -695,16 +728,18 @@
    * <p data-why="<name>"> next to them explains why they are disabled.
    */
   const GATES = {
-    'prep-photo': ['server', 'brain', 'consent'],
-    'recite-rec': ['server', 'asr', 'consent', 'mic', 'task-meaning'],
+    // 'ai-consent': closed while Claude is set up and the parent has not agreed to it
+    // (Claude reads the photos, judges the meaning and words the feedback of a check).
+    'prep-photo': ['server', 'brain', 'consent', 'ai-consent'],
+    'recite-rec': ['server', 'asr', 'consent', 'ai-consent', 'mic', 'task-meaning'],
     'recite-tts': ['server', 'tts'],
     // 'dictation': the voice would meet Quran words the server could not mark as a Quran
     // part (a safety net: the server's "dictation": false): the text can only be recited.
     'dict-start': ['server', 'dictation'],
-    // A typed check is worded by Claude when it is configured: that needs the consent.
+    // A typed check is worded by Claude when it is configured: that needs the AI consent.
     'dict-check': ['server', 'ai-consent'],
     'dict-play': ['server', 'tts'],
-    'dict-photo': ['server', 'brain', 'consent'],
+    'dict-photo': ['server', 'brain', 'consent', 'ai-consent'],
     'dict-tts': ['server', 'tts'],
     quran: ['server', 'quran'],
     'quran-rec': ['server', 'quran', 'asr', 'consent', 'mic'],
@@ -717,7 +752,8 @@
   const state = {
     screen: 'start',
     // The parent's consent (family.js reads it from the family document): consent for the
-    // microphone and camera, aiConsent for what is sent to Claude when it is configured.
+    // microphone and camera, aiConsent for what is sent to Claude when it is configured
+    // (MommyRewards.hasAiConsent: given in the box under the Claude notice).
     consent: false,
     aiConsent: false,
     health: null,
@@ -1206,6 +1242,8 @@
   function errorInfo(err) {
     if (err && err.name === 'ApiError') {
       if (err.status === 0) return { key: 'server_down' };
+      // Not sent by readPage: Claude is set up and the parent has not agreed to it.
+      if (err.code === 'ai_consent_needed') return { key: 'ai_not_sent' };
       // Refused by meaning only: a school text with Quran words, recited word by word.
       if (err.code === 'quran_text' && err.reason === 'meaning') return { key: 'error_quran_meaning' };
       // A text that is Quran: the Quran section, on its ayat when they are one range.
@@ -1221,9 +1259,15 @@
     return { key: 'error_generic' };
   }
 
-  async function loadHealth() {
-    state.healthState = 'loading';
-    refreshGates();
+  /**
+   * Ask /api/health which parts are available. opts.quiet: the gates stay as they are
+   * while it is asked (no "checking" state), for the check before a Claude call.
+   */
+  async function loadHealth(opts) {
+    if (!(opts && opts.quiet === true)) {
+      state.healthState = 'loading';
+      refreshGates();
+    }
     try {
       const h = await api('api/health');
       state.health = {
@@ -1279,6 +1323,27 @@
     return gateReason(gate) === null;
   }
 
+  /**
+   * Before a call whose server path can use Claude (/api/page/read, /api/recite/check,
+   * /api/dictation/check): true when it may go. With the parent's AI consent it always
+   * may. Without it, /api/health is asked again first, since the server may have been
+   * started again with Claude after the page loaded: the call goes only while the brain
+   * is offline (the gates and the privacy texts follow the new answer).
+   */
+  async function brainCallAllowed() {
+    if (state.aiConsent) return true;
+    await loadHealth({ quiet: true });
+    return !!state.health && state.health.brain !== 'claude';
+  }
+
+  /**
+   * A Claude call was not made (brainCallAllowed): "Nothing was sent." on the status line;
+   * the gate, closed now, says why next to the button (or the banner, if the server is down).
+   */
+  function brainCallRefused(status) {
+    setStatus(status, state.health ? 'ai_not_sent' : 'server_down', null, { error: true });
+  }
+
   /** Apply gates and busy flags to every gated control and explanation. */
   function refreshGates() {
     for (const ctl of $$('[data-gate]')) {
@@ -1318,9 +1383,27 @@
       // A hidden duplicate keeps its text: aria-describedby still reads it to screen readers.
       // The text is only written when the reason changes (a language switch repaints every
       // [data-i18n] node), so a live explanation is not announced again on each refresh.
-      const key = reason !== null && reason !== 'server_down' && reason !== 'checking_server' ? reason : null;
+      let key = reason !== null && reason !== 'server_down' && reason !== 'checking_server' ? reason : null;
+      // The child is asked to fetch a grown-up; the parent area, and a card for the
+      // grown-up elsewhere (Prepare, the check of a dictation), say what and where.
+      if (key === 'consent_needed_ai') {
+        if (why.closest('[data-screen="parent"]')) key = 'consent_needed_ai_parent';
+        else if (forGrownUp(why)) key = 'consent_needed_ai_grownup';
+      }
       if ((why.dataset.i18n || null) !== key) setT(why, key);
     }
+  }
+
+  /**
+   * True when `node` stands in a part of a screen headed "For the grown-up": one of its
+   * containers, up to the screen itself, has a .tag-parent child.
+   */
+  function forGrownUp(node) {
+    for (let el = node.parentElement; el; el = el.parentElement) {
+      if ($$(':scope > .tag-parent', el).length > 0) return true;
+      if (el.classList.contains('screen')) return false;
+    }
+    return false;
   }
 
   function setBusy(node, busy) {
@@ -1370,7 +1453,12 @@
       else setT(node, null);
       node.hidden = !h;
     }
-    for (const node of $$('.photo-privacy')) setT(node, online ? 'photo_privacy_online' : 'photo_privacy');
+    // The AI consent box follows the Claude notice, and only it (family.js keeps its state).
+    for (const node of $$('.ai-consent')) node.hidden = !claude;
+    // The photo buttons work only with Claude: then the note says where the photos go.
+    for (const node of $$('.photo-privacy')) {
+      setT(node, online ? (claude ? 'photo_privacy_online_claude' : 'photo_privacy_online') : claude ? 'photo_privacy_claude' : 'photo_privacy');
+    }
     setT($('#recite-approx'), online ? 'approximate_online' : 'approximate');
   }
 
@@ -1887,6 +1975,10 @@
       else setStatus(status, 'photo_bad', null, { error: true });
       return;
     }
+    if (!(await brainCallAllowed())) {
+      brainCallRefused(status);
+      return;
+    }
     const form = new FormData();
     form.append('image', jpeg, 'page.jpg');
     form.append('lang', state.page.lang);
@@ -2334,6 +2426,11 @@
     form.append('age', state.profile.age);
     setStatus(status, 'checking');
     const task = state.task; // a task started or left meanwhile drops this answer
+    // The server judges the meaning and words the feedback with Claude when it is set up.
+    if (!(await brainCallAllowed())) {
+      if (state.task === task) brainCallRefused(status);
+      return; // the recording is dropped: nothing went to the server
+    }
     let res;
     try {
       res = await api('api/recite/check', { form });
@@ -2951,6 +3048,11 @@
     const task = state.task; // a task started or left meanwhile drops this answer
     let res;
     try {
+      // The server words the feedback with Claude when it is set up.
+      if (!(await brainCallAllowed())) {
+        if (state.task === task) brainCallRefused(status);
+        return;
+      }
       res = await api('api/dictation/check', { form });
       if (state.task !== task) return;
     } catch (err) {
@@ -3847,6 +3949,11 @@
    */
   async function readPage(file, lang) {
     let jpeg = await shrinkImage(file);
+    if (!(await brainCallAllowed())) {
+      // Not sent: the parent has not agreed to Claude (or the server cannot be reached).
+      const why = state.health ? { status: 403, code: 'ai_consent_needed' } : { status: 0, code: null };
+      throw Object.assign(new Error('not sent'), { name: 'ApiError' }, why);
+    }
     const form = new FormData();
     form.append('image', jpeg, 'page.jpg');
     form.append('lang', LANGS.includes(lang) ? lang : state.uiLang);

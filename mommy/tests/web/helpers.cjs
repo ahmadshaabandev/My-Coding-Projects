@@ -918,6 +918,10 @@ function makeFakeApi(opts) {
     setHealthDown: (v) => {
       healthDown = v;
     },
+    /** Change what /api/health answers from now on (fields merged), e.g. {brain: 'claude'}: the owner set up Claude. */
+    setHealth: (h) => {
+      o.health = Object.assign({}, o.health, h);
+    },
     /** Answer every /api/* call 401 access_required, as the access gate does for an old cookie. */
     setAccessRequired: (v) => {
       accessRequired = !!v;
@@ -1100,14 +1104,14 @@ function allStrings(lang) {
 /**
  * Local or online, with or without Claude, and the string keys each one shows: the
  * consent boxes' first line (`privacy`, where recordings, photos and texts are checked)
- * and second line (`extra`), the photo note and the "approximate" label. The family
- * data line (fam_privacy_line) is the same in every mode.
+ * and second line (`extra`), the photo note (with Claude it says where the photos go) and
+ * the "approximate" label. The family data line (fam_privacy_line) is the same in every mode.
  */
 const PRIVACY_MODES = [
   { name: 'local, no Claude', online: false, brain: 'offline', privacy: 'consent_privacy', extra: 'consent_offline', photo: 'photo_privacy', approx: 'approximate' },
-  { name: 'local, Claude', online: false, brain: 'claude', privacy: 'consent_privacy', extra: 'consent_claude', photo: 'photo_privacy', approx: 'approximate' },
+  { name: 'local, Claude', online: false, brain: 'claude', privacy: 'consent_privacy', extra: 'consent_claude', photo: 'photo_privacy_claude', approx: 'approximate' },
   { name: 'online, no Claude', online: true, brain: 'offline', privacy: 'consent_online_no_photos', extra: 'consent_online_no_ai', photo: 'photo_privacy_online', approx: 'approximate_online' },
-  { name: 'online, Claude', online: true, brain: 'claude', privacy: 'consent_online', extra: 'consent_claude', photo: 'photo_privacy_online', approx: 'approximate_online' },
+  { name: 'online, Claude', online: true, brain: 'claude', privacy: 'consent_online', extra: 'consent_claude', photo: 'photo_privacy_online_claude', approx: 'approximate_online' },
 ];
 
 /** The fake API's /api/health answer for one of PRIVACY_MODES. */
@@ -1117,13 +1121,13 @@ function privacyHealth(mode) {
 
 /**
  * Sentences that are false online, in every language: "nothing leaves this computer"
- * (consent_offline) and the local first line, which says nothing of the server.
+ * (consent_offline) and the local first line and photo notes, which say nothing of the server.
  */
 function localOnlySentences() {
   const out = [];
   for (const lang of ['en', 'fr', 'ar']) {
     const S = uiStrings(lang, 'app.js');
-    out.push(S.consent_offline, S.consent_privacy, S.photo_privacy, S.approximate);
+    out.push(S.consent_offline, S.consent_privacy, S.photo_privacy, S.photo_privacy_claude, S.approximate);
   }
   return out.concat(['nothing leaves', 'rien ne quitte', 'لا يخرج شيء', 'Offline mode', 'Mode hors ligne', 'وضع بلا اتصال']);
 }
@@ -1141,15 +1145,24 @@ async function localSentencesShown(page) {
 const PIN = '2468';
 
 /**
- * The first-run family setup: {lang (grown-ups), childLang, consent, nickname, age,
- * avatar (index in the fixed list), pin}. Ends on the child's home.
+ * The first-run family setup: {lang (grown-ups), childLang, consent, aiConsent, nickname,
+ * age, avatar (index in the fixed list), pin}. aiConsent (default: as consent) ticks the
+ * AI consent box when it shows (Claude set up); without Claude there is none. Ends on the
+ * child's home.
  */
 async function setupFamily(page, o) {
   const opts = Object.assign({ consent: true, nickname: 'Sami', pin: PIN, avatar: 0 }, o || {});
+  const aiConsent = opts.aiConsent === undefined ? !!opts.consent : !!opts.aiConsent;
   await page.waitForSelector('#setup-form:not([hidden])');
+  // The privacy texts (and the AI box) follow /api/health: wait for its answer.
+  await page.waitForFunction(() => !document.querySelector('#consent-extra').hidden || !document.querySelector('#server-banner').hidden);
   if (opts.lang) await page.selectOption('#setup-lang', opts.lang);
   if (opts.consent) await page.check('#consent');
   else await page.uncheck('#consent');
+  if (await page.isVisible('#ai-consent')) {
+    if (aiConsent) await page.check('#ai-consent');
+    else if (opts.consent) await page.uncheck('#ai-consent');
+  }
   await page.fill('#setup-pin', opts.pin);
   await page.fill('#setup-pin2', opts.pin);
   await page.fill('#nickname', opts.nickname);
@@ -1205,12 +1218,21 @@ async function setChildLang(page, lang, childIndex) {
   await page.waitForSelector('#screen-home:not([hidden])');
 }
 
-/** Tick or untick the consent box in the parent area (Settings). */
-async function setConsent(page, on) {
+/**
+ * Tick or untick the consent box in the parent area (Settings). Ticked, with Claude set
+ * up, the AI consent box under the Claude notice too, unless {ai: false}; unticked, both
+ * consents go (the AI box is cleared with the general one).
+ */
+async function setConsent(page, on, o) {
+  const ai = !(o && o.ai === false);
   await openParent(page);
   await parentSection(page, 'settings');
-  if (on) await page.check('#settings-consent');
-  else await page.uncheck('#settings-consent');
+  if (on) {
+    await page.check('#settings-consent');
+    if (ai && (await page.isVisible('#settings-ai-consent'))) await page.check('#settings-ai-consent');
+  } else {
+    await page.uncheck('#settings-consent');
+  }
   await closeParent(page);
   await page.waitForSelector('#screen-home:not([hidden])');
 }

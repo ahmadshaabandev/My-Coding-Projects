@@ -67,6 +67,20 @@
   const VERDICTS = ['correct', 'mistakes', 'unclear', 'same_meaning', 'partly', 'different'];
   const ERROR_CODES = ['not_found', 'bad_state', 'bad_input', 'insufficient_stars', 'locked', 'unavailable'];
 
+  // The AI consent (parent.aiConsentAt) counts only with this version or a later one in
+  // parent.aiConsentVersion. Each version is one text of the Claude notice (consent_claude
+  // in app.js), above a box of its own that the app shows only while /api/health says
+  // Claude is set up:
+  //   1: photos, the page text and a transcript (meaning mode), the words the child got
+  //      wrong;
+  //   2: the same with the score, and the language and the child's age group, which the
+  //      server sends along (a consent of version 1 no longer counts: asked again).
+  // A change to that notice raises the version (tests/web/smoke.cjs keeps a fingerprint of
+  // the notice for the current version). Documents saved before the box had its own
+  // version set aiConsentAt together with the general consent, whatever the brain was,
+  // and carry none: that consent never counts either (docs/REWARDS.md).
+  const AI_CONSENT_VERSION = 2;
+
   // Fixed lists (stored without U+FE0F; input with it is accepted).
   const AVATARS = ['🐱', '🐰', '🦊', '🐻', '🐼', '🐨', '🦁', '🐯', '🐸', '🦉', '🐢', '🐬', '🦋', '🐝', '🦄', '🚀'];
   const REWARD_EMOJIS = ['🎁', '🍦', '🍫', '🍰', '🍕', '🍓', '📚', '🎨', '🧩', '🧸', '⚽', '🚲', '🎮', '🎬', '🎡', '🌳', '🎈', '🏆', '⭐', '💖'];
@@ -113,7 +127,7 @@
 
   // Allowed keys of each stored object (anything else is dropped by validateDoc).
   const DOC_KEYS = ['version', 'createdAt', 'updatedAt', 'parent', 'children', 'activeChildId', 'tasks', 'jar', 'surprises'];
-  const PARENT_KEYS = ['pin', 'failedAttempts', 'lockedUntil', 'pinResetAt', 'consentAt', 'aiConsentAt', 'uiLang'];
+  const PARENT_KEYS = ['pin', 'failedAttempts', 'lockedUntil', 'pinResetAt', 'consentAt', 'aiConsentAt', 'aiConsentVersion', 'uiLang'];
   const PIN_KEYS = ['salt', 'hash', 'iterations'];
   const CHILD_KEYS = ['id', 'nickname', 'age', 'lang', 'avatar', 'createdAt', 'quran'];
   const CHILD_QURAN_KEYS = ['surah', 'from', 'to', 'juzAmma'];
@@ -482,6 +496,7 @@
         pinResetAt: null,
         consentAt: null,
         aiConsentAt: null,
+        aiConsentVersion: null,
         uiLang: LANGS.includes(o.uiLang) ? o.uiLang : 'en',
       },
       children: [],
@@ -492,16 +507,47 @@
     };
   }
 
-  /** The parent's settings: {uiLang?, consent?: boolean, aiConsent?: boolean}. */
+  /**
+   * The parent's settings: {uiLang?, consent?: boolean, aiConsent?: boolean}.
+   * consent: the general consent (microphone and camera); false also withdraws the AI
+   * consent. aiConsent: what is sent to Claude; the caller passes true only from the box
+   * whose text is the Claude notice (it is shown only while Claude is set up). It needs
+   * the general consent ('bad_state' without it), and it is recorded with
+   * AI_CONSENT_VERSION; a consent that already counts keeps its time, an old one (no
+   * version) is replaced.
+   */
   function updateParent(doc, patch, now) {
     const d = begin(doc, now);
     reqObject(patch, 'patch');
     checkKeys(patch, PARENT_PATCH_KEYS, 'patch');
     const p = d.parent;
     if (patch.uiLang !== undefined) p.uiLang = reqEnum(patch.uiLang, 'uiLang', LANGS);
-    if (patch.consent !== undefined) p.consentAt = reqBool(patch.consent, 'consent') ? p.consentAt || now : null;
-    if (patch.aiConsent !== undefined) p.aiConsentAt = reqBool(patch.aiConsent, 'aiConsent') ? p.aiConsentAt || now : null;
+    const consent = patch.consent === undefined ? undefined : reqBool(patch.consent, 'consent');
+    const ai = patch.aiConsent === undefined ? undefined : reqBool(patch.aiConsent, 'aiConsent');
+    if (consent !== undefined) p.consentAt = consent ? p.consentAt || now : null;
+    if (ai === true) {
+      if (!p.consentAt) fail('bad_state', 'the AI consent needs the general consent', 'aiConsent');
+      if (!hasAiConsent(d)) {
+        p.aiConsentAt = now;
+        p.aiConsentVersion = AI_CONSENT_VERSION;
+      }
+    }
+    if (ai === false || consent === false) {
+      p.aiConsentAt = null;
+      p.aiConsentVersion = null;
+    }
     return d;
+  }
+
+  /**
+   * True when the parent's AI consent counts: given with the general consent, in the box
+   * whose text was the Claude notice (aiConsentVersion >= AI_CONSENT_VERSION). An
+   * aiConsentAt without a version (a document saved before the version existed) does not.
+   */
+  function hasAiConsent(doc) {
+    const p = isPlainObject(doc) && isPlainObject(doc.parent) ? doc.parent : null;
+    if (!p || !isIso(p.consentAt) || !isIso(p.aiConsentAt)) return false;
+    return Number.isInteger(p.aiConsentVersion) && p.aiConsentVersion >= AI_CONSENT_VERSION;
   }
 
   // ===========================================================================
@@ -519,7 +565,8 @@
    * A v2 document with one child made from the v1 profile {nickname, age, lang, quran:
    * {surah, from, to, juzAmma}} (an object or its JSON string). Invalid fields get the
    * v1 defaults; a missing nickname becomes opts.defaultNickname or the avatar. Consent
-   * is carried over only if it was stored (v1 does not store it).
+   * is carried over only if it was stored (v1 does not store it); an AI consent of v1 has
+   * no version, so it never counts (hasAiConsent): the parent is asked.
    */
   function migrateV1(profileV1, now, opts) {
     checkNow(now);
@@ -1600,6 +1647,18 @@
       failedAttempts = 0;
       lockedUntil = null;
     }
+    const aiConsentAt = vNullableIso(p.aiConsentAt === undefined ? null : p.aiConsentAt, 'parent.aiConsentAt', note);
+    // A missing aiConsentVersion (documents saved before it existed) is read as null, no
+    // repair: their aiConsentAt is kept but does not count (hasAiConsent).
+    let aiConsentVersion = p.aiConsentVersion === undefined ? null : p.aiConsentVersion;
+    if (aiConsentVersion !== null && !(Number.isInteger(aiConsentVersion) && aiConsentVersion >= 1 && aiConsentVersion <= 1000)) {
+      note('parent.aiConsentVersion', 'invalid, cleared');
+      aiConsentVersion = null;
+    }
+    if (aiConsentVersion !== null && aiConsentAt === null) {
+      note('parent.aiConsentVersion', 'no AI consent time, cleared');
+      aiConsentVersion = null;
+    }
     return {
       pin,
       failedAttempts,
@@ -1607,7 +1666,8 @@
       // A missing pinResetAt (documents saved before it existed) is read as null, no repair.
       pinResetAt: p.pinResetAt === undefined ? null : vNullableIso(p.pinResetAt, 'parent.pinResetAt', note),
       consentAt: vNullableIso(p.consentAt === undefined ? null : p.consentAt, 'parent.consentAt', note),
-      aiConsentAt: vNullableIso(p.aiConsentAt === undefined ? null : p.aiConsentAt, 'parent.aiConsentAt', note),
+      aiConsentAt,
+      aiConsentVersion,
       uiLang: vEnum(p.uiLang, LANGS, 'en', 'parent.uiLang', note),
     };
   }
@@ -2081,12 +2141,14 @@
     REWARD_EMOJIS: Object.freeze(REWARD_EMOJIS.slice()),
     LIMITS,
     CHILD_QURAN_DEFAULT,
+    AI_CONSENT_VERSION,
     RewardsError,
     // document
     emptyDoc,
     migrateV1,
     validateDoc,
     updateParent,
+    hasAiConsent,
     // children
     addChild,
     updateChild,
