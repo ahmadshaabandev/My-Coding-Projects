@@ -958,6 +958,11 @@ fieldset {
   white-space: nowrap;
 }
 
+/* live recitation: a word not reached yet (neutral: no colour, no judgement) */
+.w-pending {
+  color: var(--muted);
+}
+
 .w-first {
   outline: 3px solid var(--focus);
   outline-offset: 2px;

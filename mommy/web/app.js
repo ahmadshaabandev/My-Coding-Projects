@@ -18,7 +18,9 @@
  * Privacy rules followed here:
  *   - Audio and photos live only in memory: a Blob is uploaded and then dropped. This
  *     file stores nothing: the family document (family.js) holds the children's profiles,
- *     tasks and scores, never a recording, a photo or a transcript.
+ *     tasks and scores, never a recording, a photo or a transcript. A live recitation's
+ *     phrases and their transcripts (sent back as heard_before) are kept in memory for
+ *     that recording only, and dropped with it (closeLive).
  *   - Photos are resized in the browser (long edge <= 2000 px) and re-encoded as JPEG,
  *     which drops EXIF metadata, before upload.
  *   - The microphone and camera stay disabled until a parent ticks the consent box.
@@ -163,6 +165,7 @@
       rec_wait: 'Wait…',
       rec_time: '{sec} s',
       listening: "I'm listening…",
+      live_listening: "I'm listening and checking as you read…",
       checking: 'Let me check…',
       max_reached: "That's the longest I can listen to (2 minutes).",
       heard_label: 'What I heard',
@@ -380,6 +383,7 @@
       rec_wait: 'Patiente…',
       rec_time: '{sec} s',
       listening: "J'écoute…",
+      live_listening: 'J’écoute et je vérifie au fil de la lecture…',
       checking: 'Je vérifie…',
       max_reached: "C'est le plus long que je peux écouter (2 minutes).",
       heard_label: "Ce que j'ai entendu",
@@ -597,6 +601,7 @@
       rec_wait: 'لحظة…',
       rec_time: '{sec} ث',
       listening: 'أنا أستمع إليك…',
+      live_listening: 'أستمع وأتحقّق من الكلمات أثناء القراءة…',
       checking: 'أتحقّق الآن…',
       max_reached: 'هذا أطول ما أستطيع الاستماع إليه (دقيقتان).',
       heard_label: 'ما سمعته',
@@ -777,7 +782,10 @@
     // { kind, screen, quran: {surah, from, to, memory} | null, onResult, onLeave, saved }.
     task: null,
     hooks: {}, // set by family.js (setHooks)
-    recording: null, // { control, recorder }
+    recording: null, // { control, recorder, live }
+    // The live check of the recitation being recorded or finished (see "Live recitation"),
+    // or null.
+    live: null,
     // Bumped whenever spoken feedback that is still on its way must not play any more (a
     // recording starts, the screen changes, a new result arrives).
     speechToken: 0,
@@ -1281,6 +1289,9 @@
         // The app may be used from another device (the access gate is on, or the server
         // answers to a host name that is not a loopback one): the data leaves the device.
         online: h.online === true,
+        // The server checks a recitation phrase by phrase while the child reads
+        // (/api/recite/phrase); an older server leaves it out.
+        live: h.live_recite === true,
       };
       state.healthState = 'ok';
     } catch (e) {
@@ -1742,6 +1753,8 @@
       maxSeconds: config.maxSeconds || window.MommyRecorder.MAX_SECONDS,
       onBlob: config.onBlob,
       beforeStart: config.beforeStart || null,
+      // () => a live session (phrases checked while recording) or null.
+      startLive: config.startLive || null,
     };
     control.button.addEventListener('click', () => toggleRecording(control));
     return control;
@@ -1757,6 +1770,7 @@
     if (control.beforeStart && control.beforeStart() === false) return;
     state.speechToken++; // spoken feedback still on its way must not talk over the child
     player.stop();
+    const live = control.startLive ? control.startLive() : null;
     const recorder = new window.MommyRecorder.Recorder({
       maxSeconds: control.maxSeconds,
       onLevel: (level, seconds) => showLevel(control, level, seconds),
@@ -1766,13 +1780,15 @@
           finishRecording({ limit: true });
         }
       },
+      onPhrase: live ? (phrase) => livePhrase(live, phrase) : undefined,
     });
-    state.recording = { control, recorder, starting: true };
+    state.recording = { control, recorder, starting: true, live };
     setRecordState(control, 'starting');
     refreshGates();
     try {
       await recorder.start();
     } catch (err) {
+      closeLive(live);
       if (state.recording && state.recording.recorder === recorder) state.recording = null;
       setRecordState(control, 'idle');
       refreshGates();
@@ -1782,11 +1798,12 @@
     }
     if (!state.recording || state.recording.recorder !== recorder) {
       recorder.cancel();
+      closeLive(live);
       return;
     }
     state.recording.starting = false;
     setRecordState(control, 'recording');
-    if (control.status) setStatus(control.status, 'listening');
+    if (control.status) setStatus(control.status, live ? 'live_listening' : 'listening');
     refreshGates();
   }
 
@@ -1796,7 +1813,7 @@
     const rec = state.recording;
     if (!rec || rec.starting) return;
     state.recording = null;
-    const { control, recorder } = rec;
+    const { control, recorder, live } = rec;
     setRecordState(control, 'idle');
     // Busy from now until the server has answered, so a double tap cannot start again.
     setBusy(control.button, true);
@@ -1805,11 +1822,16 @@
       try {
         blob = await recorder.stop();
       } catch (err) {
+        closeLive(live);
         if (control.status) showError(control.status, err);
         return;
       }
+      if (live) {
+        live.stopped = true; // the phrases still queued go with the tail
+        live.tail = recorder.tail;
+      }
       if (control.status && !keepStatus) clearStatus(control.status);
-      await control.onBlob(blob, info);
+      await control.onBlob(blob, info, live);
     } finally {
       setBusy(control.button, false);
     }
@@ -1821,6 +1843,7 @@
     if (!rec) return;
     state.recording = null;
     rec.recorder.cancel();
+    closeLive(rec.live);
     setRecordState(rec.control, 'idle');
     if (rec.control.status) clearStatus(rec.control.status);
     refreshGates();
@@ -1862,7 +1885,8 @@
 
   /**
    * Fill `container` with the words of an alignment. Each op is a CheckResult op:
-   * {kind: match|sub|del|ins, expected, heard}. `context` is 'heard' (speech) or
+   * {kind: match|sub|del|ins, expected, heard}, or (live recitation) pending: a word not
+   * reached yet. `context` is 'heard' (speech) or
    * 'written' (dictation): it only changes the screen-reader wording.
    */
   function renderOps(container, ops, lang, context) {
@@ -1899,6 +1923,10 @@
     }
     if (kind === 'ins') {
       return el('ins', { class: 'w w-ins' }, [srOnly('(' + t('sr_extra') + ' '), '[' + heard + ']', srOnly(')')]);
+    }
+    if (kind === 'pending') {
+      // Live recitation: a word the child has not reached yet (neutral, no judgement).
+      return el('span', { class: 'w w-pending' }, expected);
     }
     return el('span', { class: 'w' }, expected || heard);
   }
@@ -2383,6 +2411,7 @@
       status: $('#recite-status'),
       startKey: 'rec_start',
       onBlob: checkRecitation,
+      startLive: startLiveRecite,
       beforeStart: () => {
         $('#recite-result').hidden = true;
         clearTaskOutcome('recite');
@@ -2437,6 +2466,7 @@
     const box = $('#recite-text');
     box.textContent = readingText();
     box.classList.add('plain');
+    box.classList.remove('live');
     setTextLang(box, state.page.lang);
     $('#recite-legend').hidden = true;
   }
@@ -2457,25 +2487,205 @@
     state.recite.feedbackBlob = null;
   }
 
-  async function checkRecitation(blob, info) {
-    const status = $('#recite-status');
+  // ---------------------------------------------------------------------------
+  // Live recitation (docs/CONTRACT.md, POST /api/recite/phrase)
+  //
+  // While the child reads, the recorder cuts the speech into phrases at the pauses
+  // (recorder.js, PhraseSegmenter). Each phrase goes to /api/recite/phrase, one request at
+  // a time and in order, with the transcripts of the phrases before it (heard_before,
+  // held here: the server keeps nothing); phrases that queued up while a request was
+  // running go together in the next one (at most LIVE_MERGE_SECONDS). In strict mode each
+  // answer's progress colours the words read so far on the Recite card, the words not
+  // reached yet in a neutral style. At Stop only the tail after the last phrase (and any
+  // phrase still queued) goes to /api/recite/check with heard_before, so the result comes
+  // as fast as the last phrase can be decoded. Any failure (a phrase request that fails,
+  // a server without the endpoint: 404) turns the live check off for this recording, and
+  // Stop sends the whole recording as before. Answers of an older recording, of a task
+  // that was left, or that arrive after the screen was left are dropped.
+  // ---------------------------------------------------------------------------
+
+  /** Largest audio of one /api/recite/phrase request (queued phrases merged), seconds. */
+  const LIVE_MERGE_SECONDS = 28;
+  /** At Stop, the longest wait for the phrase request still running before the whole recording is sent instead. */
+  const LIVE_STOP_WAIT_MS = 15000;
+  let liveSeq = 0;
+
+  function liveReciteOn() {
+    return !!(state.health && state.health.live && state.health.asr) && !!window.MommyRecorder.PhraseSegmenter;
+  }
+
+  /** A new live session for the recording that starts, or null (live check off). */
+  function startLiveRecite() {
+    closeLive(state.live);
+    if (!liveReciteOn() || !state.page.confirmed) return null;
+    const live = {
+      id: ++liveSeq,
+      task: state.task,
+      text: state.page.text,
+      lang: state.page.lang,
+      mode: state.page.mode,
+      queue: [], // phrases waiting to be sent
+      heard: [], // transcripts of the phrases sent, in order
+      busy: false,
+      failed: false,
+      stopped: false,
+      closed: false,
+      tail: null,
+      waiters: [],
+      requests: 0,
+      merged: 0, // requests that carried more than one phrase
+    };
+    state.live = live;
+    return live;
+  }
+
+  /** This session's answers are no longer wanted (cancelled, another recording, screen left). */
+  function closeLive(live) {
+    if (!live) return;
+    live.closed = true;
+    live.queue = [];
+    live.heard = [];
+    live.tail = null;
+    for (const w of live.waiters.splice(0)) w();
+    if (state.live === live) state.live = null;
+  }
+
+  function liveWanted(live) {
+    return !!live && !live.closed && state.live === live && state.task === live.task;
+  }
+
+  function livePhrase(live, phrase) {
+    if (!liveWanted(live) || live.failed || live.stopped) return;
+    live.queue.push(phrase);
+    pumpLive(live);
+  }
+
+  /** The phrases to send next: the queue's first ones, merged up to LIVE_MERGE_SECONDS. */
+  function takeLivePhrases(live, all) {
+    const out = [];
+    let seconds = 0;
+    while (live.queue.length) {
+      const len = live.queue[0].samples.length / window.MommyRecorder.TARGET_RATE;
+      if (out.length && !all && seconds + len > LIVE_MERGE_SECONDS) break;
+      out.push(live.queue.shift().samples);
+      seconds += len;
+    }
+    return out;
+  }
+
+  function wavBlob(samples) {
+    return new Blob([window.MommyRecorder.encodeWav(samples, window.MommyRecorder.TARGET_RATE)], { type: 'audio/wav' });
+  }
+
+  async function pumpLive(live) {
+    if (live.busy || live.failed || live.stopped || !live.queue.length || !liveWanted(live)) return;
+    const pieces = takeLivePhrases(live, false);
+    if (pieces.length > 1) live.merged++;
     const form = new FormData();
-    form.append('audio', blob, 'recitation.wav');
-    form.append('expected_text', state.page.text);
-    form.append('lang', state.page.lang);
-    form.append('mode', state.page.mode);
-    form.append('age', state.profile.age);
-    // Claude judges the meaning and words the feedback only with the AI consent; without
-    // it the server answers with its offline templates and heuristic (approximate).
-    const sent = addAiConsent(form);
+    form.append('audio', wavBlob(window.MommyRecorder.concatSamples(pieces)), 'phrase.wav');
+    form.append('expected_text', live.text);
+    form.append('lang', live.lang);
+    form.append('mode', live.mode);
+    form.append('heard_before', live.heard.join(' '));
+    live.busy = true;
+    live.requests++;
+    try {
+      const res = await api('api/recite/phrase', { form });
+      if (!res || typeof res !== 'object') throw new Error('bad answer');
+      const heard = onlyText(res.heard_text).trim();
+      if (heard) live.heard.push(heard);
+      if (liveWanted(live) && live.mode === 'strict' && res.progress && Array.isArray(res.progress.ops)) showLiveProgress(live, res.progress);
+    } catch (err) {
+      // An older server (404), a refusal or a failure: Stop sends the whole recording.
+      live.failed = true;
+      live.queue = [];
+    } finally {
+      live.busy = false;
+      if (!live.queue.length || live.failed || live.stopped) for (const w of live.waiters.splice(0)) w();
+    }
+    pumpLive(live);
+  }
+
+  /** Wait until no phrase request runs (at most `ms`); false when it took too long. */
+  function liveIdle(live, ms) {
+    if (!live.busy) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms);
+      live.waiters.push(() => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
+
+  /** Colour the words read so far (strict mode), the rest pending. */
+  function showLiveProgress(live, progress) {
+    if (state.recording && state.recording.live !== live) return;
+    const words = $('#recite-text');
+    words.classList.remove('plain');
+    words.classList.add('live');
+    renderOps(words, progress.ops, live.lang, 'heard');
+  }
+
+  /**
+   * The form of the final check of a live recitation: the tail (the phrases still queued
+   * and what came after the last one) with heard_before; null when the live check cannot
+   * be used (failed, closed, no tail), so the whole recording is sent.
+   */
+  async function liveFinalForm(live) {
+    if (!live || live.failed || !liveWanted(live) || !live.tail) return null;
+    if (!(await liveIdle(live, LIVE_STOP_WAIT_MS))) live.failed = true;
+    if (live.failed || !liveWanted(live)) return null;
+    const pieces = takeLivePhrases(live, true);
+    pieces.push(live.tail.samples);
+    const form = new FormData();
+    // A WAV with no samples when nothing was said after the last phrase.
+    form.append('audio', wavBlob(window.MommyRecorder.concatSamples(pieces)), 'tail.wav');
+    form.append('heard_before', live.heard.join(' '));
+    return form;
+  }
+
+  async function checkRecitation(blob, info, live) {
+    const status = $('#recite-status');
     setStatus(status, 'checking');
     const task = state.task; // a task started or left meanwhile drops this answer
+    const liveForm = await liveFinalForm(live);
+    if (state.task !== task) return;
+    const send = async (form) => {
+      form.append('expected_text', state.page.text);
+      form.append('lang', state.page.lang);
+      form.append('mode', state.page.mode);
+      form.append('age', state.profile.age);
+      // Claude judges the meaning and words the feedback only with the AI consent; without
+      // it the server answers with its offline templates and heuristic (approximate).
+      const sent = addAiConsent(form);
+      const res = await api('api/recite/check', { form });
+      followBrain(res, sent);
+      return res;
+    };
+    const whole = () => {
+      const form = new FormData();
+      form.append('audio', blob, 'recitation.wav');
+      return send(form);
+    };
     let res;
     try {
-      res = await api('api/recite/check', { form });
-      followBrain(res, sent);
+      if (liveForm) {
+        try {
+          res = await send(liveForm);
+        } catch (err) {
+          if (state.task !== task) return;
+          res = await whole(); // the live check failed at the end: the whole recording, as before
+        }
+      } else {
+        res = await whole();
+      }
     } catch (err) {
       if (state.task !== task) return;
+      if (live) {
+        closeLive(live);
+        showPlainPage(); // no half-coloured text under an error
+      }
       if (task && isQuranRefusal(err) && err.reason === 'meaning' && state.page.mode === 'contextual') {
         state.page.noMeaningTask = true; // a task by meaning with Quran words: a grown-up changes it
         refreshGates();
@@ -2486,6 +2696,7 @@
       return;
     }
     if (state.task !== task) return;
+    closeLive(live);
     clearStatus(status);
     showReciteResult(res, info);
     notifyTask('recite', res);
@@ -2513,6 +2724,7 @@
     verdictNode.hidden = true;
     scoreNode.hidden = true;
     $('#recite-ideas').hidden = true;
+    $('#recite-text').classList.remove('live');
     if (!contextual && Array.isArray(result.ops) && result.ops.length && !sayAgain) {
       const words = $('#recite-text');
       words.classList.remove('plain');

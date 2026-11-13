@@ -341,8 +341,9 @@ def recite(
     mode: str | None = "strict",
     age: str | None = "6-9",
     ai_consent: str | None = CONSENT,
+    heard_before: str | None = None,
 ) -> Any:
-    fields = dict(expected_text=expected_text, lang=lang, mode=mode, age=age, ai_consent=ai_consent)
+    fields = dict(expected_text=expected_text, lang=lang, mode=mode, age=age, ai_consent=ai_consent, heard_before=heard_before)
     data = {k: v for k, v in fields.items() if v is not None}
     files = {"audio": ("child.wav", audio if audio is not None else wav(), "audio/wav")} if audio != b"-" else None
     return client.post("/api/recite/check", data=data, files=files)
@@ -529,7 +530,7 @@ class TestHeadersAndStatic:
     def test_heavy_endpoints_run_in_the_thread_pool(self, make_client: Callable[..., TestClient]) -> None:
         heavy = {
             "/api/recite/check", "/api/quran/check", "/api/quran/locate", "/api/tts",
-            "/api/page/read", "/api/dictation/check",
+            "/api/page/read", "/api/dictation/check", "/api/recite/phrase",
         }
         routes = {r.path: r for r in make_client().app.routes if getattr(r, "path", None) in heavy}
         assert set(routes) == heavy
@@ -2667,3 +2668,317 @@ def tokenize_ar(text: str) -> list[str]:
 def check_like(body: dict) -> dict:
     """The result of a response, in the form feedback.for_result reads."""
     return body["result"]
+
+
+# ---------------------------------------------------------------------------
+# Live recitation: /api/recite/phrase and the tail of /api/recite/check (extra)
+# ---------------------------------------------------------------------------
+
+
+def phrase(
+    client: TestClient,
+    *,
+    audio: bytes | None = None,
+    expected_text: str | None = EN_TEXT,
+    lang: str | None = "en",
+    mode: str | None = "strict",
+    heard_before: str | None = None,
+    **extra: str,
+) -> Any:
+    fields = dict(expected_text=expected_text, lang=lang, mode=mode, heard_before=heard_before, **extra)
+    data = {k: v for k, v in fields.items() if v is not None}
+    files = {"audio": ("phrase.wav", audio if audio is not None else wav(), "audio/wav")} if audio != b"-" else None
+    return client.post("/api/recite/phrase", data=data, files=files)
+
+
+def empty_wav() -> bytes:
+    """A WAV file with no samples (the tail of a live recitation when nothing came after the last phrase)."""
+    return wav(0.0)
+
+
+def kinds(ops: list[dict]) -> list[str]:
+    return [op["kind"] for op in ops]
+
+
+PHRASE_KEYS = {"mode", "heard_text", "quality", "progress", "brain"}
+PROGRESS_KEYS = {"ops", "n_expected", "n_read", "n_matched", "n_errors"}
+
+
+class TestLivePhrase:
+    def test_health_and_the_switch(self, make_client: Callable[..., TestClient]) -> None:
+        assert make_client().get("/api/health").json()["live_recite"] is True
+        client = make_client(settings=make_settings(live_recite=False), transcriber=RecordingTranscriber("x"))
+        assert client.get("/api/health").json()["live_recite"] is False
+        # Off, the endpoint does not exist: an older or switched-off server answers 404 and
+        # the web client sends the whole recording.
+        assert_error(phrase(client), 404, "not_found")
+        assert "/api/recite/phrase" not in client.get("/api/openapi.json").json()["paths"]
+
+    def test_first_phrase_colours_the_words_read_and_leaves_the_rest_pending(
+        self, make_client: Callable[..., TestClient]
+    ) -> None:
+        transcriber = RecordingTranscriber("the cat sat")
+        r = phrase(make_client(transcriber=transcriber, brain=ExplodingBrain(), tts=ExplodingTTS()), audio=wav(1.5))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert set(body) == PHRASE_KEYS and set(body["progress"]) == PROGRESS_KEYS
+        assert body["mode"] == "strict" and body["heard_text"] == "the cat sat" and body["brain"] == "offline"
+        assert set(body["quality"]) == QUALITY_KEYS and body["quality"]["seconds"] == pytest.approx(1.5)
+        progress = body["progress"]
+        assert kinds(progress["ops"]) == ["match"] * 3 + ["pending"] * 3
+        assert [op["expected"] for op in progress["ops"]] == ["The", "cat", "sat", "on", "the", "mat"]
+        assert all(set(op) == OP_KEYS for op in progress["ops"])
+        assert (progress["n_expected"], progress["n_read"], progress["n_matched"], progress["n_errors"]) == (6, 3, 3, 0)
+        # Only this phrase is decoded: its samples and the language, nothing else (hard rule 1).
+        (args, kwargs), = transcriber.calls
+        assert kwargs == {} and args[1] == "en" and args[0].size == 24_000 and args[0].dtype == np.float32
+
+    def test_the_words_heard_before_are_checked_with_the_phrase(self, make_client: Callable[..., TestClient]) -> None:
+        client = make_client(transcriber=RecordingTranscriber("sat on mat"), brain=ExplodingBrain())
+        body = phrase(client, heard_before="the cat").json()
+        assert body["heard_text"] == "sat on mat"  # this phrase only; the client joins
+        ops = body["progress"]["ops"]
+        assert kinds(ops) == ["match", "match", "match", "match", "del", "match"]  # a skipped word stays missing
+        assert body["progress"]["n_read"] == 6 and body["progress"]["n_errors"] == 1
+        body = phrase(make_client(transcriber=RecordingTranscriber("sat")), heard_before="the dog").json()
+        assert kinds(body["progress"]["ops"]) == ["match", "sub", "match", "pending", "pending", "pending"]
+        assert body["progress"]["ops"][1]["heard"] == "dog" and body["progress"]["n_errors"] == 1
+
+    @pytest.mark.parametrize(
+        ("before", "heard"),
+        [("", "the cat"), ("the cat", "sat on the"), ("a cat", "sit on the mat"), ("the", "mat"), ("", "")],
+    )
+    def test_progress_is_the_strict_check_of_the_words_so_far(
+        self, make_client: Callable[..., TestClient], before: str, heard: str
+    ) -> None:
+        # The same analysis as /api/recite/check strict, with the words not reached pending.
+        body = phrase(make_client(transcriber=RecordingTranscriber(heard)), heard_before=before).json()
+        joined = " ".join(t for t in (before, heard) if t)
+        result = check_recitation(EN_TEXT, joined, "en")
+        ops = [dataclasses.asdict(op) for op in result.ops]
+        last = max((k for k, op in enumerate(ops) if op["heard_index"] is not None), default=-1)
+        for k, op in enumerate(ops):
+            if k > last:
+                assert op["kind"] == "del"
+                op["kind"] = "pending"
+        assert body["progress"]["ops"] == ops
+
+    def test_a_quran_part_follows_the_mushaf_rules(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        text = lesson(quran)
+        ayah = quran.ayat(2, 153, 153)[0]
+        words = list(ayah.match_words)
+        before = "الصبر مفتاح الفرج قال تعالى " + " ".join(words[:3])
+        said = list(words[3:8])
+        said[3] = "والصلوات"  # the 7th word of the ayah said wrongly
+        client = make_client(transcriber=RecordingTranscriber(" ".join(said)), brain=ExplodingBrain(), tts=ExplodingTTS())
+        body = phrase(client, expected_text=text, lang="ar", heard_before=before).json()
+        ops = body["progress"]["ops"]
+        # The check of /api/recite/check strict on the same words, mushaf words inside the part.
+        check = recite(make_client(transcriber=RecordingTranscriber(before + " " + " ".join(said)), brain=OfflineBrain()),
+                       expected_text=text, lang="ar").json()
+        [part] = check["quran_parts"]
+        expected_kinds = ["match"] * (part["exp_start"] + 6) + ["sub", "match"]
+        assert kinds(ops)[: len(expected_kinds)] == expected_kinds
+        assert ops[part["exp_start"] + 6]["expected"] == ayah.match_words[6]
+        assert set(kinds(ops)[len(expected_kinds):]) == {"pending"}
+        assert [op for op in ops if op["kind"] != "pending"] == check["result"]["ops"][: len(expected_kinds)]
+
+    def test_meaning_mode_gives_the_transcript_only(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        client = make_client(transcriber=RecordingTranscriber("a cat was sitting"), brain=ExplodingBrain())
+        body = phrase(client, mode="contextual", heard_before="so").json()
+        assert body == {**body, "mode": "contextual", "heard_text": "a cat was sitting", "progress": None, "brain": "offline"}
+        # The refusals of /api/recite/check by meaning, for the same texts.
+        body = assert_error(phrase(client, expected_text=lesson(quran), lang="ar", mode="contextual"), 422, "quran_text")
+        assert body["reason"] == "meaning"
+        q1 = " ".join(quran_words(quran, 112, 1, 4))
+        body = assert_error(phrase(client, expected_text=q1, lang="ar"), 422, "quran_text")
+        assert body["quran_range"] == {"surah": 112, "from": 1, "to": 4}
+
+    def test_never_calls_a_brain_even_with_the_ai_consent(self, make_client: Callable[..., TestClient]) -> None:
+        brain = ExplodingBrain()
+        client = make_client(transcriber=RecordingTranscriber("the cat"), brain=brain, tts=ExplodingTTS())
+        for mode in ("strict", "contextual"):
+            r = phrase(client, mode=mode, ai_consent="1", age="6-9")
+            assert r.status_code == 200 and r.json()["brain"] == "offline"
+        assert brain.calls == []
+
+    def test_unclear_audio_is_not_decoded(self, make_client: Callable[..., TestClient]) -> None:
+        transcriber = RecordingTranscriber("thank you")
+        client = make_client(transcriber=transcriber)
+        for audio in (silent_wav(2.0), wav(0.3)):
+            body = phrase(client, audio=audio, heard_before="the cat").json()
+            assert body["heard_text"] == "" and (body["quality"]["too_quiet"] or body["quality"]["too_short"])
+            assert kinds(body["progress"]["ops"]) == ["match", "match"] + ["pending"] * 4
+        assert transcriber.calls == []
+
+    def test_limits(self, make_client: Callable[..., TestClient]) -> None:
+        transcriber = RecordingTranscriber("x")
+        client = make_client(transcriber=transcriber)
+        assert body_limit("/api/recite/phrase") == app_mod.MAX_PHRASE_BYTES + app_mod.FORM_OVERHEAD_BYTES
+        assert app_mod.MAX_PHRASE_BYTES <= MAX_AUDIO_BYTES
+        assert phrase(client, audio=wav(30.0)).status_code == 200
+        assert_error(phrase(client, audio=wav(31.0)), 413, "audio_too_long")
+        assert_error(phrase(client, audio=wav(1.0) + b"\x00" * app_mod.MAX_PHRASE_BYTES), 413, "audio_too_large")
+        assert_error(phrase(client, audio=b"not a wav"), 400, "bad_audio")
+        assert_error(phrase(client, audio=empty_wav()), 400, "bad_audio")  # a phrase has samples
+        assert_error(phrase(client, heard_before="word " * (MAX_TEXT_CHARS // 5 + 1)), 400, "text_too_long")
+        assert_error(phrase(client, heard_before="w " * (MAX_TEXT_WORDS + 1)), 400, "text_too_long")
+        assert_error(phrase(client, expected_text="  "), 400, "empty_text")
+        assert_error(phrase(client, expected_text="Le chat [?] sur le tapis.", lang="fr"), 400, "unreadable_text")
+        assert_error(phrase(client, expected_text=AR_TEXT), 422, "lang_mismatch")
+        assert transcriber.calls == [(tuple(transcriber.calls[0][0]), {})]  # only the 30 s phrase
+        too_big = b"\x00" * (body_limit("/api/recite/phrase") + 1)
+        r = client.post("/api/recite/phrase", content=too_big, headers={"content-type": "multipart/form-data; boundary=b0"})
+        assert r.status_code == 413
+        assert_error(phrase(make_client(transcriber=FakeTranscriber(available=False))), 503, "asr_unavailable")
+
+    @pytest.mark.parametrize("missing", ["audio", "expected_text", "lang", "mode"])
+    def test_missing_fields(self, make_client: Callable[..., TestClient], missing: str) -> None:
+        kwargs: dict[str, Any] = {missing: b"-" if missing == "audio" else None}
+        body = assert_error(phrase(make_client(), **kwargs), 422, "missing_field")
+        assert missing in body["message"]
+        assert_error(phrase(make_client(), mode="dictation"), 422, "invalid_field")
+
+    def test_behind_the_access_gate(self, quran: Quran) -> None:
+        app = create_app(make_settings(access_code="phrase-gate-code"), RecordingTranscriber("x"), FakeTTS(), OfflineBrain(), quran)
+        client = TestClient(app, base_url=BASE_URL)
+        assert_error(phrase(client), 401, "access_required")
+        assert client.post("/api/access", json={"code": "phrase-gate-code"}).status_code == 204
+        assert phrase(client).status_code == 200
+
+    def test_recogniser_never_sees_the_text_or_the_words_before(self, make_client: Callable[..., TestClient]) -> None:
+        spy = SpyTranscriber("sat on")
+        client = make_client(transcriber=spy)
+        expected = "Zebras zigzag quickly across Zanzibar"
+        spy.secrets += [expected, "Zanzibar", "Quokkas yodel"]
+        assert phrase(client, expected_text=expected, heard_before="Quokkas yodel").status_code == 200
+        assert recite(client, expected_text=expected, heard_before="Quokkas yodel").status_code == 200
+        assert len(spy.calls) == 2 and spy.leaks == []
+        for args, kwargs in spy.calls:
+            assert kwargs == {} and len(args) == 2 and args[1] == "en"
+
+    def test_logs_hold_sizes_and_timings_only(
+        self, make_client: Callable[..., TestClient], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = make_client(transcriber=RecordingTranscriber("Quixotic zebras"))
+        with caplog.at_level(logging.DEBUG):
+            for mode in ("strict", "contextual"):
+                r = phrase(client, expected_text="Quixotic zebras zigzag wildly", mode=mode, heard_before="Yodelling quokkas")
+                assert r.status_code == 200
+            r = recite(client, expected_text="Quixotic zebras zigzag wildly", heard_before="Yodelling quokkas", age="10-13")
+            assert r.status_code == 200
+        assert "recite/phrase strict en: audio" in caplog.text and "after 2 words" in caplog.text
+        assert "tail after 2 words" in caplog.text
+        for word in ("Quixotic", "zebras", "zigzag", "wildly", "Yodelling", "quokkas", "10-13"):
+            assert word not in caplog.text
+
+    def test_openapi_lists_the_endpoint_without_the_ai_consent(self, make_client: Callable[..., TestClient]) -> None:
+        spec = make_client().get("/api/openapi.json").json()
+        op = spec["paths"]["/api/recite/phrase"]["post"]
+        ref = op["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"].rsplit("/", 1)[1]
+        body = spec["components"]["schemas"][ref]
+        assert set(body["properties"]) == {"audio", "expected_text", "lang", "mode", "heard_before"}
+        assert set(body["required"]) == {"audio", "expected_text", "lang", "mode"}
+        assert "ai_consent" not in body["properties"]
+        check = spec["paths"]["/api/recite/check"]["post"]
+        ref = check["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"].rsplit("/", 1)[1]
+        body = spec["components"]["schemas"][ref]
+        assert "heard_before" in body["properties"] and "heard_before" not in body["required"]
+        assert "audio" in body["required"] and "ai_consent" in body["properties"]
+
+
+class TestLiveTail:
+    """/api/recite/check with heard_before: only the tail is decoded."""
+
+    def test_strict_checks_the_words_before_and_the_tail(self, make_client: Callable[..., TestClient]) -> None:
+        transcriber = RecordingTranscriber("on the mat")
+        brain = FakeBrain()
+        body = recite(make_client(transcriber=transcriber, brain=brain), audio=wav(1.2), heard_before="the cat sit").json()
+        assert body["heard_text"] == "the cat sit on the mat"
+        assert body["result"] == json.loads(json.dumps(dataclasses.asdict(check_recitation(EN_TEXT, "the cat sit on the mat", "en"))))
+        assert body["feedback"] == "Lovely effort, keep going!" and body["brain"] == "claude"
+        assert set(body["quality"]) == QUALITY_KEYS and body["quality"]["seconds"] == pytest.approx(1.2)
+        (args, _), = transcriber.calls
+        assert args[0].size == 19_200  # the tail only
+        (summary, lang, age), _ = brain.called("word_feedback")[0]
+        assert summary["errors"][0]["heard"] == "sit"
+
+    def test_an_empty_tail_is_not_decoded(self, make_client: Callable[..., TestClient]) -> None:
+        transcriber = RecordingTranscriber("thank you")
+        client = make_client(transcriber=transcriber, brain=OfflineBrain())
+        body = recite(client, audio=empty_wav(), heard_before="the cat sat on the mat").json()
+        assert transcriber.calls == []
+        assert body["heard_text"] == "the cat sat on the mat" and body["result"]["verdict"] == "correct"
+        assert body["quality"] == {"seconds": 0.0, "rms": 0.0, "too_quiet": False, "too_short": False}
+        assert body["say_again"] is False
+
+    def test_quality_reflects_the_whole_recitation(self, make_client: Callable[..., TestClient]) -> None:
+        transcriber = RecordingTranscriber("mat")
+        client = make_client(transcriber=transcriber, brain=OfflineBrain())
+        # A tail too short to decode after words heard before: neither too short nor too quiet.
+        body = recite(client, audio=wav(0.3), heard_before="the cat sat on the").json()
+        assert transcriber.calls == [] and body["quality"]["too_short"] is False and body["quality"]["too_quiet"] is False
+        assert body["result"]["ops"][-1]["kind"] == "del"  # the last word was not heard
+        # Nothing heard before: the tail is all there is, its own flags stand.
+        for audio, flag in ((wav(0.3), "too_short"), (silent_wav(2.0), "too_quiet")):
+            body = recite(client, audio=audio, heard_before="").json()
+            assert body["quality"][flag] is True and body["result"]["verdict"] == "unclear" and body["say_again"]
+        body = recite(client, audio=empty_wav(), heard_before="  ").json()
+        assert body["quality"]["too_quiet"] and body["quality"]["too_short"] and body["say_again"]
+        # A tail with words after silence before (the earlier phrases heard nothing).
+        body = recite(make_client(transcriber=RecordingTranscriber("the cat sat on the mat")), heard_before="").json()
+        assert body["heard_text"] == "the cat sat on the mat" and body["result"]["verdict"] == "correct"
+
+    def test_an_older_client_is_answered_as_before(self, make_client: Callable[..., TestClient]) -> None:
+        # No heard_before: the audio is the whole recording, an empty WAV is refused as before.
+        transcriber = RecordingTranscriber("the cat sat on the mat")
+        client = make_client(transcriber=transcriber)
+        assert_error(recite(client, audio=empty_wav()), 400, "bad_audio")
+        body = recite(client, audio=wav(2.0)).json()
+        assert body["heard_text"] == "the cat sat on the mat" and transcriber.calls[-1][0][0].size == 32_000
+        assert body["quality"]["seconds"] == pytest.approx(2.0)
+        assert_error(recite(client, audio=b"-", heard_before="the cat"), 422, "missing_field")
+
+    def test_meaning_is_judged_on_the_joined_text(self, make_client: Callable[..., TestClient]) -> None:
+        brain = FakeBrain()
+        client = make_client(transcriber=RecordingTranscriber("was sitting"), brain=brain)
+        body = recite(client, mode="contextual", heard_before="a cat", age="10-13").json()
+        assert body["heard_text"] == "a cat was sitting" and body["brain"] == "claude"
+        assert brain.called("judge_meaning") == [((EN_TEXT, "a cat was sitting", "en", "10-13"), {})]
+        # Without the AI consent the offline heuristic answers and Claude is not called.
+        brain = FakeBrain()
+        client = make_client(transcriber=RecordingTranscriber("was sitting"), brain=brain)
+        body = recite(client, mode="contextual", heard_before="a cat", ai_consent=None).json()
+        assert body["brain"] == "offline" and body["judgement"]["approximate"] is True and brain.calls == []
+        # Nothing heard in all: unclear.
+        body = recite(make_client(transcriber=RecordingTranscriber("")), mode="contextual", audio=empty_wav(),
+                      heard_before="").json()
+        assert body["judgement"]["verdict"] == "unclear" and body["say_again"] is True
+
+    def test_strict_without_consent_uses_the_templates(self, make_client: Callable[..., TestClient]) -> None:
+        brain = FakeBrain()
+        client = make_client(transcriber=RecordingTranscriber("on mat"), brain=brain)
+        body = recite(client, heard_before="the cat sat", ai_consent=None).json()
+        assert body["brain"] == "offline" and brain.calls == []
+        assert body["feedback"] == feedback.for_result(check_recitation(EN_TEXT, "the cat sat on mat", "en"), "en", "6-9")
+
+    def test_a_quran_mistake_in_the_tail(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        ayah = quran.ayat(2, 153, 153)[0]
+        words = list(ayah.match_words)
+        words[6] = "والصلوات"
+        before = "الصبر مفتاح الفرج قال تعالى " + " ".join(words[:4])
+        tail = " ".join(words[4:]) + " ثم شرح المعلم الآية"
+        brain = FakeBrain()
+        client = make_client(brain=brain, transcriber=RecordingTranscriber(tail), tts=ExplodingTTS())
+        body = recite(client, expected_text=lesson(quran), lang="ar", heard_before=before).json()
+        assert [(op["kind"], op["expected"]) for op in body["result"]["ops"] if op["kind"] != "match"] == [
+            ("sub", ayah.match_words[6])
+        ]
+        assert body["feedback_is_quran"] is True and len(body["quran_parts"]) == 1 and brain.calls == []
+
+    def test_heard_before_limits(self, make_client: Callable[..., TestClient]) -> None:
+        transcriber = RecordingTranscriber("x")
+        client = make_client(transcriber=transcriber)
+        assert_error(recite(client, heard_before="word " * (MAX_TEXT_CHARS // 5 + 1)), 400, "text_too_long")
+        assert_error(recite(client, heard_before="the cat", audio=wav(121.0)), 413, "audio_too_long")
+        assert transcriber.calls == []

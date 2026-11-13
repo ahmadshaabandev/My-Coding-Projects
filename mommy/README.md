@@ -212,7 +212,8 @@ Other settings: `MOMMY_ASR_MODEL` (`turbo`, default, or `small`), `MOMMY_ASR_THR
 (default 4), `MOMMY_ALLOWED_HOSTS` (default `127.0.0.1,localhost,::1`),
 `MOMMY_ACCESS_CODE` (unset by default: no access gate; see the next section),
 `MOMMY_REQUIRE_ACCESS_CODE` (set in the container image: no start without a code),
-`MOMMY_LOG_LEVEL` (default `INFO`), `PORT` (default 8080).
+`MOMMY_LIVE_RECITE` (`on`, default, or `off`: the live check of a recitation, see
+"Live recitation" below), `MOMMY_LOG_LEVEL` (default `INFO`), `PORT` (default 8080).
 
 ## Run it on your own computer and share it (Docker + Cloudflare)
 
@@ -450,8 +451,27 @@ and 3 000 words, `/api/tts` 400 characters, 50 ayat per Quran request. At most t
 or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
 
 - `/api/health` also returns `tts_languages`, `asr_model` (the Whisper model in use),
-  `reasons` (why the recogniser or the voices are unavailable) and `online` (the access
-  gate is on, or an allowed host is not a loopback one).
+  `reasons` (why the recogniser or the voices are unavailable), `online` (the access
+  gate is on, or an allowed host is not a loopback one) and `live_recite` (the live
+  check below is on).
+- **Live recitation** (`MOMMY_LIVE_RECITE`, default `on`). While the child reads, the
+  browser cuts the recording into phrases at the pauses (0.65 s of silence after at least
+  0.4 s of speech, at the latest every 18 s) and sends each one to `POST
+  /api/recite/phrase` with `heard_before`, the transcripts of the phrases before it (kept
+  by the browser; the server keeps nothing). The server decodes only that phrase (Whisper
+  gets its audio and the language, never the text) and, word by word, answers with the
+  words read so far checked against the text by the same rules as `/api/recite/check`
+  (Quran parts against the mushaf), the words not reached yet marked `pending`: the
+  child sees them turn green, or a mistake marked, while reading. It never calls Claude.
+  At Stop only the tail after the last phrase goes to `/api/recite/check`, with
+  `heard_before`, so the result comes about as soon as the last phrase is decoded instead
+  of after the whole recording. If a phrase request fails, or the server has no
+  `/api/recite/phrase` (an older version), the browser sends the whole recording as
+  before. With `MOMMY_LIVE_RECITE=off` the endpoint is gone and every recording is sent
+  whole. Measured on 2 cores (Whisper turbo, 2 threads): the result comes 1.3-2.3 s after
+  Stop instead of 5-9 s for a 13-19 s recitation, and the words of a phrase are coloured
+  2-3 s after the child finishes it; word accuracy is the same within recogniser noise
+  (details in `docs/CONTRACT.md`, "Live recitation").
 - `/api/recite/check` returns a top-level `say_again`; results carry
   `say_again_reason` (`empty` or `error_rate`), `stopped_at_exp_index` (where the child
   stopped early) and `n_unreadable`. `/api/page/read` returns `contains_quran`

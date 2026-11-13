@@ -318,6 +318,7 @@ _ENV_VARS = (
     "MOMMY_TEXT_MODEL",
     "MOMMY_EFFORT",
     "MOMMY_ALLOWED_HOSTS",
+    "MOMMY_LIVE_RECITE",
 )
 
 
@@ -339,6 +340,7 @@ def test_settings_defaults(clean_env: pytest.MonkeyPatch, mommy_root: Path) -> N
     assert s.anthropic_api_key_set is False
     assert s.vision_model is None and s.text_model is None
     assert s.claude_configured is False
+    assert s.live_recite is True
     assert (s.quran_dir / "quran-uthmani.txt").is_file()
 
 
@@ -387,12 +389,23 @@ def test_settings_partially_configured_claude_is_offline(clean_env: pytest.Monke
         ("MOMMY_ASR_THREADS", "0"),
         ("MOMMY_EFFORT", "extreme"),
         ("MOMMY_ALLOWED_HOSTS", " , ,"),
+        ("MOMMY_LIVE_RECITE", "maybe"),
     ],
 )
 def test_settings_invalid_values(clean_env: pytest.MonkeyPatch, name: str, value: str) -> None:
     clean_env.setenv(name, value)
     with pytest.raises(ValueError):
         load_settings()
+
+
+@pytest.mark.parametrize(
+    ("value", "on"),
+    [("off", False), ("OFF", False), ("0", False), ("false", False), ("no", False),
+     ("on", True), ("1", True), ("True", True), ("yes", True), ("  ", True), ("", True)],
+)
+def test_settings_live_recite_switch(clean_env: pytest.MonkeyPatch, value: str, on: bool) -> None:
+    clean_env.setenv("MOMMY_LIVE_RECITE", value)
+    assert load_settings().live_recite is on
 
 
 def test_settings_is_frozen(clean_env: pytest.MonkeyPatch) -> None:

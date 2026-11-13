@@ -205,6 +205,7 @@ class Settings:
     allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS   # extra; env MOMMY_ALLOWED_HOSTS (comma-separated)
     access_code: str | None = field(default=None, repr=False)   # extra; env MOMMY_ACCESS_CODE (None: no gate)
     access_code_file: Path | None = None   # extra; env MOMMY_ACCESS_CODE_FILE, when the code came from it
+    live_recite: bool = True   # extra; env MOMMY_LIVE_RECITE (on/off, 1/0, true/false, yes/no; default on)
     claude_configured: bool    # property (extra): key and both models set
 MIN_ACCESS_CODE_CHARS = 8      # extra
 def load_settings(root: Path | None = None) -> Settings
@@ -212,7 +213,8 @@ def load_settings(root: Path | None = None) -> Settings
 # thread count that is not a positive integer, an allowed-hosts list with no host, an
 # access code shorter than MIN_ACCESS_CODE_CHARS (the message never quotes the code), or
 # (extra) no access code while MOMMY_REQUIRE_ACCESS_CODE is set (any non-blank value; the
-# container image sets it, run.sh does not). "Blank" is str.strip()'s: any Unicode white
+# container image sets it, run.sh does not), or (extra) a MOMMY_LIVE_RECITE that is neither
+# on nor off (parse_switch). "Blank" is str.strip()'s: any Unicode white
 # space, so a no-break space is no code; this is the only place that decides it.
 # The access code is stripped; it is kept out of repr(Settings), so it cannot reach a log.
 def parse_allowed_hosts(value: str) -> tuple[str, ...]   # extra
@@ -354,6 +356,11 @@ def check_writing(expected_text: str, written_text: str, lang: Lang, *, strict_t
 # "[?]", never a del.
 def build_result(ops, n_expected, n_heard, *, unreliable_error_rate=SAY_AGAIN_ERROR_RATE) -> CheckResult   # extra
 def recitation_key(token, lang) -> str; def writing_key(token, lang, *, strict_tashkeel=False) -> str   # extra
+def reading_progress(result) -> dict   # extra: where a child still reading has got to (/api/recite/phrase)
+# {"ops": [{kind, exp_index, heard_index, expected, heard}], "n_expected", "n_read",
+#  "n_matched", "n_errors"}: the del ops after the last op with a heard word become
+#  "pending" (not read yet); the ops up to there keep match/sub/del/ins. n_read counts the
+#  expected words reached, n_errors the non-matching ops among them.
 def result_summary(result, *, max_errors=5) -> dict   # extra: compact summary for feedback writers
 # {"verdict", "say_again", "say_again_reason", "n_expected", "n_errors", "n_unreadable",
 #  "word_accuracy", "stopped_at", "stopped_at_exp_index", "errors": [{kind, expected, heard, exp_index}]}
@@ -676,6 +683,7 @@ def decode_wav(data: bytes) -> np.ndarray
 # mono or multi-channel (averaged), at 8 to 96 kHz, and resamples to 16 kHz (band-limited,
 # FFT). Raises ValueError on a non-WAV, empty or unsupported file.
 def wav_duration(data: bytes) -> float   # extra: length from the header, without decoding (the app refuses > 120 s first)
+def is_empty_wav(data: bytes) -> bool    # extra: a well-formed WAV with no frame (the empty tail of a live recitation)
 def audio_quality(pcm: np.ndarray) -> dict
 # {"seconds": float, "rms": float, "too_quiet": bool, "too_short": bool}; too_quiet is
 # decided on the speech level (RMS of the loudest 10% of 25 ms frames, at most 0.5 s of
@@ -962,10 +970,11 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   JSON 500 (logged as a class name and code location only). Error messages never quote
   the text that was sent.
 - Upload limits: audio at most 10 MB and 120 s (read from the WAV header before
-  decoding), images at most 8 MB (JPEG or PNG), text fields at most 20,000 characters and
-  3,000 words, `/api/tts` text at most 400 characters, Quran ranges at most 50 ayat. Request
-  bodies are bounded before parsing (audio routes 10 MB + 256 KB, image routes 8 MB +
-  256 KB, JSON 256 KB).
+  decoding; extra: one phrase of `/api/recite/phrase` at most 4 MB and 30 s), images at
+  most 8 MB (JPEG or PNG), text fields at most 20,000 characters and 3,000 words
+  (`heard_before` too), `/api/tts` text at most 400 characters, Quran ranges at most 50
+  ayat. Request bodies are bounded before parsing (audio routes 10 MB + 256 KB,
+  `/api/recite/phrase` 4 MB + 256 KB, image routes 8 MB + 256 KB, JSON 256 KB).
 - Uploads are read into memory and never saved: Starlette's spool-to-disk threshold is
   raised above the largest body accepted.
 - Line breaks: a browser sends the line breaks of a form field as `\r\n`, while a
@@ -1099,6 +1108,60 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   these requests names its brain ("recite/check strict en: brain offline, ...",
   "dictation/check fr: brain claude, ...", "page/read: image ... bytes, brain claude, source
   claude, ..."), never a text, the age group or the code.
+- **Live recitation (extra; `MOMMY_LIVE_RECITE`, default on; `/api/health`
+  `live_recite`).** While the child reads, the web client cuts the recording into phrases
+  at the pauses (`recorder.js`, `PhraseSegmenter`) and sends each one to `POST
+  /api/recite/phrase` with `heard_before`, the transcripts of the phrases before it, which
+  the client holds (the server keeps nothing between requests). The recogniser decodes
+  that phrase only and is given its audio and the language, nothing else (hard rule 1:
+  never the expected text, never `heard_before`, never a prompt). In strict mode the
+  answer's `progress` is the word-by-word check of `heard_before` + the phrase against the
+  whole text, by the same analysis as `/api/recite/check` strict (`QuranAnalysis.check_recitation`:
+  the Quran parts against the mushaf words), turned by `align.reading_progress` into the
+  words read so far (`match`, `sub`, `del`, `ins`) and the words after the last one the
+  child reached, `"pending"`. No brain is used (`"brain": "offline"`, no AI consent read,
+  no feedback), and nothing is logged but sizes and timings ("recite/phrase strict en:
+  audio N bytes, S s, after N words, decode, asr, check, total"). At Stop the client sends
+  only the tail (the phrases still queued and what came after the last phrase) to
+  `/api/recite/check` with `heard_before`: the server decodes the tail alone and checks
+  `heard_before` + the tail exactly as a whole recording (feedback, Claude only with
+  `ai_consent=1`, `quran_parts`, `say_again`, meaning judged on the joined text). The
+  field is told apart by its presence in the form (`app.heard_before_sent`), so an empty
+  `heard_before` (the earlier phrases were heard as nothing) is still a tail, while an
+  older client, which never sends it, is answered exactly as before. A tail with nothing
+  said after the last phrase is a WAV with no samples (accepted only with `heard_before`;
+  without it, `400 bad_audio` as before). Quality (`app.live_quality`): `seconds` and
+  `rms` are the tail's and the tail alone decides whether it is decoded (too quiet or
+  under 0.5 s: not decoded), but `too_quiet` and `too_short` say whether the recitation
+  could be heard: false whenever `heard_before` has a word (those phrases were loud and
+  long enough to be recognised, while a child who stops just after the last pause sends
+  a tail of a fraction of a second, or none); with nothing heard before, the tail's own
+  flags stand (no samples at all: both true, verdict `"unclear"`). Off
+  (`MOMMY_LIVE_RECITE=off`), `/api/recite/phrase` does not exist (`404 not_found`), and
+  the client sends the whole recording; `heard_before` is still accepted by
+  `/api/recite/check`.
+
+  Measured (2026-11-13, Whisper turbo int8, `MOMMY_ASR_THREADS=2` pinned to 2 cores with
+  `taskset`, Piper-spoken texts of 4 sentences with 0.8 s pauses, the web client's own
+  `PhraseSegmenter` run on the audio, the real app): the segmenter cut every text into its
+  4 sentences. Errors of `check_recitation` (sub + del + ins), whole clip / phrase by
+  phrase, on 4 texts per language: en 0 / 1 of 125 words, fr 2 / 2 of 130, ar 29 / 31 of
+  99 (the Arabic voice itself is
+  hard to recognise; the differences are recogniser noise on the same unclear words, the
+  phrase decode loses the context of the sentence before). Decode time: a whole 13-19 s
+  recording 5.1 s (en), 6.0 s (fr), 7.9 s (ar) on average; one phrase of 2.4-4.2 s 1.6 s,
+  1.8 s, 2.2 s (at most 2.5 s). From the end of a phrase to its words coloured: 1.9-3.1 s
+  (0.65 s of silence to detect the end, then the decode). From Stop to the result: old
+  way 5.2-8.5 s; live, Stop 1 s after the last word 1.3-2.0 s (the last phrase was already
+  being decoded, the tail is empty), Stop 0.3 s after it 1.8-2.3 s (the tail, the last
+  phrase, is decoded). End to end in Chromium with a fake microphone (the real server,
+  warm, Stop 1 s after the last word): en 5.4 s -> 1.9 s, ar 9.4 s -> 1.9 s. On one core
+  with one thread: a whole 18.9 s Arabic recording 14.6 s, its last phrase (4.2 s) 4.1 s.
+  Whisper writes words on silence and noise when it is given them ("Thank you.", "Sous-titrage
+  ST' 501", "ترجمة نانسي قنقر", "اشتركوا في القناة"): the segmenter sends no phrase for
+  silence, room noise or steady noise at -40 dBFS, and the server's quality gate does not
+  decode silence or room noise (too quiet) or a clip under 0.5 s; a louder noise that
+  passes both would still reach the recogniser, as in a whole recording.
 - Text checks on the general endpoints (recite, dictation, phrases, TTS, text check), in
   this order: 400 `bad_text` (a lone UTF-16 surrogate), 400 `text_too_long` (over
   20,000 characters; checked before the words, so a text that is too long and has no
@@ -1276,9 +1339,10 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
 | Method & path | Request | Response |
 |---|---|---|
 | POST `/api/access` (extra, online only) | JSON `{"code": str}` | `204` with the `mommy_access` cookie; `403 bad_access_code`; `429 too_many_attempts` with `Retry-After`; see "Access gate". Absent (404) when no code is set. |
-| GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE`) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
+| GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable), `live_recite` (bool, `Settings.live_recite`: the server checks a recitation phrase by phrase, `/api/recite/phrase`), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE`) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
 | POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional); extra: `ai_consent` (optional, `"1"`: see "AI consent"; without it the offline brain answers) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `brain` (`"claude"`\|`"offline"`, see "AI consent"), `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
-| POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`); extra: `ai_consent` (optional, `"1"`: Claude words the feedback and judges the meaning; without it the offline templates and heuristic answer, see "AI consent") | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again` and `brain` (`"claude"`\|`"offline"`, see "AI consent"); strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
+| POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`); extra: `ai_consent` (optional, `"1"`: Claude words the feedback and judges the meaning; without it the offline templates and heuristic answer, see "AI consent"), `heard_before` (optional, a live recitation: the transcripts of the phrases `/api/recite/phrase` decoded, joined by spaces, may be empty; `audio` is then only the tail after them, a WAV with no samples when nothing came after; see "Live recitation") | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again` and `brain` (`"claude"`\|`"offline"`, see "AI consent"); strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
+| POST `/api/recite/phrase` (extra, absent with `MOMMY_LIVE_RECITE=off`) | multipart: `audio` (wav, one phrase: at most 4 MB and 30 s; `413 audio_too_large`/`audio_too_long`), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `heard_before` (optional, default empty: the transcripts of the earlier phrases, as this endpoint returned them, joined by spaces) | `{"mode", "heard_text" (this phrase only, `""` when its audio is too quiet or under 0.5 s, which is not decoded), "quality" (this phrase's), "progress", "brain": "offline"}`; `progress` is null in contextual mode, and in strict mode `{"ops": [{kind: match\|sub\|del\|ins\|pending, exp_index, heard_index, expected, heard}], "n_expected", "n_read", "n_matched", "n_errors"}` (`align.reading_progress` of the strict check of `heard_before` + `heard_text`, see "Live recitation"). The text checks and refusals of `/api/recite/check` in the same mode (`empty_text`, `text_too_long`, `unreadable_text`, `quran_text` with `quran_range` or `"reason": "meaning"`, `lang_mismatch`), and for `heard_before` `bad_text` and `text_too_long`; `503 asr_unavailable`; never a brain, the voice or the AI consent. Example: `expected_text` "The cat sat on the mat.", `heard_before` "the cat", a phrase heard as "sad" -> ops match, match, sub (heard "sad"), pending, pending, pending; `n_read` 3, `n_errors` 1. |
 | POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str], "readers": ["voice"\|"grown_up"], "read_text": [null\|str], "parts": [null\|int], "quran_parts": [part]}` (extra: all but `phrases`; the four lists have one entry per phrase). The voice reads a `voice` phrase (`/api/tts`, slow). A `grown_up` phrase is a chunk of a Quran part (at most 6 display words, never across an ayah): `read_text` is its fully vowelled Uthmani text (verbatim Tanzil) for a grown-up to read aloud, `phrase` the same words in Simple-Clean spelling (what the child writes; never sent to `/api/tts`), `parts` the index of its part in `quran_parts`. A text with no Arabic or no Quran part gives `split_phrases` with every reader `voice`. Q1 gives `422 quran_text` with no scope (and `quran_range` when one range). The `"scope": "phrase"` refusal is gone. A text of punctuation only gives `{"phrases": [], ...}` with empty lists. Example: `"الصبر مفتاح الفرج. قال تعالى: " + 2:153 + " ثم شرح المعلم الآية."` -> phrases `["الصبر مفتاح الفرج.", "قال تعالى:", <2:153 display words 1-5, in Simple-Clean words (6 words: يا أيها is one Uthmani word)>, <display words 6-10>, "ثم شرح المعلم الآية."]`, readers `["voice", "voice", "grown_up", "grown_up", "voice"]`, read_text `[null, null, <Uthmani display words 1-5>, <Uthmani display words 6-10>, null]`, parts `[null, null, 0, 0, null]`. |
 | POST `/api/text/check` (extra) | JSON `{"text", "lang": "ar"\|"en"\|"fr", "mode"?: "strict"\|"contextual"\|"dictation"}` (`mode` defaults to `strict`; any other field is ignored, the parts are never taken from the client) | `{"ok": true, "words": n, "dictation": bool, "contextual": bool, "quran_parts": [part], "mushaf_text": str}`. The checks of `/api/recite/check` in its order (`bad_text`, `text_too_long` by characters, `empty_text`, `text_too_long` by words, `unreadable_text`, `quran_text`, `lang_mismatch`, same bodies; a body that is not JSON gives `422 invalid_field` "The body is not valid JSON."). A text that is Quran (Q1) gives `422 quran_text` in every mode (with `quran_range` when one range of one surah); mode `contextual` also refuses a Q2 text and the by-meaning guard (`QURAN_MEANING_MESSAGE`); mode `dictation` refuses nothing more (no `scope` any more). `words`: the words of the cleaned text (`textnorm.tokenize`). `dictation`: true (a grown-up reads the Quran parts; false only from the never-seen safety net). `contextual`: false when the text has a Quran part or the by-meaning guard refuses it (true in its own mode). `quran_parts`: see below. `mushaf_text`: the submitted text with every Quran part that differs from the mushaf replaced by the mushaf words, in the script closest to what was typed; equal to the submitted text when nothing differs. No recogniser, voice or brain is used. `503 quran_unavailable` when the Tanzil text is missing and the text has Arabic letters. Body limit 256 KB, Host and Origin checks as everywhere. Examples: `{"text": "ذهب الولد إلى المدرسة", "lang": "ar"}` -> `{"ok": true, "words": 4, "dictation": true, "contextual": true, "quran_parts": [], "mushaf_text": "ذهب الولد إلى المدرسة"}`; the basmala on a line of its own followed by a sentence -> `dictation: true, contextual: false`, one part (1:1, rule `ayah`); 112:1-4 with or without قال تعالى / صدق الله العظيم -> `422 {"error": "quran_text", "message", "quran_range": {"surah": 112, "from": 1, "to": 4}}`; a lesson quoting 2:153 whose 7th word was typed with ض for ص -> one part with `differences: [{"op": "sub", "typed": <typed word>, "mushaf": <Uthmani word>, "mushaf_clean": <Simple-Clean word>, "index": 6, "token": <token index>}]`, `rule: "near"`, and a `mushaf_text` with the Simple-Clean word in its place. |
 | POST `/api/tts` | JSON `{"text","lang","slow":bool}` | `audio/wav`. 503 if TTS unavailable. 400 if text is empty or longer than 400 characters, or has nothing to pronounce. Extra: header `X-Speech-Check: passed\|failed\|skipped`: slow speech is transcribed back, unprompted, up to 2 takes, and must say exactly the phrase (`check_recitation`: numbers in digits match words, Arabic number words match by value). |
@@ -1532,6 +1596,30 @@ each language is still loaded on first use.
   - Show the page text; strict or contextual mode is set by the parent.
   - Big record/stop button; record WAV in the browser (16 kHz mono PCM16 via Web Audio,
     `recorder.js`), then `/api/recite/check`.
+  - Extra, live recitation (when `/api/health` `live_recite` and `asr`): while recording,
+    `recorder.js` cuts the 16 kHz signal into phrases (`onPhrase`; `PhraseSegmenter`, an
+    energy voice activity detector in 20 ms frames: speech is 10 dB above a noise floor
+    (the lowest 60 ms level of the last 3 s, rising at most 4 dB/s) and above -50 dBFS; a
+    phrase ends after 0.65 s of silence once it holds 0.4 s of speech, with 0.2 s of
+    padding on each side and no overlap; a shorter sound waits for the next phrase, a
+    burst under 0.15 s followed by 1 s of silence is dropped; after 18 s without a pause
+    the phrase is cut at the quietest 100 ms of its last 8 s, without padding; the
+    `StreamResampler` gives exactly the samples of the final recording). The status says
+    "I'm listening and checking as you read…" (`live_listening`). `app.js` sends the phrases to
+    `/api/recite/phrase` one at a time, in order, with `heard_before`; phrases that queued
+    up while a request ran go together in the next one (at most 28 s). In strict mode
+    each answer's `progress` is drawn on the Recite card with `renderOps` (match, sub,
+    del, ins as in a result; `pending` words in the muted text colour, no background);
+    by meaning nothing is coloured. At Stop the client waits for the request in flight
+    (at most 15 s), then sends the queued phrases and the tail (`recorder.tail`) with
+    `heard_before` to `/api/recite/check`; the result then shows as before (feedback,
+    "Listen", Quran notes, `notifyTask`). Any failure of a phrase request (an older
+    server's 404, a 500, the network, a refusal) or of that final check turns the live
+    check off for that recording, silently: Stop sends the whole recording as before (and
+    shows that request's own errors). Answers of a recording that was cancelled or
+    replaced, of a task that was left, or after the screen was left are dropped (a
+    session object per recording, with the task it belongs to). The microphone, consent
+    and task gates are those of the recording.
   - Highlight the words: matched green, substitution orange (showing what was heard),
     deleted grey with a strike, inserted in small brackets.
   - Speak the feedback with TTS if available. Offer "say that again" when `say_again`.

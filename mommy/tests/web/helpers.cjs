@@ -775,6 +775,12 @@ function makeFakeApi(opts) {
   const reciteQueue = [];
   const dictationQueue = [];
   const quranQueue = [];
+  // Live recitation (/api/recite/phrase): each answer "hears" the next `words` words of the
+  // text; `delay` (ms, or a function of the call) holds the answer back; `fail`: a status
+  // to answer with (404: an older server; 500), or 'network'.
+  let live = { words: 3, delay: () => 0, fail: () => null, answer: null };
+  let liveInFlight = 0;
+  let liveMaxInFlight = 0;
   const refused = new Set(); // endpoints that answer 422 quran_text whatever the text
   const unreachable = new Set(); // endpoints whose requests fail as if the server were down
   let tts = { delay: () => 0, check: (j) => (j.slow ? 'passed' : 'skipped'), refuse: () => false };
@@ -865,6 +871,41 @@ function makeFakeApi(opts) {
       if (next.mode === 'strict') return json(Object.assign({ feedback_is_quran: false, quran_parts: an.parts }, next));
       return json(next);
     }
+    if (p === '/api/recite/phrase' && method === 'POST') {
+      // One phrase of a live recitation: never a brain ("offline"), no feedback. The heard
+      // words are the next live.words words of the text after heard_before's.
+      liveInFlight++;
+      liveMaxInFlight = Math.max(liveMaxInFlight, liveInFlight);
+      try {
+        const f = call.form || {};
+        const delay = live.delay(call);
+        if (delay) await sleep(delay);
+        const fail = live.fail(call);
+        if (fail === 'network') return route.abort('connectionrefused');
+        if (fail) return json({ error: fail === 404 ? 'not_found' : 'internal_error', message: 'fake failure' }, fail);
+        const expected = f.expected_text ? f.expected_text.text : '';
+        const mode = f.mode ? f.mode.text : 'strict';
+        const lang = f.lang ? f.lang.text : 'en';
+        const an = analyse(expected.trim(), lang);
+        const refusal = textRefusal(expected, lang, mode, an);
+        if (refusal) return json(refusal[1], refusal[0]);
+        const words = expected.split(/\s+/).filter(Boolean);
+        const before = f.heard_before ? f.heard_before.text.split(/\s+/).filter(Boolean) : [];
+        if (live.answer) return json(Object.assign({ brain: 'offline' }, live.answer(call, words, before)));
+        const reached = Math.min(words.length, before.length + live.words);
+        const heard = words.slice(before.length, reached).join(' ');
+        const ops = words.map((w, i) => (i < reached ? { kind: 'match', exp_index: i, heard_index: i, expected: w, heard: w } : { kind: 'pending', exp_index: i, heard_index: null, expected: w, heard: null }));
+        return json({
+          mode,
+          heard_text: heard,
+          quality: { seconds: 1.5, rms: 0.08, too_quiet: false, too_short: false },
+          progress: mode === 'strict' ? { ops, n_expected: words.length, n_read: reached, n_matched: reached, n_errors: 0 } : null,
+          brain: 'offline',
+        });
+      } finally {
+        liveInFlight--;
+      }
+    }
     if (p === '/api/tts' && method === 'POST') {
       if (!o.health.tts) return json({ error: 'tts_unavailable', message: 'TTS models are missing' }, 503);
       // The voice guard as built: any phrase that holds Quran (a part, a whole ayah) is refused.
@@ -931,6 +972,16 @@ function makeFakeApi(opts) {
     queueDictation: (r) => dictationQueue.push(r),
     /** 'perfect' or 'mistakes' for the next /api/quran/check. */
     queueQuran: (kind) => quranQueue.push(kind),
+    /**
+     * The live recitation's fake: {words (heard per phrase request), delay(call) -> ms,
+     * fail(call) -> null | 404 | 500 | 'network', answer(call, words, before) -> body};
+     * missing parts keep the default.
+     */
+    setLive: (l) => {
+      live = { words: (l && l.words) || 3, delay: (l && l.delay) || (() => 0), fail: (l && l.fail) || (() => null), answer: (l && l.answer) || null };
+    },
+    /** The most /api/recite/phrase requests that were ever running at once. */
+    liveMaxInFlight: () => liveMaxInFlight,
     setHealthDown: (v) => {
       healthDown = v;
     },
@@ -972,6 +1023,46 @@ function makeFakeApi(opts) {
 // Page helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * A fake microphone for the live recitation (an init script): when window.__micPattern is
+ * set ([[start s, length s], ...]), getUserMedia returns a 220 Hz tone at -13 dBFS during
+ * those bursts and digital silence between them, from the moment the stream is made;
+ * otherwise Chromium's own fake device. Energy is all the phrase detector looks at, so
+ * a burst stands for a phrase read aloud.
+ */
+function fakeMicHook() {
+  const md = navigator.mediaDevices;
+  if (!md || !md.getUserMedia) return;
+  const original = md.getUserMedia.bind(md);
+  md.getUserMedia = async (constraints) => {
+    const pattern = window.__micPattern;
+    if (!pattern) return original(constraints);
+    const ctx = new AudioContext();
+    if (ctx.state === 'suspended') await ctx.resume();
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 220;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    const dest = ctx.createMediaStreamDestination();
+    osc.connect(gain);
+    gain.connect(dest);
+    const t0 = ctx.currentTime + 0.02;
+    for (const [start, length] of pattern) {
+      gain.gain.setValueAtTime(0.32, t0 + start);
+      gain.gain.setValueAtTime(0, t0 + start + length);
+    }
+    osc.start();
+    window.__micStarted = performance.now();
+    const track = dest.stream.getAudioTracks()[0];
+    const stop = track.stop.bind(track);
+    track.stop = () => {
+      stop();
+      ctx.close();
+    };
+    return dest.stream;
+  };
+}
+
 /** Logs every media play() with what the page was doing at that moment. */
 function mediaHook() {
   window.__plays = [];
@@ -993,6 +1084,7 @@ async function newPage(browser, base, viewport, fakeOpts, pageOpts) {
   await context.grantPermissions(['microphone'], { origin: base });
   const page = await context.newPage();
   await page.addInitScript(mediaHook);
+  await page.addInitScript(fakeMicHook);
   if (po.initScript) await page.addInitScript(po.initScript, po.initArg);
   page.setDefaultTimeout(10000);
   const fake = makeFakeApi(fakeOpts);

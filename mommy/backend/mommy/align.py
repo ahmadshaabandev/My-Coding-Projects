@@ -678,6 +678,36 @@ def result_summary(result: CheckResult, *, max_errors: int = 5) -> dict[str, Any
     }
 
 
+def reading_progress(result: CheckResult) -> dict[str, Any]:
+    """Where a child who is still reading has got to, from a check of what was heard so far
+    against the whole text (``/api/recite/phrase``; extra).
+
+    The words after the last expected word the child has reached (the last op with a
+    heard word) are not yet read: their ``del`` ops become ``"pending"``. The words up to
+    there keep ``match``, ``sub``, ``del`` (skipped) and ``ins``. JSON-ready:
+    ``{"ops": [{kind, exp_index, heard_index, expected, heard}], "n_expected",
+    "n_read", "n_matched", "n_errors"}``, where ``n_read`` counts the expected words
+    reached (the ops before the pending ones that have an expected word) and
+    ``n_errors`` the non-matching ops among them. Nothing heard: every word is pending.
+    """
+    last = max((k for k, op in enumerate(result.ops) if op.heard_index is not None), default=-1)
+    ops: list[dict[str, Any]] = []
+    for k, op in enumerate(result.ops):
+        kind = "pending" if k > last and op.kind == "del" else op.kind
+        ops.append({
+            "kind": kind, "exp_index": op.exp_index, "heard_index": op.heard_index,
+            "expected": op.expected, "heard": op.heard,
+        })
+    reached = ops[: last + 1]
+    return {
+        "ops": ops,
+        "n_expected": result.n_expected,
+        "n_read": sum(1 for op in reached if op["exp_index"] is not None),
+        "n_matched": sum(1 for op in reached if op["kind"] == "match"),
+        "n_errors": sum(1 for op in reached if op["kind"] != "match"),
+    }
+
+
 __all__ = [
     "MAX_JOINED_PIECES",
     "SAY_AGAIN_ERROR_RATE",
@@ -693,6 +723,7 @@ __all__ = [
     "check_recitation",
     "check_writing",
     "has_unreadable",
+    "reading_progress",
     "recitation_key",
     "result_summary",
     "speech_joins",

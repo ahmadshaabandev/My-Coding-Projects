@@ -31,7 +31,13 @@ Environment variables:
   logged; the path may be;
 * ``MOMMY_REQUIRE_ACCESS_CODE``: any non-blank value makes a missing or blank access code
   an error instead of "no gate". The container image sets it (it listens on every
-  interface, so it must never run without the gate); ``./run.sh`` does not.
+  interface, so it must never run without the gate); ``./run.sh`` does not;
+* ``MOMMY_LIVE_RECITE``: ``on`` (default) or ``off`` (also ``1``/``0``, ``true``/``false``,
+  ``yes``/``no``), the live check of a recitation, phrase by phrase while the child reads
+  (``POST /api/recite/phrase``, and the tail of a recitation sent with ``heard_before`` to
+  ``/api/recite/check``). Off, ``/api/recite/phrase`` does not exist (404), ``/api/health``
+  says ``"live_recite": false`` and the web client sends each recording whole, as before.
+  Nothing changes for the recogniser: it is still given the audio and the language only.
 
 When the key or either model is missing, the app runs offline (see ``Settings.claude_configured``).
 """
@@ -81,6 +87,7 @@ class Settings:
     access_code: str | None = field(default=None, repr=False)
     #: env MOMMY_ACCESS_CODE_FILE, when the code came from that file (None otherwise).
     access_code_file: Path | None = None
+    live_recite: bool = True  # env MOMMY_LIVE_RECITE, default on
 
     @property
     def claude_configured(self) -> bool:
@@ -95,6 +102,25 @@ def _get(env: Mapping[str, str], name: str) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+#: The values of an on/off variable (``MOMMY_LIVE_RECITE``), compared case-insensitively.
+TRUE_VALUES: tuple[str, ...] = ("1", "on", "true", "yes")
+FALSE_VALUES: tuple[str, ...] = ("0", "off", "false", "no")
+
+
+def parse_switch(env: Mapping[str, str], name: str, default: bool) -> bool:
+    """An on/off variable: ``default`` when unset or blank, else one of
+    :data:`TRUE_VALUES` or :data:`FALSE_VALUES` (ValueError for anything else)."""
+    raw = _get(env, name)
+    if raw is None:
+        return default
+    value = raw.lower()
+    if value in TRUE_VALUES:
+        return True
+    if value in FALSE_VALUES:
+        return False
+    raise ValueError(f"{name} must be on or off, got {raw!r}")
 
 
 def parse_allowed_hosts(value: str) -> tuple[str, ...]:
@@ -172,8 +198,9 @@ def load_settings(root: Path | None = None) -> Settings:
     count that is not a positive integer, an unknown effort level, an allowed-hosts
     list with no host in it or with a suffix entry that is too broad, an access code
     shorter than :data:`MIN_ACCESS_CODE_CHARS` (the message never quotes the code), a
-    code file that cannot be read or made (:func:`code_from_file`), or no access code
-    while ``MOMMY_REQUIRE_ACCESS_CODE`` is set.
+    code file that cannot be read or made (:func:`code_from_file`), no access code
+    while ``MOMMY_REQUIRE_ACCESS_CODE`` is set, or a ``MOMMY_LIVE_RECITE`` that is neither
+    on nor off (:func:`parse_switch`).
 
     With ``MOMMY_ACCESS_CODE`` unset and ``MOMMY_ACCESS_CODE_FILE`` set, this reads that
     file, and writes a new code to it first when it does not exist.
@@ -199,6 +226,8 @@ def load_settings(root: Path | None = None) -> Settings:
     effort = (_get(env, "MOMMY_EFFORT") or DEFAULT_EFFORT).lower()
     if effort not in EFFORT_LEVELS:
         raise ValueError(f"MOMMY_EFFORT must be one of {', '.join(EFFORT_LEVELS)}, got {effort!r}")
+
+    live_recite = parse_switch(env, "MOMMY_LIVE_RECITE", True)
 
     hosts_raw = _get(env, "MOMMY_ALLOWED_HOSTS")
     allowed_hosts = DEFAULT_ALLOWED_HOSTS if hosts_raw is None else parse_allowed_hosts(hosts_raw)
@@ -226,6 +255,7 @@ def load_settings(root: Path | None = None) -> Settings:
         allowed_hosts=allowed_hosts,
         access_code=access_code,
         access_code_file=access_code_file,
+        live_recite=live_recite,
     )
 
 
@@ -240,4 +270,5 @@ __all__ = [
     "code_from_file",
     "load_settings",
     "parse_allowed_hosts",
+    "parse_switch",
 ]

@@ -47,6 +47,12 @@
  *     net and "dictation": false; a text that is Quran opening the Quran section on its
  *     ayat; the screens in en, fr and ar at 360 px and in dark mode; and, over every
  *     flow, no /api/tts request holding a Quran part.
+ *   - the live recitation (docs/CONTRACT.md, POST /api/recite/phrase): the phrase detector
+ *     and the streaming resampler of recorder.js in Node; in Chromium with a fake
+ *     microphone of tone bursts, the words coloured while recording, Stop sending only
+ *     the tail with heard_before, one request at a time with queued phrases merged,
+ *     answers of a recording that was left dropped, the silent fallback to the whole
+ *     recording (500, 404, network), by meaning, Arabic at 360 px in light and dark mode;
  *   - the privacy texts in the four ways the app runs (local or online, with or without
  *     Claude: the fake /api/health "online" and "brain"): the setup's consent box and
  *     family data line in en, fr and ar, the photo note and the "approximate" label;
@@ -197,6 +203,190 @@ async function recorderUnitTests() {
     const mid = R.levelOf(new Float32Array(256).fill(10 ** (-30 / 20)));
     assert.ok(Math.abs(mid - 0.5) < 0.01, String(mid));
     assert.equal(R.levelOf(new Float32Array(256).fill(1)), 1);
+  });
+
+  await phraseSegmenterTests(R);
+}
+
+/*
+ * Live recitation: the streaming resampler and the phrase detector (recorder.js), in
+ * Node. A "phrase" here is a voiced sound: a 180 Hz tone in syllables of 190 ms with
+ * 60 ms dips between them, like speech for an energy detector.
+ */
+function lcg(seed) {
+  let x = seed >>> 0;
+  return () => {
+    x = (Math.imul(x, 1664525) + 1013904223) >>> 0;
+    return x / 4294967296 - 0.5;
+  };
+}
+
+function speechLike(rate, seconds, amp) {
+  const n = Math.round(rate * seconds);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const on = t % 0.25 < 0.19 ? 1 : 0.02;
+    out[i] = (amp || 0.2) * on * Math.sin(2 * Math.PI * 180 * t) * (1 + 0.3 * Math.sin(2 * Math.PI * 3 * t));
+  }
+  return out;
+}
+
+/** parts: [['s', seconds] | ['v', seconds, amp?] | ['n', seconds]] -> {pcm, voiced: [[start, end]]}. */
+function scene(R, rate, parts, noise) {
+  const pieces = [];
+  const voiced = [];
+  let t = 0;
+  for (const [kind, sec, amp] of parts) {
+    pieces.push(kind === 'v' ? speechLike(rate, sec, amp) : new Float32Array(Math.round(rate * sec)));
+    if (kind === 'v') voiced.push([t, t + sec]);
+    t += sec;
+  }
+  const pcm = R.concatSamples(pieces);
+  if (noise) {
+    const rnd = lcg(7);
+    for (let i = 0; i < pcm.length; i++) pcm[i] += noise * 2 * rnd();
+  }
+  return { pcm, voiced };
+}
+
+/** Run a segmenter over pcm in chunks of random sizes; {phrases, tail}. */
+function segmentAll(R, pcm, options, seed) {
+  const seg = new R.PhraseSegmenter(options);
+  const rnd = lcg(seed || 1);
+  const phrases = [];
+  let i = 0;
+  while (i < pcm.length) {
+    const n = 200 + Math.floor((rnd() + 0.5) * 3000);
+    for (const p of seg.push(pcm.subarray(i, i + n))) phrases.push(p);
+    i += n;
+  }
+  return { phrases, tail: seg.finish() };
+}
+
+async function phraseSegmenterTests(R) {
+  await check('recorder.StreamResampler in chunks of any size gives exactly downsample() of the whole', () => {
+    for (const [rate, seconds] of [[48000, 2.3], [44100, 1.7], [16000, 0.5], [8000, 0.4]]) {
+      const input = speechLike(rate, seconds, 0.5);
+      const whole = R.downsample(input, rate, 16000);
+      const rs = new R.StreamResampler(rate, 16000);
+      const rnd = lcg(rate);
+      const out = [];
+      for (let i = 0; i < input.length;) {
+        const n = 1 + Math.floor((rnd() + 0.5) * 5000);
+        out.push(rs.push(input.subarray(i, i + n)));
+        i += n;
+      }
+      out.push(rs.flush());
+      const streamed = R.concatSamples(out);
+      assert.equal(streamed.length, whole.length, rate + ' Hz length');
+      let diff = 0;
+      for (let k = 0; k < whole.length; k++) diff = Math.max(diff, Math.abs(streamed[k] - whole[k]));
+      assert.ok(diff < 1e-6, rate + ' Hz differs by ' + diff);
+      assert.ok(rs._buf.length < 200, 'the resampler keeps only a short history: ' + rs._buf.length);
+    }
+  });
+
+  await check('recorder.PhraseSegmenter cuts at pauses of 0.8 s, with 0.2 s of padding, in order and without overlap', () => {
+    const rate = 16000;
+    const { pcm, voiced } = scene(R, rate, [['s', 0.6], ['v', 2.0], ['s', 0.8], ['v', 1.5], ['s', 0.8], ['v', 2.2], ['s', 1.5]], 0.0005);
+    const { phrases, tail } = segmentAll(R, pcm);
+    assert.equal(phrases.length, 3, JSON.stringify(phrases.map((p) => [p.start, p.end])));
+    phrases.forEach((p, k) => {
+      const [a, b] = voiced[k];
+      assert.ok(Math.abs(p.start - (a - 0.2)) <= 0.03, `phrase ${k} starts at ${p.start}, speech at ${a}`);
+      assert.ok(p.end >= b - 0.07 + 0.2 - 0.03 && p.end <= b + 0.2 + 0.03, `phrase ${k} ends at ${p.end}, speech at ${b}`);
+      assert.equal(p.forced, false);
+      assert.ok(p.speech >= 0.4);
+      assert.equal(p.samples.length, Math.round((p.end - p.start) * rate));
+      // The samples are the signal itself.
+      const from = Math.round(p.start * rate);
+      for (const k2 of [0, 100, p.samples.length - 1]) assert.equal(p.samples[k2], pcm[from + k2]);
+      if (k) assert.ok(p.start >= phrases[k - 1].end, 'no overlap');
+    });
+    assert.equal(tail.samples.length, 0, 'nothing after the last phrase');
+    assert.equal(tail.speech, 0);
+  });
+
+  await check('recorder.PhraseSegmenter: a pause under 0.65 s does not cut, a short sound waits for the next phrase, a click is dropped', () => {
+    // 0.5 s pause inside a sentence: one phrase.
+    let r = segmentAll(R, scene(R, 16000, [['s', 0.5], ['v', 1.2], ['s', 0.5], ['v', 1.2], ['s', 1.0]]).pcm);
+    assert.equal(r.phrases.length, 1);
+    assert.ok(r.phrases[0].speech > 1.5);
+    // 0.25 s of sound then 0.9 s of silence: not sent alone, it starts the next phrase.
+    r = segmentAll(R, scene(R, 16000, [['s', 0.5], ['v', 0.25], ['s', 0.9], ['v', 1.2], ['s', 1.0]]).pcm);
+    assert.equal(r.phrases.length, 1);
+    assert.ok(Math.abs(r.phrases[0].start - 0.3) < 0.03, 'starts with the short sound: ' + r.phrases[0].start);
+    // 0.1 s click then 1.2 s of silence: dropped; the phrase starts at the speech.
+    r = segmentAll(R, scene(R, 16000, [['s', 0.5], ['v', 0.1], ['s', 1.2], ['v', 1.2], ['s', 1.0]]).pcm);
+    assert.equal(r.phrases.length, 1);
+    assert.ok(Math.abs(r.phrases[0].start - 1.6) < 0.03, 'the click is left out: ' + r.phrases[0].start);
+    // A short sound at the very end stays in the tail (with up to 1 s of lead-in).
+    r = segmentAll(R, scene(R, 16000, [['s', 0.5], ['v', 1.2], ['s', 1.0], ['v', 0.3], ['s', 0.3]]).pcm);
+    assert.equal(r.phrases.length, 1);
+    assert.ok(r.tail.speech >= 0.15 && r.tail.samples.length > 0);
+    assert.ok(r.tail.start >= r.phrases[0].end && r.tail.start <= 2.7 - 0.6, 'tail from ' + r.tail.start);
+    assert.equal(r.tail.end, 3.3);
+  });
+
+  await check('recorder.PhraseSegmenter: silence or a steady noise alone gives no phrase and an empty tail', () => {
+    for (const noise of [0, 0.0005, 0.02]) {
+      const { pcm } = scene(R, 16000, [['s', 12]], noise);
+      const r = segmentAll(R, pcm);
+      assert.equal(r.phrases.length, 0, 'noise ' + noise);
+      assert.equal(r.tail.samples.length, 0);
+      assert.equal(r.tail.speech, 0);
+    }
+  });
+
+  await check('recorder.PhraseSegmenter follows the noise floor: phrases in a noisy room, and after the noise gets louder', () => {
+    // A room at about -37 dBFS (white noise), the voice at about -17 dBFS.
+    let { pcm, voiced } = scene(R, 16000, [['s', 1.0], ['v', 1.5], ['s', 0.9], ['v', 1.5], ['s', 1.0]], 0.025);
+    let r = segmentAll(R, pcm);
+    assert.equal(r.phrases.length, 2, JSON.stringify(r.phrases.map((p) => [p.start, p.end])));
+    assert.ok(Math.abs(r.phrases[1].start - (voiced[1][0] - 0.2)) < 0.05);
+    // Quiet (-66 dBFS), then a fan makes the room 20 dB louder for 7 s before the child goes on.
+    const quiet = scene(R, 16000, [['s', 0.5], ['v', 1.2], ['s', 1.0]], 0.0005).pcm;
+    const noisy = scene(R, 16000, [['s', 7], ['v', 1.2, 0.5], ['s', 1.0]], 0.005).pcm;
+    r = segmentAll(R, R.concatSamples([quiet, noisy]));
+    const starts = r.phrases.map((p) => p.start);
+    assert.ok(r.phrases.length >= 2, JSON.stringify(starts));
+    const last = r.phrases[r.phrases.length - 1];
+    assert.ok(Math.abs(last.start - (2.7 + 7 - 0.2)) < 0.1, 'the phrase after the fan: ' + JSON.stringify(starts));
+    assert.ok(last.end - last.start < 2.0, 'the fan is not part of it');
+  });
+
+  await check('recorder.PhraseSegmenter cuts 40 s of speech without a pause at the quietest moment, at most every 18 s, without padding', () => {
+    const rate = 16000;
+    const { pcm } = scene(R, rate, [['s', 0.5], ['v', 11.5], ['v', 0.12, 0.004], ['v', 3.5], ['v', 25], ['s', 1.0]]);
+    const { phrases, tail } = segmentAll(R, pcm);
+    assert.ok(phrases.length >= 3, String(phrases.length));
+    assert.equal(phrases[0].forced, true);
+    // The first cut is in the quiet 120 ms at 12 s (inside the 8 s searched before 18 s).
+    assert.ok(Math.abs(phrases[0].end - 12.06) < 0.08, 'cut at ' + phrases[0].end);
+    for (let k = 0; k < phrases.length; k++) {
+      const p = phrases[k];
+      assert.ok(p.end - p.start <= 18.25, 'phrase of ' + (p.end - p.start) + ' s');
+      if (k) assert.equal(p.start, phrases[k - 1].end, 'a forced cut joins the next phrase exactly');
+    }
+    const covered = phrases.reduce((a, p) => a + p.samples.length, 0) + tail.samples.length;
+    assert.ok(covered >= (40.12 - 0.3) * rate, 'every word is in a phrase or the tail');
+  });
+
+  await check('recorder.PhraseSegmenter keeps speech from the very first moment of a recording', () => {
+    const { pcm } = scene(R, 16000, [['v', 1.5], ['s', 1.0], ['v', 1.0], ['s', 1.0]]);
+    const { phrases } = segmentAll(R, pcm);
+    assert.equal(phrases.length, 2);
+    assert.ok(phrases[0].start <= 0.02, 'starts at ' + phrases[0].start);
+  });
+
+  await check('recorder.PhraseSegmenter keeps a bounded buffer during a long recording', () => {
+    const seg = new R.PhraseSegmenter();
+    const { pcm } = scene(R, 16000, [['s', 0.5], ['v', 1.5], ['s', 1.0]]);
+    for (let k = 0; k < 40; k++) seg.push(pcm); // 2 minutes
+    assert.equal(seg.phrases, 40);
+    assert.ok(seg._samples.length <= 16000 * 2.5, 'samples kept: ' + seg._samples.length);
+    assert.ok(seg._frames.length <= 130, 'frames kept: ' + seg._frames.length);
   });
 }
 
@@ -970,6 +1160,249 @@ function quranWrapReport() {
     }
   }
   return { markers, marks, bad };
+}
+
+// ---------------------------------------------------------------------------
+// Live recitation (docs/CONTRACT.md, POST /api/recite/phrase)
+// ---------------------------------------------------------------------------
+
+const LIVE_TEXT = 'The cat sat on the mat. It was a sunny day. The dog came to play.';
+const LIVE_TEXT_AR = 'ذهب الولد إلى المدرسة في الصباح. جلس في الصف وفتح كتابه. شرح المعلم الدرس بصوت واضح.';
+const LIVE_HEALTH = { asr: true, tts: true, brain: 'claude', quran: true, languages: ['ar', 'en', 'fr'], live_recite: true };
+
+/** Seconds of audio in a WAV upload of the fake API. */
+function wavSeconds(part) {
+  const h = parseWav(part.data);
+  assert.equal(h.rate, 16000);
+  assert.equal(h.channels, 1);
+  assert.equal(h.bits, 16);
+  return h.dataBytes / 32000;
+}
+
+/** Seconds since the fake microphone started. */
+function micTime(page) {
+  return page.evaluate(() => (performance.now() - window.__micStarted) / 1000);
+}
+
+async function waitMic(page, seconds) {
+  for (;;) {
+    const t = await micTime(page);
+    if (t >= seconds) return;
+    await sleep(Math.min(100, (seconds - t) * 1000));
+  }
+}
+
+/** A page with the live recitation on, a session started and `text` confirmed, on Recite. */
+async function livePage(browser, base, { lang, text, mode, colorScheme, viewport } = {}) {
+  const ctx = await newPage(browser, base, viewport || { width: 360, height: 780 }, { health: LIVE_HEALTH }, { colorScheme });
+  const { page } = ctx;
+  await page.goto(base + '/');
+  await startSession(page, { consent: true });
+  if (lang && lang !== 'en') await switchLang(page, lang, 'prepare');
+  await page.click('#nav [data-go="prepare"]');
+  if (mode === 'contextual') await page.check('input[name="mode"][value="contextual"]');
+  await confirmPageText(page, text || LIVE_TEXT);
+  await page.click('#nav [data-go="recite"]');
+  await page.waitForSelector('#recite-main:not([hidden])');
+  return ctx;
+}
+
+async function startLiveRecording(page, pattern) {
+  await page.evaluate((p) => {
+    window.__micPattern = p;
+  }, pattern);
+  await page.click('#recite-rec');
+  await page.waitForSelector('#recite-rec[data-state="recording"]');
+}
+
+async function liveFlow(browser, base) {
+  const words = LIVE_TEXT.split(' ');
+  {
+    const { context, page, fake, problems } = await livePage(browser, base);
+
+    await check('live: while recording, each phrase colours the words read so far and leaves the rest pending', async () => {
+      fake.setLive({ words: 4 });
+      fake.queueRecite(H.strictResult(LIVE_TEXT, []));
+      await startLiveRecording(page, [[0.4, 1.0], [2.2, 1.0], [4.0, 1.0]]);
+      assert.equal((await page.textContent('#recite-status')).trim(), H.uiStrings('en').live_listening);
+      const first = await waitForCall(fake, '/api/recite/phrase', 1);
+      const f = first.form;
+      assert.equal(f.heard_before.text, '');
+      assert.equal(f.expected_text.text, LIVE_TEXT);
+      assert.equal(f.lang.text, 'en');
+      assert.equal(f.mode.text, 'strict');
+      assert.ok(!f.age && !f.ai_consent, 'a phrase carries no age and no AI consent');
+      const sec = wavSeconds(f.audio);
+      assert.ok(sec > 1.2 && sec < 1.7, 'the first phrase with its padding: ' + sec);
+      await page.waitForFunction(() => document.querySelectorAll('#recite-text .w-match').length === 4);
+      assert.equal(await page.locator('#recite-text .w-pending').count(), words.length - 4);
+      assert.equal(await page.getAttribute('#recite-rec', 'data-state'), 'recording', 'coloured during the recording');
+      assert.ok(await page.isHidden('#recite-legend'));
+      const styles = await page.evaluate(() => {
+        const cs = (sel) => getComputedStyle(document.querySelector(sel));
+        return { match: cs('#recite-text .w-match').color, pending: cs('#recite-text .w-pending').color, pendingBg: cs('#recite-text .w-pending').backgroundColor };
+      });
+      assert.notEqual(styles.pending, styles.match);
+      assert.equal(styles.pendingBg, 'rgba(0, 0, 0, 0)', 'a pending word has no colour of a result');
+      await shot(page, 'live-en-360');
+      const second = await waitForCall(fake, '/api/recite/phrase', 2);
+      assert.equal(second.form.heard_before.text, words.slice(0, 4).join(' '));
+      await page.waitForFunction(() => document.querySelectorAll('#recite-text .w-match').length === 8);
+    });
+
+    await check('live: Stop sends only the tail with heard_before, and the result follows', async () => {
+      await waitMic(page, 5.3); // inside the pause after the third phrase: not cut yet
+      const stopAt = await micTime(page);
+      await page.click('#recite-rec');
+      const call = await waitForCall(fake, '/api/recite/check', 1);
+      assert.equal(fake.callsTo('/api/recite/phrase').length, 2);
+      assert.equal(call.form.heard_before.text, words.slice(0, 8).join(' '));
+      const tail = wavSeconds(call.form.audio);
+      assert.ok(tail > 1.0 && tail < 2.6 && tail < stopAt - 2.5, `the tail only: ${tail} s of ${stopAt} s`);
+      assert.equal(call.form.mode.text, 'strict');
+      assert.equal(call.form.age.text, '6-9');
+      await page.waitForSelector('#recite-result:not([hidden])');
+      assert.equal(await page.locator('#recite-text .w-pending').count(), 0);
+      assert.equal(await page.locator('#recite-text .w-match').count(), words.length);
+      assert.ok(await page.isVisible('#recite-legend'));
+      assert.equal(fake.callsTo('/api/recite/check').length, 1, 'no second upload of the whole recording');
+      assert.equal(await page.evaluate(() => MommyRecorder.openStreams()), 0, 'microphone released');
+    });
+
+    await check('live: phrases go one at a time, in order; those that queued up go together', async () => {
+      const before = fake.callsTo('/api/recite/phrase').length;
+      fake.setLive({ words: 3, delay: () => 3000 });
+      fake.queueRecite(H.strictResult(LIVE_TEXT, []));
+      await startLiveRecording(page, [[0.3, 0.6], [1.6, 0.6], [2.9, 0.6], [4.2, 0.6]]);
+      const second = await waitForCall(fake, '/api/recite/phrase', before + 2);
+      assert.equal(second.form.heard_before.text, words.slice(0, 3).join(' '), 'sent after the first answer');
+      const merged = wavSeconds(second.form.audio);
+      assert.ok(merged > 1.6 && merged < 2.4, 'phrases 2 and 3 in one request: ' + merged);
+      await waitMic(page, 6.0);
+      await page.click('#recite-rec');
+      const call = await waitForCall(fake, '/api/recite/check', 2);
+      assert.equal(fake.callsTo('/api/recite/phrase').length, before + 2);
+      assert.equal(fake.liveMaxInFlight(), 1, 'never two phrase requests at once');
+      assert.equal(call.form.heard_before.text, words.slice(0, 6).join(' '), 'the final waited for the request in flight');
+      assert.ok(wavSeconds(call.form.audio) > 0.9, 'the queued fourth phrase goes with the tail');
+      await page.waitForSelector('#recite-result:not([hidden])');
+    });
+
+    await check('live: an answer for a recording that was left is dropped', async () => {
+      fake.setLive({ words: 5, delay: () => 2500 });
+      const before = fake.callsTo('/api/recite/phrase').length;
+      await startLiveRecording(page, [[0.3, 0.8]]);
+      await waitForCall(fake, '/api/recite/phrase', before + 1);
+      await page.click('#nav [data-go="prepare"]'); // leaves the screen: the recording is dropped
+      await page.click('#nav [data-go="recite"]');
+      await startLiveRecording(page, []);
+      await sleep(3000); // the old answer has arrived meanwhile
+      assert.equal(await page.locator('#recite-text .w').count(), 0, 'the new recording shows the plain text');
+      assert.equal(fake.callsTo('/api/recite/phrase').length, before + 1);
+      await page.click('#nav [data-go="prepare"]');
+      await page.click('#nav [data-go="recite"]');
+    });
+
+    for (const [fail, label] of [[500, 'a phrase request fails'], [404, 'an older server (404)'], ['network', 'the network fails']]) {
+      await check(`live: when ${label}, Stop sends the whole recording as before, silently`, async () => {
+        fake.setLive({ fail: () => fail });
+        fake.queueRecite(H.strictResult(LIVE_TEXT, [1]));
+        const phrases = fake.callsTo('/api/recite/phrase').length;
+        const checks = fake.callsTo('/api/recite/check').length;
+        await startLiveRecording(page, [[0.3, 0.8], [1.8, 0.8], [3.3, 0.8]]);
+        await waitForCall(fake, '/api/recite/phrase', phrases + 1);
+        await waitMic(page, 4.6);
+        assert.ok(await page.isHidden('#recite-status.is-error'), 'no error shown');
+        const stopAt = await micTime(page);
+        await page.click('#recite-rec');
+        const call = await waitForCall(fake, '/api/recite/check', checks + 1);
+        assert.equal(fake.callsTo('/api/recite/phrase').length, phrases + 1, 'no phrase after a failure');
+        assert.ok(!call.form.heard_before, 'no heard_before: the whole recording');
+        const sec = wavSeconds(call.form.audio);
+        assert.ok(Math.abs(sec - stopAt) < 0.5, `the whole recording: ${sec} s of ${stopAt} s`);
+        await page.waitForSelector('#recite-result:not([hidden])');
+        assert.equal(await page.locator('#recite-text .w-sub').count(), 1);
+      });
+    }
+
+    await check('live: no console errors (besides the failures asked for), page errors or external requests', () => {
+      const left = problems.filter((p) => !/status of (404|500)|ERR_CONNECTION_REFUSED|net::ERR_FAILED/.test(p));
+      assert.deepEqual(left, []);
+    });
+    await context.close();
+  }
+
+  {
+    const { context, page, fake, problems } = await livePage(browser, base, { mode: 'contextual' });
+    await check('live: by meaning, the phrases are decoded but no word is coloured; Stop sends the tail', async () => {
+      fake.setLive({ words: 4 });
+      await startLiveRecording(page, [[0.3, 0.8], [1.8, 0.8]]);
+      const first = await waitForCall(fake, '/api/recite/phrase', 1);
+      assert.equal(first.form.mode.text, 'contextual');
+      await waitForCall(fake, '/api/recite/phrase', 2);
+      await sleep(300);
+      assert.equal(await page.locator('#recite-text .w').count(), 0);
+      await page.click('#recite-rec');
+      const call = await waitForCall(fake, '/api/recite/check', 1);
+      assert.equal(call.form.mode.text, 'contextual');
+      assert.equal(call.form.heard_before.text, words.slice(0, 8).join(' '));
+      await page.waitForSelector('#recite-result:not([hidden])');
+      assert.ok(await page.isVisible('#recite-verdict'));
+    });
+    assert.deepEqual(problems, []);
+    await context.close();
+  }
+
+  for (const colorScheme of ['light', 'dark']) {
+    const { context, page, fake, problems } = await livePage(browser, base, { lang: 'ar', text: LIVE_TEXT_AR, colorScheme });
+    await check(`live: Arabic at 360 px (${colorScheme}): right to left, coloured as the child reads, no horizontal scroll`, async () => {
+      fake.setLive({ words: 5 });
+      await startLiveRecording(page, [[0.3, 1.0], [2.0, 1.0]]);
+      assert.equal((await page.textContent('#recite-status')).trim(), H.uiStrings('ar').live_listening);
+      await waitForCall(fake, '/api/recite/phrase', 2);
+      await page.waitForFunction(() => document.querySelectorAll('#recite-text .w-match').length === 10);
+      assert.equal(await page.getAttribute('#recite-text', 'dir'), 'rtl');
+      assert.equal(await page.getAttribute('#recite-text', 'lang'), 'ar');
+      const pending = await page.locator('#recite-text .w-pending').count();
+      assert.equal(pending, LIVE_TEXT_AR.split(' ').length - 10);
+      // The first word read is on the right.
+      const [a, b] = await page.evaluate(() => [...document.querySelectorAll('#recite-text .w')].slice(0, 2).map((n) => n.getBoundingClientRect().left));
+      assert.ok(a > b, 'right to left');
+      const colours = await page.evaluate(() => {
+        const cs = (sel) => getComputedStyle(document.querySelector(sel)).color;
+        return { match: cs('#recite-text .w-match'), pending: cs('#recite-text .w-pending'), text: getComputedStyle(document.body).color };
+      });
+      assert.notEqual(colours.pending, colours.match);
+      assert.notEqual(colours.pending, colours.text);
+      await noHorizontalScroll(page);
+      assert.deepEqual(await H.overflowing(page), []);
+      await shot(page, `live-ar-360-${colorScheme}`);
+      await page.click('#recite-rec');
+      await waitForCall(fake, '/api/recite/check', 1);
+      await page.waitForSelector('#recite-result:not([hidden])');
+    });
+    assert.deepEqual(problems, []);
+    await context.close();
+  }
+
+  {
+    const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 });
+    await check('live: a server that does not offer it (no live_recite in /api/health) gets the whole recording only', async () => {
+      await page.goto(base + '/');
+      await startSession(page, { consent: true });
+      await confirmPageText(page, LIVE_TEXT);
+      await page.click('#nav [data-go="recite"]');
+      await startLiveRecording(page, [[0.3, 0.8], [1.8, 0.8]]);
+      assert.equal((await page.textContent('#recite-status')).trim(), H.uiStrings('en').listening);
+      await waitMic(page, 3.4);
+      await page.click('#recite-rec');
+      const call = await waitForCall(fake, '/api/recite/check', 1);
+      assert.equal(fake.callsTo('/api/recite/phrase').length, 0);
+      assert.ok(!call.form.heard_before);
+    });
+    assert.deepEqual(problems, []);
+    await context.close();
+  }
 }
 
 async function arabicFlow(browser, base) {
@@ -2600,6 +3033,8 @@ async function main() {
     await aiConsentFlow(browser, base);
     console.log('# browser: length limit');
     await limitFlow(browser, base);
+    console.log('# browser: live recitation (phrase by phrase)');
+    await liveFlow(browser, base);
   } finally {
     await browser.close();
     server.close();

@@ -317,6 +317,17 @@ def wav_duration(data: bytes) -> float:
     return n_frames / fmt.rate
 
 
+def is_empty_wav(data: bytes) -> bool:
+    """True for a well-formed RIFF/WAV file whose ``data`` chunk holds no complete frame
+    (the tail of a live recitation when nothing was said after the last phrase); False for
+    anything else, a file that is not a usable WAV included (extra)."""
+    try:
+        fmt, raw = _read_chunks(bytes(data))
+    except (ValueError, TypeError, struct.error):
+        return False
+    return len(raw) // (fmt.bits // 8 * fmt.channels) == 0
+
+
 # ---------------------------------------------------------------------------
 # Audio quality
 # ---------------------------------------------------------------------------

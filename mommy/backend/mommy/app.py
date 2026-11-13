@@ -14,6 +14,12 @@ Flows
   ``check_recitation`` (deterministic, hard rule 2) -> ``brain.word_feedback``, which
   only words the result (the templates of :mod:`mommy.feedback` when it fails).
 * Contextual recitation: the same audio steps, then ``brain.judge_meaning``.
+* Live recitation (``MOMMY_LIVE_RECITE``, default on): ``POST /api/recite/phrase``
+  decodes one phrase (the same audio steps, the recogniser still given only the audio and
+  the language) and, word by word, checks the words heard so far (``heard_before``, held
+  by the client, + the phrase) against the whole text, the words not reached yet
+  ``"pending"``; no brain, nothing kept. At the end ``/api/recite/check`` gets only the
+  tail with ``heard_before`` and checks the joined text as a whole recording.
 * Dictation: ``brain.read_handwriting(image, lang)`` reads the child's paper *blind*
   (hard rule 3; the expected text is not an argument), or the parent types it; then
   ``check_writing`` and feedback. The result always needs the parent's confirmation.
@@ -126,8 +132,16 @@ from .access import (
     host_key,
     is_public_client,
 )
-from .align import UNREADABLE, CheckResult, has_unreadable, recitation_key, result_summary, tokenize_written
-from .asr import ASRUnavailable, SherpaWhisper, Transcriber, audio_quality, decode_wav, wav_duration
+from .align import (
+    UNREADABLE,
+    CheckResult,
+    has_unreadable,
+    reading_progress,
+    recitation_key,
+    result_summary,
+    tokenize_written,
+)
+from .asr import ASRUnavailable, SherpaWhisper, Transcriber, audio_quality, decode_wav, is_empty_wav, wav_duration
 from .config import DEFAULT_ALLOWED_HOSTS, Settings, load_settings
 from .feedback import AgeBand
 from .llm import VERDICTS, Brain, OfflineBrain, make_brain, meaning_feedback
@@ -170,6 +184,14 @@ MAX_AUDIO_SECONDS = 120.0
 #: Rounding allowance on the length of a recording made right up to the limit.
 AUDIO_SECONDS_TOLERANCE = 0.1
 
+#: Largest phrase of a live recitation (``/api/recite/phrase``), in seconds and bytes. The
+#: web client cuts a phrase at a pause and at the latest after about 18 s of speech, and
+#: merges phrases that queued up while the server was busy into at most 28 s, so 30 s is
+#: one Whisper window. 4 MB holds 30 s of 16-bit audio at up to 48 kHz mono (the web
+#: client sends 16 kHz: about 1 MB).
+MAX_PHRASE_SECONDS = 30.0
+MAX_PHRASE_BYTES = 4 * MB
+
 #: Largest image upload (bytes), from the contract.
 MAX_IMAGE_BYTES = 8 * MB
 #: Every image is decoded and re-encoded; refuse decoding more pixels than this (the web
@@ -206,6 +228,7 @@ MAX_JSON_BYTES = 256 * 1024
 #: Body limits of the upload routes; every other ``/api/*`` route gets MAX_JSON_BYTES.
 BODY_LIMITS: dict[str, int] = {
     "/api/recite/check": MAX_AUDIO_BYTES + FORM_OVERHEAD_BYTES,
+    "/api/recite/phrase": MAX_PHRASE_BYTES + FORM_OVERHEAD_BYTES,
     "/api/quran/check": MAX_AUDIO_BYTES + FORM_OVERHEAD_BYTES,
     "/api/quran/locate": MAX_AUDIO_BYTES + FORM_OVERHEAD_BYTES,
     "/api/page/read": MAX_IMAGE_BYTES + FORM_OVERHEAD_BYTES,
@@ -709,12 +732,16 @@ def _read_upload(upload: UploadFile, limit: int, what: str) -> bytes:
     return data
 
 
-def _decode_audio(data: bytes) -> np.ndarray:
-    """WAV bytes -> 16 kHz PCM, refusing a recording over the length limit unread."""
+def _decode_audio(data: bytes, max_seconds: float = MAX_AUDIO_SECONDS, *, allow_empty: bool = False) -> np.ndarray:
+    """WAV bytes -> 16 kHz PCM, refusing a recording over the length limit unread. With
+    ``allow_empty`` (the tail of a live recitation), a WAV file with no samples gives an
+    empty clip instead of 400 ``bad_audio``."""
+    if allow_empty and is_empty_wav(data):
+        return np.zeros(0, dtype=np.float32)
     try:
         seconds = wav_duration(data)
-        if seconds > MAX_AUDIO_SECONDS + AUDIO_SECONDS_TOLERANCE:
-            raise ApiError(413, "audio_too_long", f"The recording is longer than {MAX_AUDIO_SECONDS:.0f} seconds.")
+        if seconds > max_seconds + AUDIO_SECONDS_TOLERANCE:
+            raise ApiError(413, "audio_too_long", f"The recording is longer than {max_seconds:.0f} seconds.")
         return decode_wav(data)
     except ValueError as exc:  # the messages describe the file format, never its content
         raise ApiError(400, "bad_audio", f"The audio is not a usable WAV file: {exc}.") from None
@@ -780,6 +807,72 @@ def clean_image(data: bytes) -> bytes:
 
 def _quality_unclear(quality: dict) -> bool:
     return bool(quality.get("too_quiet") or quality.get("too_short"))
+
+
+# -- live recitation (extra: /api/recite/phrase and the tail of /api/recite/check) ----------
+
+HEARD_BEFORE_PHRASE_DOC = (
+    "Optional: the transcripts (heard_text) of the earlier phrases of this recitation, joined "
+    "by spaces, in order, as this endpoint returned them; empty for the first phrase. Held by "
+    "the client: the server keeps nothing between requests. At most 20,000 characters and "
+    "3,000 words."
+)
+HEARD_BEFORE_CHECK_DOC = (
+    "Optional (a live recitation): the transcripts of the phrases already decoded by "
+    "/api/recite/phrase, joined by spaces, in order (may be empty). With it, audio is only "
+    "the tail of the recording after those phrases (a WAV with no samples when nothing was "
+    "said after them): only the tail is decoded, and the recitation is checked as "
+    "heard_before + the tail. quality then describes the tail, except that too_quiet and "
+    "too_short are false when heard_before has a word. Without it (older clients), audio is "
+    "the whole recording, as before."
+)
+PHRASE_AUDIO_DOC = "One phrase of the recitation as a WAV file: at most 30 seconds and 4 MB."
+
+
+async def heard_before_sent(request: Request) -> bool:
+    """True when the form body has a ``heard_before`` field, empty or not: a live
+    recitation whose earlier phrases were heard as nothing still sends only its tail.
+    (FastAPI reads an empty form field as a missing one, so the parameter alone cannot
+    tell an empty ``heard_before`` from an older client that does not send it.)"""
+    form = await request.form()
+    return any(isinstance(v, str) for v in form.getlist("heard_before"))
+
+
+#: The dependency of /api/recite/check that tells a live tail from a whole recording.
+HeardBeforeSent = Annotated[bool, Depends(heard_before_sent)]
+
+
+def _heard_before(value: str, lang: Lang) -> str:
+    """The ``heard_before`` field of a live recitation, stripped, with ``\\n`` line breaks:
+    400 ``bad_text`` or ``text_too_long`` (characters, then words) as for a text field;
+    empty is allowed (nothing heard yet)."""
+    text = _lines(value).strip()
+    _check_chars(text, "heard_before")
+    _check_words(text, "heard_before", lang)
+    return text
+
+
+def join_heard(before: str, heard: str) -> str:
+    """What was heard of a whole recitation: the earlier phrases' transcripts, then this
+    one (a space between, none around an empty one)."""
+    return " ".join(t for t in (before, heard) if t)
+
+
+def live_quality(tail: dict, before: str, lang: Lang) -> dict:
+    """The quality of a live recitation checked from its tail (``/api/recite/check`` with
+    ``heard_before``).
+
+    ``seconds`` and ``rms`` are the tail's, and the tail alone decides whether it is
+    decoded. But ``too_quiet`` and ``too_short`` say whether the *recitation* could be
+    heard: when ``heard_before`` has a word, the earlier phrases were long and loud enough
+    to be recognised, so both are False, whatever the tail (a child who stops right after
+    the last pause sends a tail of a fraction of a second, or none). With nothing heard
+    before, the tail is all there is to judge, and its own flags stand (no samples at all:
+    both True, and the check asks to say it again).
+    """
+    if tokenize(before, lang):
+        return {**tail, "too_quiet": False, "too_short": False}
+    return dict(tail)
 
 
 #: The form field by which a request carries the parent's AI consent (hard rule 5).
@@ -996,14 +1089,22 @@ def create_app(
         def __exit__(self, *exc: object) -> None:
             decode_slots.release()
 
-    def listen(upload: UploadFile, lang: Lang) -> tuple[str, dict, dict[str, float]]:
+    def listen(
+        upload: UploadFile,
+        lang: Lang,
+        *,
+        max_bytes: int = MAX_AUDIO_BYTES,
+        max_seconds: float = MAX_AUDIO_SECONDS,
+        allow_empty: bool = False,
+    ) -> tuple[str, dict, dict[str, float]]:
         """Audio upload -> (heard text, quality, timings). The recogniser gets the audio
-        and the language only, and is not run on an unclear clip."""
+        and the language only, and is not run on an unclear clip (an empty one included,
+        see ``allow_empty`` of :func:`_decode_audio`)."""
         started = time.perf_counter()
-        data = _read_upload(upload, MAX_AUDIO_BYTES, "audio")
+        data = _read_upload(upload, max_bytes, "audio")
         n_bytes = len(data)
         with decoding():
-            pcm = _decode_audio(data)
+            pcm = _decode_audio(data, max_seconds, allow_empty=allow_empty)
         del data
         quality = audio_quality(pcm)
         decoded = time.perf_counter()
@@ -1114,6 +1215,7 @@ def create_app(
     # -- general ---------------------------------------------------------------
 
     online = is_online(settings)
+    live = bool(getattr(settings, "live_recite", True))
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -1129,6 +1231,7 @@ def create_app(
             "online": online,
             "languages": list(LANGUAGES),
             "tts_languages": list(tts_langs) if tts_langs is not None else (list(LANGUAGES) if tts_ok else []),
+            "live_recite": live,
             "asr_model": model if isinstance(model := getattr(transcriber, "model", None), str) else settings.asr_model,
             "reasons": {
                 "asr": getattr(transcriber, "unavailable_reason", None),
@@ -1198,17 +1301,30 @@ def create_app(
         mode: Annotated[Literal["strict", "contextual"], Form()],
         age: Annotated[AgeField, Form()],
         consent: AiConsent,
+        live_tail: HeardBeforeSent,
+        heard_before: Annotated[str | None, Form(description=HEARD_BEFORE_CHECK_DOC)] = None,
     ) -> dict[str, Any]:
         """Check a recitation: word by word (strict) or by meaning (contextual). Claude
         words the feedback and judges the meaning only with the AI consent; without it the
-        offline templates and the offline meaning heuristic answer."""
+        offline templates and the offline meaning heuristic answer.
+
+        With ``heard_before`` (a live recitation: what ``/api/recite/phrase`` heard of the
+        phrases before), ``audio`` is only the tail after them: the recogniser decodes the
+        tail alone, and the check runs on ``heard_before`` + the tail exactly as on a whole
+        recording. See :func:`live_quality` for the quality of such a check."""
         started = time.perf_counter()
         used = brain_for(consent)
         expected_text = _lines(expected_text)
         expected = _clean_text(expected_text, "expected_text", lang)
         analysis = check_expected(expected, lang, "expected_text", mode)
+        before = _heard_before(heard_before or "", lang) if live_tail else None
         require_asr()
-        heard, quality, timings = listen(audio, lang)
+        if before is None:
+            heard, quality, timings = listen(audio, lang)
+        else:
+            tail, tail_quality, timings = listen(audio, lang, allow_empty=True)
+            heard = join_heard(before, tail)
+            quality = live_quality(tail_quality, before, lang)
 
         if mode == "strict":
             # A Quran part is compared with its mushaf words as the Quran check does; the
@@ -1254,12 +1370,56 @@ def create_app(
                 "say_again": judgement["say_again"],
             }
         out["brain"] = brain_name(used)
+        # Sizes and timings only: the number of words heard before, never the words.
+        live_note = "" if before is None else f", tail after {len(tokenize(before, lang))} words"
         log.info(
-            "recite/check %s %s: brain %s, audio %d bytes, %.1f s, decode %.2f s, asr %.2f s, total %.2f s",
+            "recite/check %s %s: brain %s, audio %d bytes, %.1f s, decode %.2f s, asr %.2f s, total %.2f s%s",
             mode, lang, out["brain"], timings["bytes"], quality["seconds"], timings["decode_s"], timings["asr_s"],
-            time.perf_counter() - started,
+            time.perf_counter() - started, live_note,
         )
         return out
+
+    if live:
+
+        @app.post("/api/recite/phrase")
+        def recite_phrase(
+            audio: Annotated[UploadFile, File(description=PHRASE_AUDIO_DOC)],
+            expected_text: Annotated[str, Form()],
+            lang: Annotated[LangField, Form()],
+            mode: Annotated[Literal["strict", "contextual"], Form()],
+            heard_before: Annotated[str, Form(description=HEARD_BEFORE_PHRASE_DOC)] = "",
+        ) -> dict[str, Any]:
+            """One phrase of a live recitation: the recogniser decodes this phrase only
+            (the audio and the language, nothing else), and in strict mode the words heard
+            so far (``heard_before`` + this phrase) are checked against the whole text by
+            the same word-by-word analysis as ``/api/recite/check`` (Quran parts against
+            the mushaf), with the words not reached yet ``"pending"``
+            (:func:`mommy.align.reading_progress`). No brain is ever used (no AI consent
+            needed; ``"brain": "offline"``), no feedback is written and nothing is kept:
+            the client holds the transcripts and sends them back."""
+            started = time.perf_counter()
+            expected_text = _lines(expected_text)
+            expected = _clean_text(expected_text, "expected_text", lang)
+            analysis = check_expected(expected, lang, "expected_text", mode)
+            before = _heard_before(heard_before, lang)
+            require_asr()
+            heard, quality, timings = listen(
+                audio, lang, max_bytes=MAX_PHRASE_BYTES, max_seconds=MAX_PHRASE_SECONDS
+            )
+            progress: dict[str, Any] | None = None
+            if mode == "strict":
+                result, _words = analysis.check_recitation(join_heard(before, heard))
+                progress = reading_progress(result)
+            checked = time.perf_counter()
+            out = {"mode": mode, "heard_text": heard, "quality": quality, "progress": progress, "brain": "offline"}
+            log.info(
+                "recite/phrase %s %s: audio %d bytes, %.1f s, after %d words, decode %.2f s, asr %.2f s, "
+                "check %.3f s, total %.2f s",
+                mode, lang, timings["bytes"], quality["seconds"], len(tokenize(before, lang)), timings["decode_s"],
+                timings["asr_s"], checked - started - timings["decode_s"] - timings["asr_s"],
+                time.perf_counter() - started,
+            )
+            return out
 
     # -- dictation ---------------------------------------------------------------
 
