@@ -748,11 +748,11 @@
   // pause after each word said slowly (base + per letter, ms; see writePauseMs).
   const MAX_SENTENCE_WORDS = { '6-9': 4, '10-13': 6, '14-18': 6 };
   const WRITE_PAUSE = {
-    '6-9': { base: 1500, perLetter: 600 },
-    '10-13': { base: 1000, perLetter: 350 },
-    '14-18': { base: 800, perLetter: 220 },
+    '6-9': { base: 700, perLetter: 280 },
+    '10-13': { base: 500, perLetter: 160 },
+    '14-18': { base: 400, perLetter: 100 },
   };
-  const MAX_WORD_PAUSE_MS = 9000;
+  const MAX_WORD_PAUSE_MS = 4000;
   const ARABIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
 
   /**
@@ -3345,6 +3345,27 @@
   }
 
   /**
+   * The voice's silence before and after a word cut off (it adds a few tenths of a second
+   * at each end, which made the gaps between words longer than the writing pause), keeping
+   * 40 ms around the sound. A sound with nothing above the threshold is kept whole.
+   */
+  function trimSilence(pcm) {
+    const { data, rate, channels } = pcm;
+    const threshold = 330; // about -40 dBFS
+    let first = 0;
+    while (first < data.length && Math.abs(data[first]) < threshold) first++;
+    if (first >= data.length) return pcm;
+    let last = data.length - 1;
+    while (last > first && Math.abs(data[last]) < threshold) last--;
+    const margin = Math.round(0.04 * rate) * channels;
+    const start = Math.max(0, first - margin);
+    const end = Math.min(data.length, last + 1 + margin);
+    const from = start - (start % channels);
+    const to = end + ((channels - (end % channels)) % channels);
+    return { rate, channels, data: data.subarray(from, Math.min(data.length, to)) };
+  }
+
+  /**
    * One WAV Blob of `parts` ({blob, pauseMs}): each sound followed by its silence. Null
    * when the sounds are not all 16-bit PCM of the same rate and channels.
    */
@@ -3353,7 +3374,7 @@
     for (const part of parts) {
       const pcm = wavPcm(await part.blob.arrayBuffer());
       if (!pcm || (pcms.length && (pcm.rate !== pcms[0].rate || pcm.channels !== pcms[0].channels))) return null;
-      pcms.push(pcm);
+      pcms.push(trimSilence(pcm));
     }
     const { rate, channels } = pcms[0];
     const silences = parts.map((p) => Math.round((p.pauseMs / 1000) * rate) * channels);

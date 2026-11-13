@@ -1869,8 +1869,8 @@ each language is still loaded on first use.
     10-13 and 14-18), never splitting a word; a Quran chunk is never cut.
   - For each sentence the voice says it once at normal speed (`/api/tts`, `slow: false`),
     then each of its words slowly (`slow: true`, the punctuation left out), with a pause
-    after each word to write it: `base + perLetter × letters`, by age group (6-9: 1.5 s
-    + 0.6 s a letter; 10-13: 1.0 s + 0.35 s; 14-18: 0.8 s + 0.22 s; at most 9 s;
+    after each word to write it: `base + perLetter × letters`, by age group (6-9: 0.7 s
+    + 0.28 s a letter; 10-13: 0.5 s + 0.16 s; 14-18: 0.4 s + 0.1 s; at most 4 s;
     `writePauseMs`). Next is free once the sentence has been heard (it stops the words
     still to come); Repeat replays the sentence, then the words. The audio of every
     sentence and word is fetched once and kept in memory for the dictation; the next

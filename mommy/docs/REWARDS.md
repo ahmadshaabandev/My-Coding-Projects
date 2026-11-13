@@ -1038,8 +1038,10 @@ the logs).
     with a pause after each word to write it. Sentences: the server's phrases (at most 6
     words) are cut again in the browser to at most 4 words for 6-9 years (6 for 10-13 and
     14-18), never splitting a word. The pause after a word is `base + perLetter ×
-    letters`: 6-9 years 1.5 s + 0.6 s a letter, 10-13 years 1.0 s + 0.35 s, 14-18 years
-    0.8 s + 0.22 s, at most 9 s. Why these numbers: handwriting-speed norms put copying
+    letters`: 6-9 years 0.7 s + 0.28 s a letter, 10-13 years 0.5 s + 0.16 s, 14-18 years
+    0.4 s + 0.1 s, at most 4 s (about half of the first values, 1.5 s + 0.6 s, 1.0 s +
+    0.35 s, 0.8 s + 0.22 s, at most 9 s, which families found too slow: a child who
+    needs longer taps Repeat). Why the first numbers: handwriting-speed norms put copying
     at about 25-40 letters a minute at 7-8 years (1.5-2.4 s a letter), 60-80 at 11-12
     (0.75-1 s) and 100 or more at 15 (0.6 s); a dictation also needs time to recall the
     spelling, and the child hears the word again only on Repeat, so the base time covers
