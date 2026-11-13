@@ -59,6 +59,7 @@
 
   const STRINGS = {
     en: {
+      fam_more_setup: 'More: privacy, a copy of the family list',
       fam_led_practice_gone: 'Practice',
       fam_led_practice_quran: 'Practice: Quran',
       fam_led_practice: 'Practice: {title}',
@@ -386,6 +387,7 @@
     },
 
     fr: {
+      fam_more_setup: 'Plus : confidentialité, copie de la liste de la famille',
       fam_led_practice_gone: 'Entraînement',
       fam_led_practice_quran: 'Entraînement : Coran',
       fam_led_practice: 'Entraînement : {title}',
@@ -710,6 +712,7 @@
     },
 
     ar: {
+      fam_more_setup: 'المزيد: الخصوصية، نسخة من قائمة العائلة',
       fam_led_practice_gone: 'تدرّب',
       fam_led_practice_quran: 'تدرّب: القرآن الكريم',
       fam_led_practice: 'تدرّب: {title}',
@@ -1036,10 +1039,12 @@
 
   const LANG_NAMES = { en: 'English', fr: 'Français', ar: 'العربية' };
   const KIND_ICONS = { recite: 'i-mic', dictation: 'i-pencil', quran: 'i-book' };
-  const PARENT_SECTIONS = ['review', 'tasks', 'rewards', 'children', 'settings'];
+  // (Redesign) Only what needs a grown-up: nothing waits for the parent any more.
+  const PARENT_SECTIONS = ['rewards', 'tasks', 'children', 'settings'];
   const MAX_AYAT = 50;
   const STAR = '⭐';
   const LEDGER_SHOWN = 10; // history entries shown before "Show all"
+  const CHILD_SCREENS = ['home', 'texts', 'prepare', 'recite', 'dictation', 'quran'];
 
   // ===========================================================================
   // Module state
@@ -1056,8 +1061,10 @@
 
   const session = {
     childId: null, // the child learning in this tab (not taken from another tab)
-    parentOpen: false, // the parent area was unlocked; leaving it locks it again
-    section: 'tasks',
+    // The parent area was unlocked: it stays open while the grown-up moves around the app,
+    // and locks when the page is hidden, after 3 minutes without use in it, or by "Close".
+    parentOpen: false,
+    section: 'rewards',
     task: null, // {id, kind} of the task being done
     setupLang: null,
     setupChildLangTouched: false,
@@ -1068,13 +1075,14 @@
     childForm: null, // {id: childId | null}
     removing: null, // childId waiting for the remove confirmation
     detailTaskId: null, // the task whose details are open (Tasks)
-    sendBack: null, // {taskId, where: 'review' | 'detail', text}: the open "Not yet" note
+    undoing: null, // {taskId, where: 'tasks' | 'rewards'}: "Take the stars back", asked in place
     rwForm: null, // {kind: 'goal' | 'surprise' | 'adjust', childId}: the open form of Rewards
     ledgerAll: false, // the whole history of the stars is shown (else the newest entries)
     deleting: 0, // "delete all data": 0, or the confirmation step shown (1, then 2)
     copy: null, // Settings: a copy read from a file (readFamilyCopy), waiting for "Replace"
     setupCopy: null, // the setup: a copy read from a file, used instead of a first child
-    aiPromptLater: false, // "Not now" on the AI consent prompt, until the parent area opens again
+    whoAdd: false, // "Who is learning?": the form of a new profile is open
+    deletingText: null, // My texts: the text whose deletion is asked in place
   };
 
   // ===========================================================================
@@ -1432,7 +1440,7 @@
     if ($('#pin-dialog').open) closePin(false);
     if (app.taskRunning()) app.leaveTask();
     Object.assign(session, {
-      childId: null, parentOpen: false, section: 'tasks', task: null, ptChildId: null,
+      childId: null, parentOpen: false, section: 'rewards', task: null, ptChildId: null,
       setupLang: lang, setupChildLangTouched: false,
     });
     closeTaskForm();
@@ -1456,7 +1464,7 @@
     if (session.childForm && session.childForm.id && !doc.children.some((c) => c.id === session.childForm.id)) closeChildForm();
     if (session.removing && !doc.children.some((c) => c.id === session.removing)) hideRemoveConfirm();
     if (session.detailTaskId && !doc.tasks.some((x) => x.id === session.detailTaskId)) session.detailTaskId = null;
-    if (session.sendBack && !doc.tasks.some((x) => x.id === session.sendBack.taskId && x.status === 'ready')) session.sendBack = null;
+    if (session.undoing && !doc.tasks.some((x) => x.id === session.undoing.taskId && x.status === 'done')) session.undoing = null;
     syncApp();
     const screen = app.screen();
     const allowed = route(screen);
@@ -1479,7 +1487,7 @@
     updateTaskOfflineNote();
     const c = activeChild();
     app.setChild(c ? { id: c.id, nickname: c.nickname, age: c.age, lang: c.lang, quran: c.quran } : null);
-    if (c && ['home', 'prepare', 'recite', 'dictation', 'quran'].includes(app.screen())) app.setUiLang(c.lang);
+    if (c && CHILD_SCREENS.includes(app.screen())) app.setUiLang(c.lang);
   }
 
   /** The child's Quran screen state (surah, range, Juz' Amma), kept in the profile. */
@@ -1496,8 +1504,6 @@
   // ===========================================================================
   // Hooks for app.js: which screen, in which language
   // ===========================================================================
-
-  const CHILD_SCREENS = ['home', 'prepare', 'recite', 'dictation', 'quran'];
 
   function route(screen) {
     if (!store.doc) return 'start';
@@ -1522,19 +1528,25 @@
     if (screen === 'start') renderSetup();
     else if (screen === 'who') renderWho();
     else if (screen === 'home') renderHome();
+    else if (screen === 'texts') renderTexts();
+    else if (screen === 'recite' || screen === 'dictation') renderPickLists();
     else if (screen === 'parent') renderParent();
     if (session.task) renderBanner();
   }
 
   function leave(screen) {
     if (screen === 'parent') {
-      session.parentOpen = false; // the PIN is asked again next time
-      armParentIdle();
+      // (Redesign) Leaving the parent area does not lock it (the 3-minute timer, a hidden
+      // page and "Close" do); its open forms close.
       closeTaskForm();
       closeChildForm();
       hideRemoveConfirm();
       resetParentForms();
       session.detailTaskId = null;
+    } else if (screen === 'texts') {
+      session.deletingText = null;
+    } else if (screen === 'who') {
+      closeWhoAdd();
     }
   }
 
@@ -1544,6 +1556,8 @@
     if (screen === 'start') renderSetupCopy();
     else if (screen === 'who') renderWho();
     else if (screen === 'home') renderHome();
+    else if (screen === 'texts') renderTexts();
+    else if (screen === 'recite' || screen === 'dictation') renderPickLists();
     else if (screen === 'parent') renderParent();
     if (session.task) renderBanner();
   }
@@ -1754,6 +1768,7 @@
     const copy = session.setupCopy;
     $('#setup-copy-box').hidden = !copy;
     $('#setup-first-child').hidden = !!copy;
+    if (copy) $('#setup-more').open = true;
     if (copy) renderCopySummary('setup-copy', copy);
   }
 
@@ -1770,6 +1785,7 @@
 
   function renderWho() {
     const list = $('#who-list');
+    const formOpen = session.whoAdd || !(store.doc && store.doc.children.length);
     list.textContent = '';
     const children = store.doc ? store.doc.children : [];
     for (const c of children) {
@@ -1781,6 +1797,59 @@
       list.append(el('li', null, btn));
     }
     $('#who-empty').hidden = children.length > 0;
+    // (Redesign) A child adds their own profile, no PIN; with nobody yet, the form is open.
+    const form = $('#who-add');
+    if (formOpen && form.hidden) resetWhoAdd();
+    form.hidden = !formOpen;
+    $('#who-add-open').hidden = formOpen;
+    $('#who-add-open').setAttribute('aria-expanded', formOpen ? 'true' : 'false');
+  }
+
+  function resetWhoAdd() {
+    $('#wa-nick').value = '';
+    $('#wa-age').value = '6-9';
+    $('#wa-lang').value = store.doc ? store.doc.parent.uiLang : app.uiLang();
+    const used = new Set((store.doc ? store.doc.children : []).map((x) => x.avatar));
+    renderEmojiPick($('#wa-avatars'), R.AVATARS, R.AVATARS.find((a) => !used.has(a)) || R.AVATARS[0]);
+    app.clearStatus($('#wa-status'));
+  }
+
+  function openWhoAdd() {
+    session.whoAdd = true;
+    renderWho();
+    $('#who-add-h').focus();
+  }
+
+  function closeWhoAdd() {
+    session.whoAdd = false;
+    if ($('#who-add')) $('#who-add').hidden = true;
+  }
+
+  /** The new profile is saved, chosen, and its home opens. */
+  function submitWhoAdd() {
+    if (!store.doc) return;
+    const status = $('#wa-status');
+    const input = { nickname: $('#wa-nick').value.trim(), age: $('#wa-age').value, lang: $('#wa-lang').value, avatar: pickedEmoji($('#wa-avatars')) };
+    if (!input.nickname) {
+      app.setStatus(status, 'fam_wa_err_name', null, { error: true });
+      $('#wa-nick').focus();
+      return;
+    }
+    let child;
+    try {
+      update((d, now) => {
+        const r = R.addChild(d, input, now);
+        child = r.child;
+        return R.setActiveChild(r.doc, r.child.id, now);
+      });
+    } catch (err) {
+      app.setStatus(status, isRewardsError(err, 'bad_input') && err.field === 'nickname' ? 'fam_wa_err_name' : 'error_generic', null, { error: true });
+      return;
+    }
+    session.whoAdd = false;
+    session.childId = child.id;
+    syncApp();
+    app.go('home');
   }
 
   function pickChild(id) {
@@ -1825,9 +1894,9 @@
       bar.hidden = true;
     }
     renderSurprises(sum.unseenSurprises);
-    fillTaskList($('#home-todo'), $('#home-todo-empty'), sum.todo, 'todo');
-    fillTaskList($('#home-wait'), $('#home-wait-empty'), sum.waiting, 'waiting');
-    fillTaskList($('#home-done'), $('#home-done-empty'), sum.done, 'done');
+    // (Redesign) The parent's tasks are suggestions on top; free practice is always there.
+    fillTaskList($('#home-todo'), $('#home-todo-sec'), sum.todo, 'todo');
+    fillTaskList($('#home-done'), $('#home-done-sec'), sum.done, 'done');
   }
 
   /** Unseen surprises show once, as a celebration card. */
@@ -1853,10 +1922,11 @@
     }
   }
 
-  function fillTaskList(list, empty, tasks, section) {
+  /** A list of task cards; its section shows only when it has some. */
+  function fillTaskList(list, sectionNode, tasks, section) {
     list.textContent = '';
     for (const task of tasks) list.append(taskCard(task, section));
-    empty.hidden = tasks.length > 0;
+    sectionNode.hidden = tasks.length === 0;
   }
 
   /** One task card of the child's home ('todo', 'waiting' or 'done'). */
@@ -1993,39 +2063,168 @@
     if (passed) {
       const vars = { stars: starsText(task.stars) };
       if (task.reward) vars.reward = { user: rewardLabel(task.reward) };
-      const card = el('div', { class: 'celebrate' }, [el('p', { class: 'celebrate-title' }, tNodes(task.reward ? 'fam_celebrate_reward' : 'fam_celebrate', vars))]);
-      node.append(card);
-      // Dictation: the parent is here (they confirmed the result): a shortcut to confirm the task.
-      if (task.kind === 'dictation' && task.status === 'ready') card.append(dictationShortcut(task.id));
+      // (Redesign) The stars are in the jar at once: no grown-up step.
+      node.append(el('div', { class: 'celebrate' }, [el('p', { class: 'celebrate-title' }, tNodes(task.reward ? 'fam_celebrate_reward' : 'fam_celebrate', vars))]));
     } else {
       node.append(el('p', { class: 'try-again' }, t('fam_try_again')));
     }
     node.hidden = false;
   }
 
-  function dictationShortcut(taskId) {
-    const box = el('div', { class: 'shortcut' });
-    const btn = el('button', { type: 'button', class: 'btn btn-primary', id: 'btn-confirm-task-now' }, [svgIcon('i-lock'), el('span', null, t('fam_confirm_task_now'))]);
-    const status = el('p', { class: 'status', role: 'status', 'aria-live': 'polite' });
-    btn.addEventListener('click', async () => {
-      const ok = await pinDialog('confirm');
-      if (!ok) return;
-      let task;
-      try {
-        update((d, now) => R.confirmTask(d, taskId, 'app_pass', now));
-        task = R.getTask(store.doc, taskId);
-      } catch (err) {
-        app.setStatus(status, 'error_generic', null, { error: true });
-        return;
+  // ===========================================================================
+  // (Redesign) Stars of free practice: a saved text read aloud or written, the Quran section
+  // ===========================================================================
+
+  /** A check result of free practice: a star when it passes (rewards.js decides how many). */
+  function onPractice(input, res, node) {
+    const c = activeChild();
+    if (!store.doc || !c || !node) return;
+    let out;
+    try {
+      const r = updateSaved((d, now) => (out = R.awardPractice(d, c.id, input, res, now)).doc);
+      if (!out.stars && r.saved === false) return;
+    } catch (err) {
+      // A result that does not fit (it should not happen), or a text deleted meanwhile.
+      if (isRewardsError(err)) return;
+      throw err;
+    }
+    node.textContent = '';
+    if (out.why === 'not_passed') {
+      node.append(el('p', { class: 'try-again' }, t('fam_try_again')));
+    } else {
+      const key = out.why === 'star' ? 'fam_practice_star' : out.why === 'again_today' ? 'fam_practice_again' : 'fam_practice_limit';
+      node.append(el('div', { class: 'celebrate' }, [el('p', { class: 'celebrate-title' }, t(key))]));
+    }
+    node.hidden = false;
+  }
+
+  // ===========================================================================
+  // (Redesign) My texts: the child's saved texts
+  // ===========================================================================
+
+  function childTexts() {
+    const c = activeChild();
+    return c && store.doc ? R.childTexts(store.doc, c.id) : [];
+  }
+
+  function textMeta(x) {
+    return LANG_NAMES[x.lang] + ' · ' + t(x.mode === 'contextual' ? 'texts_mode_meaning' : 'texts_mode_words');
+  }
+
+  function renderTexts() {
+    const list = $('#texts-list');
+    list.textContent = '';
+    const texts = childTexts();
+    for (const x of texts) list.append(textItem(x));
+    $('#texts-empty').hidden = texts.length > 0;
+  }
+
+  function textItem(x) {
+    const nameId = 'tx-' + x.id;
+    const btn = (cls, key, attr, fn) => {
+      const b = el('button', Object.assign({ type: 'button', class: 'btn ' + cls, 'aria-describedby': nameId }, attr), t(key));
+      b.addEventListener('click', fn);
+      return b;
+    };
+    const lines = [
+      el('h2', { class: 'text-title', id: nameId }, userText(x.title)),
+      el('p', { class: 'hint text-meta' }, textMeta(x)),
+      el('div', { class: 'text-go' }, [
+        btn('btn-primary', 'texts_read', { 'data-text-recite': x.id }, () => app.openText(x, 'recite')),
+        btn('', 'texts_dict', { 'data-text-dict': x.id }, () => app.openText(x, 'dictation')),
+      ]),
+    ];
+    if (session.deletingText === x.id) {
+      const yes = btn('btn-small btn-danger-ghost', 'texts_delete', { 'data-text-delete-yes': x.id }, () => deleteText(x.id));
+      const no = btn('btn-small', 'fam_keep', { 'data-text-delete-no': x.id }, () => {
+        session.deletingText = null;
+        renderTexts();
+        const again = $('#texts-list [data-text-delete="' + x.id + '"]');
+        if (again) again.focus();
+      });
+      lines.push(el('div', { class: 'ptask-actions inline-confirm', role: 'group' }, [el('p', null, t('texts_delete_q')), yes, no]));
+    } else {
+      lines.push(el('div', { class: 'ptask-actions' }, [
+        btn('btn-small', 'texts_edit', { 'data-text-edit': x.id }, () => app.editText(x)),
+        btn('btn-small btn-danger-ghost', 'texts_delete', { 'data-text-delete': x.id }, () => {
+          session.deletingText = x.id;
+          renderTexts();
+          const yes = $('#texts-list [data-text-delete-yes="' + x.id + '"]');
+          if (yes) yes.focus();
+        }),
+      ]));
+    }
+    return el('li', { class: 'text-item', 'data-text': x.id }, lines);
+  }
+
+  function deleteText(textId) {
+    session.deletingText = null;
+    try {
+      update((d, now) => R.removeText(d, textId, now));
+    } catch (err) {
+      renderTexts();
+      app.setStatus($('#texts-status'), 'error_generic', null, { error: true });
+      return;
+    }
+    renderTexts();
+    app.setStatus($('#texts-status'), 'texts_deleted');
+    $('#texts-new').focus();
+  }
+
+  function newText() {
+    app.clearStatus($('#texts-status'));
+    const c = activeChild();
+    if (c && childTexts().length >= R.LIMITS.textsPerChild) {
+      app.setStatus($('#texts-status'), 'texts_full', { n: R.LIMITS.textsPerChild }, { error: true });
+      return;
+    }
+    app.editText(null);
+  }
+
+  /** Read aloud and Dictation without a text: the child's texts to choose from. */
+  function renderPickLists() {
+    const info = app.pageInfo();
+    for (const list of $$('.pick-list')) {
+      list.textContent = '';
+      if (info.ready || info.task) continue;
+      const screen = list.dataset.pick;
+      for (const x of childTexts().slice(0, 8)) {
+        const b = el('button', { type: 'button', class: 'btn pick-btn', 'data-pick-text': x.id }, [svgIcon('i-doc'), userText(x.title)]);
+        b.addEventListener('click', () => app.openText(x, screen));
+        list.append(el('li', null, b));
       }
-      box.textContent = '';
-      box.append(el('p', { class: 'confirmed' }, tNodes('fam_task_confirmed', { stars: starsText(task.stars) })));
-      if (task.reward) box.append(el('p', { class: 'confirmed' }, tNodes('fam_reward_unlocked_now', { reward: { user: rewardLabel(task.reward) } })));
-      box.setAttribute('tabindex', '-1');
-      box.focus();
-    });
-    box.append(el('p', { class: 'tag-parent' }, t('parent_tag')), el('p', null, t('fam_dict_shortcut')), btn, status);
-    return box;
+    }
+  }
+
+  /**
+   * The editor saved a text (app.js, after the server checked it): a new text of the
+   * active child, or the change of one. {id, title} or {error: key}.
+   */
+  function onTextSaved(input) {
+    const c = activeChild();
+    if (!store.doc || !c) return { error: 'text_not_saved' };
+    const fields = { title: input.title || null, text: input.text, lang: input.lang, mode: input.mode };
+    let text;
+    let saved;
+    try {
+      const own = input.id && store.doc.texts.some((x) => x.id === input.id && x.childId === c.id);
+      if (own) {
+        saved = updateSaved((d, now) => R.updateText(d, input.id, fields, now)).saved;
+        text = R.getText(store.doc, input.id);
+      } else {
+        if (!fields.title) delete fields.title;
+        saved = updateSaved((d, now) => {
+          const r = R.addText(d, c.id, fields, now);
+          text = r.text;
+          return r.doc;
+        }).saved;
+      }
+    } catch (err) {
+      if (isRewardsError(err, 'bad_input') && err.field === 'texts') return { error: 'texts_full' };
+      return { error: 'text_not_saved' };
+    }
+    if (!saved && !store.memoryOnly) return { error: 'text_not_saved' };
+    return { id: text.id, title: text.title };
   }
 
   // ===========================================================================
@@ -2325,7 +2524,9 @@
     if (!session.parentOpen) return;
     if ($('#pin-dialog').open && pin.purpose === 'change') closePin(false);
     session.parentOpen = false;
-    app.go('who');
+    // On the parent area, the next screen is "Who is learning?"; elsewhere (a child's
+    // screen) nothing moves: the area simply asks for the PIN again next time.
+    if (app.screen() === 'parent') app.go('who');
   }
 
   /**
@@ -2362,23 +2563,28 @@
       pickerTappedAt = null;
       if (!picker) lockParent();
     });
+    // Only use of the parent area keeps it open: a child using the app does not.
     for (const ev of ['pointerdown', 'keydown', 'input', 'wheel', 'touchstart']) {
-      document.addEventListener(ev, () => session.parentOpen && armParentIdle(), { capture: true, passive: true });
+      document.addEventListener(ev, () => {
+        if (session.parentOpen && (app.screen() === 'parent' || $('#pin-dialog').open)) armParentIdle();
+      }, { capture: true, passive: true });
     }
   }
 
   async function openParent() {
     if (!store.doc) return;
+    // (Redesign) Still open (the grown-up went to a child's screen and came back): no PIN.
+    if (session.parentOpen) {
+      armParentIdle();
+      app.go('parent');
+      return;
+    }
     const ok = await pinDialog('unlock');
     if (!ok) return;
     session.parentOpen = true;
-    session.aiPromptLater = false; // asked again each time the parent area opens
-    app.clearStatus($('#ai-prompt-done'));
     armParentIdle();
-    // Without consent the microphone stays off: the box is in Settings. Otherwise the
-    // tasks waiting for a grown-up come first.
-    if (!store.doc.parent.consentAt) session.section = 'settings';
-    else session.section = R.reviewQueue(store.doc).length ? 'review' : 'tasks';
+    // Without consent the microphone stays off: the box is in Settings. Otherwise Rewards.
+    session.section = store.doc.parent.consentAt ? 'rewards' : 'settings';
     app.go('parent');
   }
 
@@ -2395,73 +2601,20 @@
 
   function closeParent() {
     session.parentOpen = false;
+    if (parentIdle) clearTimeout(parentIdle);
+    parentIdle = null;
     app.go(session.childId ? 'home' : 'who');
-  }
-
-  /**
-   * The AI consent prompt at the top of the parent area: Claude is set up, the general
-   * consent is given, and the AI consent is not (never given, given while Claude was not
-   * set up, or saved before it had its own box). Not on Settings, which has the box, and
-   * not after "Not now" until the parent area is opened again.
-   */
-  function aiPromptWanted() {
-    const p = store.doc && store.doc.parent;
-    return !!p && !!p.consentAt && claudeSetUp() && !R.hasAiConsent(store.doc) && !session.aiPromptLater && session.section !== 'settings';
-  }
-
-  function renderAiPrompt() {
-    const box = $('#ai-prompt');
-    const show = aiPromptWanted();
-    if (show && box.hidden) {
-      $('#ai-prompt-check').checked = false;
-      app.clearStatus($('#ai-prompt-status'));
-    }
-    box.hidden = !show;
-  }
-
-  function saveAiPrompt() {
-    const status = $('#ai-prompt-status');
-    if (!$('#ai-prompt-check').checked) {
-      app.setStatus(status, 'fam_ai_tick_first', null, { error: true });
-      $('#ai-prompt-check').focus();
-      return;
-    }
-    // Only while the box stood under the Claude notice (the prompt shows only then).
-    if (!aiPromptWanted()) {
-      renderAiPrompt();
-      return;
-    }
-    try {
-      update((d, now) => R.updateParent(d, { aiConsent: true }, now));
-    } catch (err) {
-      app.setStatus(status, 'error_generic', null, { error: true });
-      return;
-    }
-    syncApp();
-    renderParent();
-    app.setStatus($('#ai-prompt-done'), 'fam_ai_saved');
-    const h = $('#screen-parent .psec:not([hidden]) h2');
-    if (h) h.focus();
-  }
-
-  function laterAiPrompt() {
-    session.aiPromptLater = true;
-    renderAiPrompt();
-    const h = $('#screen-parent .psec:not([hidden]) h2');
-    if (h) h.focus();
   }
 
   function renderParent() {
     if (!store.doc) return;
     renderPinResetNotice();
-    renderAiPrompt();
     for (const tab of $$('#psec-nav .psec-tab')) {
       if (tab.dataset.psec === session.section) tab.setAttribute('aria-current', 'true');
       else tab.removeAttribute('aria-current');
     }
     for (const sec of $$('#screen-parent .psec')) sec.hidden = sec.dataset.psec !== session.section;
-    if (session.section === 'review') renderReview();
-    else if (session.section === 'tasks') renderTasks();
+    if (session.section === 'tasks') renderTasks();
     else if (session.section === 'rewards') renderRewards();
     else if (session.section === 'children') renderChildren();
     else if (session.section === 'settings') renderSettings();
@@ -2471,7 +2624,6 @@
   function showSection(name) {
     if (!PARENT_SECTIONS.includes(name)) return;
     if (name !== session.section) {
-      app.clearStatus($('#ai-prompt-done'));
       closeTaskForm();
       closeChildForm();
       hideRemoveConfirm();
@@ -2486,7 +2638,7 @@
 
   /** The small forms of To review, Rewards and Settings, closed. */
   function resetParentForms() {
-    session.sendBack = null;
+    session.undoing = null;
     session.ledgerAll = false;
     session.deleting = 0;
     session.copy = null;
@@ -2498,7 +2650,6 @@
     const doc = store.doc;
     const kids = new Set(doc.children.map((c) => c.id));
     const give = doc.tasks.filter((x) => x.rewardStatus === 'unlocked' && kids.has(x.childId)).length;
-    setCount($('#psec-count-review'), R.reviewQueue(doc).length);
     setCount($('#psec-count-rewards'), give);
   }
 
@@ -2560,107 +2711,58 @@
     return el('p', { class: 'improve' }, tNodes(n === 1 ? 'fam_review_improve_one' : 'fam_review_improve', { n }));
   }
 
-  // --- To review: the queue across children ------------------------------------
-
-  function renderReview() {
-    const queue = R.reviewQueue(store.doc);
-    const list = $('#pr-list');
-    list.textContent = '';
-    for (const entry of queue) list.append(reviewItem(entry));
-    $('#pr-notes').hidden = !queue.length;
-    $('#pr-empty').hidden = queue.length > 0;
-  }
-
-  function reviewItem(entry) {
-    const task = entry.task;
-    return el('li', { class: 'ptask review-item status-ready', 'data-task': task.id }, [
-      el('p', { class: 'review-who' }, [el('span', { class: 'review-avatar', 'aria-hidden': 'true' }, entry.child.avatar), userText(entry.child.nickname)]),
-      el('div', { class: 'ptask-head' }, [kindIcon(task.kind), el('p', { class: 'ptask-title' }, userText(task.title))]),
-      el('p', { class: 'hint ptask-meta' }, t('fam_kind_' + task.kind) + ' · ' + t('fam_pass_line', { rule: passRuleText(task) })),
-      statList(task, entry),
-      improvementLine(entry.improvement),
-      // A dictation is written: the paper is the parent's real check (UX-13).
-      task.kind === 'dictation' ? el('p', { class: 'hint-parent' }, t('fam_review_paper')) : null,
-      readyActions(task, 'review'),
-    ]);
-  }
-
-  /** Confirm and "Not yet: try again" (with the note form when it is open) for a task waiting for the parent. */
-  function readyActions(task, where) {
-    const box = el('div', { class: 'ready-actions' });
-    const open = !!session.sendBack && session.sendBack.taskId === task.id && session.sendBack.where === where;
-    const confirm = el('button', { type: 'button', class: 'btn btn-primary btn-small', 'data-confirm': task.id }, t('fam_confirm'));
-    confirm.addEventListener('click', () => confirmNow(task.id, 'app_pass', where));
-    const notYet = el('button', { type: 'button', class: 'btn btn-small', 'data-not-yet': task.id, 'aria-expanded': open ? 'true' : 'false' }, t('fam_not_yet'));
-    notYet.addEventListener('click', () => toggleSendBack(task.id, where));
-    box.append(el('div', { class: 'ptask-actions' }, [confirm, notYet]));
-    if (open) box.append(sendBackForm(task, where));
-    return box;
-  }
-
   function sectionStatus(where) {
-    return where === 'review' ? $('#pr-status') : where === 'rewards' ? $('#prw-status') : $('#pt-status');
+    return where === 'rewards' ? $('#prw-status') : $('#pt-status');
   }
 
   /** After an action in a list that was drawn again: focus where the parent was. */
   function refocus(where, taskId) {
-    const target = where === 'review' ? $('#psec-review-h') : where === 'rewards' ? $('#prw-give-h') : $('#pt-list [data-details="' + taskId + '"]') || $('#psec-tasks-h');
+    const target = where === 'rewards' ? $('#prw-history-h') : $('#pt-list [data-details="' + taskId + '"]') || $('#psec-tasks-h');
     if (target) target.focus();
   }
 
-  function toggleSendBack(taskId, where) {
-    const open = session.sendBack && session.sendBack.taskId === taskId && session.sendBack.where === where;
-    session.sendBack = open ? null : { taskId, where, text: '' };
-    renderParent();
-    if (open) {
-      const b = $('#screen-parent [data-not-yet="' + taskId + '"]');
-      if (b) b.focus();
-    } else {
-      const input = $('#sb-note-' + taskId);
-      if (input) input.focus();
-    }
-  }
-
-  function sendBackForm(task, where) {
-    const id = 'sb-note-' + task.id;
-    const input = el('input', { id, type: 'text', maxlength: String(R.LIMITS.sentBackNote), autocomplete: 'off', spellcheck: 'false', dir: 'auto' });
-    input.value = session.sendBack.text;
-    input.addEventListener('input', () => {
-      if (session.sendBack) session.sendBack.text = input.value;
-    });
-    const status = el('p', { class: 'status', role: 'status', 'aria-live': 'polite' });
-    const send = el('button', { type: 'submit', class: 'btn btn-primary btn-small', 'data-send-back': task.id }, t('fam_sendback_send'));
-    const cancel = el('button', { type: 'button', class: 'btn btn-small' }, t('fam_cancel'));
-    cancel.addEventListener('click', () => toggleSendBack(task.id, where));
-    const form = el('form', { class: 'sub-form send-back', novalidate: true }, [
-      el('div', { class: 'field' }, [el('label', { for: id }, t('fam_sendback_label')), input]),
-      el('p', { class: 'hint' }, t('fam_sendback_hint')),
-      status,
-      el('div', { class: 'btn-row' }, [send, cancel]),
-    ]);
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      sendBackNow(task.id, input.value, where, status);
-    });
-    return form;
-  }
-
-  function sendBackNow(taskId, note, where, formStatus) {
-    const task = R.getTask(store.doc, taskId);
-    if (!task) return;
+  /** (Redesign) The parent takes back the stars of a done task: it is to do again. */
+  function undoNow(taskId, where) {
+    session.undoing = null;
+    let task;
     try {
-      update((d, now) => R.sendBack(d, taskId, note.trim() || null, now));
+      update((d, now) => R.undoTask(d, taskId, now));
+      task = R.getTask(store.doc, taskId);
     } catch (err) {
-      app.setStatus(formStatus, 'error_generic', null, { error: true });
+      renderParent();
+      app.setStatus(sectionStatus(where), 'error_generic', null, { error: true });
       return;
     }
-    session.sendBack = null;
     renderParent();
-    say(sectionStatus(where), [['fam_sent_back', { name: childName(task.childId) }]]);
-    refocus(where, taskId);
+    say(sectionStatus(where), [['fam_undone']]);
+    refocus(where, task.id);
   }
 
-  /** Confirm ('app_pass', a task waiting) or confirm anyway ('parent_override', a task to do). */
+  /** "Take the stars back", asked in place first (the reward is locked again too). */
+  function undoControls(task, where) {
+    if (session.undoing && session.undoing.taskId === task.id && session.undoing.where === where) {
+      const yes = el('button', { type: 'button', class: 'btn btn-small btn-danger-ghost', 'data-undo-yes': task.id }, t('fam_undo'));
+      yes.addEventListener('click', () => undoNow(task.id, where));
+      const no = el('button', { type: 'button', class: 'btn btn-small', 'data-undo-no': task.id }, t('fam_keep'));
+      no.addEventListener('click', () => {
+        session.undoing = null;
+        renderParent();
+        const again = $('#screen-parent [data-undo="' + task.id + '"]');
+        if (again) again.focus();
+      });
+      return el('div', { class: 'ptask-actions inline-confirm', role: 'group' }, [el('p', null, t('fam_undo_q')), yes, no]);
+    }
+    const b = el('button', { type: 'button', class: 'btn btn-small btn-danger-ghost', 'data-undo': task.id }, t('fam_undo'));
+    b.addEventListener('click', () => {
+      session.undoing = { taskId: task.id, where };
+      renderParent();
+      const yes = $('#screen-parent [data-undo-yes="' + task.id + '"]');
+      if (yes) yes.focus();
+    });
+    return b;
+  }
+
+  /** "Mark as done" ('parent_override', a task to do): its stars go into the jar. */
   function confirmNow(taskId, how, where) {
     let task;
     try {
@@ -2671,7 +2773,6 @@
       app.setStatus(sectionStatus(where), 'error_generic', null, { error: true });
       return;
     }
-    if (session.sendBack && session.sendBack.taskId === taskId) session.sendBack = null;
     renderParent();
     const parts = [['fam_confirmed_for', { stars: starsText(task.stars), name: childName(task.childId) }]];
     if (task.reward) parts.push(['fam_reward_to_give', { reward: { user: rewardLabel(task.reward) } }]);
@@ -2699,7 +2800,6 @@
 
   function toggleDetail(taskId) {
     session.detailTaskId = session.detailTaskId === taskId ? null : taskId;
-    if (session.sendBack && session.sendBack.where === 'detail') session.sendBack = null;
     renderTasks();
     const b = $('#pt-list [data-details="' + taskId + '"]');
     if (b) b.focus();
@@ -2744,18 +2844,10 @@
       box.append(el('p', { class: 'hint detail-line' }, t('fam_detail_no_try')));
     }
     if (task.sentBackNote && task.status === 'assigned') box.append(el('p', { class: 'task-note' }, [t('fam_note_label') + ' ', userText(task.sentBackNote)]));
+    if (task.status === 'assigned') box.append(el('p', { class: 'hint-parent' }, t(task.kind === 'dictation' ? 'fam_detail_anyway_dictation' : 'fam_mark_done_hint')));
     if (task.confirmedBy) box.append(el('p', { class: 'detail-line' }, t(task.confirmedBy === 'app_pass' ? 'fam_detail_by_app' : 'fam_detail_by_parent')));
     if (task.reward) box.append(el('p', { class: 'detail-line' }, [el('span', { 'aria-hidden': 'true' }, task.reward.emoji + ' '), t('fam_rs_' + (task.rewardStatus === 'none' ? 'locked' : task.rewardStatus))]));
     const actions = R.taskActions(task);
-    if (actions.confirm) {
-      box.append(el('p', { class: 'hint-parent' }, t('fam_detail_waiting')), readyActions(task, 'detail'));
-    } else if (actions.confirmAnyway) {
-      const b = el('button', { type: 'button', class: 'btn btn-primary btn-small', 'data-confirm-anyway': task.id }, t('fam_confirm_anyway'));
-      b.addEventListener('click', () => confirmNow(task.id, 'parent_override', 'detail'));
-      // Never passed in the app, or to do again (sent back, or its text changed).
-      const hint = stats.passedCount ? 'fam_detail_anyway_again' : task.kind === 'dictation' ? 'fam_detail_anyway_dictation' : 'fam_detail_anyway_hint';
-      box.append(el('p', { class: 'hint-parent' }, t(hint)), el('div', { class: 'ptask-actions' }, b));
-    }
     if (actions.markRewardGiven) {
       const b = el('button', { type: 'button', class: 'btn btn-small', 'data-given': task.id }, t('fam_mark_given'));
       b.addEventListener('click', () => markGiven(task.id, 'detail'));
@@ -2956,7 +3048,11 @@
     for (const e of shown) {
       const plus = e.delta > 0;
       const delta = el('bdi', { class: 'ledger-delta ' + (plus ? 'is-plus' : 'is-minus'), dir: 'ltr' }, (plus ? '+' : e.delta < 0 ? '−' : '') + app.fmtNum(Math.abs(e.delta)) + ' ' + STAR);
-      list.append(el('li', null, [delta, el('span', { class: 'ledger-what' }, ledgerWhat(doc, jar, e)), el('span', { class: 'ledger-when' }, fmtDate(e.at))]));
+      const item = el('li', null, [delta, el('span', { class: 'ledger-what' }, ledgerWhat(doc, jar, e)), el('span', { class: 'ledger-when' }, fmtDate(e.at))]);
+      // (Redesign) The stars a task gave can be taken back here (its latest credit only).
+      const task = e.reason === 'task' && e.ref ? doc.tasks.find((x) => x.id === e.ref) : null;
+      if (task && task.status === 'done' && latestCredit(jar, task.id) === e) item.append(el('div', { class: 'ledger-undo' }, undoControls(task, 'rewards')));
+      list.append(item);
     }
     $('#prw-ledger-empty').hidden = entries.length > 0;
     const more = $('#prw-ledger-more');
@@ -2965,10 +3061,28 @@
     more.textContent = session.ledgerAll ? t('fam_show_less') : t('fam_show_all', { n: entries.length });
   }
 
+  /** The newest 'task' entry of a task in the history. */
+  function latestCredit(jar, taskId) {
+    for (let i = jar.ledger.length - 1; i >= 0; i--) {
+      const e = jar.ledger[i];
+      if (e.ref === taskId && (e.reason === 'task' || e.reason === 'undo')) return e.reason === 'task' ? e : null;
+    }
+    return null;
+  }
+
   function ledgerWhat(doc, jar, e) {
     if (e.reason === 'task') {
       const task = doc.tasks.find((x) => x.id === e.ref);
       return task ? tNodes('fam_led_task', { title: { user: task.title } }) : t('fam_led_task_gone');
+    }
+    if (e.reason === 'undo') {
+      const task = doc.tasks.find((x) => x.id === e.ref);
+      return task ? tNodes('fam_led_undo', { title: { user: task.title } }) : t('fam_led_undo_gone');
+    }
+    if (e.reason === 'practice') {
+      if (e.act === 'quran') return t('fam_led_practice_quran');
+      const x = e.ref ? (doc.texts || []).find((y) => y.id === e.ref) : null;
+      return x ? tNodes('fam_led_practice', { title: { user: x.title } }) : t('fam_led_practice_gone');
     }
     if (e.reason === 'goal') {
       const goal = jar.goals.find((g) => g.id === e.ref);
@@ -3499,7 +3613,7 @@
       $('#pt-archived').hidden = true;
       return;
     }
-    const order = { assigned: 0, ready: 1, done: 2 };
+    const order = { assigned: 0, done: 2 };
     const tasks = doc.tasks.filter((x) => x.childId === session.ptChildId);
     const shown = tasks.filter((x) => x.status !== 'archived').sort((a, b) => order[a.status] - order[b.status] || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
     for (const task of shown) list.append(parentTaskItem(task));
@@ -3563,7 +3677,15 @@
       });
       buttons.push(b);
     }
+    if (actions.confirmAnyway) {
+      const b = el('button', { type: 'button', class: 'btn btn-small', 'data-confirm-anyway': task.id }, t('fam_mark_done'));
+      b.addEventListener('click', () => confirmNow(task.id, 'parent_override', 'tasks'));
+      buttons.push(b);
+    }
+    const undoing = task.status === 'done' && session.undoing && session.undoing.taskId === task.id && session.undoing.where === 'tasks';
+    if (task.status === 'done' && !undoing) buttons.push(undoControls(task, 'tasks'));
     let actionRow = el('div', { class: 'ptask-actions' }, buttons);
+    if (undoing) actionRow = undoControls(task, 'tasks');
     if (actions.archive && session.archiving === task.id) {
       const yes = el('button', { type: 'button', class: 'btn btn-small btn-danger-ghost', 'data-archive-yes': task.id }, t('fam_archive'));
       yes.addEventListener('click', () => archive(task.id));
@@ -3603,7 +3725,6 @@
       return;
     }
     if (session.taskForm && session.taskForm.id === taskId) closeTaskForm();
-    if (session.sendBack && session.sendBack.taskId === taskId) session.sendBack = null;
     renderParent();
     app.setStatus($('#pt-status'), 'fam_task_archived');
     $('#pt-new').focus();
@@ -3725,10 +3846,7 @@
    */
   function onHealth() {
     updateTaskOfflineNote();
-    if (store.doc && app.screen() === 'parent') {
-      renderAiPrompt();
-      if (session.section === 'settings') renderSettings();
-    }
+    if (store.doc && app.screen() === 'parent' && session.section === 'settings') renderSettings();
   }
 
   function setRadio(name, value) {
@@ -3801,6 +3919,8 @@
     $('#tf-reward-text').value = task && task.reward ? task.reward.text : '';
     renderEmojiPick($('#tf-emojis'), R.REWARD_EMOJIS, task && task.reward ? task.reward.emoji : R.REWARD_EMOJIS[0]);
     $('#tf-due').value = task && task.due ? task.due : '';
+    // "More options" is open when the task uses one of them.
+    $('#tf-more').open = !!task && (!!task.reward || !!task.due || task.pass.minAccuracy !== 1 || task.title !== R.defaultTitle(task.kind, task));
     for (const id of ['#tf-status', '#tf-photo-status', '#tf-quran-note', '#tf-surah-status']) app.clearStatus($(id));
     showTaskQuran(null);
     $('#tf-to-quran').hidden = true;
@@ -3875,7 +3995,11 @@
     const kind = task ? task.kind : formKind();
     const fail = (key, focus) => {
       app.setStatus(status, key, null, { error: true });
-      if (focus) focus.focus();
+      if (focus) {
+        const more = focus.closest('details');
+        if (more) more.open = true;
+        focus.focus();
+      }
     };
     let withQuran = false;
     const common = {};
@@ -4034,8 +4158,6 @@
     });
     $('#settings-consent').addEventListener('change', onSettingsConsent);
     $('#settings-ai-consent').addEventListener('change', onSettingsAiConsent);
-    $('#ai-prompt-save').addEventListener('click', saveAiPrompt);
-    $('#ai-prompt-later').addEventListener('click', laterAiPrompt);
     // Children
     $('#pc-add').addEventListener('click', () => openChildForm(null));
     $('#cf').addEventListener('submit', (e) => {
@@ -4056,7 +4178,7 @@
       session.ptChildId = e.target.value;
       closeTaskForm();
       session.detailTaskId = null;
-      session.sendBack = null;
+      session.undoing = null;
       app.clearStatus($('#pt-status'));
       renderTasks();
     });
@@ -4144,6 +4266,18 @@
       $('#data-notice').hidden = true;
     });
     for (const id of ['#btn-who-parents', '#btn-home-parents']) $(id).addEventListener('click', openParent);
+    // (Redesign) A child adds their own profile; My texts.
+    $('#who-add-open').addEventListener('click', openWhoAdd);
+    $('#who-add').addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitWhoAdd();
+    });
+    $('#wa-cancel').addEventListener('click', () => {
+      closeWhoAdd();
+      renderWho();
+      $('#who-add-open').focus();
+    });
+    $('#texts-new').addEventListener('click', newText);
     $('#btn-switch-child').addEventListener('click', () => {
       session.childId = null;
       syncApp();
@@ -4151,7 +4285,7 @@
     });
     window.addEventListener('storage', onStorage);
     syncApp();
-    app.setHooks({ route, langFor, enter, leave, onQuranPrefs, onLanguage: redraw, onHealth });
+    app.setHooks({ route, langFor, enter, leave, onQuranPrefs, onLanguage: redraw, onHealth, onTextSaved, onPractice });
   }
 
   window.MommyFamily = Object.freeze({ attach });

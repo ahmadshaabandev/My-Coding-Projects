@@ -47,7 +47,7 @@
 
   const STRINGS = {
     en: {
-      dict_fix_hint: 'If a word was read wrong, let’s fix it here, then check again.',
+      dict_fix_hint: 'If a word was not read as it was written, let’s fix it here, then check again.',
       dict_fix_title: 'Was my writing read right?',
       other_text: 'Another text',
       which_text: 'Text:',
@@ -279,7 +279,7 @@
     },
 
     fr: {
-      dict_fix_hint: 'Si un mot a été mal lu, corrigeons-le ici, puis vérifions de nouveau.',
+      dict_fix_hint: 'Si un mot n’a pas été lu comme il était écrit, corrigeons-le ici, puis vérifions de nouveau.',
       dict_fix_title: 'Mon écriture a-t-elle été bien lue ?',
       other_text: 'Un autre texte',
       which_text: 'Texte :',
@@ -503,7 +503,7 @@
     },
 
     ar: {
-      dict_fix_hint: 'إذا قُرئت كلمة خطأً، هيا نصحّحها هنا ثم نعيد التحقّق.',
+      dict_fix_hint: 'إذا لم تُقرأ كلمة كما كُتبت، هيا نصحّحها هنا ثم نعيد التحقّق.',
       dict_fix_title: 'هل قُرئت كتابتي جيدًا؟',
       other_text: 'نص آخر',
       which_text: 'النص:',
@@ -1588,7 +1588,8 @@
     }
     const childScreen = CHILD_SCREENS.includes(screen) && state.childId !== null;
     // During a task the banner leads back: no tabs to other activities.
-    $('#nav').hidden = !childScreen || !!state.task;
+    // (Redesign) The home has its own big buttons: no tabs there.
+    $('#nav').hidden = !childScreen || !!state.task || screen === 'home';
     $('#btn-home').hidden = !childScreen || screen === 'home';
     $('#task-banner').hidden = !state.task;
     if (screen === 'recite') enterRecite();

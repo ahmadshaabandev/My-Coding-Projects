@@ -1716,6 +1716,162 @@ fieldset {
   gap: 10px;
 }
 
+/* (Redesign) The child's home: four big buttons, all free practice. */
+.home-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.home-act {
+  min-height: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 8px;
+  border: 3px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 800;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.home-act:hover {
+  border-color: var(--primary);
+}
+
+.home-act .icon {
+  width: 40px;
+  height: 40px;
+  color: var(--primary);
+}
+
+.home-act.act-recite .icon {
+  color: var(--rec);
+}
+
+/* (Redesign) My texts: each text with its two ways to practise. */
+.text-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.text-item {
+  padding: 14px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.text-title {
+  margin: 0;
+  font-size: 1.2rem;
+  overflow-wrap: anywhere;
+}
+
+.text-meta {
+  margin: 2px 0 10px;
+}
+
+.text-go {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.text-go .btn {
+  min-height: 56px;
+  font-size: 1.1rem;
+}
+
+/* Read aloud and Dictation without a text: the texts to choose from. */
+.pick-list {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.pick-list:empty {
+  display: none;
+}
+
+.pick-btn {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: start;
+}
+
+.which-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0 0 8px;
+  font-weight: 700;
+}
+
+.which-label {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* "More": details that only grown-ups need now and then. */
+details.more {
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface-2);
+}
+
+details.more > summary {
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+details.more > summary:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+details.more[open] {
+  padding: 0 12px 12px;
+}
+
+details.more[open] > summary {
+  margin: 0 -12px 6px;
+}
+
+.privacy-short {
+  margin-top: 12px;
+}
+
+.who-add {
+  margin-top: 14px;
+}
+
+.ledger-undo {
+  flex-basis: 100%;
+}
+
 /* The task being done: title, pass level, the way back. */
 .task-banner {
   display: flex;
@@ -1806,8 +1962,8 @@ fieldset {
 
 /* The parent area. */
 .psec-nav {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   margin: 0 0 14px;
 }
@@ -2301,6 +2457,12 @@ h4 {
 
   .card {
     padding: 14px;
+  }
+}
+
+@media (min-width: 560px) {
+  .psec-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
