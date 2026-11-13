@@ -33,10 +33,10 @@ What you need:
   with one of the three newest macOS versions (Apple menu > About This Mac shows yours),
   Intel or Apple Silicon (M1, M2, M3 and later). Linux works too (see the note at the
   end).
-- **8 GB of RAM or more.** Mommy uses 4 to 5 GB while it runs.
+- **8 GB of RAM or more.** Mommy uses 5 to 6 GB while it runs.
 - **About 10 GB of free disk space**: Docker Desktop takes about 3 GB, and Mommy about
-  5 GB (the app with its speech models, and what Docker keeps from building it).
-- The first start downloads about 1 GB (plus about 0.5 GB for Docker Desktop) and takes
+  6 GB (the app with its speech models, and what Docker keeps from building it).
+- The first start downloads about 1.6 GB (plus about 0.5 GB for Docker Desktop) and takes
   10 to 30 minutes, depending on your internet connection.
 
 The computer must stay on (and awake) while your friend uses Mommy. If it cannot,
@@ -75,7 +75,11 @@ small computer in Oracle's cloud, which stays on day and night.
    **Use recommended settings**, keep it and type your Mac password. Accept the terms when
    it asks. Signing in to a Docker account is not needed: you can skip it. Wait until the
    bottom-left corner of its window says **Engine running**.
-4. **Give it enough memory.** Mommy needs at least 6 GB inside Docker.
+4. **Give it enough memory.** Mommy needs at least 6 GB inside Docker. About 1 GB of
+   it is for the quick live recognisers of English and French; if Docker can have only
+   6 GB and Mommy stops while it checks a reading (out of memory), add the line
+   `MOMMY_LIVE_ASR_MODEL: whisper` under `environment:` in `compose.yaml` (the live check
+   then waits for Whisper, as before).
 
    - **Mac:** in Docker Desktop, click the gear icon (Settings) > **Resources** >
      **Advanced**. Set **Memory limit** to **6 GB or more** (8 GB if your Mac has 16 GB of

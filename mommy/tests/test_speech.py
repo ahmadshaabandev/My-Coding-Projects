@@ -42,7 +42,9 @@ from mommy.asr import (
     ASRUnavailable,
     FakeTranscriber,
     MIN_DECODE_SAMPLES,
+    QUICK_MODELS,
     SAMPLE_RATE,
+    QuickRecognizer,
     SherpaWhisper,
     Transcriber,
     audio_quality,
@@ -581,6 +583,89 @@ class TestSherpaWhisperWrapper:
         assert w.available is False
 
 
+@pytest.fixture
+def fake_quick(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> SimpleNamespace:
+    """Replace sherpa_onnx in mommy.asr with a recorder of the quick builders; create the
+    model files of every quick recogniser."""
+    builds: list[tuple[str, dict]] = []
+    decodes: list[int] = []
+
+    def builder(kind: str):
+        def build(**kwargs):  # keyword-only, like the real calls
+            builds.append((kind, kwargs))
+            return _FakeRecognizer(kwargs, decodes)
+        return build
+
+    monkeypatch.setattr(asr_mod, "sherpa_onnx", SimpleNamespace(OfflineRecognizer=SimpleNamespace(
+        from_moonshine_v2=builder("moonshine_v2"), from_transducer=builder("transducer"))))
+    for model in QUICK_MODELS.values():
+        (tmp_path / model.directory).mkdir()
+        for name in model.files:
+            (tmp_path / model.directory / name).write_bytes(b"")
+    return SimpleNamespace(models_dir=tmp_path, builds=builds, decodes=decodes)
+
+
+class TestQuickRecognizer:
+    def test_models(self) -> None:
+        # Arabic has no quick recogniser: none was close to Whisper turbo.
+        assert set(QUICK_MODELS) == {"en", "fr"}
+        assert QUICK_MODELS["en"].kind == "moonshine_v2" and QUICK_MODELS["en"].max_seconds == 15.0
+        assert QUICK_MODELS["fr"].kind == "nemo_transducer" and QUICK_MODELS["fr"].max_seconds == asr_mod.MAX_CHUNK_SECONDS
+
+    def test_missing_files_means_none(self, tmp_path: Path) -> None:
+        q = QuickRecognizer(tmp_path, 2)
+        assert q.available is False and q.languages == ()
+        assert not q.available_for("en") and not q.accepts(np.zeros(16000, np.float32), "en")
+        with pytest.raises(ASRUnavailable):
+            q.transcribe(np.zeros(16000, dtype=np.float32), "en")
+        q.preload()  # nothing to load, no error
+        with pytest.raises(ValueError):
+            QuickRecognizer(tmp_path, 0)
+
+    def test_one_language_present(self, fake_quick: SimpleNamespace) -> None:
+        model = QUICK_MODELS["fr"]
+        (fake_quick.models_dir / model.directory / model.files[0]).unlink()
+        q = QuickRecognizer(fake_quick.models_dir, 2)
+        assert q.languages == ("en",) and q.available_for("en") and not q.available_for("fr")
+        assert not q.available_for("ar")
+
+    def test_signature_cannot_take_expected_text(self) -> None:
+        assert list(inspect.signature(QuickRecognizer.transcribe).parameters) == ["self", "pcm16k", "lang"]
+
+    def test_never_given_prompt_hotwords_or_language(self, fake_quick: SimpleNamespace) -> None:
+        q = QuickRecognizer(fake_quick.models_dir, num_threads=3)
+        assert q.languages == ("en", "fr") and not fake_quick.builds  # lazy
+        x = np.ones(16000, dtype=np.float32) * 0.1
+        assert q.transcribe(x, "en") == "piece1"  # cleaned like Whisper's text
+        q.transcribe(x, "fr")
+        q.transcribe(x, "en")
+        (k1, moon), (k2, para) = fake_quick.builds  # one build per model, cached
+        assert k1 == "moonshine_v2" and set(moon) == {"encoder", "decoder", "tokens", "num_threads", "decoding_method"}
+        assert moon["encoder"].endswith("encoder_model.ort") and moon["num_threads"] == 3
+        assert k2 == "transducer" and set(para) == {
+            "encoder", "decoder", "joiner", "tokens", "num_threads", "decoding_method", "model_type"}
+        assert para["model_type"] == "nemo_transducer" and para["joiner"].endswith("joiner.int8.onnx")
+        for _kind, kwargs in fake_quick.builds:
+            assert not any(k in kwargs for k in ("prompt", "hotwords", "hotwords_file", "language", "src_lang"))
+
+    def test_length_limits(self, fake_quick: SimpleNamespace) -> None:
+        q = QuickRecognizer(fake_quick.models_dir, 2)
+        assert q.accepts(np.zeros(15 * 16000, np.float32), "en")
+        assert not q.accepts(np.zeros(15 * 16000 + 1, np.float32), "en")  # Moonshine: at most 15 s
+        assert q.accepts(np.zeros(28 * 16000, np.float32), "fr")
+        with pytest.raises(ValueError):
+            q.transcribe(np.zeros(16 * 16000, np.float32), "en")
+        assert q.transcribe(np.zeros(1, np.float32), "en") == ""  # never decoded (native crash)
+        assert fake_quick.decodes == []
+        with pytest.raises(ValueError):
+            q.transcribe(np.zeros(16000, np.float32), "de")  # type: ignore[arg-type]
+
+    def test_preload(self, fake_quick: SimpleNamespace) -> None:
+        q = QuickRecognizer(fake_quick.models_dir, 2)
+        q.preload(("ar", "en"))
+        assert [k for k, _ in fake_quick.builds] == ["moonshine_v2"]
+
+
 def test_fake_transcriber() -> None:
     fake = FakeTranscriber("le chat")
     assert isinstance(fake, Transcriber)
@@ -1020,6 +1105,36 @@ class TestRoundTrips:
     def test_single_take_arabic(self, piper_exact: PiperTTS, whisper_small: SherpaWhisper) -> None:
         heard, result = speak_and_check(piper_exact, whisper_small, AR_SAID, AR_SAID, "ar")
         assert result.verdict == "correct", heard
+
+
+@pytest.fixture(scope="session")
+def quick_real() -> QuickRecognizer:
+    q = QuickRecognizer(MODELS_DIR, num_threads=4)
+    if q.languages != ("en", "fr"):
+        pytest.skip("the quick live recognisers are not downloaded")
+    return q
+
+
+class TestQuickRecognizerRealSpeech:
+    """The quick recognisers of a live recitation hear what was said (Piper's voice, noise 0)."""
+
+    @pytest.mark.parametrize(("lang", "said", "other_text", "expected", "heard"), [
+        ("en", EN_SAID, "The cat sat on the hat today.", "hat", "mat"),
+        ("fr", FR_SAID, "Le chat mange une pomme verte.", "verte", "rouge"),
+    ])
+    def test_hears_the_words_said(
+        self, piper_exact: PiperTTS, quick_real: QuickRecognizer, lang: str, said: str, other_text: str,
+        expected: str, heard: str,
+    ) -> None:
+        text, result = speak_and_check(piper_exact, quick_real, said, said, lang)
+        assert result.verdict == "correct", text
+        # Against a text with another word there, the word said is heard (no text is given).
+        errors = [(op.kind, op.expected, op.heard) for op in check_recitation(other_text, text, lang).ops if op.kind != "match"]
+        assert errors == [("sub", expected, heard)], text
+
+    def test_silence_gives_no_words(self, quick_real: QuickRecognizer) -> None:
+        for lang in ("en", "fr"):
+            assert quick_real.transcribe(np.zeros(32000, dtype=np.float32), lang) == ""
 
 
 class TestErrorDetectionEndToEnd:

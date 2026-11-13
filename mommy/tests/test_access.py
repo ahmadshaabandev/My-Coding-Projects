@@ -856,17 +856,34 @@ class PreloadingTTS(FakeTTS):
         self.loaded.append(langs)
 
 
+class PreloadingQuick:
+    """A quick live recogniser that records what it preloads."""
+
+    available = True
+    languages = ("en", "fr")
+
+    def __init__(self) -> None:
+        self.loaded: list[tuple[str, ...]] = []
+
+    def available_for(self, lang: str) -> bool:
+        return lang in self.languages
+
+    def preload(self, langs: tuple[str, ...]) -> None:
+        self.loaded.append(langs)
+
+
 def fake_default_components(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """Make build_default_app() use fakes; returns the list of preload threads started."""
     monkeypatch.setattr(app_mod.SherpaWhisper, "from_settings", classmethod(lambda cls, settings: PreloadingTranscriber()))
     monkeypatch.setattr(app_mod.PiperTTS, "from_settings", classmethod(lambda cls, settings: PreloadingTTS()))
     monkeypatch.setattr(app_mod, "Quran", lambda directory: None)
+    monkeypatch.setattr(app_mod, "QuickRecognizer", lambda models_dir, threads: PreloadingQuick())
     started: list[Any] = []
     real = app_mod.start_preload
 
-    def recording(transcriber: Any, tts: Any) -> Any:
-        thread = real(transcriber, tts)
-        started.append((thread, transcriber, tts))
+    def recording(transcriber: Any, tts: Any, quick: Any = None) -> Any:
+        thread = real(transcriber, tts, quick)
+        started.append((thread, transcriber, tts, quick))
         return thread
 
     monkeypatch.setattr(app_mod, "start_preload", recording)
@@ -901,9 +918,19 @@ class TestPreload:
         started = fake_default_components(monkeypatch)
         app = app_mod.build_default_app()
         assert app.state.access_gate is not None
-        [(thread, transcriber, tts)] = started
+        [(thread, transcriber, tts, quick)] = started
         thread.join(10)
         assert transcriber.loaded == [("ar",), ("en",), ("fr",)] and tts.loaded == [("ar",), ("en",), ("fr",)]
+        assert quick.loaded == [("ar",), ("en",), ("fr",)]  # it loads the languages it has
+
+    def test_without_the_quick_recognisers(self, monkeypatch: pytest.MonkeyPatch, restore_mommy_logger: None) -> None:
+        monkeypatch.setenv("MOMMY_ACCESS_CODE", CODE)
+        monkeypatch.setenv("MOMMY_LIVE_ASR_MODEL", "whisper")
+        started = fake_default_components(monkeypatch)
+        app_mod.build_default_app()
+        [(thread, _transcriber, _tts, quick)] = started
+        thread.join(10)
+        assert quick is None
 
 
 # ---------------------------------------------------------------------------

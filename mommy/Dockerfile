@@ -6,13 +6,14 @@
 # at run time and never written into the image; without the code the container refuses
 # to start (MOMMY_REQUIRE_ACCESS_CODE below, and scripts/space_start.sh).
 #
-# Local test without the 1.2 GB of models in the image (they are mounted read-only):
+# Local test without the 2 GB of models in the image (they are mounted read-only):
 #   docker build --build-arg SKIP_MODELS=1 -t mommy-space .
 #   read -rs MOMMY_ACCESS_CODE && export MOMMY_ACCESS_CODE    # not on the command line
 #   docker run --rm -p 127.0.0.1:7860:7860 -e MOMMY_ACCESS_CODE \
 #     -e MOMMY_ALLOWED_HOSTS=localhost \
 #     -v "$(readlink -f models/sherpa-onnx-whisper-turbo)":/home/user/app/models/sherpa-onnx-whisper-turbo:ro \
-#     ... (the same for the three vits-piper-* voices and ppocr-onnx, the OCR models) mommy-space
+#     ... (the same for the three vits-piper-* voices, ppocr-onnx, the OCR models, and the
+#     quick live recognisers sherpa-onnx-moonshine-base-en-* and sherpa-onnx-nemo-parakeet-*) mommy-space
 # Behind a TLS-intercepting proxy, add --network host and
 # --secret id=build_ca,src=<CA bundle> to the build (read by curl and pip only, never
 # stored in a layer).
@@ -40,8 +41,9 @@ FROM ${PYTHON_IMAGE} AS models
 ARG SKIP_MODELS=0
 WORKDIR /build
 COPY scripts/download_models.sh scripts/download_models.sh
-# Turbo, the three Piper voices (no --small: the app uses turbo) and the OCR models of the
-# local page reader (models/ppocr-onnx/, 31 MB). The script checks the sha256 of every
+# Turbo, the three Piper voices (no --small: the app uses turbo), the quick recognisers of
+# a live recitation (English and French, MOMMY_LIVE_ASR_MODEL=auto) and the OCR models of
+# the local page reader (models/ppocr-onnx/, 31 MB). The script checks the sha256 of every
 # archive before unpacking it and of every OCR file before keeping it, so a replaced
 # release file stops the build. "bash script": a Space repository does not keep the
 # executable bit. test_wavs/ are sample clips.

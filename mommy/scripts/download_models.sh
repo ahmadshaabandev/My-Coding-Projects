@@ -3,13 +3,22 @@
 # (OCR) models into models/.
 #
 #   scripts/download_models.sh           Whisper turbo + the Piper voices for ar, en and fr
+#                                        + the quick live recognisers (about 0.8 GB unpacked)
 #                                        + the OCR models (models/ppocr-onnx/, about 31 MB)
 #   scripts/download_models.sh --small   also Whisper small (use it with MOMMY_ASR_MODEL=small)
+#   scripts/download_models.sh --no-quick   without the quick live recognisers (the live
+#                                        check then uses Whisper alone, as with
+#                                        MOMMY_LIVE_ASR_MODEL=whisper)
 #   scripts/download_models.sh --check   only check that the download URLs answer (nothing is saved)
 #
 # Turbo is the default recogniser: on a 4-core CPU it is as fast as small once loaded,
 # and markedly better on Arabic and on French homophones; it needs about 1 GB more RAM
 # per loaded language. --turbo is accepted for compatibility (turbo is always fetched).
+#
+# The quick live recognisers (mommy/asr.py, QUICK_MODELS; MOMMY_LIVE_ASR_MODEL=auto) decode
+# the phrases of a live recitation first, 5 to 15 times faster than turbo: Moonshine base
+# for English (MIT licence, about 135 MB) and NVIDIA Parakeet TDT 0.6B v3 for French
+# (CC-BY-4.0, about 670 MB), both int8 conversions from the same sherpa-onnx releases.
 #
 # Idempotent: a model whose directory already exists in models/ (a symlink is fine) is
 # skipped, and only its expected files are checked. Each archive is downloaded and
@@ -37,13 +46,15 @@ OCR_BASE="https://github.com/GreatV/oar-ocr/releases/download"
 OCR_DIR="ppocr-onnx"
 
 small=0
+quick=1
 check=0
 for arg in "$@"; do
   case "$arg" in
     --small) small=1 ;;
     --turbo) ;;
+    --no-quick) quick=0 ;;
     --check) check=1 ;;
-    -h | --help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "download_models.sh: unknown option '$arg' (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -55,6 +66,12 @@ models=(
   "vits-piper-en_US-lessac-medium|tts-models|9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e|en_US-lessac-medium.onnx tokens.txt espeak-ng-data"
   "vits-piper-fr_FR-siwis-medium|tts-models|375909aa30842b3a4efa10b1beb1d761af792960ae6873b4d53889f96c66195b|fr_FR-siwis-medium.onnx tokens.txt espeak-ng-data"
 )
+if ((quick)); then
+  models+=(
+    "sherpa-onnx-moonshine-base-en-quantized-2026-02-27|asr-models|43232c1d13013d37317163baec3135bd771a186a4356f28c889bab453bb0e891|encoder_model.ort decoder_model_merged.ort tokens.txt"
+    "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8|asr-models|1495e91b59d7fc53ddca91f3431758ec99f8fa253fdb0e1e851be0f72b14b0f9|encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt"
+  )
+fi
 if ((small)); then
   models+=("sherpa-onnx-whisper-small|asr-models|486a46afbb7ba798507190ffe02fea2dd726049af212e774537efac6afb210a6|small-encoder.int8.onnx small-decoder.int8.onnx small-tokens.txt")
 fi

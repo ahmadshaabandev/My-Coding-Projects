@@ -3004,6 +3004,155 @@ class TestLiveTail:
 # ---------------------------------------------------------------------------
 
 
+class FakeQuick:
+    """A quick live recogniser (mommy.asr.QuickRecognizer) for the given languages: returns
+    a preset text (or raises) and records what it was given; checks, during every call,
+    that none of ``secrets`` is anywhere it could see."""
+
+    def __init__(self, heard: str = "", langs: Sequence[str] = ("en", "fr"), *, error: BaseException | None = None,
+                 max_seconds: float = 28.0) -> None:
+        self.heard = heard
+        self.languages = tuple(langs)
+        self.available = bool(self.languages)
+        self.error = error
+        self.max_seconds = max_seconds
+        self.calls: list[tuple[tuple, dict]] = []
+        self.secrets: list[str] = []
+        self.leaks: list[str] = []
+
+    def available_for(self, lang: str) -> bool:
+        return lang in self.languages
+
+    def accepts(self, pcm: np.ndarray, lang: str) -> bool:
+        return self.available_for(lang) and pcm.size <= self.max_seconds * 16_000
+
+    def transcribe(self, *args: Any, **kwargs: Any) -> str:
+        self.calls.append((args, kwargs))
+        self.leaks.extend(find_leaks(self.secrets, args, kwargs))
+        if self.error is not None:
+            raise self.error
+        return self.heard
+
+
+class TestLiveQuickRecogniser:
+    """MOMMY_LIVE_ASR_MODEL=auto: a quick recogniser decodes a live phrase (and the tail)
+    first; its words are kept when they add no mistake, else Whisper decodes the phrase."""
+
+    def client(self, quran: Quran, whisper: Any, quick: Any, **settings: Any) -> TestClient:
+        app = create_app(make_settings(**settings), whisper, FakeTTS(), ExplodingBrain(), quran, None, quick)
+        return TestClient(app, base_url=BASE_URL)
+
+    def test_a_phrase_read_right_is_not_decoded_by_whisper(self, quran: Quran, caplog: pytest.LogCaptureFixture) -> None:
+        whisper, quick = RecordingTranscriber("never used"), FakeQuick("sat on")
+        client = self.client(quran, whisper, quick)
+        assert client.get("/api/health").json()["live_quick"] == ["en", "fr"]
+        with caplog.at_level(logging.INFO):
+            body = phrase(client, heard_before="the cat").json()
+        assert body["heard_text"] == "sat on" and whisper.calls == []
+        assert kinds(body["progress"]["ops"]) == ["match"] * 4 + ["pending"] * 2
+        (args, kwargs), = quick.calls
+        assert kwargs == {} and len(args) == 2 and args[1] == "en" and args[0].dtype == np.float32
+        assert "via quick" in caplog.text
+
+    @pytest.mark.parametrize(("before", "quick_heard"), [
+        ("the cat", "sat in"),          # a wrong word
+        ("the cat", "on the"),          # a skipped word
+        ("the cat sat on the mat", "and more"),  # words the text does not have
+        ("the cat", ""),                # nothing heard
+        ("the dog", "sat in"),          # one more mistake than before
+    ])
+    def test_a_phrase_with_a_mistake_goes_to_whisper(self, quran: Quran, before: str, quick_heard: str) -> None:
+        whisper, quick = RecordingTranscriber("sat on"), FakeQuick(quick_heard)
+        body = phrase(self.client(quran, whisper, quick), heard_before=before).json()
+        assert len(quick.calls) == 1 and len(whisper.calls) == 1
+        assert body["heard_text"] == "sat on"  # Whisper's words, checked as before
+        joined = " ".join(t for t in (before, "sat on") if t)
+        assert body["progress"] == app_mod.reading_progress(check_recitation(EN_TEXT, joined, "en"))
+
+    def test_an_earlier_mistake_does_not_send_every_phrase_to_whisper(self, quran: Quran) -> None:
+        whisper, quick = RecordingTranscriber("x"), FakeQuick("sat on")
+        body = phrase(self.client(quran, whisper, quick), heard_before="the dog").json()
+        assert whisper.calls == [] and body["progress"]["n_errors"] == 1  # the earlier one only
+
+    def test_whisper_decodes_when_the_quick_one_cannot(self, quran: Quran) -> None:
+        # Arabic (no quick recogniser), a failure, a phrase too long for it, contextual mode.
+        whisper = RecordingTranscriber("ذهب الولد")
+        quick = FakeQuick("ذهب الولد", langs=("en", "fr"))
+        assert phrase(self.client(quran, whisper, quick), expected_text=AR_TEXT, lang="ar").status_code == 200
+        assert quick.calls == [] and len(whisper.calls) == 1
+        for q, kwargs in ((FakeQuick(error=RuntimeError("native")), {}), (FakeQuick("the cat", max_seconds=0.5), {}),
+                          (FakeQuick("the cat"), {"mode": "contextual"})):
+            whisper = RecordingTranscriber("the cat")
+            r = phrase(self.client(quran, whisper, q), **kwargs)
+            assert r.status_code == 200 and r.json()["heard_text"] == "the cat" and len(whisper.calls) == 1
+
+    def test_the_setting_whisper_and_the_live_switch(self, quran: Quran) -> None:
+        for settings in ({"live_asr_model": "whisper"}, {"live_recite": False}):
+            whisper, quick = RecordingTranscriber("sat on"), FakeQuick("sat on")
+            client = self.client(quran, whisper, quick, **settings)
+            assert client.get("/api/health").json()["live_quick"] == []
+            if settings.get("live_recite") is False:
+                assert recite(client, heard_before="the cat", ai_consent=None).status_code == 200
+            else:
+                assert phrase(client, heard_before="the cat").json()["heard_text"] == "sat on"
+            assert quick.calls == [] and len(whisper.calls) == 1
+
+    def test_the_tail_of_a_live_recitation(self, quran: Quran) -> None:
+        whisper, quick = RecordingTranscriber("never used"), FakeQuick("on the mat")
+        client = self.client(quran, whisper, quick)
+        body = recite(client, heard_before="the cat sat", ai_consent=None).json()
+        assert body["heard_text"] == "the cat sat on the mat" and body["result"]["verdict"] == "correct"
+        assert whisper.calls == [] and len(quick.calls) == 1
+        # A tail with a mistake, a whole recording and contextual mode: Whisper.
+        quick = FakeQuick("on a mat")
+        whisper = RecordingTranscriber("on a mat")
+        client = self.client(quran, whisper, quick)
+        body = recite(client, heard_before="the cat sat", ai_consent=None).json()
+        assert body["result"]["n_errors"] == 1 and len(quick.calls) == 1 and len(whisper.calls) == 1
+        assert recite(client, ai_consent=None).status_code == 200  # no heard_before
+        assert recite(client, heard_before="the cat", mode="contextual", ai_consent=None).status_code == 200
+        assert len(quick.calls) == 1 and len(whisper.calls) == 3
+
+    def test_unclear_audio_is_decoded_by_neither(self, quran: Quran) -> None:
+        whisper, quick = RecordingTranscriber("thank you"), FakeQuick("thank you")
+        client = self.client(quran, whisper, quick)
+        assert phrase(client, audio=silent_wav(2.0)).json()["heard_text"] == ""
+        assert whisper.calls == [] and quick.calls == []
+
+    def test_never_sees_the_text_or_the_words_before(self, quran: Quran) -> None:
+        whisper, quick = RecordingTranscriber("x"), FakeQuick("Zebras zigzag")
+        expected = "Zebras zigzag quickly across Zanzibar"
+        quick.secrets += [expected, "Zanzibar", "Quokkas yodel"]
+        client = self.client(quran, whisper, quick)
+        assert phrase(client, expected_text=expected, heard_before="Quokkas yodel").status_code == 200
+        assert recite(client, expected_text=expected, heard_before="Quokkas yodel", ai_consent=None).status_code == 200
+        assert len(quick.calls) == 2 and quick.leaks == []
+
+    def test_logs_hold_sizes_and_timings_only(self, quran: Quran, caplog: pytest.LogCaptureFixture) -> None:
+        client = self.client(quran, RecordingTranscriber("Quixotic"), FakeQuick("Quixotic zebras"))
+        with caplog.at_level(logging.DEBUG):
+            phrase(client, expected_text="Quixotic zebras zigzag wildly", heard_before="Yodelling quokkas")
+            recite(client, expected_text="Quixotic zebras zigzag wildly", heard_before="Yodelling quokkas", ai_consent=None)
+        assert "(via quick, quick" in caplog.text and "tail after 2 words, via quick" in caplog.text
+        for word in ("Quixotic", "zebras", "zigzag", "wildly", "Yodelling", "quokkas"):
+            assert word not in caplog.text
+
+    def test_preload_includes_the_quick_recognisers(self) -> None:
+        loaded: list[str] = []
+
+        class Loader:
+            available = True
+
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def preload(self, langs: tuple[str, ...]) -> None:
+                loaded.append(f"{self.name}:{langs[0]}")
+
+        app_mod.start_preload(Loader("whisper"), Loader("voice"), Loader("quick")).join(5)
+        assert loaded == [f"{n}:{lang}" for n in ("whisper", "quick", "voice") for lang in ("ar", "en", "fr")]
+
+
 class TestLocalPageReader:
     """Without Claude for the request, a page photo is read on the server by the local
     reader (``"reader": "local"``), with the same answer shape and the same Quran handling

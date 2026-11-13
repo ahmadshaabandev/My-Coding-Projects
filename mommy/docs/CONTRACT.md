@@ -139,7 +139,8 @@ mommy/
   requirements.lock         every package, pinned and hashed (pip install --require-hashes -r requirements.lock)
   requirements-runtime.lock the same pins and hashes without the "# tests only" requirements (extra; what the image installs)
   run.sh                    starts uvicorn on 127.0.0.1:8080 (PORT to change), serving the API and web/
-  scripts/download_models.sh  fetches the sherpa-onnx Whisper turbo model (small with --small) and the Piper voices into models/,
+  scripts/download_models.sh  fetches the sherpa-onnx Whisper turbo model (small with --small), the Piper voices and (extra;
+                            not with --no-quick) the quick live recognisers (Moonshine base en, Parakeet TDT 0.6B v3) into models/,
                             each archive checked against its pinned sha256 before it is unpacked, and the OCR models
                             (extra) into models/ppocr-onnx/, each file checked against its pinned sha256
   scripts/lock_requirements.py  regenerates both lock files (development only: the one script that uses the network)
@@ -218,6 +219,7 @@ class Settings:
     access_code: str | None = field(default=None, repr=False)   # extra; env MOMMY_ACCESS_CODE (None: no gate)
     access_code_file: Path | None = None   # extra; env MOMMY_ACCESS_CODE_FILE, when the code came from it
     live_recite: bool = True   # extra; env MOMMY_LIVE_RECITE (on/off, 1/0, true/false, yes/no; default on)
+    live_asr_model: str = "auto"   # extra; env MOMMY_LIVE_ASR_MODEL ("auto" or "whisper"; see "Live recitation")
     ocr: bool = True           # extra; env MOMMY_OCR (on/off as MOMMY_LIVE_RECITE; default on): the local page reader
     ocr_threads: int           # extra; env MOMMY_OCR_THREADS, default asr_threads
     claude_configured: bool    # property (extra): key and both models set
@@ -228,7 +230,8 @@ def load_settings(root: Path | None = None) -> Settings
 # access code shorter than MIN_ACCESS_CODE_CHARS (the message never quotes the code), or
 # (extra) no access code while MOMMY_REQUIRE_ACCESS_CODE is set (any non-blank value; the
 # container image sets it, run.sh does not), or (extra) a MOMMY_LIVE_RECITE or MOMMY_OCR
-# that is neither on nor off (parse_switch), or a MOMMY_OCR_THREADS that is not a positive
+# that is neither on nor off (parse_switch), a MOMMY_LIVE_ASR_MODEL that is neither auto
+# nor whisper, or a MOMMY_OCR_THREADS that is not a positive
 # integer (parse_threads, which also reads MOMMY_ASR_THREADS). "Blank" is str.strip()'s: any Unicode white
 # space, so a no-break space is no code; this is the only place that decides it.
 # The access code is stripped; it is kept out of repr(Settings), so it cannot reach a log.
@@ -1241,14 +1244,34 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   /api/recite/phrase` with `heard_before`, the transcripts of the phrases before it, which
   the client holds (the server keeps nothing between requests). The recogniser decodes
   that phrase only and is given its audio and the language, nothing else (hard rule 1:
-  never the expected text, never `heard_before`, never a prompt). In strict mode the
+  never the expected text, never `heard_before`, never a prompt).
+  Extra, the quick recognisers (`MOMMY_LIVE_ASR_MODEL`, `auto` by default, or `whisper`;
+  `asr.QuickRecognizer`, `app.quick_kept`; `/api/health` `live_quick` lists the languages
+  that have one): in strict mode, for a language with a quick recogniser whose files are
+  present (English: Moonshine base, int8, MIT; French: NVIDIA Parakeet TDT 0.6B v3, int8,
+  CC-BY-4.0; both from the sherpa-onnx `asr-models` release, sha256-pinned in
+  `scripts/download_models.sh`; Arabic has none), the quick recogniser decodes the phrase
+  first. It is given the audio only (no language, prompt or hotwords; hard rule 1 holds
+  for it too). Its transcript is kept when it has a word and adds no mistake to the words
+  read so far (`reading_progress` `n_errors` of `heard_before` + it not above that of
+  `heard_before` alone); otherwise Whisper decodes the same audio and its transcript is
+  used, exactly as before. The text only decides, once the quick transcript is made
+  without it, whether Whisper decodes the phrase too: a phrase heard with a mistake is
+  always Whisper's (the risk left: a quick recogniser hearing the right word where the
+  child said another, measured below). The
+  tail of `/api/recite/check` with `heard_before` (strict) is decoded the same way;
+  contextual mode, a whole recording and every other endpoint use Whisper alone.
+  Moonshine is given at most 15 s (it loses words beyond about 20 s), Parakeet at most
+  28 s; a longer clip goes to Whisper, as does any failure of the quick one. The log line
+  says `via quick` or `via whisper` and both times. In strict mode the
   answer's `progress` is the word-by-word check of `heard_before` + the phrase against the
   whole text, by the same analysis as `/api/recite/check` strict (`QuranAnalysis.check_recitation`:
   the Quran parts against the mushaf words), turned by `align.reading_progress` into the
   words read so far (`match`, `sub`, `del`, `ins`) and the words after the last one the
   child reached, `"pending"`. No brain is used (`"brain": "offline"`, no AI consent read,
   no feedback), and nothing is logged but sizes and timings ("recite/phrase strict en:
-  audio N bytes, S s, after N words, decode, asr, check, total"). At Stop the client sends
+  audio N bytes, S s, after N words, decode, asr (via quick|whisper, quick), check,
+  total"). At Stop the client sends
   only the tail (the phrases still queued and what came after the last phrase) to
   `/api/recite/check` with `heard_before`: the server decodes the tail alone and checks
   `heard_before` + the tail exactly as a whole recording (feedback, Claude only with
@@ -1284,6 +1307,60 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   phrase, is decoded). End to end in Chromium with a fake microphone (the real server,
   warm, Stop 1 s after the last word): en 5.4 s -> 1.9 s, ar 9.4 s -> 1.9 s. On one core
   with one thread: a whole 18.9 s Arabic recording 14.6 s, its last phrase (4.2 s) 4.1 s.
+
+  Quick recognisers, measured (2026-11-13, same machine, 2 cores, 2 threads; 48 phrases per
+  language: 4 Piper-spoken texts, clean and with white noise at about 15 dB SNR, cut by
+  the client's segmenter; errors of the phrase transcripts joined, of 250 words en, 260
+  fr, 198 ar; time: mean decode of one 2.2-3.4 s phrase):
+
+  | Recogniser (int8) | en errors | fr errors | ar errors | en / fr / ar decode | size |
+  |---|---|---|---|---|---|
+  | Whisper turbo (the default) | 3 | 8 | 66 | 1.83 / 1.97 / 2.25 s | 1.0 GB |
+  | Whisper turbo, `tail_paddings` 500 (300) | 8 (89) | 30 (48) | 74 (75) | 1.16 / 1.42 / 1.60 s | |
+  | Whisper small | 3 | 23 | 84 | 1.23 / 1.49 / 1.71 s | 0.37 GB |
+  | Whisper base | 3 | 42 | 105 | 0.39 / 0.48 / 0.57 s | 0.15 GB |
+  | Moonshine base en / ar (v2) | 2 | - | 81 | 0.13 / - / 0.27 s | 0.14 GB each |
+  | Moonshine tiny en (v2) | 9 | - | - | 0.08 s | 0.04 GB |
+  | Parakeet TDT 0.6B v3 | 5 | 6 | - | 0.33 / 0.34 / - s | 0.67 GB |
+  | Canary 180M flash | 3 | 8 | - | 0.44 / 0.45 / - s | 0.2 GB |
+  | Omnilingual ASR 300M CTC | 12 | 25 | 77 | 0.48 / 0.50 / 0.75 s | 0.35 GB |
+  | Qwen3-ASR 0.6B | 2 | 17 | 72 | 1.25 / 1.45 / 1.44 s | 0.94 GB |
+
+  On 24 misread sentences per language (one word changed, Piper-spoken, 12 read fluently
+  and 12 word by word), Whisper turbo, Moonshine en and Parakeet heard the changed word
+  in every one but the homophone mer/mère, which none heard. Canary writes whole
+  sentences on noise and room silence ("I don't know, I don't know, ..."); Parakeet and
+  Moonshine write nothing there. Moonshine ar is under a non-commercial licence and was
+  8 errors worse than turbo on the clean Arabic texts; no candidate came close to turbo
+  in Arabic, which keeps Whisper alone. On words read one at a time (each word spoken
+  alone, 0.15-0.9 s between words: a beginning reader), the quick recognisers hear more
+  correct words wrongly than Whisper (en 12 against 4 of 96 words, fr 19 against 13 of
+  95): that is why only a transcript that adds no mistake is kept. Whisper's tail
+  padding (`tail_paddings`, 1000 frames by default, see `asr.py`) loses words when
+  lowered and stays as it is. The 0.65 s end-of-phrase silence also stays: at 0.5 s and
+  0.45 s Whisper's errors on the word-by-word reading rose from 4 to 5 and 7 (en, of 96)
+  and from 13 to 16 and 17 (fr, of 95), the phrases being cut inside sentences.
+
+  End to end with the quick recognisers (`auto`) against Whisper alone (the real app in
+  one process, the client's policy replayed in real time: phrases sent when the
+  segmenter ends them, one request at a time; Stop 1 s after the last word; medians):
+  phrase end to words coloured, fluent reading, en 2.31 s -> 0.65 s, fr 2.55 s ->
+  0.86 s (with noise 2.31 -> 0.63, 2.48 -> 0.94), ar unchanged (2.9 s); of that, the
+  time after the end was detected went from 1.8-2.1 s to 0.14 s (en) and 0.38 s (fr).
+  Stop to result, fluent: en 1.5 s -> 0.5 s, fr 1.8 s -> 0.1 s. Final errors: en 1 -> 1 of
+  125 (noisy 2 -> 1), fr 5 -> 1 of 130 (noisy 4 -> 1). Word-by-word reading: en 2.20 s ->
+  0.67 s (errors 1 -> 1 of 96, Stop to result 1.4 s -> 0.01 s); fr 2.4-2.8 s -> 2.5-2.6 s
+  (most phrases go on to Whisper after the quick decode, 0.3-0.4 s more), errors 36 ->
+  10 of 95 (Whisper looped "le champ vers" eight times on one phrase whose Parakeet
+  transcript was kept instead). The work around the recogniser stays small: 10 ms per
+  phrase for a 35-word text, 34 ms for 600 words, 0.2 s for 3,000 (two strict checks of
+  the words so far when the quick transcript is tried). The quick recognisers take about
+  1.05 GB more memory once both are loaded (Moonshine 0.24 GB, Parakeet 0.81 GB), plus
+  about 0.25 GB while Parakeet decodes a 25 s clip. Without AMX (the int8 matrix unit of
+  this Xeon, which onnxruntime uses), Whisper turbo is 26 % slower per phrase and the
+  quick recognisers are unchanged; an Ampere A1 core (Neoverse N1, no such unit) was not
+  measured.
+
   Whisper writes words on silence and noise when it is given them ("Thank you.", "Sous-titrage
   ST' 501", "ترجمة نانسي قنقر", "اشتركوا في القناة"): the segmenter sends no phrase for
   silence, room noise or steady noise at -40 dBFS, and the server's quality gate does not
@@ -1466,7 +1543,7 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
 | Method & path | Request | Response |
 |---|---|---|
 | POST `/api/access` (extra, online only) | JSON `{"code": str}` | `204` with the `mommy_access` cookie; `403 bad_access_code`; `429 too_many_attempts` with `Retry-After`; see "Access gate". Absent (404) when no code is set. |
-| GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts, ocr}` (why unavailable), `ocr` (bool: a page photo can be read on the server without Claude, see "Local page reading"; false with `MOMMY_OCR=off` or without the OCR models or packages), `live_recite` (bool, `Settings.live_recite`: the server checks a recitation phrase by phrase, `/api/recite/phrase`), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE`) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
+| GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts, ocr}` (why unavailable), `ocr` (bool: a page photo can be read on the server without Claude, see "Local page reading"; false with `MOMMY_OCR=off` or without the OCR models or packages), `live_recite` (bool, `Settings.live_recite`: the server checks a recitation phrase by phrase, `/api/recite/phrase`), `live_quick` (the languages whose live phrases a quick recogniser decodes first: `["en", "fr"]` with `MOMMY_LIVE_ASR_MODEL=auto` and their models present, else `[]`; see "Live recitation"), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE`) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
 | POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional); extra: `ai_consent` (optional, `"1"`: see "AI consent"; without it the offline brain answers) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `brain` (`"claude"`\|`"offline"`, see "AI consent"), `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline), `reader` (`"claude"`\|`"local"`\|`"none"`: who read the photo, see "Local page reading"), `reader_error` (the class name, when the local reader failed) |
 | POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`); extra: `ai_consent` (optional, `"1"`: Claude words the feedback and judges the meaning; without it the offline templates and heuristic answer, see "AI consent"), `heard_before` (optional, a live recitation: the transcripts of the phrases `/api/recite/phrase` decoded, joined by spaces, may be empty; `audio` is then only the tail after them, a WAV with no samples when nothing came after; see "Live recitation") | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again` and `brain` (`"claude"`\|`"offline"`, see "AI consent"); strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
 | POST `/api/recite/phrase` (extra, absent with `MOMMY_LIVE_RECITE=off`) | multipart: `audio` (wav, one phrase: at most 4 MB and 30 s; `413 audio_too_large`/`audio_too_long`), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `heard_before` (optional, default empty: the transcripts of the earlier phrases, as this endpoint returned them, joined by spaces) | `{"mode", "heard_text" (this phrase only, `""` when its audio is too quiet or under 0.5 s, which is not decoded), "quality" (this phrase's), "progress", "brain": "offline"}`; `progress` is null in contextual mode, and in strict mode `{"ops": [{kind: match\|sub\|del\|ins\|pending, exp_index, heard_index, expected, heard}], "n_expected", "n_read", "n_matched", "n_errors"}` (`align.reading_progress` of the strict check of `heard_before` + `heard_text`, see "Live recitation"). The text checks and refusals of `/api/recite/check` in the same mode (`empty_text`, `text_too_long`, `unreadable_text`, `quran_text` with `quran_range` or `"reason": "meaning"`, `lang_mismatch`), and for `heard_before` `bad_text` and `text_too_long`; `503 asr_unavailable`; never a brain, the voice or the AI consent. Example: `expected_text` "The cat sat on the mat.", `heard_before` "the cat", a phrase heard as "sad" -> ops match, match, sub (heard "sad"), pending, pending, pending; `n_read` 3, `n_errors` 1. |

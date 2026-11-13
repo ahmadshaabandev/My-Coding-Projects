@@ -87,15 +87,17 @@ contextual mode and words the feedback. Module boundaries, the HTTP API and the 
 
 ## Quick start
 
-Requirements: Python 3.13, `curl`, `tar` with bzip2, about 1 GB of disk for the models,
-about 5 GB of RAM with the three recognisers loaded (peaks stay under 6 GB; reading a
-page photo locally adds about 0.2 GB, briefly 0.45 GB), and a recent browser.
+Requirements: Python 3.13, `curl`, `tar` with bzip2, about 2 GB of disk for the models,
+about 5 GB of RAM with the three recognisers loaded, 6 GB with the quick live recognisers
+of English and French too (peaks stay under 7 GB; reading a page photo locally adds
+about 0.2 GB, briefly 0.45 GB), and a recent browser.
 
 ```sh
 cd mommy
 python3 -m venv .venv
 .venv/bin/pip install --require-hashes -r requirements.lock   # every package pinned and hashed
 scripts/download_models.sh     # Whisper turbo (537 MB) + Piper voices ar/en/fr (64 MB each) + OCR (31 MB)
+                               # + the quick live recognisers en/fr (106 + 465 MB; --no-quick: without them)
 ./run.sh                       # serves the API and the web client
 ```
 
@@ -258,7 +260,9 @@ Other settings: `MOMMY_ASR_MODEL` (`turbo`, default, or `small`), `MOMMY_ASR_THR
 `MOMMY_ACCESS_CODE` (unset by default: no access gate; see the next section),
 `MOMMY_REQUIRE_ACCESS_CODE` (set in the container image: no start without a code),
 `MOMMY_LIVE_RECITE` (`on`, default, or `off`: the live check of a recitation, see
-"Live recitation" below), `MOMMY_OCR` (`on`, default, or `off`: the local page reader)
+"Live recitation" below), `MOMMY_LIVE_ASR_MODEL` (`auto`, default, or `whisper`: whether
+a quick recogniser decodes the live phrases of English and French first, see "Live
+recitation" below), `MOMMY_OCR` (`on`, default, or `off`: the local page reader)
 and `MOMMY_OCR_THREADS` (default: `MOMMY_ASR_THREADS`), `MOMMY_LOG_LEVEL` (default
 `INFO`), `PORT` (default 8080).
 
@@ -417,7 +421,8 @@ deleting the Space removes it.
   3.4 to 3.8 s for a 5.3 s Arabic one, 3.3 to 3.5 s for a 6.6 s English one, 7.4 to
   8.5 s for a 16.7 s one. The voice answers in 0.2 to 0.4 s; slow dictation phrases
   (checked by the recogniser) take 1.4 to 3.5 s in French and 2 to 4 s in Arabic. With
-  the three languages loaded the server uses about 5 GB of RAM (peaks under 6 GB).
+  the three languages loaded the server uses about 5 GB of RAM (peaks under 6 GB), and
+  about 1 GB more once the quick live recognisers of English and French are loaded.
 - **One user at a time.** It is the same single-process prototype: one recognition runs
   at a time, so recordings sent together queue (about 3.5 s more for each one ahead).
 - **Each browser has its own family data.** Children, tasks, stars and rewards stay in
@@ -460,12 +465,14 @@ docker run --rm -p 127.0.0.1:7860:7860 -e MOMMY_ACCESS_CODE -e MOMMY_ALLOWED_HOS
   -v "$(readlink -f models/vits-piper-ar_JO-kareem-medium)":/home/user/app/models/vits-piper-ar_JO-kareem-medium:ro \
   -v "$(readlink -f models/vits-piper-en_US-lessac-medium)":/home/user/app/models/vits-piper-en_US-lessac-medium:ro \
   -v "$(readlink -f models/vits-piper-fr_FR-siwis-medium)":/home/user/app/models/vits-piper-fr_FR-siwis-medium:ro \
+  -v "$(readlink -f models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27)":/home/user/app/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27:ro \
+  -v "$(readlink -f models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8)":/home/user/app/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8:ro \
   mommy-space
 ```
 
 Then open <http://localhost:7860> and type the code: over plain http the gate works on
 `localhost` only (anywhere else the cookie is `Secure`, so it needs HTTPS). The image is
-about 0.5 GB without the models and 1.7 GB with them; it installs
+about 0.5 GB without the models and 2.5 GB with them; it installs
 `requirements-runtime.lock` (no test tools) and starts from a `python:3.13-slim` pinned
 by digest. `deploy.py --dry-run --out DIR` assembles exactly what would be uploaded, for
 `docker build DIR`.
@@ -524,6 +531,15 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
   Stop instead of 5-9 s for a 13-19 s recitation, and the words of a phrase are coloured
   2-3 s after the child finishes it; word accuracy is the same within recogniser noise
   (details in `docs/CONTRACT.md`, "Live recitation").
+  Quick recognisers (`MOMMY_LIVE_ASR_MODEL=auto`, default): in strict mode an English
+  phrase is first decoded by Moonshine base and a French one by Parakeet TDT 0.6B v3
+  (given the audio only, like Whisper); their words are kept when they add no mistake to
+  the words read so far, otherwise Whisper decodes the phrase as before. A phrase read
+  right is then coloured about 0.65 s (en) and 0.9 s (fr) after the child finishes it
+  instead of 2.3-2.6 s, and the result comes 0.1-0.5 s after Stop, with the same word
+  accuracy on the measured texts; Arabic keeps Whisper alone (no faster recogniser came
+  close to it). They need about 1 GB more memory. `MOMMY_LIVE_ASR_MODEL=whisper` (or
+  `scripts/download_models.sh --no-quick`) keeps Whisper alone.
 - `/api/recite/check` returns a top-level `say_again`; results carry
   `say_again_reason` (`empty` or `error_rate`), `stopped_at_exp_index` (where the child
   stopped early) and `n_unreadable`. `/api/page/read` returns `contains_quran`
@@ -697,7 +713,9 @@ node tests/web/access.cjs         # the access gate of an online deployment, in 
   Lessac data under its own licence
   (<https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html>);
   the French voice (`fr_FR-siwis-medium`) data is CC BY 4.0. See each `MODEL_CARD` in
-  `models/`.
+  `models/`. The quick live recognisers: Moonshine base English (Moonshine AI, MIT; its
+  `LICENSE` in `models/`) and NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0: credit NVIDIA in any
+  public use), both as converted by sherpa-onnx.
 - **Quran.**
   - Hafs only (Tanzil Uthmani and Simple-Clean text, version 1.1). The check is word by
     word: it does not judge tajwid or pronunciation beyond what the recogniser writes.
@@ -795,7 +813,7 @@ mommy/
   deploy/huggingface/          README.md (the Space card) and deploy.py (creates or updates the Space)
   deploy/oracle/               ORACLE.md and setup.sh: the self-hosting kit on an Oracle Cloud Always Free VM;
                                compose.oracle.yaml (both link modes), compose.stable.yaml and Caddyfile (the permanent link)
-  scripts/download_models.sh   fetches the Whisper model(s), Piper voices and OCR models into models/ (sha256 checked)
+  scripts/download_models.sh   fetches the Whisper model(s), the quick live recognisers, Piper voices and OCR models into models/ (sha256 checked)
   scripts/space_start.sh       the image's start command: checks the access code, runs uvicorn
   scripts/lock_requirements.py regenerates both lock files (development only)
   scripts/refresh_pins.py      shows or moves the pinned images (cloudflared, Caddy, Python) to newer digests (development only)

@@ -19,7 +19,11 @@ Flows
   the language) and, word by word, checks the words heard so far (``heard_before``, held
   by the client, + the phrase) against the whole text, the words not reached yet
   ``"pending"``; no brain, nothing kept. At the end ``/api/recite/check`` gets only the
-  tail with ``heard_before`` and checks the joined text as a whole recording.
+  tail with ``heard_before`` and checks the joined text as a whole recording. In strict
+  mode a quick recogniser (``MOMMY_LIVE_ASR_MODEL``, :class:`mommy.asr.QuickRecognizer`)
+  decodes the phrase or tail first, given the audio only; its words are kept when they
+  add no mistake to the words read so far, else Whisper decodes the same audio
+  (:func:`quick_kept`).
 * Dictation: ``brain.read_handwriting(image, lang)`` reads the child's paper *blind*
   (hard rule 3; the expected text is not an argument), or the parent types it; then
   ``check_writing`` and feedback. The result always needs the parent's confirmation.
@@ -105,6 +109,7 @@ import threading
 import time
 import traceback
 import unicodedata
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import Annotated, Any, Literal
 
@@ -146,7 +151,16 @@ from .align import (
     result_summary,
     tokenize_written,
 )
-from .asr import ASRUnavailable, SherpaWhisper, Transcriber, audio_quality, decode_wav, is_empty_wav, wav_duration
+from .asr import (
+    ASRUnavailable,
+    QuickRecognizer,
+    SherpaWhisper,
+    Transcriber,
+    audio_quality,
+    decode_wav,
+    is_empty_wav,
+    wav_duration,
+)
 from .config import DEFAULT_ALLOWED_HOSTS, Settings, load_settings
 from .feedback import AgeBand
 from .llm import VERDICTS, Brain, OfflineBrain, make_brain, meaning_feedback
@@ -867,6 +881,28 @@ def join_heard(before: str, heard: str) -> str:
     return " ".join(t for t in (before, heard) if t)
 
 
+def quick_kept(analysis: QuranAnalysis, before: str, quick_heard: str) -> dict[str, Any] | None:
+    """The reading progress of ``before`` + a quick recogniser's transcript of the next
+    phrase, when that transcript is kept; None when Whisper must decode the phrase (extra,
+    live recitation in strict mode).
+
+    Kept: the transcript has a word and adds no mistake to the words read so far
+    (:func:`mommy.align.reading_progress` ``n_errors`` of ``before`` + it is not above
+    that of ``before`` alone): a phrase read right. A phrase with a mistake, a skipped word,
+    words the text does not have, or nothing heard goes to Whisper, which is as accurate
+    as before on every phrase it decodes. Neither recogniser is given the text (hard rule
+    1); the text only decides, afterwards, which transcript is used. Measured
+    (docs/CONTRACT.md, "Live recitation"): Moonshine and Parakeet hear the word actually
+    said where a child misreads (24 of 24 misread sentences, but for one homophone that
+    Whisper misses too), while on words read one at a time they hear more correct words
+    wrongly than Whisper, so those phrases go to Whisper."""
+    if not tokenize(quick_heard, analysis.lang):
+        return None
+    errors_before = reading_progress(analysis.check_recitation(before)[0])["n_errors"]
+    progress = reading_progress(analysis.check_recitation(join_heard(before, quick_heard))[0])
+    return progress if progress["n_errors"] <= errors_before else None
+
+
 def live_quality(tail: dict, before: str, lang: Lang) -> dict:
     """The quality of a live recitation checked from its tail (``/api/recite/check`` with
     ``heard_before``).
@@ -989,11 +1025,16 @@ def create_app(
     brain: Brain,
     quran: Quran | None,
     reader: PageReader | None = None,
+    quick: QuickRecognizer | None = None,
 ) -> FastAPI:
     """The Mommy API (see the module docstring) serving ``settings.web_dir`` at ``/``.
 
     ``quran`` is None when the Tanzil files could not be loaded: ``/api/health`` then
     says ``"quran": false`` and the Quran endpoints answer 503.
+
+    ``quick`` holds the quick recognisers of a live recitation (extra; used only with
+    ``settings.live_asr_model == "auto"`` and the live recitation on): see
+    :func:`quick_kept`.
 
     ``reader`` is the local page reader (:class:`mommy.ocr.PPOCRReader`), used by
     ``/api/page/read`` when Claude may not read the photo; None (``MOMMY_OCR=off``, or
@@ -1104,6 +1145,15 @@ def create_app(
         def __exit__(self, *exc: object) -> None:
             decode_slots.release()
 
+    quick_on = (
+        bool(getattr(settings, "live_recite", True))
+        and quick is not None
+        and getattr(settings, "live_asr_model", "auto") == "auto"
+    )
+
+    def quick_languages() -> list[str]:
+        return [lang for lang in LANGUAGES if quick_on and quick is not None and quick.available_for(lang)]
+
     def listen(
         upload: UploadFile,
         lang: Lang,
@@ -1111,10 +1161,17 @@ def create_app(
         max_bytes: int = MAX_AUDIO_BYTES,
         max_seconds: float = MAX_AUDIO_SECONDS,
         allow_empty: bool = False,
-    ) -> tuple[str, dict, dict[str, float]]:
+        keep: Callable[[str], bool] | None = None,
+    ) -> tuple[str, dict, dict[str, Any]]:
         """Audio upload -> (heard text, quality, timings). The recogniser gets the audio
         and the language only, and is not run on an unclear clip (an empty one included,
-        see ``allow_empty`` of :func:`_decode_audio`)."""
+        see ``allow_empty`` of :func:`_decode_audio`).
+
+        With ``keep`` (a live phrase or tail in strict mode) and a quick recogniser for
+        the language, the quick one decodes the clip first, and its transcript is the
+        answer when ``keep`` accepts it (:func:`quick_kept`); otherwise, or when it fails,
+        Whisper decodes the same clip. ``timings["via"]``: ``"quick"``, ``"whisper"`` or
+        ``"none"`` (not decoded); ``quick_s``: the quick decode's time."""
         started = time.perf_counter()
         data = _read_upload(upload, max_bytes, "audio")
         n_bytes = len(data)
@@ -1124,12 +1181,28 @@ def create_app(
         quality = audio_quality(pcm)
         decoded = time.perf_counter()
         heard = ""
+        via = "none"
+        quick_s = 0.0
         if not _quality_unclear(quality):
-            try:
-                heard = transcriber.transcribe(pcm, lang)
-            except ASRUnavailable as exc:
-                raise ApiError(503, "asr_unavailable", "Speech recognition is not available.") from exc
-        timings = {"bytes": n_bytes, "decode_s": decoded - started, "asr_s": time.perf_counter() - decoded}
+            if keep is not None and quick_on and quick is not None and quick.accepts(pcm, lang):
+                try:
+                    quick_heard = quick.transcribe(pcm, lang)
+                except Exception as exc:  # noqa: BLE001 - Whisper answers instead
+                    log.warning("the quick %s recogniser failed (%s); Whisper decodes", lang, type(exc).__name__)
+                    quick_heard = ""
+                quick_s = time.perf_counter() - decoded
+                if quick_heard and keep(quick_heard):
+                    heard, via = quick_heard, "quick"
+            if via != "quick":
+                try:
+                    heard = transcriber.transcribe(pcm, lang)
+                except ASRUnavailable as exc:
+                    raise ApiError(503, "asr_unavailable", "Speech recognition is not available.") from exc
+                via = "whisper"
+        timings = {
+            "bytes": n_bytes, "decode_s": decoded - started, "asr_s": time.perf_counter() - decoded,
+            "quick_s": quick_s, "via": via,
+        }
         return heard, quality, timings
 
     def word_feedback(
@@ -1252,6 +1325,7 @@ def create_app(
             "languages": list(LANGUAGES),
             "tts_languages": list(tts_langs) if tts_langs is not None else (list(LANGUAGES) if tts_ok else []),
             "live_recite": live,
+            "live_quick": quick_languages(),
             "ocr": local_reader() is not None,
             "asr_model": model if isinstance(model := getattr(transcriber, "model", None), str) else settings.asr_model,
             "reasons": {
@@ -1375,7 +1449,8 @@ def create_app(
         if before is None:
             heard, quality, timings = listen(audio, lang)
         else:
-            tail, tail_quality, timings = listen(audio, lang, allow_empty=True)
+            keep = (lambda q: quick_kept(analysis, before, q) is not None) if mode == "strict" else None
+            tail, tail_quality, timings = listen(audio, lang, allow_empty=True, keep=keep)
             heard = join_heard(before, tail)
             quality = live_quality(tail_quality, before, lang)
 
@@ -1424,7 +1499,10 @@ def create_app(
             }
         out["brain"] = brain_name(used)
         # Sizes and timings only: the number of words heard before, never the words.
-        live_note = "" if before is None else f", tail after {len(tokenize(before, lang))} words"
+        live_note = (
+            "" if before is None
+            else f", tail after {len(tokenize(before, lang))} words, via {timings['via']} (quick {timings['quick_s']:.2f} s)"
+        )
         log.info(
             "recite/check %s %s: brain %s, audio %d bytes, %.1f s, decode %.2f s, asr %.2f s, total %.2f s%s",
             mode, lang, out["brain"], timings["bytes"], quality["seconds"], timings["decode_s"], timings["asr_s"],
@@ -1456,21 +1534,33 @@ def create_app(
             analysis = check_expected(expected, lang, "expected_text", mode)
             before = _heard_before(heard_before, lang)
             require_asr()
+            kept: list[dict[str, Any]] = []
+
+            def keep(quick_heard: str) -> bool:
+                progress = quick_kept(analysis, before, quick_heard)
+                if progress is not None:
+                    kept.append(progress)
+                return progress is not None
+
             heard, quality, timings = listen(
-                audio, lang, max_bytes=MAX_PHRASE_BYTES, max_seconds=MAX_PHRASE_SECONDS
+                audio, lang, max_bytes=MAX_PHRASE_BYTES, max_seconds=MAX_PHRASE_SECONDS,
+                keep=keep if mode == "strict" else None,
             )
             progress: dict[str, Any] | None = None
             if mode == "strict":
-                result, _words = analysis.check_recitation(join_heard(before, heard))
-                progress = reading_progress(result)
+                if timings["via"] == "quick":
+                    progress = kept[-1]  # the check of before + this transcript, done by keep
+                else:
+                    result, _words = analysis.check_recitation(join_heard(before, heard))
+                    progress = reading_progress(result)
             checked = time.perf_counter()
             out = {"mode": mode, "heard_text": heard, "quality": quality, "progress": progress, "brain": "offline"}
             log.info(
-                "recite/phrase %s %s: audio %d bytes, %.1f s, after %d words, decode %.2f s, asr %.2f s, "
-                "check %.3f s, total %.2f s",
+                "recite/phrase %s %s: audio %d bytes, %.1f s, after %d words, decode %.2f s, asr %.2f s "
+                "(via %s, quick %.2f s), check %.3f s, total %.2f s",
                 mode, lang, timings["bytes"], quality["seconds"], len(tokenize(before, lang)), timings["decode_s"],
-                timings["asr_s"], checked - started - timings["decode_s"] - timings["asr_s"],
-                time.perf_counter() - started,
+                timings["asr_s"], timings["via"], timings["quick_s"],
+                checked - started - timings["decode_s"] - timings["asr_s"], time.perf_counter() - started,
             )
             return out
 
@@ -1834,8 +1924,9 @@ def _configure_logging() -> None:
         logger.propagate = False
 
 
-def start_preload(transcriber: Transcriber, tts: Synthesizer) -> threading.Thread:
-    """Load the recognisers, then the voices, in a background thread, one language at a
+def start_preload(transcriber: Transcriber, tts: Synthesizer, quick: Any = None) -> threading.Thread:
+    """Load the recognisers (Whisper, then the quick ones of a live recitation when
+    ``quick`` is given), then the voices, in a background thread, one language at a
     time (the components' locks are released in between, so a request is never kept
     waiting for more than one load). Online only (``build_default_app``): after a cold
     start the first recording would otherwise wait for its recogniser (7 to 40 s on 2
@@ -1844,8 +1935,8 @@ def start_preload(transcriber: Transcriber, tts: Synthesizer) -> threading.Threa
 
     def run() -> None:
         started = time.perf_counter()
-        for kind, component in (("recogniser", transcriber), ("voice", tts)):
-            preload = getattr(component, "preload", None)
+        for kind, component in (("recogniser", transcriber), ("quick recogniser", quick), ("voice", tts)):
+            preload = getattr(component, "preload", None) if component is not None else None
             if preload is None or not getattr(component, "available", False):
                 continue
             for lang in LANGUAGES:
@@ -1867,6 +1958,12 @@ def build_default_app() -> FastAPI:
     _configure_logging()
     settings = load_settings()
     transcriber = SherpaWhisper.from_settings(settings)
+    # The quick recognisers of a live recitation: only with MOMMY_LIVE_ASR_MODEL=auto.
+    quick = (
+        QuickRecognizer(settings.models_dir, settings.asr_threads)
+        if settings.live_recite and settings.live_asr_model == "auto"
+        else None
+    )
     tts = PiperTTS.from_settings(settings)
     brain = make_brain(settings)
     # The local page reader loads its models at the first page (about 0.5 s).
@@ -1881,14 +1978,14 @@ def build_default_app() -> FastAPI:
     else:
         log.info("Quran text loaded in %.1f s", time.perf_counter() - started)
     log.info(
-        "starting: asr=%s (%s) tts=%s brain=%s quran=%s ocr=%s",
-        transcriber.available, transcriber.model, tts.available, brain.name, quran is not None,
-        bool(reader and reader.available),
+        "starting: asr=%s (%s) live quick=%s tts=%s brain=%s quran=%s ocr=%s",
+        transcriber.available, transcriber.model, ",".join(quick.languages) if quick else "off", tts.available,
+        brain.name, quran is not None, bool(reader and reader.available),
     )
-    app = create_app(settings, transcriber, tts, brain, quran, reader)
+    app = create_app(settings, transcriber, tts, brain, quran, reader, quick)
     if settings.access_code is not None:
         # Online only: local use keeps loading each language on first use.
-        start_preload(transcriber, tts)
+        start_preload(transcriber, tts, quick)
     return app
 
 

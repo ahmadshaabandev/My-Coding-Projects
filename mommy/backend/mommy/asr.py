@@ -19,6 +19,10 @@ Pieces
 * :func:`audio_quality` measures length and loudness, so that a clip that is too short or
   too quiet is answered with "say it again" instead of a guess.
 * :class:`SherpaWhisper` is the real recogniser; :class:`FakeTranscriber` is for tests.
+* :class:`QuickRecognizer` holds the quick recognisers of a live recitation (extra;
+  ``MOMMY_LIVE_ASR_MODEL``): Moonshine base for English and Parakeet TDT 0.6B v3 for
+  French, 5 to 15 times faster than Whisper turbo. They are only tried first on a phrase:
+  see ``mommy.app`` (``listen``) for when Whisper decodes it anyway.
 
 Whisper details (measured on sherpa-onnx 2.0.1)
 -----------------------------------------------
@@ -32,9 +36,13 @@ Whisper details (measured on sherpa-onnx 2.0.1)
 * On silence or noise Whisper writes sound descriptions such as ``(upbeat music)`` or
   ``[Music]``. They are not words the child said, so :func:`clean_transcript` removes
   text in round or square brackets and music notes.
-* ``tail_paddings`` is left at the library default (-1): the features are padded to the
-  full 30 s window, which is what the models were trained on. ``decoding_method`` is the
-  only one sherpa-onnx offers for Whisper, ``"greedy_search"``.
+* ``tail_paddings`` is left at the library default (-1). sherpa-onnx 2.0 does not pad a
+  clip to the 30 s window: it adds 1000 frames (10 s) of zeros after the clip so that the
+  model finds the end of the speech, and the encoder runs on clip + 10 s. Fewer frames are
+  faster but lose words (measured 2026-11-13 on 48 Piper-spoken phrases per language,
+  turbo, 2 threads: 500 frames, 35 % faster, errors en 1 -> 6, fr 4 -> 14 of 125-130
+  words; 300 frames, en 38 errors), so the default stays. ``decoding_method`` is the only
+  one sherpa-onnx offers for Whisper, ``"greedy_search"``.
 * Speed with 4 threads on a 4-core CPU (int8 models): a real-time factor of about 0.3
   for both small and turbo (1.5 s for a 5 s clip, 5 s for 17 s, 11 s for 33 s in two
   pieces). The first decode after loading is slower. Loading takes 2-4 s per language
@@ -587,6 +595,138 @@ class SherpaWhisper:
         return clean_transcript(" ".join(texts))
 
 
+@dataclass(frozen=True)
+class QuickModel:
+    """One quick recogniser of a live recitation: its directory in ``models/``, the
+    sherpa-onnx builder it needs, the files that must be there and the longest clip it is
+    given (a longer one goes to Whisper)."""
+
+    directory: str
+    kind: str  # "moonshine_v2" or "nemo_transducer"
+    files: tuple[str, ...]
+    max_seconds: float
+
+
+#: The quick recognisers per language (``MOMMY_LIVE_ASR_MODEL=auto``). Arabic has none:
+#: no candidate was close to Whisper turbo (measured 2026-11-13, see docs/CONTRACT.md,
+#: "Live recitation"). Moonshine base (English, MIT licence) loses words on clips over
+#: about 20 s (24 s: 16 errors in 500 words, against 0 in 250 at 12 s), so it is given at
+#: most 15 s; Parakeet TDT 0.6B v3 (25 European languages, CC-BY-4.0) does not.
+QUICK_MODELS: dict[str, QuickModel] = {
+    "en": QuickModel(
+        "sherpa-onnx-moonshine-base-en-quantized-2026-02-27",
+        "moonshine_v2",
+        ("encoder_model.ort", "decoder_model_merged.ort", "tokens.txt"),
+        15.0,
+    ),
+    "fr": QuickModel(
+        "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+        "nemo_transducer",
+        ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"),
+        MAX_CHUNK_SECONDS,
+    ),
+}
+
+
+class QuickRecognizer:
+    """The quick recognisers of a live recitation (extra), one per language of
+    :data:`QUICK_MODELS` whose files are in ``models_dir``.
+
+    Like :class:`SherpaWhisper`, a recogniser is given the audio and nothing else (hard
+    rule 1): ``from_moonshine_v2`` has no prompt, language or hotword option, and
+    ``from_transducer`` is built without its hotwords file. Neither model is told the
+    language (Parakeet recognises it from the audio; a phrase it hears in another language
+    does not match the text and goes to Whisper). Built lazily per model and cached;
+    decodes run one at a time under one lock (they take a fraction of a second).
+    ``available_for(lang)`` says whether a language has one; :meth:`transcribe` raises
+    :class:`ASRUnavailable` for a language without one, and ValueError for a clip longer
+    than the model's ``max_seconds`` (the caller checks :meth:`accepts` first).
+    """
+
+    def __init__(self, models_dir: Path, num_threads: int = 4, models: dict[str, QuickModel] | None = None) -> None:
+        if num_threads < 1:
+            raise ValueError("num_threads must be at least 1")
+        self.models_dir = Path(models_dir)
+        self.num_threads = int(num_threads)
+        self.models = dict(QUICK_MODELS if models is None else models)
+        self._recognizers: dict[str, Any] = {}
+        self._lock = threading.Lock()
+        self.languages: tuple[str, ...] = tuple(
+            lang for lang, m in self.models.items()
+            if sherpa_onnx is not None and not self._missing(m)
+        )
+        self.available: bool = bool(self.languages)
+        absent = [lang for lang in self.models if lang not in self.languages]
+        if absent:
+            log.info("no quick live recogniser for %s (model files missing)", ", ".join(absent))
+
+    def _missing(self, model: QuickModel) -> list[str]:
+        return [f for f in model.files if not (self.models_dir / model.directory / f).is_file()]
+
+    def available_for(self, lang: str) -> bool:
+        """True when ``lang`` has a quick recogniser whose files are present."""
+        return lang in self.languages
+
+    def accepts(self, pcm16k: np.ndarray, lang: str) -> bool:
+        """True when ``lang`` has a quick recogniser and the clip is not too long for it."""
+        return self.available_for(lang) and np.asarray(pcm16k).size <= self.models[lang].max_seconds * SAMPLE_RATE
+
+    def _recognizer(self, lang: str) -> Any:
+        """The cached recogniser of ``lang`` (call with the lock held)."""
+        model = self.models[lang]
+        rec = self._recognizers.get(model.directory)
+        if rec is None:
+            started = time.perf_counter()
+            d = self.models_dir / model.directory
+            # The complete argument lists: no prompt, no hotwords, never the expected text.
+            if model.kind == "moonshine_v2":
+                rec = sherpa_onnx.OfflineRecognizer.from_moonshine_v2(
+                    encoder=str(d / model.files[0]), decoder=str(d / model.files[1]), tokens=str(d / model.files[2]),
+                    num_threads=self.num_threads, decoding_method="greedy_search",
+                )
+            elif model.kind == "nemo_transducer":
+                rec = sherpa_onnx.OfflineRecognizer.from_transducer(
+                    encoder=str(d / model.files[0]), decoder=str(d / model.files[1]), joiner=str(d / model.files[2]),
+                    tokens=str(d / model.files[3]), num_threads=self.num_threads,
+                    decoding_method="greedy_search", model_type="nemo_transducer",
+                )
+            else:  # pragma: no cover - QUICK_MODELS only names the two kinds above
+                raise ValueError(f"unknown quick model kind {model.kind!r}")
+            self._recognizers[model.directory] = rec
+            log.info("loaded the quick %s recogniser in %.1f s", lang, time.perf_counter() - started)
+        return rec
+
+    def preload(self, langs: tuple[Lang, ...] = LANGUAGES) -> None:
+        """Build the recognisers of ``langs`` (those that have one) now."""
+        with self._lock:
+            for lang in langs:
+                if self.available_for(lang):
+                    self._recognizer(lang)
+
+    def transcribe(self, pcm16k: np.ndarray, lang: Lang) -> str:
+        """Transcribe float32 mono 16 kHz audio (no prompt, no hotwords, no language)."""
+        _check_lang(lang)
+        if not self.available_for(lang):
+            raise ASRUnavailable(f"no quick recogniser for {lang}")
+        pcm = _as_pcm(pcm16k)
+        if pcm.size > self.models[lang].max_seconds * SAMPLE_RATE:
+            raise ValueError("clip too long for the quick recogniser")
+        if pcm.size < MIN_DECODE_SAMPLES:
+            return ""
+        started = time.perf_counter()
+        with self._lock:
+            rec = self._recognizer(lang)
+            stream = rec.create_stream()
+            stream.accept_waveform(SAMPLE_RATE, pcm)
+            rec.decode_stream(stream)
+            text = stream.result.text
+        elapsed = time.perf_counter() - started
+        seconds = pcm.size / SAMPLE_RATE
+        # Sizes and timings only (hard rule 5).
+        log.info("quick %s: %.2f s of audio in %.2f s (RTF %.2f)", lang, seconds, elapsed, elapsed / seconds)
+        return clean_transcript(text)
+
+
 class FakeTranscriber:
     """A :class:`Transcriber` for tests: returns a preset transcript.
 
@@ -620,7 +760,10 @@ __all__ = [
     "MAX_CHUNK_SECONDS",
     "MIN_DECODE_SAMPLES",
     "MIN_SECONDS",
+    "QUICK_MODELS",
     "QUIET_LEVEL",
+    "QuickModel",
+    "QuickRecognizer",
     "SAMPLE_RATE",
     "SherpaWhisper",
     "Transcriber",

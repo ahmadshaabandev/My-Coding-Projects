@@ -68,7 +68,7 @@ SWAP_FILE="/swapfile"
 # file, the firewall rules of --stable (plain marker files, no secrets).
 STATE_DIR="/var/lib/mommy-setup"
 SWAP_GB="${MOMMY_SWAP_GB:-4}"
-readonly MIN_MEM_KB=4718592      # 4.5 GiB: below it, Mommy cannot run (about 5 GB at most)
+readonly MIN_MEM_KB=4718592      # 4.5 GiB: below it, Mommy cannot run (about 6 GB at most, swap helps)
 readonly LOW_MEM_KB=7340032      # 7 GiB: below it, warn
 # Free disk space needed: the image (about 2 GB), its build, the logs.
 MIN_FREE_GB="${MOMMY_MIN_FREE_GB:-8}"
@@ -292,10 +292,10 @@ check_machine() {
 
   mem_kb=$(awk '$1 == "MemTotal:" { print $2 }' /proc/meminfo)
   if (( mem_kb < MIN_MEM_KB )); then
-    fail_check "This VM has $(( mem_kb / 1024 )) MB of memory; Mommy needs about 5 GB. Use the shape VM.Standard.A1.Flex with 12 GB (ORACLE.md, step 2)."
+    fail_check "This VM has $(( mem_kb / 1024 )) MB of memory; Mommy needs about 6 GB. Use the shape VM.Standard.A1.Flex with 12 GB (ORACLE.md, step 2)."
   fi
   if (( mem_kb < LOW_MEM_KB )); then
-    warn "This VM has $(( mem_kb / 1024 )) MB of memory: Mommy needs up to about 5 GB, so it will be tight (the swap file helps)."
+    warn "This VM has $(( mem_kb / 1024 )) MB of memory: Mommy needs up to about 6 GB, so it will be tight (the swap file helps)."
   fi
   info "Memory: $(( mem_kb / 1024 )) MB, $(nproc) CPU core(s)"
 

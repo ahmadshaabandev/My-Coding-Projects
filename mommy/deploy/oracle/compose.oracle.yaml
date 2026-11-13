@@ -7,8 +7,9 @@
 #
 # The models are loaded when the app starts (scripts/space_start.sh starts the app with
 # the access gate on, and the app then preloads every recogniser and voice). They stay
-# in memory, about 3.6 GB of the VM's 12 GB, which also keeps the VM from looking idle
-# to Oracle (ORACLE.md, "Staying free").
+# in memory, about 3.6 GB of the VM's 12 GB (about 1 GB more with the quick live
+# recognisers of English and French, MOMMY_LIVE_ASR_MODEL=auto, the default), which also
+# keeps the VM from looking idle to Oracle (ORACLE.md, "Staying free").
 
 services:
   mommy:

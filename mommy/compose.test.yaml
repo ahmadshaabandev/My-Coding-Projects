@@ -29,6 +29,8 @@ services:
       - ./models/vits-piper-en_US-lessac-medium:/home/user/app/models/vits-piper-en_US-lessac-medium:ro
       - ./models/vits-piper-fr_FR-siwis-medium:/home/user/app/models/vits-piper-fr_FR-siwis-medium:ro
       - ./models/ppocr-onnx:/home/user/app/models/ppocr-onnx:ro
+      - ./models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27:/home/user/app/models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27:ro
+      - ./models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8:/home/user/app/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8:ro
 
 secrets:
   build_ca:

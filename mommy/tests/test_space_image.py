@@ -156,12 +156,25 @@ def test_every_model_archive_has_a_pinned_sha256() -> None:
     assert {name for name, *_ in rows} == {
         "sherpa-onnx-whisper-turbo", "sherpa-onnx-whisper-small", "vits-piper-ar_JO-kareem-medium",
         "vits-piper-en_US-lessac-medium", "vits-piper-fr_FR-siwis-medium",
+        "sherpa-onnx-moonshine-base-en-quantized-2026-02-27", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
     }
     for name, _tag, sha, files in rows:
         assert re.fullmatch(r"[0-9a-f]{64}", sha), name
         assert files, name
     text = DOWNLOAD.read_text("utf-8")
     assert text.index('if [[ "$actual" != "$sha" ]]') < text.index("tar -xjf")
+
+
+def test_the_quick_live_recognisers_are_downloaded() -> None:
+    """The quick recognisers of a live recitation (mommy.asr.QUICK_MODELS) are fetched by
+    default with the files the app checks for; --no-quick leaves them out."""
+    from mommy.asr import QUICK_MODELS
+
+    rows = {name: files for name, _tag, _sha, files in _model_table()}
+    for model in QUICK_MODELS.values():
+        assert rows[model.directory] == list(model.files)
+    text = DOWNLOAD.read_text("utf-8")
+    assert "--no-quick) quick=0 ;;" in text and "if ((quick)); then" in text
 
 
 def _fake_archive(directory: Path, name: str, files: list[str], payload: bytes) -> Path:
@@ -239,7 +252,23 @@ def test_download_installs_an_archive_that_matches(download_copy: tuple[Path, Pa
     for file, tag, asset, _sha in ocr:
         assert (models / "ppocr-onnx" / file).read_bytes() == (served / "ocr" / tag / asset).read_bytes()
     r = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=120, check=False)
-    assert r.returncode == 0 and r.stdout.count("skip  ") == 4 + len(ocr)
+    assert r.returncode == 0 and r.stdout.count("skip  ") == 6 + len(ocr)
+
+
+def test_download_without_the_quick_recognisers(download_copy: tuple[Path, Path, list]) -> None:
+    script, served, rows = download_copy
+    import hashlib
+
+    text = script.read_text("utf-8")
+    for name, tag, sha, _files in rows:
+        text = text.replace(sha, hashlib.sha256((served / tag / f"{name}.tar.bz2").read_bytes()).hexdigest())
+    for _file, tag, asset, sha in _ocr_table():
+        text = text.replace(sha, hashlib.sha256((served / "ocr" / tag / asset).read_bytes()).hexdigest())
+    script.write_text(text, encoding="utf-8")
+    r = subprocess.run(["bash", str(script), "--no-quick"], capture_output=True, text=True, timeout=120, check=False)
+    assert r.returncode == 0, r.stdout + r.stderr
+    names = {p.name for p in (script.parent.parent / "models").iterdir()}
+    assert "sherpa-onnx-whisper-turbo" in names and not any("moonshine" in n or "parakeet" in n for n in names)
 
 
 # ---------------------------------------------------------------------------

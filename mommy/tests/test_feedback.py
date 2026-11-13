@@ -319,6 +319,7 @@ _ENV_VARS = (
     "MOMMY_EFFORT",
     "MOMMY_ALLOWED_HOSTS",
     "MOMMY_LIVE_RECITE",
+    "MOMMY_LIVE_ASR_MODEL",
 )
 
 
@@ -341,6 +342,7 @@ def test_settings_defaults(clean_env: pytest.MonkeyPatch, mommy_root: Path) -> N
     assert s.vision_model is None and s.text_model is None
     assert s.claude_configured is False
     assert s.live_recite is True
+    assert s.live_asr_model == "auto"
     assert (s.quran_dir / "quran-uthmani.txt").is_file()
 
 
@@ -390,6 +392,8 @@ def test_settings_partially_configured_claude_is_offline(clean_env: pytest.Monke
         ("MOMMY_EFFORT", "extreme"),
         ("MOMMY_ALLOWED_HOSTS", " , ,"),
         ("MOMMY_LIVE_RECITE", "maybe"),
+        ("MOMMY_LIVE_ASR_MODEL", "turbo"),
+        ("MOMMY_LIVE_ASR_MODEL", "parakeet"),
     ],
 )
 def test_settings_invalid_values(clean_env: pytest.MonkeyPatch, name: str, value: str) -> None:
@@ -406,6 +410,12 @@ def test_settings_invalid_values(clean_env: pytest.MonkeyPatch, name: str, value
 def test_settings_live_recite_switch(clean_env: pytest.MonkeyPatch, value: str, on: bool) -> None:
     clean_env.setenv("MOMMY_LIVE_RECITE", value)
     assert load_settings().live_recite is on
+
+
+@pytest.mark.parametrize(("value", "model"), [("whisper", "whisper"), (" Whisper ", "whisper"), ("AUTO", "auto"), ("", "auto")])
+def test_settings_live_asr_model(clean_env: pytest.MonkeyPatch, value: str, model: str) -> None:
+    clean_env.setenv("MOMMY_LIVE_ASR_MODEL", value)
+    assert load_settings().live_asr_model == model
 
 
 def test_settings_is_frozen(clean_env: pytest.MonkeyPatch) -> None:

@@ -109,7 +109,7 @@ common and not your fault.
   - Each check takes about 1.8 times as long. In a test of one core against two (on
     another kind of processor than Oracle's, so the times on the VM differ), an
     8-second Arabic recitation took 6.2 s to check instead of 3.5 s.
-  - Memory is tight. Once each language has been used, Mommy holds about 5 GB, so the
+  - Memory is tight. Once each language has been used, Mommy holds about 6 GB, so the
     setup's warning that memory "will be tight" is expected. The swap file it makes
     takes the rest, and a check in a language not used for a while can then be slower.
 - Do not make several VMs to try: the free allowance counts all your Ampere VMs

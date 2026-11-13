@@ -159,6 +159,7 @@ def test_the_test_override_is_marked_and_mounts_the_models(test_config: dict[str
     assert set(mounts) == {
         "sherpa-onnx-whisper-turbo", "vits-piper-ar_JO-kareem-medium", "vits-piper-en_US-lessac-medium",
         "vits-piper-fr_FR-siwis-medium", "ppocr-onnx",
+        "sherpa-onnx-moonshine-base-en-quantized-2026-02-27", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
     }
     for name, mount in mounts.items():
         assert mount["read_only"] is True and mount["target"] == f"/home/user/app/models/{name}"

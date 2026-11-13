@@ -38,6 +38,16 @@ Environment variables:
   ``/api/recite/check``). Off, ``/api/recite/phrase`` does not exist (404), ``/api/health``
   says ``"live_recite": false`` and the web client sends each recording whole, as before.
   Nothing changes for the recogniser: it is still given the audio and the language only.
+* ``MOMMY_LIVE_ASR_MODEL``: ``auto`` (default) or ``whisper``, the recogniser of the
+  phrases of a live recitation in strict mode (``/api/recite/phrase`` and the tail of
+  ``/api/recite/check`` with ``heard_before``). ``auto``: a quick recogniser decodes the
+  phrase first where the language has one whose files are present (English: Moonshine
+  base, French: Parakeet TDT 0.6B v3; ``mommy.asr.QUICK_MODELS``), and its words are kept
+  when they add no mistake to the words read so far; otherwise Whisper decodes the phrase
+  as before. Arabic, contextual mode and every other endpoint always use Whisper.
+  Measured on 2 cores: a phrase read right is coloured 0.1-0.4 s after the end of
+  speech is detected instead of 1.6-2.5 s, with the same word accuracy (docs/CONTRACT.md,
+  "Live recitation"). ``whisper``: Whisper only, as before;
 * ``MOMMY_OCR``: ``on`` (default) or ``off`` (the same values as ``MOMMY_LIVE_RECITE``), the
   local reading of printed pages (:mod:`mommy.ocr`): without Claude for a request,
   ``POST /api/page/read`` reads the photo on the server itself. Off, the models are not
@@ -62,9 +72,12 @@ from .access import create_code_file, host_entry, read_code_file
 log = logging.getLogger(__name__)
 
 ASR_MODELS: tuple[str, ...] = ("small", "turbo")
+#: The values of ``MOMMY_LIVE_ASR_MODEL``.
+LIVE_ASR_MODELS: tuple[str, ...] = ("auto", "whisper")
 EFFORT_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 
 DEFAULT_ASR_MODEL = "turbo"
+DEFAULT_LIVE_ASR_MODEL = "auto"
 DEFAULT_ASR_THREADS = 4
 DEFAULT_EFFORT = "low"
 DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
@@ -95,6 +108,7 @@ class Settings:
     #: env MOMMY_ACCESS_CODE_FILE, when the code came from that file (None otherwise).
     access_code_file: Path | None = None
     live_recite: bool = True  # env MOMMY_LIVE_RECITE, default on
+    live_asr_model: str = DEFAULT_LIVE_ASR_MODEL  # env MOMMY_LIVE_ASR_MODEL: "auto" or "whisper"
     ocr: bool = True  # env MOMMY_OCR, default on
     ocr_threads: int = DEFAULT_ASR_THREADS  # env MOMMY_OCR_THREADS, default asr_threads
 
@@ -223,8 +237,9 @@ def load_settings(root: Path | None = None) -> Settings:
     list with no host in it or with a suffix entry that is too broad, an access code
     shorter than :data:`MIN_ACCESS_CODE_CHARS` (the message never quotes the code), a
     code file that cannot be read or made (:func:`code_from_file`), no access code
-    while ``MOMMY_REQUIRE_ACCESS_CODE`` is set, or a ``MOMMY_LIVE_RECITE`` or ``MOMMY_OCR``
-    that is neither on nor off (:func:`parse_switch`).
+    while ``MOMMY_REQUIRE_ACCESS_CODE`` is set, a ``MOMMY_LIVE_RECITE`` or ``MOMMY_OCR``
+    that is neither on nor off (:func:`parse_switch`), or a ``MOMMY_LIVE_ASR_MODEL`` that
+    is not one of :data:`LIVE_ASR_MODELS`.
 
     With ``MOMMY_ACCESS_CODE`` unset and ``MOMMY_ACCESS_CODE_FILE`` set, this reads that
     file, and writes a new code to it first when it does not exist.
@@ -244,6 +259,11 @@ def load_settings(root: Path | None = None) -> Settings:
         raise ValueError(f"MOMMY_EFFORT must be one of {', '.join(EFFORT_LEVELS)}, got {effort!r}")
 
     live_recite = parse_switch(env, "MOMMY_LIVE_RECITE", True)
+    live_asr_model = (_get(env, "MOMMY_LIVE_ASR_MODEL") or DEFAULT_LIVE_ASR_MODEL).lower()
+    if live_asr_model not in LIVE_ASR_MODELS:
+        raise ValueError(
+            f"MOMMY_LIVE_ASR_MODEL must be one of {', '.join(LIVE_ASR_MODELS)}, got {live_asr_model!r}"
+        )
     ocr = parse_switch(env, "MOMMY_OCR", True)
 
     hosts_raw = _get(env, "MOMMY_ALLOWED_HOSTS")
@@ -273,6 +293,7 @@ def load_settings(root: Path | None = None) -> Settings:
         access_code=access_code,
         access_code_file=access_code_file,
         live_recite=live_recite,
+        live_asr_model=live_asr_model,
         ocr=ocr,
         ocr_threads=ocr_threads,
     )
@@ -282,6 +303,7 @@ __all__ = [
     "ASR_MODELS",
     "DEFAULT_ALLOWED_HOSTS",
     "EFFORT_LEVELS",
+    "LIVE_ASR_MODELS",
     "MIN_ACCESS_CODE_CHARS",
     "Settings",
     "access_code_from",
