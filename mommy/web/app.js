@@ -2681,6 +2681,33 @@
     words.classList.remove('plain');
     words.classList.add('live');
     renderOps(words, progress.ops, live.lang, 'heard');
+    followReading(words);
+  }
+
+  /**
+   * (Redesign) Keep the line being read in view: the first word not reached yet (or the
+   * last word) stays above the sticky record bar and below the top bar, scrolling only
+   * when it would be hidden. Smooth, except with prefers-reduced-motion.
+   */
+  function followReading(box) {
+    const next = box.querySelector('.w-pending') || box.lastElementChild;
+    if (!next || !next.getBoundingClientRect) return;
+    const r = next.getBoundingClientRect();
+    const bar = $('#screen-recite .rec-bar');
+    const top = $('.topbar');
+    const bottomLimit = (bar ? bar.getBoundingClientRect().top : window.innerHeight) - 16;
+    const topLimit = (top ? top.getBoundingClientRect().bottom : 0) + 16;
+    let dy = 0;
+    if (r.bottom > bottomLimit) dy = r.bottom - bottomLimit + r.height;
+    else if (r.top < topLimit) dy = r.top - topLimit - r.height;
+    if (!dy) return;
+    let reduce = false;
+    try {
+      reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) {
+      reduce = false;
+    }
+    window.scrollBy({ top: dy, behavior: reduce ? 'auto' : 'smooth' });
   }
 
   /**
@@ -2929,10 +2956,6 @@
       }
       checkDictation({ written: text }, $('#dict-review-status'));
     });
-    // The marks shown to the parent belong to the text that was checked: once it is
-    // edited, it must be checked again before the child sees anything.
-    $('#dict-read-text').addEventListener('input', updateReviewConfirm);
-    $('#btn-dict-confirm').addEventListener('click', showDictationToChild);
     $('#dict-listen').addEventListener('click', () => playFeedback('dictation'));
     $('#btn-dict-new').addEventListener('click', () => {
       resetDictation();
@@ -2977,7 +3000,7 @@
     $('#dict-read-text').value = '';
     for (const id of ['#dict-intro-status', '#dict-speak-status', '#dict-check-status', '#dict-review-status', '#dict-child-status']) clearStatus($(id));
     clearTaskOutcome('dictation');
-    updateReviewConfirm();
+    $('#dict-fix').open = false;
     setDictStage('intro');
   }
 
@@ -3355,7 +3378,6 @@
     const buttons = [$('#btn-dict-check'), $('#btn-dict-recheck'), ...$$('[data-gate="dict-photo"]')];
     for (const b of buttons) setBusy(b, true);
     d.checking = true;
-    updateReviewConfirm();
     const task = state.task; // a task started or left meanwhile drops this answer
     let res;
     let sent = false;
@@ -3384,66 +3406,42 @@
     } finally {
       for (const b of buttons) setBusy(b, false);
       d.checking = false;
-      updateReviewConfirm();
     }
     clearStatus(status);
-    showDictationReview(res);
+    showDictationResult(res);
   }
 
   /**
-   * True when "What was read" was edited after the result shown was computed. Line breaks
-   * are compared as LF: a textarea's value holds LF, while a browser sends a form field
-   * with CRLF, which a server may echo in read_text (a two-line answer was never confirmed).
+   * (Redesign) The result, straight away: the words marked, the feedback (spoken unless it
+   * quotes the Quran) and, under "Was my writing read right?", the text that was read,
+   * which the child may correct and check again (it is their own writing). Every check
+   * counts for a task or for the stars of free practice; the child can retry freely.
    */
-  function reviewIsStale() {
-    const r = state.dictation.result;
-    const lines = (s) => onlyText(s).replace(/\r\n?/g, '\n').trim();
-    return !!r && lines($('#dict-read-text').value) !== lines(r.res.read_text);
-  }
-
-  /** "Confirm result" only shows the child marks that match the text in the box. */
-  function updateReviewConfirm() {
-    const stale = reviewIsStale();
-    $('#dict-stale').hidden = !stale;
-    $('#btn-dict-confirm').disabled = stale || state.dictation.checking;
-  }
-
-  /** The parent sees the result first and can correct what was read. */
-  function showDictationReview(res) {
+  function showDictationResult(res) {
     state.speechToken++;
+    const d = state.dictation;
     const lang = state.page.lang;
     const result = res.result || {};
     const feedback = onlyText(res.feedback);
     // feedback_is_quran: it quotes the mushaf word of a Quran part, so it is never spoken.
-    state.dictation.result = { res, feedback: feedback ? { text: feedback, lang, quran: res.feedback_is_quran === true } : null };
-    state.dictation.feedbackBlob = null;
+    d.result = { res, feedback: feedback ? { text: feedback, lang, quran: res.feedback_is_quran === true } : null };
+    d.feedbackBlob = null;
 
     const readText = $('#dict-read-text');
     readText.value = onlyText(res.read_text);
     setTextLang(readText, lang);
-    updateReviewConfirm();
     const uncertain = Array.isArray(res.uncertain_words) ? res.uncertain_words.filter((w) => typeof w === 'string' && w) : [];
     const unc = $('#dict-uncertain');
     if (uncertain.length) setT(unc, 'uncertain', { words: uncertain.join(uiLang() === 'ar' ? '، ' : ', ') });
     else setT(unc, null);
     unc.hidden = uncertain.length === 0;
     $('#dict-legible').hidden = res.legible !== false;
+    // A photo that was hard to read: the text that was read is shown at once.
+    if (res.legible === false || uncertain.length) $('#dict-fix').open = true;
 
-    renderOps($('#dict-review-words'), result.ops || [], lang, 'written');
-    const fb = $('#dict-review-feedback');
-    fb.textContent = feedback;
-    setTextLang(fb, lang);
-    setDictStage('review');
-    $('#dict-main [data-stage="review"]').focus({ preventScroll: true });
-  }
-
-  function showDictationToChild() {
-    const d = state.dictation;
-    if (!d.result || d.checking || reviewIsStale()) return;
-    const lang = state.page.lang;
-    renderOps($('#dict-child-words'), (d.result.res.result || {}).ops || [], lang, 'written');
+    renderOps($('#dict-child-words'), result.ops || [], lang, 'written');
     const fb = $('#dict-child-feedback');
-    fb.textContent = d.result.feedback ? d.result.feedback.text : '';
+    fb.textContent = feedback;
     setTextLang(fb, lang);
     const fbQuran = !!(d.result.feedback && d.result.feedback.quran);
     $('#dict-listen').hidden = !d.result.feedback || fbQuran;
@@ -3452,8 +3450,7 @@
     setDictStage('child');
     $('#dict-main [data-stage="child"]').focus({ preventScroll: true });
     playFeedback('dictation', true);
-    // The result the parent confirmed is the one that counts for a task.
-    notifyTask('dictation', d.result.res);
+    notifyResult('dictation', res);
   }
 
   // ===========================================================================
@@ -4051,6 +4048,7 @@
     state.page.confirmToken = token;
     setPageQuran(null);
     $('#page-text').value = '';
+    $('#page-title').value = '';
     setPageLang(state.page.lang);
     const strict = $('input[name="mode"][value="strict"]');
     if (strict) strict.checked = true;
@@ -4196,14 +4194,80 @@
       return;
     }
     if (state.page !== page || page.confirmToken !== token) return;
+    page.checked = true;
     if (res.quranParts.length) setPageQuran({ parts: res.quranParts, mushafText: res.mushafText, text: page.text });
     if (!res.dictation) setNoDictation(true);
-    if (!res.contextual && page.mode === 'contextual') {
+    if (!res.contextual && !state.task) {
+      // A saved text with Quran words is recited word by word only.
+      setNoMeaning(true);
+    } else if (!res.contextual && page.mode === 'contextual') {
       page.noMeaningTask = true;
       refreshGates();
     }
     updateQuranNotes();
     refreshPlainPage();
+  }
+
+  // ---------------------------------------------------------------------------
+  // (Redesign) "My texts": a saved text opens on Read aloud or Dictation, or in the editor
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The page becomes the saved text `x` ({id, title, text, lang, mode}), confirmed (it was
+   * checked when it was saved; its Quran parts are asked again in the background), or a
+   * new empty text (x null). The editor's fields follow.
+   */
+  function loadText(x) {
+    const token = state.page.confirmToken + 1;
+    if (x) {
+      const lang = LANGS.includes(x.lang) ? x.lang : state.profile.lang;
+      state.page = Object.assign(emptyPage(lang), {
+        text: onlyText(x.text),
+        mode: x.mode === 'contextual' ? 'contextual' : 'strict',
+        title: onlyText(x.title),
+        textId: typeof x.id === 'string' ? x.id : null,
+        confirmed: true,
+        langChosen: true,
+        confirmToken: token,
+      });
+    } else {
+      state.page = emptyPage(state.profile.lang);
+      state.page.confirmToken = token;
+    }
+    setPageQuran(null);
+    $('#page-text').value = state.page.text;
+    $('#page-title').value = state.page.title;
+    setPageLang(state.page.lang);
+    for (const r of $$('input[name="mode"]')) r.checked = r.value === state.page.mode;
+    for (const id of ['#prep-status', '#prep-quran-note', '#prep-confirm-status']) clearStatus($(id));
+    $('#prep-next').hidden = true;
+    setBusy($('#btn-confirm'), false);
+    setNoDictation(false);
+    setNoMeaning(false);
+    resetRecite();
+    resetDictation();
+    renderLegends();
+    updateReciteModeLabel();
+    refreshGates();
+    if (x) taskQuranParts(state.page);
+  }
+
+  /** Practise a saved text: Read aloud ('recite') or 'dictation'. Ends a task first. */
+  function openText(x, screen) {
+    if (!x || state.childId === null || (screen !== 'recite' && screen !== 'dictation')) return false;
+    if (state.task) endTask();
+    loadText(x);
+    go(screen);
+    return true;
+  }
+
+  /** The editor: a saved text to change, or a new text (x null). */
+  function editText(x) {
+    if (state.childId === null) return false;
+    if (state.task) endTask();
+    loadText(x || null);
+    go('prepare');
+    return true;
   }
 
   /** "Back to my tasks": end the task and show the child's home. */
@@ -4307,7 +4371,10 @@
 
   /**
    * family.js: {route(screen) -> screen, langFor(screen) -> lang | null, enter(screen),
-   * leave(screen), onQuranPrefs(prefs), onLanguage(lang), onHealth(health)}.
+   * leave(screen), onQuranPrefs(prefs), onLanguage(lang), onHealth(health),
+   * onTextSaved({id, title, text, lang, mode}) -> {id, title} | {error: key} (redesign: the
+   * text is saved in "My texts"), onPractice({kind, textId}, response, outcomeNode) (a
+   * check result of free practice)}.
    */
   function setHooks(hooks) {
     state.hooks = Object.assign({}, hooks || {});
@@ -4367,6 +4434,10 @@
     startTask,
     leaveTask,
     taskRunning: () => state.task !== null,
+    // (Redesign) My texts: practise a saved text, change it or write a new one
+    openText,
+    editText,
+    pageInfo: () => ({ ready: state.page.confirmed, textId: state.page.textId, task: state.task !== null }),
   });
 
   // ===========================================================================
