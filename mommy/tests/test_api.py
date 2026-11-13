@@ -1038,6 +1038,17 @@ class TestTTS:
         (args, kwargs), = transcriber.calls
         assert kwargs == {} and len(args) == 2 and isinstance(args[0], np.ndarray) and args[1] == "fr"
 
+    def test_slow_word_without_the_check(self, make_client: Callable[..., TestClient]) -> None:
+        # The single words of a dictation: slow, but never sent to the recogniser (it is
+        # unreliable on one word and costs seconds of CPU per word).
+        tts = FakeTTS()
+        transcriber = RecordingTranscriber("chat")
+        r = make_client(tts=tts, transcriber=transcriber).post(
+            "/api/tts", json={"text": "chat", "lang": "fr", "slow": True, "check": False}
+        )
+        assert r.status_code == 200 and r.headers["x-speech-check"] == "skipped"
+        assert tts.calls == [("chat", "fr", True)] and transcriber.calls == []
+
     def test_slow_speech_heard_with_digits_passes(self, make_client: Callable[..., TestClient]) -> None:
         # Regression: "twelve" heard as "12" failed the check after two syntheses.
         tts = FakeTTS()

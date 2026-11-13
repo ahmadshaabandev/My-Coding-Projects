@@ -1727,26 +1727,60 @@
   // ===========================================================================
 
   const player = {
-    audio: null,
+    // One audio element for the whole page, reused for every sound: phones (Safari above
+    // all) let an element play without a new tap only once a tap has started it, so a
+    // fresh element per sound was refused after the dictation's writing pauses.
+    el: null,
     url: null,
     done: null,
+    handlers: null,
+    element() {
+      if (!this.el) {
+        this.el = new Audio();
+        this.el.preload = 'auto';
+      }
+      return this.el;
+    },
+    /**
+     * Call from a tap (synchronously): starts the shared element once with a moment of
+     * silence, so that later sounds may play without a tap. Harmless when not needed.
+     */
+    unlock() {
+      if (this.unlocked || this.url) return;
+      const el = this.element();
+      try {
+        const silent = new Blob([window.MommyRecorder.encodeWav(new Float32Array(1600), 16000)], { type: 'audio/wav' });
+        const url = URL.createObjectURL(silent);
+        el.src = url;
+        const p = el.play();
+        const clear = () => {
+          if (el.src === url && !this.url) el.removeAttribute('src');
+          URL.revokeObjectURL(url);
+        };
+        if (p && p.then) p.then(() => { this.unlocked = true; clear(); }, clear);
+      } catch (e) {
+        /* not supported: each sound then needs its own tap, as before */
+      }
+    },
     /**
      * Play a WAV Blob; resolves when playback starts (rejects if blocked). `onDone` is
      * called once when this playback ends, fails or is stopped.
      */
     async play(blob, onDone) {
       this.stop();
-      this.url = URL.createObjectURL(blob);
-      const audio = new Audio(this.url);
-      this.audio = audio;
+      const el = this.element();
+      const url = URL.createObjectURL(blob);
+      this.url = url;
       this.done = onDone || null;
       const finish = () => {
-        if (this.audio === audio) this.stop();
+        if (this.url === url) this.stop();
       };
-      audio.addEventListener('ended', finish);
-      audio.addEventListener('error', finish);
+      this.handlers = finish;
+      el.addEventListener('ended', finish);
+      el.addEventListener('error', finish);
+      el.src = url;
       try {
-        await audio.play();
+        await el.play();
       } catch (e) {
         finish();
         throw e;
@@ -1755,11 +1789,16 @@
     stop() {
       const done = this.done;
       this.done = null;
-      if (this.audio) {
-        this.audio.pause();
-        this.audio = null;
+      if (this.el) {
+        if (this.handlers) {
+          this.el.removeEventListener('ended', this.handlers);
+          this.el.removeEventListener('error', this.handlers);
+          this.handlers = null;
+        }
+        this.el.pause();
       }
       if (this.url) {
+        if (this.el) this.el.removeAttribute('src');
         URL.revokeObjectURL(this.url);
         this.url = null;
       }
@@ -1772,8 +1811,10 @@
    * X-Speech-Check: 'passed', 'failed' (the voice may not say the phrase clearly) or
    * 'skipped'.
    */
-  async function fetchSpeech(text, lang, slow) {
-    const res = await api('api/tts', { json: { text, lang, slow: !!slow }, as: 'response' });
+  async function fetchSpeech(text, lang, slow, noCheck) {
+    const json = { text, lang, slow: !!slow };
+    if (noCheck) json.check = false; // single dictation words: no speech check (see /api/tts)
+    const res = await api('api/tts', { json, as: 'response' });
     const check = (res.headers.get('X-Speech-Check') || 'skipped').toLowerCase();
     return { blob: await res.blob(), check };
   }
@@ -2981,9 +3022,10 @@
   // ===========================================================================
 
   function initDictation() {
-    $('#btn-dict-start').addEventListener('click', startDictation);
-    $('#dict-repeat').addEventListener('click', () => playPhrase(state.dictation.index, { repeat: true }));
-    $('#dict-next').addEventListener('click', nextPhrase);
+    // Each tap also lets the shared player play the sounds that follow without a tap.
+    $('#btn-dict-start').addEventListener('click', () => { player.unlock(); startDictation(); });
+    $('#dict-repeat').addEventListener('click', () => { player.unlock(); playPhrase(state.dictation.index, { repeat: true }); });
+    $('#dict-next').addEventListener('click', () => { player.unlock(); nextPhrase(); });
     $('#dict-show').addEventListener('click', togglePhrase);
     $('#dict-gu-show').addEventListener('click', showGrownUpText);
     $('#dict-gu-done').addEventListener('click', doneReading);
@@ -3233,21 +3275,38 @@
     prefetch(index + 1);
     // Then word by word, slowly, with a pause after each word to write it.
     setStatus(status, 'word_by_word');
+    // All the words with their writing pauses become ONE sound, played at once: no new
+    // start after each pause, which phones may refuse without a tap.
+    const parts = [];
     for (const w of words) {
-      if (!current() || state.screen !== 'dictation') return;
-      let ws;
       try {
-        ws = await wordSpeech(w);
+        parts.push({ blob: (await wordSpeech(w)).blob, pauseMs: writePauseMs(w, state.profile.age) });
       } catch (err) {
-        continue; // a word the voice cannot say (or refuses) is skipped: the sentence was heard
+        /* a word the voice cannot say (or refuses) is left out: the sentence was heard */
       }
       if (!current() || state.screen !== 'dictation') return;
+    }
+    const track = parts.length ? await joinWavs(parts) : null;
+    if (!current() || state.screen !== 'dictation') return;
+    if (track) {
       try {
-        await playToEnd(ws.blob);
+        await playToEnd(track);
       } catch (err) {
+        if (current() && err && err.name === 'NotAllowedError') setStatus(status, 'press_repeat');
         return;
       }
-      await sleepMs(writePauseMs(w, state.profile.age));
+    } else {
+      // Formats that cannot be joined: one word after the other, as before.
+      for (const part of parts) {
+        if (!current() || state.screen !== 'dictation') return;
+        try {
+          await playToEnd(part.blob);
+        } catch (err) {
+          if (current() && err && err.name === 'NotAllowedError') setStatus(status, 'press_repeat');
+          return;
+        }
+        await sleepMs(part.pauseMs);
+      }
     }
     if (current()) clearStatus(status);
   }
@@ -3263,6 +3322,58 @@
     return new Promise((r) => setTimeout(r, ms));
   }
 
+  /** {rate, channels, data: Int16Array} of a 16-bit PCM WAV, or null. */
+  function wavPcm(buf) {
+    const v = new DataView(buf);
+    if (buf.byteLength < 12 || v.getUint32(0, false) !== 0x52494646 || v.getUint32(8, false) !== 0x57415645) return null;
+    let off = 12;
+    let fmt = null;
+    while (off + 8 <= buf.byteLength) {
+      const id = v.getUint32(off, false);
+      const size = v.getUint32(off + 4, true);
+      const body = off + 8;
+      if (id === 0x666d7420 && size >= 16) {
+        fmt = { format: v.getUint16(body, true), channels: v.getUint16(body + 2, true), rate: v.getUint32(body + 4, true), bits: v.getUint16(body + 14, true) };
+      } else if (id === 0x64617461) {
+        if (!fmt || fmt.format !== 1 || fmt.bits !== 16) return null;
+        const len = Math.min(size, buf.byteLength - body) & ~1;
+        return { rate: fmt.rate, channels: fmt.channels, data: new Int16Array(buf.slice(body, body + len)) };
+      }
+      off = body + size + (size & 1);
+    }
+    return null;
+  }
+
+  /**
+   * One WAV Blob of `parts` ({blob, pauseMs}): each sound followed by its silence. Null
+   * when the sounds are not all 16-bit PCM of the same rate and channels.
+   */
+  async function joinWavs(parts) {
+    const pcms = [];
+    for (const part of parts) {
+      const pcm = wavPcm(await part.blob.arrayBuffer());
+      if (!pcm || (pcms.length && (pcm.rate !== pcms[0].rate || pcm.channels !== pcms[0].channels))) return null;
+      pcms.push(pcm);
+    }
+    const { rate, channels } = pcms[0];
+    const silences = parts.map((p) => Math.round((p.pauseMs / 1000) * rate) * channels);
+    let total = 0;
+    pcms.forEach((p, i) => { total += p.data.length + silences[i]; });
+    const out = new Int16Array(total);
+    let at = 0;
+    pcms.forEach((p, i) => {
+      out.set(p.data, at);
+      at += p.data.length + silences[i];
+    });
+    const header = new DataView(new ArrayBuffer(44));
+    const w = (o, s) => { for (let i = 0; i < 4; i++) header.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); header.setUint32(4, 36 + out.byteLength, true); w(8, 'WAVE');
+    w(12, 'fmt '); header.setUint32(16, 16, true); header.setUint16(20, 1, true); header.setUint16(22, channels, true);
+    header.setUint32(24, rate, true); header.setUint32(28, rate * channels * 2, true); header.setUint16(32, channels * 2, true);
+    header.setUint16(34, 16, true); w(36, 'data'); header.setUint32(40, out.byteLength, true);
+    return new Blob([header.buffer, out.buffer], { type: 'audio/wav' });
+  }
+
   /** The words of a sentence as the voice says them, without the punctuation around them. */
   function sentenceWords(text) {
     return onlyText(text).split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter(Boolean);
@@ -3273,7 +3384,7 @@
     const d = state.dictation;
     const key = state.page.lang + ' ' + word;
     if (d.wordAudio.has(key)) return d.wordAudio.get(key);
-    const p = fetchSpeech(word, state.page.lang, true);
+    const p = fetchSpeech(word, state.page.lang, true, true);
     d.wordAudio.set(key, p);
     p.catch(() => {
       if (d.wordAudio.get(key) === p) d.wordAudio.delete(key);

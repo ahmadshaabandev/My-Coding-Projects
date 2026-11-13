@@ -643,12 +643,12 @@ async function mainFlow(browser, base) {
     // Then each word, slowly (the punctuation left out), fetched once.
     for (const w of ['The', 'cat', 'sat']) {
       await waitForTts(fake, w);
-      assert.deepEqual(fake.ttsFor(w)[0].json, { text: w, lang: 'en', slow: true });
+      assert.deepEqual(fake.ttsFor(w)[0].json, { text: w, lang: 'en', slow: true, check: false }, 'single words: no speech check');
     }
     // While the child writes, the next sentence and its words are fetched ahead.
     await waitForTts(fake, 'on the mat.');
     await waitForTts(fake, 'mat');
-    assert.deepEqual(fake.ttsFor('mat')[0].json, { text: 'mat', lang: 'en', slow: true });
+    assert.deepEqual(fake.ttsFor('mat')[0].json, { text: 'mat', lang: 'en', slow: true, check: false });
     await page.waitForSelector('#dict-next:not([disabled])');
     const n = fake.callsTo('/api/tts').length;
     await page.click('#dict-repeat');
@@ -960,6 +960,60 @@ async function recordLabelsFit(browser, base) {
       assert.equal(await page.$eval('#recite-rec .rec-label', (n) => getComputedStyle(n).overflowWrap), 'normal');
     });
     await context.close();
+  }
+}
+
+/**
+ * Phones only let a sound start without a new tap on an element a tap has started, and
+ * only shortly after a tap on a fresh one (Chromium's user-gesture-required policy acts
+ * the same). The owner heard only the first word of the word-by-word part: the app made
+ * a fresh element per sound, so the words after a writing pause were refused. Here the
+ * words arrive more than 5 s after the tap, as on a slow server, and must still play.
+ */
+async function strictAutoplayFlow(base) {
+  const strict = await chromium.launch({
+    headless: true,
+    args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=user-gesture-required'],
+  });
+  try {
+    const { context, page, fake, problems } = await newPage(strict, base, { width: 360, height: 780 });
+    await page.addInitScript(() => {
+      window.__strictPlays = [];
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        const at = Date.now();
+        const p = play.call(this);
+        p.then(() => window.__strictPlays.push({ ok: true, at }), (e) => window.__strictPlays.push({ ok: false, name: e.name, at }));
+        return p;
+      };
+      window.__mommyPauseScale = 0.05;
+    });
+    await check('dictation on a phone-like autoplay policy: the sentence AND the words play, even when the words come more than 5 s after the tap', async () => {
+      await page.goto(base + '/');
+      await startSession(page, { consent: true, nickname: 'Lina' });
+      await page.waitForSelector('#screen-prepare:not([hidden])');
+      await page.fill('#page-text', PAGE_TEXT);
+      await pressConfirm(page);
+      fake.setTts({ delay: (j) => (j.slow ? 6000 : 0) });
+      await H.goTab(page, 'dictation');
+      await page.click('#btn-dict-start');
+      try {
+        await page.waitForFunction(() => window.__strictPlays.filter((p) => p.ok).length >= 2, null, { timeout: 40000 });
+      } catch (e) {
+        throw new Error('plays: ' + JSON.stringify(await page.evaluate(() => window.__strictPlays)) + ' status: ' + (await page.textContent('#dict-speak-status')) + ' tts: ' + JSON.stringify(fake.callsTo('/api/tts').map((c) => c.json)) + ' errors: ' + JSON.stringify(problems));
+      }
+      const plays = await page.evaluate(() => window.__strictPlays);
+      // The tap's moment of silence may be cut short by the sentence (AbortError): fine.
+      assert.deepEqual(plays.filter((p) => !p.ok && p.name !== 'AbortError'), [], 'no sound was refused');
+      const ok = plays.filter((p) => p.ok);
+      assert.ok(ok[1].at - plays[0].at > 5000, 'the words (one sound) started more than 5 s after the tap, and played');
+      // The tap's moment of silence, the sentence, then all its words as one sound.
+      assert.equal(await page.locator('audio').count(), 0, 'one shared element, not in the page');
+      fake.setTts(null);
+    });
+    await context.close();
+  } finally {
+    await strict.close();
   }
 }
 
@@ -3040,6 +3094,8 @@ async function main() {
     if (wanted('desktopShots')) await desktopShots(browser, base);
     console.log('# browser: record button labels');
     if (wanted('recordLabelsFit')) await recordLabelsFit(browser, base);
+    console.log('# browser: phone-like autoplay policy');
+    if (wanted('strictAutoplayFlow')) await strictAutoplayFlow(base);
     console.log('# browser: dark mode');
     if (wanted('darkMode')) await darkMode(browser, base);
     console.log('# browser: unavailable features');

@@ -607,6 +607,9 @@ class TTSRequest(BaseModel):
     text: str
     lang: LangField
     slow: bool = False
+    # False: slow speech without the recogniser's check (the single words of a dictation:
+    # the check is unreliable on one word and costs one to five seconds of CPU each).
+    check: bool = True
 
 
 class PhrasesRequest(BaseModel):
@@ -1550,7 +1553,7 @@ def create_app(
         _refuse_lang_mismatch(text, body.lang, "text")
         check = "skipped"
         try:
-            if body.slow and getattr(transcriber, "available", False):
+            if body.slow and body.check and getattr(transcriber, "available", False):
                 try:
                     spoken = synthesize_verified(
                         tts, transcriber, text, body.lang, slow=True, attempts=SPEECH_CHECK_ATTEMPTS
