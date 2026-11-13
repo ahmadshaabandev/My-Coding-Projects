@@ -367,9 +367,17 @@
    * - A phrase ends after END_SILENCE_S (0.65 s) of silence, once it holds MIN_SPEECH_S
    *   (0.4 s) of speech. The pauses between words of a sentence read aloud are under
    *   about 0.3 s, and a hesitation inside a word is shorter still; children reading
-   *   pause 0.5-1 s and more at commas and full stops. 0.65 s therefore cuts at those
-   *   pauses, not inside a word, while the result follows the child within a second. A
-   *   phrase with less speech than 0.4 s (a cough, a click, a one-syllable word) is not
+   *   word by word pause 0.5-1 s and more at commas and full stops. 0.65 s therefore cuts
+   *   at those pauses, not inside a word, while the result follows the child within a
+   *   second. A child reading fluently pauses only 0.2-0.5 s between sentences, so with
+   *   0.65 s alone a paragraph ran to the forced cut and nothing was coloured for 18 s.
+   *   So once a phrase holds more than LONG_SPEECH_S (1.5 s) of speech and is dense speech
+   *   (speech for at least DENSE_SPEECH, 60 %, of its time: a fluent reader), the silence
+   *   needed shrinks with its speech, down to SHORT_END_SILENCE_S (0.3 s) at LONGER_SPEECH_S
+   *   (3 s): a fluent reader's phrase ends at a sentence pause after 2-3 sentences or
+   *   fewer. A word-by-word reader (much of the time between words: 35-45 % speech) keeps
+   *   0.65 s: shorter phrases of a few words made Whisper's errors worse for those readers.
+   *   A phrase with less speech than 0.4 s (a cough, a click, a one-syllable word) is not
    *   sent alone: Whisper is unreliable on such short clips (it tends to write a word that
    *   was not said); it stays in the next phrase, or the tail. A burst of less than
    *   CLICK_S (0.15 s) of speech followed by DROP_SILENCE_S (1 s) of silence is dropped
@@ -377,10 +385,12 @@
    * - Each phrase has PAD_S (0.2 s) of the signal before its first and after its last
    *   speech frame (soft starts and ends of words, and some silence for Whisper), never
    *   reaching into the previous phrase.
-   * - A phrase is cut anyway after MAX_PHRASE_S (18 s), at the quietest 100 ms of its
-   *   last CUT_SEARCH_S (8 s): one decode stays well inside Whisper's 30 s window, and the
-   *   child sees progress even without pauses. There is no padding at a forced cut (the
-   *   next phrase starts exactly there, so no word is decoded twice).
+   * - A phrase is cut anyway after MAX_PHRASE_S (7 s), in the middle of the longest pause
+   *   (frames that are not speech) of its last CUT_SEARCH_S (4 s) but not its last 0.5 s
+   *   - the gap between two sentences or two words, not a quiet sound inside a word -
+   *   or, with no pause of 100 ms there, at its quietest 100 ms: the child sees progress at
+   *   least every 7 s or so even without a pause long enough, and one decode stays short. There is no padding at a
+   *   forced cut (the next phrase starts exactly there, so no word is decoded twice).
    */
   const VAD = {
     FRAME_S: 0.02,
@@ -391,14 +401,36 @@
     FLOOR_RISE_DB_PER_S: 4,
     MIN_FLOOR_DBFS: -90,
     END_SILENCE_S: 0.65,
+    LONG_SPEECH_S: 1.5,
+    LONGER_SPEECH_S: 3,
+    SHORT_END_SILENCE_S: 0.3,
+    DENSE_SPEECH: 0.6,
     MIN_SPEECH_S: 0.4,
     CLICK_S: 0.15,
     DROP_SILENCE_S: 1.0,
     PAD_S: 0.2,
     TAIL_LEAD_S: 1.0,
-    MAX_PHRASE_S: 18,
-    CUT_SEARCH_S: 8,
+    MAX_PHRASE_S: 7,
+    CUT_SEARCH_S: 4,
   };
+
+  /**
+   * Segmenter numbers that differ by language (live recitation). Arabic has no quick
+   * recogniser: every phrase goes to Whisper, which loses words at the cuts of short
+   * phrases (a fluent Arabic reading of 98 s, Piper-spoken: 50 / 60 errors of 177 words,
+   * clean / noisy, with 8-9 phrases of 12 s; 58 / 69 with 20-22 phrases of 4.6 s; 52 / 63
+   * with 13-15 phrases of 7 s). So an Arabic phrase shrinks its end silence only after
+   * 3 s of speech (0.3 s at 5 s) and is cut at 9 s at the latest; English and French
+   * (quick recognisers, the same errors either way) keep the defaults of VAD.
+   */
+  const PHRASE_OPTIONS = {
+    ar: { LONG_SPEECH_S: 3, LONGER_SPEECH_S: 5, MAX_PHRASE_S: 9, CUT_SEARCH_S: 5 },
+  };
+
+  /** The PhraseSegmenter options of a reading in `lang` (a copy; {} for the defaults). */
+  function phraseOptionsFor(lang) {
+    return Object.assign({}, PHRASE_OPTIONS[lang] || {});
+  }
 
   /** Level in dBFS of a block of samples (RMS; -120 for silence). */
   function dbfs(samples, from, to) {
@@ -521,7 +553,7 @@
         this._silence++;
         const silenceS = this._silence * frameS;
         const speechS = r.speechFrames * frameS;
-        if (speechS >= v.MIN_SPEECH_S && silenceS >= v.END_SILENCE_S) {
+        if (speechS >= v.MIN_SPEECH_S && silenceS >= this._endSilence(r, end, speechS)) {
           const pad = Math.round(v.PAD_S * this.rate);
           const from = Math.max(this.consumed, r.start - pad);
           const to = Math.min(this._total, r.lastSpeechEnd + pad);
@@ -537,6 +569,22 @@
       if (r && (end - Math.max(this.consumed, r.start)) / this.rate >= v.MAX_PHRASE_S) {
         this._forcedCut(end, out);
       }
+    }
+
+    /**
+     * The silence that ends the phrase: END_SILENCE_S, shrinking to SHORT_END_SILENCE_S
+     * as the phrase's speech grows from LONG_SPEECH_S to LONGER_SPEECH_S, but only while
+     * the phrase is dense speech (at least DENSE_SPEECH of its time since it started, the
+     * silence now included) - a fluent reader. A word-by-word reader (much of the time
+     * between words) keeps END_SILENCE_S.
+     */
+    _endSilence(r, end, speechS) {
+      const v = this.v;
+      if (speechS <= v.LONG_SPEECH_S) return v.END_SILENCE_S;
+      const spanS = (end - r.start) / this.rate;
+      if (speechS < v.DENSE_SPEECH * spanS) return v.END_SILENCE_S;
+      const k = Math.min(1, (speechS - v.LONG_SPEECH_S) / Math.max(1e-6, v.LONGER_SPEECH_S - v.LONG_SPEECH_S));
+      return v.END_SILENCE_S - k * (v.END_SILENCE_S - v.SHORT_END_SILENCE_S);
     }
 
     /**
@@ -563,22 +611,46 @@
       }
     }
 
-    /** Cut at the quietest 100 ms of the last CUT_SEARCH_S; the region goes on from there. */
+    /** Cut in the longest pause of the last CUT_SEARCH_S (see VAD); the region goes on from there. */
     _forcedCut(end, out) {
       const v = this.v;
       const f = this.frame;
       const r = this._region;
       const startFrame = Math.ceil(Math.max(this.consumed, r.start, end - Math.round(v.CUT_SEARCH_S * this.rate)) / f);
       const endFrame = end / f - Math.round(0.5 / v.FRAME_S); // not in the last 0.5 s
-      const win = Math.max(1, Math.round(0.1 / v.FRAME_S));
       let best = endFrame;
+      // The longest pause (run of frames that are not speech) in the window, at its middle:
+      // the gap between two sentences or two words, rather than a quiet sound inside a
+      // word. Equal runs: the quieter one.
+      let bestLen = 0;
       let bestE = Infinity;
-      for (let k = startFrame; k + win <= endFrame; k++) {
+      for (let k = startFrame; k < endFrame; ) {
+        if (this._frames[k - this._frameBase].speech) {
+          k++;
+          continue;
+        }
+        let j = k;
         let e = 0;
-        for (let j = k; j < k + win; j++) e += Math.pow(10, this._frames[j - this._frameBase].db / 10);
-        if (e < bestE) {
-          bestE = e;
-          best = k + Math.floor(win / 2);
+        while (j < endFrame && !this._frames[j - this._frameBase].speech) e += Math.pow(10, this._frames[j++ - this._frameBase].db / 10);
+        const len = j - k;
+        if (len > bestLen || (len === bestLen && e / len < bestE)) {
+          bestLen = len;
+          bestE = e / len;
+          best = k + Math.floor(len / 2);
+        }
+        k = j;
+      }
+      if (bestLen < Math.round(0.1 / v.FRAME_S)) {
+        // No pause of 100 ms: the quietest 100 ms.
+        const win = Math.max(1, Math.round(0.1 / v.FRAME_S));
+        bestE = Infinity;
+        for (let k = startFrame; k + win <= endFrame; k++) {
+          let e = 0;
+          for (let j = k; j < k + win; j++) e += Math.pow(10, this._frames[j - this._frameBase].db / 10);
+          if (e < bestE) {
+            bestE = e;
+            best = k + Math.floor(win / 2);
+          }
         }
       }
       const cut = best * f;
@@ -655,7 +727,9 @@
   class Recorder {
     /**
      * @param {{maxSeconds?: number, onLevel?: (level:number, seconds:number) => void,
-     *          onLimit?: () => void, onPhrase?: (phrase:object) => void}} [options]
+     *          onLimit?: () => void, onPhrase?: (phrase:object) => void,
+     *          phraseOptions?: object}} [options] phraseOptions: PhraseSegmenter options
+     *          (phraseOptionsFor(lang)).
      */
     constructor(options) {
       const opts = options || {};
@@ -664,6 +738,7 @@
       this.onLevel = typeof opts.onLevel === 'function' ? opts.onLevel : null;
       this.onLimit = typeof opts.onLimit === 'function' ? opts.onLimit : null;
       this.onPhrase = typeof opts.onPhrase === 'function' ? opts.onPhrase : null;
+      this.phraseOptions = opts.phraseOptions && typeof opts.phraseOptions === 'object' ? opts.phraseOptions : {};
       this._resampler = null;
       this._segmenter = null;
       /** After stop(), with onPhrase: the rest after the last phrase (see the header). */
@@ -727,7 +802,7 @@
         this._maxSamples = Math.floor(this.maxSeconds * ctx.sampleRate);
         if (this.onPhrase) {
           this._resampler = new StreamResampler(ctx.sampleRate, TARGET_RATE);
-          this._segmenter = new PhraseSegmenter({ rate: TARGET_RATE });
+          this._segmenter = new PhraseSegmenter(Object.assign({}, this.phraseOptions, { rate: TARGET_RATE }));
         }
         this._source = ctx.createMediaStreamSource(stream);
         this._sink = ctx.createGain();
@@ -949,6 +1024,7 @@
     concatSamples,
     StreamResampler,
     PhraseSegmenter,
+    phraseOptionsFor,
     VAD,
     /** Number of microphone streams currently held by recorders (for tests). */
     openStreams: () => openStreams,

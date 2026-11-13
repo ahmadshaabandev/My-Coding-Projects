@@ -205,7 +205,7 @@ MAX_AUDIO_SECONDS = 120.0
 AUDIO_SECONDS_TOLERANCE = 0.1
 
 #: Largest phrase of a live recitation (``/api/recite/phrase``), in seconds and bytes. The
-#: web client cuts a phrase at a pause and at the latest after about 18 s of speech, and
+#: web client cuts a phrase at a pause and at the latest after 7 s (9 s in Arabic), and
 #: merges phrases that queued up while the server was busy into at most 28 s, so 30 s is
 #: one Whisper window. 4 MB holds 30 s of 16-bit audio at up to 48 kHz mono (the web
 #: client sends 16 kHz: about 1 MB).

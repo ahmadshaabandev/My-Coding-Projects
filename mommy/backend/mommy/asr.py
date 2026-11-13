@@ -609,7 +609,8 @@ class QuickModel:
 
 #: The quick recognisers per language (``MOMMY_LIVE_ASR_MODEL=auto``). Arabic has none:
 #: no candidate was close to Whisper turbo (measured 2026-11-13, see docs/CONTRACT.md,
-#: "Live recitation"). Moonshine base (English, MIT licence) loses words on clips over
+#: "Live recitation"); tried in the cascade, Omnilingual ASR 300M CTC (Apache-2.0) had
+#: 1 of 79 Arabic phrases kept (no misreading missed), so it only added its decode time. Moonshine base (English, MIT licence) loses words on clips over
 #: about 20 s (24 s: 16 errors in 500 words, against 0 in 250 at 12 s), so it is given at
 #: most 15 s; Parakeet TDT 0.6B v3 (25 European languages, CC-BY-4.0) does not.
 QUICK_MODELS: dict[str, QuickModel] = {

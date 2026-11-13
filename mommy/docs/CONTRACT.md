@@ -1337,9 +1337,63 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   correct words wrongly than Whisper (en 12 against 4 of 96 words, fr 19 against 13 of
   95): that is why only a transcript that adds no mistake is kept. Whisper's tail
   padding (`tail_paddings`, 1000 frames by default, see `asr.py`) loses words when
-  lowered and stays as it is. The 0.65 s end-of-phrase silence also stays: at 0.5 s and
-  0.45 s Whisper's errors on the word-by-word reading rose from 4 to 5 and 7 (en, of 96)
-  and from 13 to 16 and 17 (fr, of 95), the phrases being cut inside sentences.
+  lowered and stays as it is. The 0.65 s end-of-phrase silence also stays for a reader
+  who pauses between words: at 0.5 s and 0.45 s for every phrase, Whisper's errors on
+  the word-by-word reading rose from 4 to 5 and 7 (en, of 96) and from 13 to 16 and 17
+  (fr, of 95), the phrases being cut inside sentences.
+
+  Fluent reading (measured 2026-11-13, same machine, 2 cores; one long Piper-spoken
+  reading per language, its sentences joined by 0.25-0.5 s pauses as a child reading on
+  without stopping: en 16 sentences, 38 s; fr 16, 41 s; ar 28, 98 s; clean, and with
+  white noise at about 15 dB SNR; the real app, the client's policy replayed in real
+  time, `auto`, Stop 1 s after the last word). With the 0.65 s rule alone almost no pause
+  ended a phrase: the phrases ran to the forced cut (18 s; 3, 3 and 8 phrases of 12 s
+  on average), and the first words were coloured 19.3 s (en), 20.4 s (fr) and 26.2 s
+  (ar) after the start, 16-22 s after the first sentence ended; from the end of a phrase
+  to its words coloured took 6.7 s, 4.2 s and 11.5 s (medians; an English phrase over
+  15 s goes to Whisper, an Arabic one of 12-15 s takes 7 s to decode). With the needed
+  silence shrinking in a long, dense phrase (0.3 s at 3 s of speech, 5 s in Arabic) and
+  the forced cut at 7 s (9 s in Arabic) in the longest pause, the first words are
+  coloured after 5.3 s, 8.2 s and 13.4 s, and a phrase 0.4 s, 2.7 s and 3.9 s after its
+  end (with noise: first 19.2 -> 7.9 s, 9.5 -> 8.3 s, 23.7 -> 13.5 s; phrase end to
+  colours 6.5 -> 2.8 s, 1.8 -> 3.1 s, 6.9 -> 4.9 s). Stop to result: en 0.2 -> 0.0 s,
+  fr 4.3 -> 2.4 s, ar 8.8 -> 1.9 s (noisy 5.6 -> 0.0, 6.9 -> 3.7, 5.0 -> 1.9). Final
+  errors: en 1 -> 1 of 125 (noisy 1 -> 0), fr 0 -> 1 of 130 (noisy 2 -> 0), ar 53 -> 56
+  of 177 (noisy 64 -> 62). Arabic has its own, longer phrases (`recorder.js`,
+  `phraseOptionsFor`): every Arabic phrase is Whisper's, and Whisper loses words at the
+  cuts of short phrases (decoded offline: 50 / 60 errors, clean / noisy, with 8-9
+  phrases of 12 s; 58 / 69 with 20-22 phrases of 4.6 s, the English and French numbers;
+  52 / 63 with 13-15 phrases of 7 s, the Arabic ones). Readers who pause between words
+  are unchanged: their phrases are 35-45 % speech, so the needed silence stays 0.65 s
+  (the word-by-word readings above: the same cuts but for one 8.1 s French phrase now
+  cut in a pause at 7 s; errors en 1 -> 1 of 96, fr 10 -> 11 of 95, ar 61 -> 61 of 75;
+  same delays).
+
+  Slower than real time (a stand-in for a small ARM server: one x86 core with
+  `taskset`, `MOMMY_ASR_THREADS=1`, AMX refused by an `LD_PRELOAD` shim; Whisper turbo
+  then takes about 4.2 s for a 2 s Arabic clip, 6 s for 7 s and 14 s for 14 s, the
+  decoder's time growing with the words), the fluent Arabic reading of 98 s: before,
+  the first words were coloured 33.9 s after the start and each 12-15 s phrase 19-22 s
+  after its end, the result 22.5 s after Stop; now the first words after 17.5 s, and a
+  phrase 10 s after its end at first, growing to 19-26 s by the end of the reading
+  (each 6-7 s phrase takes about 8 s to decode, so the queue falls behind; queued
+  phrases then go together, which saves Whisper's fixed cost per request and keeps the
+  delay from growing without bound), the result 20.1 s after Stop; errors 52 -> 58 of
+  177. A smaller merge (14 s instead of 28 s) changed nothing (the queue held at most two
+  phrases). Only a faster decode would keep up on such a server.
+  Omnilingual ASR 300M CTC (int8, Apache-2.0: the model's README and LICENSE in the
+  sherpa-onnx `asr-models` release) was tried as the Arabic quick recogniser of the
+  cascade: of 79 Arabic phrases (the 4-sentence texts clean and noisy, word-by-word
+  readings, the fluent reading) its transcript was kept for 1, and for 3 of 24 correctly
+  read single sentences; it never accepted one of 24 misread sentences (Whisper caught
+  all 24), but it only added its decode time (about 30 % more per phrase), so Arabic
+  stays with Whisper alone.
+
+  The Quran section (`/api/quran/check`) has no live check: it sends the whole
+  recording, as there is no phrase endpoint for a Quran range (a phrase would be checked
+  with `Quran.check` of the range and `heard_before`, and the strict mushaf comparison
+  must stay the server's). A school text with Quran parts recited on Recite does get the
+  live colours (its parts against the mushaf words).
 
   End to end with the quick recognisers (`auto`) against Whisper alone (the real app in
   one process, the client's policy replayed in real time: phrases sent when the
@@ -1840,23 +1894,41 @@ each language is still loaded on first use.
     `recorder.js` cuts the 16 kHz signal into phrases (`onPhrase`; `PhraseSegmenter`, an
     energy voice activity detector in 20 ms frames: speech is 10 dB above a noise floor
     (the lowest 60 ms level of the last 3 s, rising at most 4 dB/s) and above -50 dBFS; a
-    phrase ends after 0.65 s of silence once it holds 0.4 s of speech, with 0.2 s of
-    padding on each side and no overlap; a shorter sound waits for the next phrase, a
-    burst under 0.15 s followed by 1 s of silence is dropped; after 18 s without a pause
-    the phrase is cut at the quietest 100 ms of its last 8 s, without padding; the
+    phrase ends after 0.65 s of silence once it holds 0.4 s of speech; once it holds
+    more than 1.5 s of speech and is dense speech (speech in at least 60 % of its time: a
+    fluent reader), the silence needed shrinks with its speech to 0.3 s at 3 s, while a
+    word-by-word reader (35-45 % speech) keeps 0.65 s; 0.2 s of padding on each side and
+    no overlap; a shorter sound waits for the next phrase, a burst under 0.15 s followed
+    by 1 s of silence is dropped; after 7 s without such a pause the phrase is cut in the
+    middle of the longest pause (frames that are not speech, at least 100 ms) of its last
+    4 s but the last 0.5 s, or else at its quietest 100 ms, without padding; Arabic
+    (`phraseOptionsFor('ar')`: Whisper alone, which loses words at the cuts of short
+    phrases) shrinks the silence from 3 s of speech to 0.3 s at 5 s and cuts at 9 s in
+    its last 5 s; the
     `StreamResampler` gives exactly the samples of the final recording). The status says
-    "I'm listening and checking as you read…" (`live_listening`). `app.js` sends the phrases to
+    "I'm listening and checking as you read…" (`live_listening`) in strict mode, and
+    "I'm listening… I'll check the meaning at the end." (`live_listening_meaning`) by
+    meaning, where no word is coloured while reading. `app.js` sends the phrases to
     `/api/recite/phrase` one at a time, in order, with `heard_before`; phrases that queued
-    up while a request ran go together in the next one (at most 28 s). In strict mode
+    up while a request ran go together in the next one (at most 28 s). While a phrase
+    request runs, the status line has a small blinking dot (`.live-checking`) and, once
+    words are coloured, the next 6 words not reached yet a dotted underline and a soft
+    fade (`.w-checking`; still no judgement, nothing announced; no motion with
+    `prefers-reduced-motion`). In strict mode
     each answer's `progress` is drawn on the Recite card with `renderOps` (match, sub,
     del, ins as in a result; `pending` words in the muted text colour, no background);
     by meaning nothing is coloured. At Stop the client waits for the request in flight
     (at most 15 s), then sends the queued phrases and the tail (`recorder.tail`) with
     `heard_before` to `/api/recite/check`; the result then shows as before (feedback,
-    "Listen", Quran notes, `notifyTask`). Any failure of a phrase request (an older
-    server's 404, a 500, the network, a refusal) or of that final check turns the live
-    check off for that recording, silently: Stop sends the whole recording as before (and
-    shows that request's own errors). Answers of a recording that was cancelled or
+    "Listen", Quran notes, `notifyTask`). A phrase request that fails for a passing
+    reason (the network, no answer within 90 s, `429`, any `5xx` such as `503 busy`) is
+    tried again 1 s, 2 s and 4 s later, its phrases kept at the head of the queue (with
+    any that came meanwhile; `heard_before` unchanged); at Stop a phrase still waiting
+    for its next try goes with the tail. After 4 failures in a row, or at once for any
+    other refusal (an older server's `404`, a `400`), the live check is off for that
+    recording: the status line goes back to "I'm listening…", nothing else is shown, and
+    Stop sends the whole recording as before (and shows that request's own errors). A
+    failure of the final check also sends the whole recording. Answers of a recording that was cancelled or
     replaced, of a task that was left, or after the screen was left are dropped (a
     session object per recording, with the task it belongs to). The microphone, consent
     and task gates are those of the recording.

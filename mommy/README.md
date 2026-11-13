@@ -515,7 +515,9 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
   Claude read).
 - **Live recitation** (`MOMMY_LIVE_RECITE`, default `on`). While the child reads, the
   browser cuts the recording into phrases at the pauses (0.65 s of silence after at least
-  0.4 s of speech, at the latest every 18 s) and sends each one to `POST
+  0.4 s of speech; for a child reading fluently, who pauses only 0.2-0.5 s between
+  sentences, the silence needed shrinks to 0.3 s once the phrase holds 3 s of speech, 5 s
+  in Arabic; at the latest every 7 s, 9 s in Arabic, at a pause) and sends each one to `POST
   /api/recite/phrase` with `heard_before`, the transcripts of the phrases before it (kept
   by the browser; the server keeps nothing). The server decodes only that phrase (Whisper
   gets its audio and the language, never the text) and, word by word, answers with the
@@ -524,13 +526,23 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
   child sees them turn green, or a mistake marked, while reading. It never calls Claude.
   At Stop only the tail after the last phrase goes to `/api/recite/check`, with
   `heard_before`, so the result comes about as soon as the last phrase is decoded instead
-  of after the whole recording. If a phrase request fails, or the server has no
-  `/api/recite/phrase` (an older version), the browser sends the whole recording as
-  before. With `MOMMY_LIVE_RECITE=off` the endpoint is gone and every recording is sent
+  of after the whole recording. While a phrase is being checked, a small dot blinks after
+  the status line and the next words are softly marked, so the page never looks stuck. A
+  phrase request that fails for a passing reason (the network, the server busy or
+  failing) is tried again 1, 2 and 4 s later; after 4 failures in a row, or if the server
+  has no `/api/recite/phrase` (an older version), the browser sends the whole recording
+  as before. By meaning (contextual mode) no word is coloured while reading, and the
+  status line says the meaning is checked at the end. With `MOMMY_LIVE_RECITE=off` the endpoint is gone and every recording is sent
   whole. Measured on 2 cores (Whisper turbo, 2 threads): the result comes 1.3-2.3 s after
   Stop instead of 5-9 s for a 13-19 s recitation, and the words of a phrase are coloured
   2-3 s after the child finishes it; word accuracy is the same within recogniser noise
-  (details in `docs/CONTRACT.md`, "Live recitation").
+  (details in `docs/CONTRACT.md`, "Live recitation"). For a child reading fluently, the
+  first words are coloured 5-8 s (en, fr) and 13 s (ar) after the start instead of
+  19-26 s, then each phrase 0.4-4 s after it is read (medians, 2 cores). On a server
+  that decodes Arabic slower than real time the colours still lag (10-26 s on one core
+  without AMX, against 19-22 s before, and 34 s before the first ones): there only a
+  faster decode helps. The Quran section has no live check: it sends the whole
+  recording.
   Quick recognisers (`MOMMY_LIVE_ASR_MODEL=auto`, default): in strict mode an English
   phrase is first decoded by Moonshine base and a French one by Parakeet TDT 0.6B v3
   (given the audio only, like Whisper); their words are kept when they add no mistake to
@@ -538,7 +550,8 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
   right is then coloured about 0.65 s (en) and 0.9 s (fr) after the child finishes it
   instead of 2.3-2.6 s, and the result comes 0.1-0.5 s after Stop, with the same word
   accuracy on the measured texts; Arabic keeps Whisper alone (no faster recogniser came
-  close to it). They need about 1 GB more memory. `MOMMY_LIVE_ASR_MODEL=whisper` (or
+  close to it; Omnilingual ASR 300M, tried as the Arabic quick recogniser, was kept for 1
+  phrase of 79). They need about 1 GB more memory. `MOMMY_LIVE_ASR_MODEL=whisper` (or
   `scripts/download_models.sh --no-quick`) keeps Whisper alone.
 - `/api/recite/check` returns a top-level `say_again`; results carry
   `say_again_reason` (`empty` or `error_rate`), `stopped_at_exp_index` (where the child

@@ -187,6 +187,7 @@
       rec_time: '{sec} s',
       listening: "I'm listening…",
       live_listening: "I'm listening and checking as you read…",
+      live_listening_meaning: "I'm listening… I'll check the meaning at the end.",
       checking: 'Let me check…',
       max_reached: "That's the longest I can listen to (2 minutes).",
       heard_label: 'What I heard',
@@ -410,6 +411,7 @@
       rec_time: '{sec} s',
       listening: "J'écoute…",
       live_listening: 'J’écoute et je vérifie au fil de la lecture…',
+      live_listening_meaning: 'J’écoute… Je vérifierai le sens à la fin.',
       checking: 'Je vérifie…',
       max_reached: "C'est le plus long que je peux écouter (2 minutes).",
       heard_label: "Ce que j'ai entendu",
@@ -633,6 +635,7 @@
       rec_time: '{sec} ث',
       listening: 'أنا أستمع إليك…',
       live_listening: 'أستمع وأتحقّق من الكلمات أثناء القراءة…',
+      live_listening_meaning: 'أستمع… وسأتحقّق من المعنى في النهاية.',
       checking: 'أتحقّق الآن…',
       max_reached: 'هذا أطول ما أستطيع الاستماع إليه (دقيقتان).',
       heard_label: 'ما سمعته',
@@ -1163,11 +1166,24 @@
       init.method = 'POST';
       init.body = o.form;
     }
+    // timeoutMs: give up on a request that has not answered by then (ApiError 0 'timeout').
+    let timer = null;
+    let timedOut = false;
+    if (o.timeoutMs > 0 && typeof AbortController === 'function') {
+      const ctl = new AbortController();
+      init.signal = ctl.signal;
+      timer = setTimeout(() => {
+        timedOut = true;
+        ctl.abort();
+      }, o.timeoutMs);
+    }
     let res;
     try {
       res = await fetch(path, init);
     } catch (e) {
-      throw new ApiError(0, 'network', '');
+      throw new ApiError(0, timedOut ? 'timeout' : 'network', '');
+    } finally {
+      if (timer) clearTimeout(timer);
     }
     if (!res.ok) {
       let code = 'http_' + res.status;
@@ -1866,6 +1882,7 @@
         }
       },
       onPhrase: live ? (phrase) => livePhrase(live, phrase) : undefined,
+      phraseOptions: live && window.MommyRecorder.phraseOptionsFor ? window.MommyRecorder.phraseOptionsFor(live.lang) : undefined,
     });
     state.recording = { control, recorder, starting: true, live };
     setRecordState(control, 'starting');
@@ -1888,8 +1905,18 @@
     }
     state.recording.starting = false;
     setRecordState(control, 'recording');
-    if (control.status) setStatus(control.status, live ? 'live_listening' : 'listening');
+    if (control.status) setStatus(control.status, listeningKey(live));
     refreshGates();
+  }
+
+  /**
+   * The status line while recording: in strict mode with the live check on, "listening and
+   * checking as you read" (the words are coloured as the child reads); by meaning, the
+   * meaning is judged only at the end, so no colours come while reading.
+   */
+  function listeningKey(live) {
+    if (!live || live.failed) return 'listening';
+    return live.mode === 'contextual' ? 'live_listening_meaning' : 'live_listening';
   }
 
   async function finishRecording(meta) {
@@ -1914,6 +1941,7 @@
       if (live) {
         live.stopped = true; // the phrases still queued go with the tail
         live.tail = recorder.tail;
+        showLiveChecking(live, false);
       }
       if (control.status && !keepStatus) clearStatus(control.status);
       await control.onBlob(blob, info, live);
@@ -2646,18 +2674,35 @@
   // held here: the server keeps nothing); phrases that queued up while a request was
   // running go together in the next one (at most LIVE_MERGE_SECONDS). In strict mode each
   // answer's progress colours the words read so far on the Recite card, the words not
-  // reached yet in a neutral style. At Stop only the tail after the last phrase (and any
-  // phrase still queued) goes to /api/recite/check with heard_before, so the result comes
-  // as fast as the last phrase can be decoded. Any failure (a phrase request that fails,
-  // a server without the endpoint: 404) turns the live check off for this recording, and
-  // Stop sends the whole recording as before. Answers of an older recording, of a task
-  // that was left, or that arrive after the screen was left are dropped.
+  // reached yet in a neutral style; while a phrase is being checked, the status line shows
+  // a small busy dot and the next words a soft "checking" state, so the page never looks
+  // dead between two answers. At Stop only the tail after the last phrase (and any phrase
+  // still queued) goes to /api/recite/check with heard_before, so the result comes as fast
+  // as the last phrase can be decoded. A phrase request that fails for a passing reason (no
+  // network, a timeout, the server busy or failing: status 0, 429 or 5xx) is tried again
+  // after LIVE_RETRY_MS, its phrases kept at the head of the queue (so heard_before stays in
+  // order); after LIVE_MAX_TRIES failures in a row, or at once for any other refusal (an
+  // older server without the endpoint: 404, a bad request: 400), the live check is off for
+  // this recording, the status line says only "listening", and Stop sends the whole
+  // recording as before. Answers of an older recording, of a task that was left, or that
+  // arrive after the screen was left are dropped.
   // ---------------------------------------------------------------------------
 
   /** Largest audio of one /api/recite/phrase request (queued phrases merged), seconds. */
   const LIVE_MERGE_SECONDS = 28;
   /** At Stop, the longest wait for the phrase request still running before the whole recording is sent instead. */
   const LIVE_STOP_WAIT_MS = 15000;
+  /**
+   * A phrase request with no answer after this long is given up (and tried again). Well
+   * above the decode of a 28 s phrase on a slow server (about 30 s on 2 ARM cores): the
+   * server still decodes a request the browser gave up, so giving up early only adds work.
+   */
+  const LIVE_REQUEST_TIMEOUT_MS = 90000;
+  /** Waits before the 2nd, 3rd and 4th try of a phrase request that failed for a passing reason. */
+  const LIVE_RETRY_MS = [1000, 2000, 4000];
+  const LIVE_MAX_TRIES = LIVE_RETRY_MS.length + 1;
+  /** Pending words shown as "being checked" while a phrase request runs. */
+  const LIVE_CHECKING_WORDS = 6;
   let liveSeq = 0;
 
   function liveReciteOn() {
@@ -2684,6 +2729,9 @@
       waiters: [],
       requests: 0,
       merged: 0, // requests that carried more than one phrase
+      failures: 0, // failed tries in a row of the phrases at the head of the queue
+      retries: 0, // tries made again over the whole recording
+      retryTimer: null,
     };
     state.live = live;
     return live;
@@ -2696,6 +2744,9 @@
     live.queue = [];
     live.heard = [];
     live.tail = null;
+    if (live.retryTimer) clearTimeout(live.retryTimer);
+    live.retryTimer = null;
+    showLiveChecking(live, false);
     for (const w of live.waiters.splice(0)) w();
     if (state.live === live) state.live = null;
   }
@@ -2717,7 +2768,7 @@
     while (live.queue.length) {
       const len = live.queue[0].samples.length / window.MommyRecorder.TARGET_RATE;
       if (out.length && !all && seconds + len > LIVE_MERGE_SECONDS) break;
-      out.push(live.queue.shift().samples);
+      out.push(live.queue.shift());
       seconds += len;
     }
     return out;
@@ -2727,33 +2778,88 @@
     return new Blob([window.MommyRecorder.encodeWav(samples, window.MommyRecorder.TARGET_RATE)], { type: 'audio/wav' });
   }
 
+  /** A failure worth another try: no answer (network, timeout), too many requests, or a server error or busy (5xx). */
+  function liveTransient(err) {
+    if (!err || err.name !== 'ApiError') return false;
+    return err.status === 0 || err.status === 429 || err.status >= 500;
+  }
+
   async function pumpLive(live) {
-    if (live.busy || live.failed || live.stopped || !live.queue.length || !liveWanted(live)) return;
-    const pieces = takeLivePhrases(live, false);
-    if (pieces.length > 1) live.merged++;
+    if (live.busy || live.retryTimer || live.failed || live.stopped || !live.queue.length || !liveWanted(live)) return;
+    const phrases = takeLivePhrases(live, false);
+    if (phrases.length > 1) live.merged++;
     const form = new FormData();
-    form.append('audio', wavBlob(window.MommyRecorder.concatSamples(pieces)), 'phrase.wav');
+    form.append('audio', wavBlob(window.MommyRecorder.concatSamples(phrases.map((p) => p.samples))), 'phrase.wav');
     form.append('expected_text', live.text);
     form.append('lang', live.lang);
     form.append('mode', live.mode);
     form.append('heard_before', live.heard.join(' '));
     live.busy = true;
     live.requests++;
+    showLiveChecking(live, true);
+    let retryIn = 0;
     try {
-      const res = await api('api/recite/phrase', { form });
+      const res = await api('api/recite/phrase', { form, timeoutMs: LIVE_REQUEST_TIMEOUT_MS });
       if (!res || typeof res !== 'object') throw new Error('bad answer');
+      live.failures = 0;
       const heard = onlyText(res.heard_text).trim();
       if (heard) live.heard.push(heard);
       if (liveWanted(live) && live.mode === 'strict' && res.progress && Array.isArray(res.progress.ops)) showLiveProgress(live, res.progress);
     } catch (err) {
-      // An older server (404), a refusal or a failure: Stop sends the whole recording.
-      live.failed = true;
-      live.queue = [];
+      live.failures++;
+      if (liveTransient(err) && live.failures < LIVE_MAX_TRIES && !live.closed) {
+        // Tried again: the phrases go back to the head of the queue (with any that came
+        // meanwhile), and nothing was added to heard_before.
+        live.queue.unshift(...phrases);
+        if (!live.stopped) retryIn = LIVE_RETRY_MS[live.failures - 1];
+      } else {
+        // An older server (404), a refusal or failures in a row: Stop sends the whole recording.
+        live.failed = true;
+        live.queue = [];
+        liveFailedStatus(live);
+      }
     } finally {
       live.busy = false;
+      if (!retryIn) showLiveChecking(live, false);
       if (!live.queue.length || live.failed || live.stopped) for (const w of live.waiters.splice(0)) w();
     }
+    if (retryIn) {
+      live.retries++;
+      live.retryTimer = setTimeout(() => {
+        live.retryTimer = null;
+        if (!live.busy) showLiveChecking(live, false);
+        pumpLive(live);
+      }, retryIn);
+      return;
+    }
     pumpLive(live);
+  }
+
+  /** The live check is off for this recording: the status line no longer says "checking". */
+  function liveFailedStatus(live) {
+    const rec = state.recording;
+    if (!rec || rec.live !== live || live.stopped || !liveWanted(live)) return;
+    if (rec.control.status) setStatus(rec.control.status, 'listening');
+  }
+
+  /**
+   * While a phrase request runs (and while it waits to be tried again): a busy dot on the
+   * status line and the first LIVE_CHECKING_WORDS words not reached yet marked "checking"
+   * (strict mode, once words are coloured). Visual only: nothing is announced.
+   */
+  function showLiveChecking(live, on) {
+    const rec = state.recording;
+    const status = rec && rec.live === live && rec.control.status;
+    const words = $('#recite-text');
+    const show = !!on && liveWanted(live) && !live.stopped;
+    if (status) status.classList.toggle('live-checking', show);
+    else if (!show) for (const n of document.querySelectorAll('.status.live-checking')) n.classList.remove('live-checking');
+    if (!words) return;
+    for (const w of words.querySelectorAll('.w-checking')) w.classList.remove('w-checking');
+    if (show && live.mode === 'strict' && words.classList.contains('live')) {
+      const pending = words.querySelectorAll('.w-pending');
+      for (let k = 0; k < pending.length && k < LIVE_CHECKING_WORDS; k++) pending[k].classList.add('w-checking');
+    }
   }
 
   /** Wait until no phrase request runs (at most `ms`); false when it took too long. */
@@ -2813,7 +2919,10 @@
     if (!live || live.failed || !liveWanted(live) || !live.tail) return null;
     if (!(await liveIdle(live, LIVE_STOP_WAIT_MS))) live.failed = true;
     if (live.failed || !liveWanted(live)) return null;
-    const pieces = takeLivePhrases(live, true);
+    if (live.retryTimer) clearTimeout(live.retryTimer); // what waits for another try goes with the tail
+    live.retryTimer = null;
+    showLiveChecking(live, false);
+    const pieces = takeLivePhrases(live, true).map((p) => p.samples);
     pieces.push(live.tail.samples);
     const form = new FormData();
     // A WAV with no samples when nothing was said after the last phrase.
