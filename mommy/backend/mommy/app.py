@@ -881,26 +881,105 @@ def join_heard(before: str, heard: str) -> str:
     return " ".join(t for t in (before, heard) if t)
 
 
-def quick_kept(analysis: QuranAnalysis, before: str, quick_heard: str) -> dict[str, Any] | None:
-    """The reading progress of ``before`` + a quick recogniser's transcript of the next
-    phrase, when that transcript is kept; None when Whisper must decode the phrase (extra,
-    live recitation in strict mode).
+#: Hesitation sounds a quick recogniser may write where Whisper writes nothing (extra, live
+#: recitation): never a word of a text (one the text has is not dropped), so dropping
+#: them from a quick transcript can hide no misreading.
+QUICK_FILLERS: dict[str, frozenset[str]] = {
+    "en": frozenset({"um", "umm", "uh", "uhh", "uhm", "er", "erm", "hmm", "hm", "mm", "mmm", "mhm", "ah", "eh", "huh", "oh"}),
+    "fr": frozenset({"euh", "heu", "hum", "hmm", "hm", "mm", "mmm", "ah", "eh", "oh", "bah", "ben"}),
+    "ar": frozenset(),
+}
 
-    Kept: the transcript has a word and adds no mistake to the words read so far
-    (:func:`mommy.align.reading_progress` ``n_errors`` of ``before`` + it is not above
-    that of ``before`` alone): a phrase read right. A phrase with a mistake, a skipped word,
-    words the text does not have, or nothing heard goes to Whisper, which is as accurate
-    as before on every phrase it decodes. Neither recogniser is given the text (hard rule
-    1); the text only decides, afterwards, which transcript is used. Measured
-    (docs/CONTRACT.md, "Live recitation"): Moonshine and Parakeet hear the word actually
-    said where a child misreads (24 of 24 misread sentences, but for one homophone that
-    Whisper misses too), while on words read one at a time they hear more correct words
-    wrongly than Whisper, so those phrases go to Whisper."""
-    if not tokenize(quick_heard, analysis.lang):
-        return None
+#: Words that sound the same (extra, live recitation): where a quick recogniser writes one
+#: for the other, the child said the text's word as far as anyone can hear, so the text's
+#: word is kept. Whisper, which writes with the sentence's context, rarely confuses them;
+#: a recogniser without it (Moonshine) does ("to" heard as "two").
+QUICK_HOMOPHONES: dict[str, tuple[frozenset[str], ...]] = {
+    "en": tuple(frozenset(g) for g in (
+        ("to", "too", "two"), ("there", "their", "theyre"), ("your", "youre"), ("its", "it's"),
+        ("for", "four"), ("by", "buy", "bye"), ("no", "know"), ("new", "knew"), ("one", "won"),
+        ("right", "write"), ("hear", "here"), ("sea", "see"), ("son", "sun"), ("ate", "eight"),
+        ("be", "bee"), ("our", "hour"), ("where", "wear"), ("wood", "would"), ("which", "witch"),
+        ("weather", "whether"), ("whole", "hole"), ("knight", "night"), ("road", "rode"),
+        ("tail", "tale"), ("flower", "flour"), ("meet", "meat"), ("week", "weak"),
+        ("blue", "blew"), ("red", "read"), ("so", "sew"), ("not", "knot"), ("wait", "weight"),
+    )),
+    "fr": tuple(frozenset(g) for g in (
+        ("a", "à"), ("et", "est"), ("ou", "où"), ("ces", "ses", "cest"), ("son", "sont"),
+        ("on", "ont"), ("mer", "mère", "maire"), ("vers", "vert", "verre"), ("cent", "sans", "sang"),
+        ("peu", "peut"), ("la", "là"), ("mais", "mes"), ("dans", "dent"), ("leur", "leurs"),
+    )),
+    "ar": (),
+}
+
+
+def _homophones(a: str, b: str, lang: Lang) -> bool:
+    ka, kb = recitation_key(a, lang), recitation_key(b, lang)
+    groups = QUICK_HOMOPHONES.get(lang, ())
+    return any(ka in g and kb in g for g in (frozenset(recitation_key(w, lang) for w in grp) for grp in groups))
+
+
+def quick_verdict(analysis: QuranAnalysis, before: str, quick_heard: str) -> tuple[dict[str, Any] | None, str, str]:
+    """``(progress, transcript, reason)`` for a quick recogniser's transcript of the next
+    phrase (extra, live recitation in strict mode). ``progress`` is the reading progress of
+    ``before`` + ``transcript`` when it is kept, else None (Whisper decodes the phrase);
+    ``reason`` says why, for the log: ``"kept"``, ``"empty"`` or ``"mistake: <kind> at
+    word <k> of <n>[, the phrase's last word], <m> new"`` - positions only, never a word.
+
+    Kept: the transcript, with two harmless differences taken out, has a word and adds no
+    mistake to the words read so far (:func:`mommy.align.reading_progress` ``n_errors``
+    of ``before`` + it not above that of ``before`` alone): a phrase read right. The two
+    differences: hesitation sounds (:data:`QUICK_FILLERS`, unless the text has that word)
+    are dropped, as Whisper drops them; and a word written as a homophone of the text's
+    word at that place (:data:`QUICK_HOMOPHONES`) becomes the text's word. Neither can be
+    a misreading: one is not a word of the text, the other sounds exactly like it. A
+    phrase with any other mistake, a skipped word, words the text does not have, or
+    nothing heard goes to Whisper, which is as accurate as before on every phrase it
+    decodes. Neither recogniser is given the text (hard rule 1); the text only decides,
+    afterwards, which transcript is used. Measured (docs/CONTRACT.md, "Live
+    recitation"): Moonshine and Parakeet hear the word actually said where a child
+    misreads (24 of 24 misread sentences, but for one homophone that Whisper misses too),
+    while on words read one at a time they hear more correct words wrongly than Whisper,
+    so those phrases go to Whisper."""
+    lang = analysis.lang
+    text_keys = {recitation_key(t, lang) for t in tokenize(analysis.text, lang)}
+    fillers = QUICK_FILLERS.get(lang, frozenset())
+    words = [t for t in tokenize(quick_heard, lang) if recitation_key(t, lang) not in fillers or recitation_key(t, lang) in text_keys]
+    if not words:
+        return None, "", "empty"
+    n_before = len(tokenize(before, lang))
     errors_before = reading_progress(analysis.check_recitation(before)[0])["n_errors"]
-    progress = reading_progress(analysis.check_recitation(join_heard(before, quick_heard))[0])
-    return progress if progress["n_errors"] <= errors_before else None
+    result = analysis.check_recitation(join_heard(before, " ".join(words)))[0]
+    changed = False
+    for op in result.ops:
+        k = (op.heard_index or 0) - n_before
+        if (op.kind == "sub" and op.heard_index is not None and 0 <= k < len(words) and words[k] == op.heard
+                and op.expected and _homophones(op.expected, op.heard, lang)):
+            words[k] = op.expected
+            changed = True
+    if changed:
+        result = analysis.check_recitation(join_heard(before, " ".join(words)))[0]
+    transcript = " ".join(words)
+    progress = reading_progress(result)
+    if progress["n_errors"] <= errors_before:
+        return progress, transcript, "kept"
+    reached = [op for op in progress["ops"] if op["kind"] != "pending"]
+    new = [op for op in reached if op["kind"] != "match" and (op["heard_index"] is None or op["heard_index"] >= n_before)]
+    first = new[0] if new else next(op for op in reached if op["kind"] != "match")
+    at = first["exp_index"]
+    if at is None:  # an added word: where it falls in the text
+        later = [op["exp_index"] for op in reached[reached.index(first):] if op["exp_index"] is not None]
+        at = later[0] if later else progress["n_read"]
+    last = first["heard_index"] is not None and first["heard_index"] == n_before + len(words) - 1
+    reason = (f"mistake: {first['kind']} at word {at + 1} of {progress['n_expected']}"
+              f"{', the phrase' + chr(39) + 's last word' if last else ''}, {progress['n_errors'] - errors_before} new")
+    return None, transcript, reason
+
+
+def quick_kept(analysis: QuranAnalysis, before: str, quick_heard: str) -> dict[str, Any] | None:
+    """The reading progress of ``before`` + a quick transcript when it is kept, else None
+    (:func:`quick_verdict`)."""
+    return quick_verdict(analysis, before, quick_heard)[0]
 
 
 def live_quality(tail: dict, before: str, lang: Lang) -> dict:
@@ -1161,17 +1240,20 @@ def create_app(
         max_bytes: int = MAX_AUDIO_BYTES,
         max_seconds: float = MAX_AUDIO_SECONDS,
         allow_empty: bool = False,
-        keep: Callable[[str], bool] | None = None,
+        keep: Callable[[str], tuple[str | None, str]] | None = None,
     ) -> tuple[str, dict, dict[str, Any]]:
         """Audio upload -> (heard text, quality, timings). The recogniser gets the audio
         and the language only, and is not run on an unclear clip (an empty one included,
         see ``allow_empty`` of :func:`_decode_audio`).
 
         With ``keep`` (a live phrase or tail in strict mode) and a quick recogniser for
-        the language, the quick one decodes the clip first, and its transcript is the
-        answer when ``keep`` accepts it (:func:`quick_kept`); otherwise, or when it fails,
-        Whisper decodes the same clip. ``timings["via"]``: ``"quick"``, ``"whisper"`` or
-        ``"none"`` (not decoded); ``quick_s``: the quick decode's time."""
+        the language, the quick one decodes the clip first; ``keep(transcript)`` answers
+        ``(kept transcript or None, reason)`` (:func:`quick_verdict`), and the kept
+        transcript is the answer; otherwise, or when it fails, Whisper decodes the same
+        clip. ``timings["via"]``: ``"quick"``, ``"whisper"`` or ``"none"`` (not decoded);
+        ``quick_s``: the quick decode's time; ``quick``: why the quick transcript was or
+        was not used (``"kept"``, ``"empty"``, ``"mistake: ..."``, ``"failed"``, ``"too
+        long"``, ``"no model"``, ``"off"``), for the log."""
         started = time.perf_counter()
         data = _read_upload(upload, max_bytes, "audio")
         n_bytes = len(data)
@@ -1183,16 +1265,25 @@ def create_app(
         heard = ""
         via = "none"
         quick_s = 0.0
+        quick_why = "off"
         if not _quality_unclear(quality):
-            if keep is not None and quick_on and quick is not None and quick.accepts(pcm, lang):
+            if keep is not None and quick_on and quick is not None and not quick.available_for(lang):
+                quick_why = "no model"
+            elif keep is not None and quick_on and quick is not None and not quick.accepts(pcm, lang):
+                quick_why = "too long"
+            elif keep is not None and quick_on and quick is not None:
+                quick_heard = ""
                 try:
                     quick_heard = quick.transcribe(pcm, lang)
+                    quick_why = "empty"
                 except Exception as exc:  # noqa: BLE001 - Whisper answers instead
                     log.warning("the quick %s recogniser failed (%s); Whisper decodes", lang, type(exc).__name__)
-                    quick_heard = ""
+                    quick_why = "failed"
                 quick_s = time.perf_counter() - decoded
-                if quick_heard and keep(quick_heard):
-                    heard, via = quick_heard, "quick"
+                if quick_heard:
+                    kept, quick_why = keep(quick_heard)
+                    if kept is not None:
+                        heard, via = kept, "quick"
             if via != "quick":
                 try:
                     heard = transcriber.transcribe(pcm, lang)
@@ -1201,7 +1292,7 @@ def create_app(
                 via = "whisper"
         timings = {
             "bytes": n_bytes, "decode_s": decoded - started, "asr_s": time.perf_counter() - decoded,
-            "quick_s": quick_s, "via": via,
+            "quick_s": quick_s, "via": via, "quick": quick_why,
         }
         return heard, quality, timings
 
@@ -1449,7 +1540,11 @@ def create_app(
         if before is None:
             heard, quality, timings = listen(audio, lang)
         else:
-            keep = (lambda q: quick_kept(analysis, before, q) is not None) if mode == "strict" else None
+            def keep_tail(quick_heard: str) -> tuple[str | None, str]:
+                progress, transcript, reason = quick_verdict(analysis, before, quick_heard)
+                return (transcript if progress is not None else None), reason
+
+            keep = keep_tail if mode == "strict" else None
             tail, tail_quality, timings = listen(audio, lang, allow_empty=True, keep=keep)
             heard = join_heard(before, tail)
             quality = live_quality(tail_quality, before, lang)
@@ -1501,7 +1596,7 @@ def create_app(
         # Sizes and timings only: the number of words heard before, never the words.
         live_note = (
             "" if before is None
-            else f", tail after {len(tokenize(before, lang))} words, via {timings['via']} (quick {timings['quick_s']:.2f} s)"
+            else f", tail after {len(tokenize(before, lang))} words, via {timings['via']} (quick {timings['quick_s']:.2f} s, {timings['quick']})"
         )
         log.info(
             "recite/check %s %s: brain %s, audio %d bytes, %.1f s, decode %.2f s, asr %.2f s, total %.2f s%s",
@@ -1536,11 +1631,11 @@ def create_app(
             require_asr()
             kept: list[dict[str, Any]] = []
 
-            def keep(quick_heard: str) -> bool:
-                progress = quick_kept(analysis, before, quick_heard)
+            def keep(quick_heard: str) -> tuple[str | None, str]:
+                progress, transcript, reason = quick_verdict(analysis, before, quick_heard)
                 if progress is not None:
                     kept.append(progress)
-                return progress is not None
+                return (transcript if progress is not None else None), reason
 
             heard, quality, timings = listen(
                 audio, lang, max_bytes=MAX_PHRASE_BYTES, max_seconds=MAX_PHRASE_SECONDS,
@@ -1557,9 +1652,9 @@ def create_app(
             out = {"mode": mode, "heard_text": heard, "quality": quality, "progress": progress, "brain": "offline"}
             log.info(
                 "recite/phrase %s %s: audio %d bytes, %.1f s, after %d words, decode %.2f s, asr %.2f s "
-                "(via %s, quick %.2f s), check %.3f s, total %.2f s",
+                "(via %s, quick %.2f s, %s), check %.3f s, total %.2f s",
                 mode, lang, timings["bytes"], quality["seconds"], len(tokenize(before, lang)), timings["decode_s"],
-                timings["asr_s"], timings["via"], timings["quick_s"],
+                timings["asr_s"], timings["via"], timings["quick_s"], timings["quick"],
                 checked - started - timings["decode_s"] - timings["asr_s"], time.perf_counter() - started,
             )
             return out

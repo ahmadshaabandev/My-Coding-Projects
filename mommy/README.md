@@ -546,7 +546,9 @@ or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
   Quick recognisers (`MOMMY_LIVE_ASR_MODEL=auto`, default): in strict mode an English
   phrase is first decoded by Moonshine base and a French one by Parakeet TDT 0.6B v3
   (given the audio only, like Whisper); their words are kept when they add no mistake to
-  the words read so far, otherwise Whisper decodes the phrase as before. A phrase read
+  the words read so far (hesitation sounds such as "um" left out, and a homophone such as
+  "two" for "to" taken as the text's word), otherwise Whisper decodes the phrase as
+  before; the server log says why a phrase went to Whisper (positions only, never words). A phrase read
   right is then coloured about 0.65 s (en) and 0.9 s (fr) after the child finishes it
   instead of 2.3-2.6 s, and the result comes 0.1-0.5 s after Stop, with the same word
   accuracy on the measured texts; Arabic keeps Whisper alone (no faster recogniser came

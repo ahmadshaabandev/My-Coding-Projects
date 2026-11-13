@@ -2804,7 +2804,14 @@
       live.failures = 0;
       const heard = onlyText(res.heard_text).trim();
       if (heard) live.heard.push(heard);
-      if (liveWanted(live) && live.mode === 'strict' && res.progress && Array.isArray(res.progress.ops)) showLiveProgress(live, res.progress);
+      if (liveWanted(live) && live.mode === 'strict' && res.progress && Array.isArray(res.progress.ops)) {
+        try {
+          showLiveProgress(live, res.progress);
+        } catch (e) {
+          // A drawing problem is not a failed request: the next answer draws again.
+          console.warn('live progress not shown', e && e.name);
+        }
+      }
     } catch (err) {
       live.failures++;
       if (liveTransient(err) && live.failures < LIVE_MAX_TRIES && !live.closed) {

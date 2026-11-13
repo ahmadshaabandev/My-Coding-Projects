@@ -1254,7 +1254,13 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   first. It is given the audio only (no language, prompt or hotwords; hard rule 1 holds
   for it too). Its transcript is kept when it has a word and adds no mistake to the words
   read so far (`reading_progress` `n_errors` of `heard_before` + it not above that of
-  `heard_before` alone); otherwise Whisper decodes the same audio and its transcript is
+  `heard_before` alone; `app.quick_verdict`), once two harmless differences are taken
+  out: hesitation sounds (`QUICK_FILLERS`: "um", "uh", "er", "hmm", "oh", "euh", ...,
+  unless the text has that word) are dropped, as Whisper drops them, and a word written
+  as a homophone of the text's word at that place (`QUICK_HOMOPHONES`: to/too/two,
+  sea/see, et/est, a/à, ...) becomes the text's word; neither can hide a misreading (a
+  sound said in place of a word leaves that word skipped, and a homophone sounds exactly
+  like the text's word). Otherwise Whisper decodes the same audio and its transcript is
   used, exactly as before. The text only decides, once the quick transcript is made
   without it, whether Whisper decodes the phrase too: a phrase heard with a mistake is
   always Whisper's (the risk left: a quick recogniser hearing the right word where the
@@ -1270,8 +1276,10 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   words read so far (`match`, `sub`, `del`, `ins`) and the words after the last one the
   child reached, `"pending"`. No brain is used (`"brain": "offline"`, no AI consent read,
   no feedback), and nothing is logged but sizes and timings ("recite/phrase strict en:
-  audio N bytes, S s, after N words, decode, asr (via quick|whisper, quick), check,
-  total"). At Stop the client sends
+  audio N bytes, S s, after N words, decode, asr (via quick|whisper, quick S s, why),
+  check, total"), where why tells why the quick transcript was or was not used, by
+  positions only: `kept`, `empty`, `mistake: sub|del|ins at word K of N[, the phrase's
+  last word], M new`, `too long`, `failed`, `no model`. At Stop the client sends
   only the tail (the phrases still queued and what came after the last phrase) to
   `/api/recite/check` with `heard_before`: the server decodes the tail alone and checks
   `heard_before` + the tail exactly as a whole recording (feedback, Claude only with
@@ -1368,6 +1376,25 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   (the word-by-word readings above: the same cuts but for one 8.1 s French phrase now
   cut in a pause at 7 s; errors en 1 -> 1 of 96, fr 10 -> 11 of 95, ar 61 -> 61 of 75;
   same delays).
+
+  The same English reading in Chromium at 360 px (mobile emulation, the real server on
+  2 cores, the reading as the fake microphone in real time): the first words were
+  coloured 7.1 s after the start (20.3 s with the former segmenter), then 16, 35, 50,
+  74, 88, 103 and 125 words at 7, 14, 16, 23, 27, 36 and 38 s (before: 44 words at 20 s,
+  88 at 32 s, the rest only at Stop); the result 0.2 s after Stop (5.4 s).
+
+  On the owner's server (Ampere A1, 2 OCPU, English, an adult reading the text exactly)
+  the two phrase requests of a recording were a 3.7 s and an 11.2 s phrase, 33 s apart;
+  Moonshine decoded each in 0.2-0.3 s, but its transcript was not kept and Whisper took
+  5.6 s and 10.8 s (about 1-1.5 times the audio). The log now says why a quick
+  transcript is not kept. On the measured readings the change of rule keeps a few more
+  phrases (en/fr word-by-word: 26 -> 28 of 46) and no more misread sentences (1 of 48 in
+  both, the homophone mer/mère); a long phrase is the main risk (the more words, the
+  likelier one of them is heard wrongly), which the shorter phrases above reduce. With
+  one x86 core without AMX and one thread (Whisper about 1.25 times the audio, as on that
+  server), the fluent English reading: first words 19.6 s -> 5.3 s after the start,
+  phrase end to colours 12.4 s -> 0.5 s (median; at most 17.8 s -> 6.2 s), Stop to
+  result 8.7 s -> 0.0 s; French 21.3 s -> 8.6 s, 5.1 s -> 4.4 s, 10.5 s -> 6.4 s.
 
   Slower than real time (a stand-in for a small ARM server: one x86 core with
   `taskset`, `MOMMY_ASR_THREADS=1`, AMX refused by an `LD_PRELOAD` shim; Whisper turbo

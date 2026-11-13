@@ -3137,6 +3137,47 @@ class TestLiveQuickRecogniser:
         for word in ("Quixotic", "zebras", "zigzag", "wildly", "Yodelling", "quokkas"):
             assert word not in caplog.text
 
+    @pytest.mark.parametrize(("before", "quick_heard", "heard_text"), [
+        ("the cat", "um sat uh on", "sat on"),  # hesitation sounds: dropped, as Whisper drops them
+        ("", "the cat sat on the mat oh", "the cat sat on the mat"),  # a stray sound at the end
+    ])
+    def test_hesitation_sounds_do_not_send_a_phrase_to_whisper(
+        self, quran: Quran, before: str, quick_heard: str, heard_text: str,
+    ) -> None:
+        whisper, quick = RecordingTranscriber("never used"), FakeQuick(quick_heard)
+        body = phrase(self.client(quran, whisper, quick), heard_before=before).json()
+        assert body["heard_text"] == heard_text and whisper.calls == []
+        assert body["progress"]["n_errors"] == 0
+
+    def test_a_homophone_is_the_text_s_word(self, quran: Quran) -> None:
+        whisper, quick = RecordingTranscriber("never used"), FakeQuick("went too the sea")
+        body = phrase(self.client(quran, whisper, quick), expected_text="We went to the see.", heard_before="we").json()
+        assert body["heard_text"] == "went to the see" and whisper.calls == []
+        assert kinds(body["progress"]["ops"]) == ["match"] * 5
+
+    def test_a_filler_or_homophone_never_hides_a_misreading(self, quran: Quran) -> None:
+        # "um" said in place of a word leaves that word skipped; a word that only looks
+        # alike ("box" for "fox") is no homophone: Whisper decodes both.
+        for heard in ("the um sat", "the box sat"):
+            whisper, quick = RecordingTranscriber("the cat sat"), FakeQuick(heard)
+            body = phrase(self.client(quran, whisper, quick), expected_text="The cat sat. The fox ran.").json()
+            assert len(whisper.calls) == 1 and body["heard_text"] == "the cat sat"
+        # A filler that is a word of the text is that word.
+        whisper, quick = RecordingTranscriber("never used"), FakeQuick("oh no")
+        body = phrase(self.client(quran, whisper, quick), expected_text="Oh no, the cat!").json()
+        assert body["heard_text"] == "oh no" and whisper.calls == []
+
+    def test_the_log_says_why_whisper_decoded(self, quran: Quran, caplog: pytest.LogCaptureFixture) -> None:
+        client = self.client(quran, RecordingTranscriber("sat in"), FakeQuick("sat in"))
+        with caplog.at_level(logging.INFO):
+            phrase(client, heard_before="the cat")
+        assert "via whisper, quick" in caplog.text
+        assert "mistake: sub at word 4 of 6, the phrase's last word, 1 new" in caplog.text
+        client = self.client(quran, RecordingTranscriber("sat on"), FakeQuick("sat on"))
+        with caplog.at_level(logging.INFO):
+            phrase(client, heard_before="the cat")
+        assert "via quick, quick" in caplog.text and ", kept)" in caplog.text
+
     def test_preload_includes_the_quick_recognisers(self) -> None:
         loaded: list[str] = []
 
