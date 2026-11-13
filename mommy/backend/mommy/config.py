@@ -38,6 +38,13 @@ Environment variables:
   ``/api/recite/check``). Off, ``/api/recite/phrase`` does not exist (404), ``/api/health``
   says ``"live_recite": false`` and the web client sends each recording whole, as before.
   Nothing changes for the recogniser: it is still given the audio and the language only.
+* ``MOMMY_OCR``: ``on`` (default) or ``off`` (the same values as ``MOMMY_LIVE_RECITE``), the
+  local reading of printed pages (:mod:`mommy.ocr`): without Claude for a request,
+  ``POST /api/page/read`` reads the photo on the server itself. Off, the models are not
+  loaded, ``/api/health`` says ``"ocr": false`` and a page photo without Claude needs the
+  parent to type the text, as before;
+* ``MOMMY_OCR_THREADS``: CPU threads for the local page reader (default: the value of
+  ``MOMMY_ASR_THREADS``).
 
 When the key or either model is missing, the app runs offline (see ``Settings.claude_configured``).
 """
@@ -88,6 +95,8 @@ class Settings:
     #: env MOMMY_ACCESS_CODE_FILE, when the code came from that file (None otherwise).
     access_code_file: Path | None = None
     live_recite: bool = True  # env MOMMY_LIVE_RECITE, default on
+    ocr: bool = True  # env MOMMY_OCR, default on
+    ocr_threads: int = DEFAULT_ASR_THREADS  # env MOMMY_OCR_THREADS, default asr_threads
 
     @property
     def claude_configured(self) -> bool:
@@ -104,7 +113,7 @@ def _get(env: Mapping[str, str], name: str) -> str | None:
     return value or None
 
 
-#: The values of an on/off variable (``MOMMY_LIVE_RECITE``), compared case-insensitively.
+#: The values of an on/off variable (``MOMMY_LIVE_RECITE``, ``MOMMY_OCR``), compared case-insensitively.
 TRUE_VALUES: tuple[str, ...] = ("1", "on", "true", "yes")
 FALSE_VALUES: tuple[str, ...] = ("0", "off", "false", "no")
 
@@ -121,6 +130,21 @@ def parse_switch(env: Mapping[str, str], name: str, default: bool) -> bool:
     if value in FALSE_VALUES:
         return False
     raise ValueError(f"{name} must be on or off, got {raw!r}")
+
+
+def parse_threads(env: Mapping[str, str], name: str, default: int) -> int:
+    """A thread count: ``default`` when unset or blank, else a positive integer
+    (ValueError for anything else)."""
+    raw = _get(env, name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from None
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1, got {value}")
+    return value
 
 
 def parse_allowed_hosts(value: str) -> tuple[str, ...]:
@@ -199,8 +223,8 @@ def load_settings(root: Path | None = None) -> Settings:
     list with no host in it or with a suffix entry that is too broad, an access code
     shorter than :data:`MIN_ACCESS_CODE_CHARS` (the message never quotes the code), a
     code file that cannot be read or made (:func:`code_from_file`), no access code
-    while ``MOMMY_REQUIRE_ACCESS_CODE`` is set, or a ``MOMMY_LIVE_RECITE`` that is neither
-    on nor off (:func:`parse_switch`).
+    while ``MOMMY_REQUIRE_ACCESS_CODE`` is set, or a ``MOMMY_LIVE_RECITE`` or ``MOMMY_OCR``
+    that is neither on nor off (:func:`parse_switch`).
 
     With ``MOMMY_ACCESS_CODE`` unset and ``MOMMY_ACCESS_CODE_FILE`` set, this reads that
     file, and writes a new code to it first when it does not exist.
@@ -212,22 +236,15 @@ def load_settings(root: Path | None = None) -> Settings:
     if asr_model not in ASR_MODELS:
         raise ValueError(f"MOMMY_ASR_MODEL must be one of {', '.join(ASR_MODELS)}, got {asr_model!r}")
 
-    threads_raw = _get(env, "MOMMY_ASR_THREADS")
-    if threads_raw is None:
-        asr_threads = DEFAULT_ASR_THREADS
-    else:
-        try:
-            asr_threads = int(threads_raw)
-        except ValueError:
-            raise ValueError(f"MOMMY_ASR_THREADS must be an integer, got {threads_raw!r}") from None
-        if asr_threads < 1:
-            raise ValueError(f"MOMMY_ASR_THREADS must be at least 1, got {asr_threads}")
+    asr_threads = parse_threads(env, "MOMMY_ASR_THREADS", DEFAULT_ASR_THREADS)
+    ocr_threads = parse_threads(env, "MOMMY_OCR_THREADS", asr_threads)
 
     effort = (_get(env, "MOMMY_EFFORT") or DEFAULT_EFFORT).lower()
     if effort not in EFFORT_LEVELS:
         raise ValueError(f"MOMMY_EFFORT must be one of {', '.join(EFFORT_LEVELS)}, got {effort!r}")
 
     live_recite = parse_switch(env, "MOMMY_LIVE_RECITE", True)
+    ocr = parse_switch(env, "MOMMY_OCR", True)
 
     hosts_raw = _get(env, "MOMMY_ALLOWED_HOSTS")
     allowed_hosts = DEFAULT_ALLOWED_HOSTS if hosts_raw is None else parse_allowed_hosts(hosts_raw)
@@ -256,6 +273,8 @@ def load_settings(root: Path | None = None) -> Settings:
         access_code=access_code,
         access_code_file=access_code_file,
         live_recite=live_recite,
+        ocr=ocr,
+        ocr_threads=ocr_threads,
     )
 
 
@@ -271,4 +290,5 @@ __all__ = [
     "load_settings",
     "parse_allowed_hosts",
     "parse_switch",
+    "parse_threads",
 ]

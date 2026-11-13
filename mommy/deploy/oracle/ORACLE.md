@@ -440,8 +440,10 @@ Do not edit the files in `~/mommy-app` by hand: the setup puts such changes asid
   saves downloads: usually the Downloads folder, and on an iPhone the Files app, which may
   be iCloud Drive. Mommy makes it and reads it in the browser and never sends it to the
   VM.
-- **This setup runs Mommy without Claude**: page photos and handwriting are not read
-  automatically (the parent types the text), and nothing is sent to the Claude API.
+- **This setup runs Mommy without Claude**: a photo of a printed page is read, if at
+  all, by Mommy itself on the VM (no outside AI service), handwriting is not read
+  automatically (the parent types what the child wrote), and nothing is sent to the
+  Claude API.
 - **The code** is kept on the VM in a Docker volume (a file readable by Mommy only),
   never in a log or in `~/mommy-app`. It travels only inside the link, after the `#`.
 - **The SSH key** opens the VM: keep it private, and do not send it to anyone.

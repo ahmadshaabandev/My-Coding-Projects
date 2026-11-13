@@ -549,40 +549,27 @@
           <p class="phrase" id="dict-phrase" hidden></p>
         </div>
 
-        <!-- Stage 3: the child checks their own paper (redesign: no grown-up stage) -->
-        <div class="card stage" data-stage="check" hidden>
-          <h2 class="card-title" data-i18n="dict_check_title">Check my writing</h2>
-          <p data-i18n="dict_check_intro">Take a photo of the paper, or type exactly what was written, mistakes included.</p>
-          <div class="btn-row">
-            <label class="btn file-btn" data-gate-label="dict-photo">
-              <input type="file" id="dict-take" accept="image/*" capture="environment" data-gate="dict-photo">
-              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-camera"/></svg>
-              <span data-i18n="take_photo">Take a photo</span>
-            </label>
-            <label class="btn file-btn" data-gate-label="dict-photo">
-              <input type="file" id="dict-choose" accept="image/*" data-gate="dict-photo">
-              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-image"/></svg>
-              <span data-i18n="choose_photo">Choose a photo</span>
-            </label>
+        <!-- Stage 3 (owner's decision): "Mom's check". A grown-up looks at the paper and
+             taps each word that is not right; nothing is sent to the server. -->
+        <div class="card stage mom-check" data-stage="mom" hidden tabindex="-1" aria-labelledby="dict-mom-h">
+          <p class="gu-child" data-i18n="mom_child">All written? Let’s show the paper to Mom!</p>
+          <h2 class="card-title" id="dict-mom-h" data-i18n="mom_title">Mom’s check</h2>
+          <p data-i18n="mom_intro">Mom (or another grown-up): please look at the paper and tap each word that is not right. Tap again to undo.</p>
+          <div class="mom-words" id="dict-mom-words" role="group" aria-labelledby="dict-mom-h"></div>
+          <p class="status" id="dict-mom-count" role="status" aria-live="polite"></p>
+          <div class="btn-row btn-row-big">
+            <button type="button" class="btn btn-big" id="dict-mom-all" data-i18n="mom_all">All correct</button>
+            <button type="button" class="btn btn-big btn-primary" id="dict-mom-done" data-i18n="mom_done">Done</button>
           </div>
-          <p class="why" data-why="dict-photo" hidden></p>
-          <div class="field">
-            <label for="dict-written" data-i18n="written_label">What I wrote</label>
-            <textarea id="dict-written" rows="5" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
-          </div>
-          <button type="button" class="btn btn-primary btn-wide" id="btn-dict-check" data-gate="dict-check" data-i18n="check_writing">Check</button>
-          <p class="why" data-why="dict-check" hidden></p>
-          <p class="status" id="dict-check-status" role="status" aria-live="polite"></p>
         </div>
 
-        <!-- Stage 4: the result, straight away; the text read from a photo can be corrected
-             and checked again (it is the child's own writing). -->
+        <!-- Stage 4: the result for the child, with the stars. -->
         <div class="card stage result" data-stage="child" hidden tabindex="-1">
           <h2 class="card-title" data-i18n="dict_result_title">My dictation</h2>
           <p class="feedback" id="dict-child-feedback"></p>
           <p class="hint" id="dict-fb-quran" data-i18n="feedback_not_spoken" hidden>This message quotes the Quran, so it is shown and not spoken.</p>
           <div class="words" id="dict-child-words"></div>
-          <ul class="legend" data-legend="written"></ul>
+          <p class="hint" id="dict-fix-hint" data-i18n="dict_fix_hint" hidden>The words in orange are written here the right way: let’s look at them and write them once more.</p>
           <div class="task-outcome" id="task-outcome-dictation" aria-live="polite" hidden></div>
           <div class="btn-row">
             <button type="button" class="btn" id="dict-listen" data-gate="dict-tts">
@@ -593,19 +580,6 @@
           </div>
           <p class="why" data-why="dict-tts" hidden></p>
           <p class="status" id="dict-child-status" role="status" aria-live="polite"></p>
-          <details class="more dict-fix" id="dict-fix">
-            <summary data-i18n="dict_fix_title">Was my writing read right?</summary>
-            <p class="hint" id="dict-legible" data-i18n="illegible" hidden>The writing was hard to read. Please check it carefully.</p>
-            <p class="hint" id="dict-uncertain" hidden></p>
-            <div class="field">
-              <label for="dict-read-text" data-i18n="read_text_label">What was read</label>
-              <textarea id="dict-read-text" rows="4" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
-            </div>
-            <p class="hint" data-i18n="dict_fix_hint">If a word was read wrong, fix it here, then check again.</p>
-            <button type="button" class="btn" id="btn-dict-recheck" data-gate="dict-check" data-i18n="recheck">Check again</button>
-            <p class="why" data-why="dict-check" hidden></p>
-            <p class="status" id="dict-review-status" role="status" aria-live="polite"></p>
-          </details>
         </div>
       </div>
     </section>

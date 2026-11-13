@@ -1872,6 +1872,48 @@ details.more[open] > summary {
   flex-basis: 100%;
 }
 
+/* "Mom's check": the text, large, each word a button to mark (tap again to undo). */
+.mom-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+  font-size: 1.5rem;
+  line-height: 1.4;
+}
+
+.mom-word {
+  min-height: 48px;
+  min-width: 48px;
+  padding: 4px 10px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mom-word.is-quran,
+.w.is-quran {
+  font-family: var(--font-quran);
+}
+
+.mom-word[aria-pressed="true"] {
+  border: 2px dashed var(--sub-line);
+  background: var(--sub-bg);
+  color: var(--sub-fg);
+  text-decoration: underline wavy var(--sub-line);
+}
+
+.mom-word[aria-pressed="true"]::after {
+  content: " ✗";
+}
+
+.w-fix .w-exp {
+  font-weight: 800;
+}
+
 /* The task being done: title, pass level, the way back. */
 .task-banner {
   display: flex;

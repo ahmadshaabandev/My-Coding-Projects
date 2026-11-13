@@ -37,7 +37,7 @@ from typing import Any, Callable, Iterator, Sequence
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image, PngImagePlugin
+from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 from starlette.formparsers import MultiPartParser
 
 from mommy import app as app_mod
@@ -64,6 +64,8 @@ from mommy.app import (
 from mommy.asr import ASRUnavailable, FakeTranscriber, SherpaWhisper, Transcriber
 from mommy.config import Settings, load_settings
 from mommy.llm import Brain, ClaudeBrain, OfflineBrain
+from mommy.ocr import NOTES as OCR_NOTES
+from mommy.ocr import FakePageReader, OCRBusy, OCRUnavailable, PPOCRReader
 from mommy.phrases import split_phrases
 from mommy.quran import Quran
 from mommy.tts import FakeTTS, QuranTextRefused, TTSUnavailable
@@ -313,6 +315,7 @@ def make_client(quran: Quran) -> Callable[..., TestClient]:
         brain: Any = None,
         quran_obj: Any = _REAL,
         settings: Settings | None = None,
+        reader: Any = None,
     ) -> TestClient:
         app = create_app(
             settings or make_settings(),
@@ -320,6 +323,7 @@ def make_client(quran: Quran) -> Callable[..., TestClient]:
             tts if tts is not None else FakeTTS(),
             brain if brain is not None else FakeBrain(),
             quran if quran_obj is _REAL else quran_obj,
+            reader,
         )
         return TestClient(app, base_url=BASE_URL)
 
@@ -706,7 +710,7 @@ class TestPageRead:
         assert r.json() == {
             "text": FR_TEXT, "lang": "fr", "notes": "", "source": "claude", "needs_manual": False,
             "contains_quran": False, "unreadable_marks": 0,
-            "quran_parts": [], "mushaf_text": FR_TEXT, "quran_range": None, "brain": "claude",
+            "quran_parts": [], "mushaf_text": FR_TEXT, "quran_range": None, "brain": "claude", "reader": "claude",
         }
         assert brain.called("read_page") == [((clean_image(image), "fr"), {})]
 
@@ -2982,3 +2986,158 @@ class TestLiveTail:
         assert_error(recite(client, heard_before="word " * (MAX_TEXT_CHARS // 5 + 1)), 400, "text_too_long")
         assert_error(recite(client, heard_before="the cat", audio=wav(121.0)), 413, "audio_too_long")
         assert transcriber.calls == []
+
+
+# ---------------------------------------------------------------------------
+# /api/page/read with the local page reader (mommy.ocr; MOMMY_OCR)
+# ---------------------------------------------------------------------------
+
+
+class TestLocalPageReader:
+    """Without Claude for the request, a page photo is read on the server by the local
+    reader (``"reader": "local"``), with the same answer shape and the same Quran handling
+    as a page read by Claude; with Claude and the consent, Claude reads it as before."""
+
+    @staticmethod
+    def post(client: TestClient, *, lang: str | None = "fr", ai_consent: str | None = None, image: bytes | None = None) -> Any:
+        return TestPageRead().post(client, image if image is not None else jpeg(), lang=lang, ai_consent=ai_consent)
+
+    def test_without_consent_the_server_reads_the_photo(self, make_client: Callable[..., TestClient]) -> None:
+        brain, reader = FakeBrain(), FakePageReader(FR_TEXT, "fr")
+        image = jpeg()
+        r = self.post(make_client(brain=brain, reader=reader), image=image)
+        assert r.status_code == 200
+        assert r.json() == {
+            "text": FR_TEXT, "lang": "fr", "notes": OCR_NOTES["fr"], "source": "offline", "needs_manual": False,
+            "contains_quran": False, "unreadable_marks": 0, "quran_parts": [], "mushaf_text": FR_TEXT,
+            "quran_range": None, "brain": "offline", "reader": "local",
+        }
+        assert brain.calls == []  # Claude never sees the photo without the consent
+        assert reader.calls == [(len(clean_image(image)), "fr")]  # the cleaned image, never the upload
+
+    @pytest.mark.parametrize("brain", [FakeBrain(), OfflineBrain()], ids=["claude without consent", "no claude"])
+    def test_every_way_without_claude_uses_the_reader(self, make_client: Callable[..., TestClient], brain: Any) -> None:
+        reader = FakePageReader(EN_TEXT, "en")
+        client = make_client(brain=brain, reader=reader)
+        for consent in (None, "0", "1"):
+            body = self.post(client, lang=None, ai_consent=consent).json()
+            if consent == "1" and brain.name == "claude":
+                assert body["reader"] == "claude" and body["text"] == FR_TEXT
+            else:
+                assert (body["reader"], body["brain"], body["text"], body["lang"]) == ("local", "offline", EN_TEXT, "en")
+        assert len(reader.calls) == (2 if brain.name == "claude" else 3)
+        assert all(hint is None for _, hint in reader.calls)
+
+    def test_with_consent_claude_reads_and_the_reader_is_not_used(self, make_client: Callable[..., TestClient]) -> None:
+        brain, reader = FakeBrain(), FakePageReader(EN_TEXT, "en")
+        body = self.post(make_client(brain=brain, reader=reader), ai_consent=CONSENT).json()
+        assert (body["reader"], body["brain"], body["source"], body["text"]) == ("claude", "claude", "claude", FR_TEXT)
+        assert reader.calls == [] and len(brain.called("read_page")) == 1
+
+    def test_when_claude_fails_the_server_reads_it(self, make_client: Callable[..., TestClient]) -> None:
+        reader = FakePageReader(FR_TEXT, "fr")
+        body = self.post(make_client(brain=RaisingBrain(), reader=reader), ai_consent=CONSENT).json()
+        assert (body["reader"], body["brain"], body["source"], body["brain_error"]) == ("local", "claude", "offline", "RuntimeError")
+        assert body["text"] == FR_TEXT and body["needs_manual"] is False
+        failed = FakeBrain(page={"text": "", "lang": None, "notes": "", "needs_manual": True, "error": "RateLimitError"})
+        body = self.post(make_client(brain=failed, reader=FakePageReader(FR_TEXT, "fr")), ai_consent=CONSENT).json()
+        assert (body["reader"], body["brain_error"], body["text"]) == ("local", "RateLimitError", FR_TEXT)
+
+    def test_without_a_reader_the_parent_types_the_text(self, make_client: Callable[..., TestClient]) -> None:
+        for reader in (None, FakePageReader(FR_TEXT, available=False)):
+            client = make_client(brain=OfflineBrain(), reader=reader)
+            body = self.post(client).json()
+            assert (body["reader"], body["text"], body["needs_manual"], body["source"]) == ("none", "", True, "offline")
+            assert "reader_error" not in body
+        assert reader.calls == []
+
+    def test_mommy_ocr_off_never_uses_the_reader(self, make_client: Callable[..., TestClient]) -> None:
+        reader = FakePageReader(FR_TEXT, "fr")
+        client = make_client(brain=OfflineBrain(), reader=reader, settings=make_settings(ocr=False))
+        body = self.post(client).json()
+        assert (body["reader"], body["needs_manual"]) == ("none", True)
+        assert reader.calls == []
+        health = client.get("/api/health").json()
+        assert health["ocr"] is False and health["reasons"]["ocr"] == "MOMMY_OCR is off"
+
+    def test_health_says_whether_photos_can_be_read_without_claude(self, make_client: Callable[..., TestClient]) -> None:
+        body = make_client(brain=OfflineBrain(), reader=FakePageReader()).get("/api/health").json()
+        assert body["ocr"] is True and body["reasons"]["ocr"] is None and body["brain"] == "offline"
+        body = make_client(reader=FakePageReader(available=False)).get("/api/health").json()
+        assert body["ocr"] is False and body["reasons"]["ocr"] == "the fake reader is off"
+        assert make_client().get("/api/health").json()["ocr"] is False  # no reader given
+
+    def test_a_reader_failure_asks_the_parent_to_type(self, make_client: Callable[..., TestClient]) -> None:
+        for error in (ValueError("the image could not be decoded"), OCRUnavailable("gone"), RuntimeError("onnx")):
+            reader = FakePageReader(FR_TEXT, "fr", error=error)
+            body = self.post(make_client(brain=OfflineBrain(), reader=reader)).json()
+            assert (body["reader"], body["text"], body["needs_manual"]) == ("local", "", True)
+            assert body["reader_error"] == type(error).__name__ and "brain_error" not in body
+
+    def test_the_reader_gets_only_a_checked_and_cleaned_image(self, make_client: Callable[..., TestClient]) -> None:
+        reader = FakePageReader(FR_TEXT, "fr")
+        client = make_client(brain=OfflineBrain(), reader=reader)
+        assert_error(self.post(client, image=b"GIF89a....."), 400, "bad_image")
+        assert_error(self.post(client, image=jpeg() + b"\x00" * MAX_IMAGE_BYTES), 413, "image_too_large")
+        bomb = io.BytesIO()
+        Image.new("L", (5000, 4000)).save(bomb, "PNG")
+        assert_error(self.post(client, image=bomb.getvalue()), 400, "bad_image")
+        assert reader.calls == []
+        big = jpeg((4000, 3000), exif={0x010F: "PhoneMaker"})
+        assert self.post(client, image=big).status_code == 200
+        assert reader.calls == [(len(clean_image(big)), "fr")]  # 2000 px, no metadata
+
+    def test_a_busy_reader_answers_503(self, make_client: Callable[..., TestClient]) -> None:
+        reader = FakePageReader(FR_TEXT, "fr", error=OCRBusy("another page is being read"))
+        assert_error(self.post(make_client(brain=OfflineBrain(), reader=reader)), 503, "busy")
+
+    def test_the_quran_is_handled_as_for_claude(self, make_client: Callable[..., TestClient], quran: Quran) -> None:
+        surah = " ".join(quran_words(quran, 112, 1, 4))
+        text = lesson(quran)
+        missing = text.replace(quran_words(quran, 2, 153, 153)[6], "[?]")
+        word = quran_words(quran, 2, 153, 153)[6]
+        misread = text.replace(f" {word} ", f" {word[:-1]} ")  # an OCR slip inside the ayah
+        for page_text in (surah, text, missing, misread, AR_TEXT):
+            page = {"text": page_text, "lang": "ar", "notes": "", "contains_quran": False, "needs_manual": False}
+            by_claude = self.post(make_client(brain=FakeBrain(page=page)), lang="ar", ai_consent=CONSENT).json()
+            by_reader = self.post(make_client(brain=OfflineBrain(), reader=FakePageReader(page_text, "ar")), lang="ar").json()
+            assert by_reader["reader"] == "local" and by_claude["reader"] == "claude"
+            same = ("text", "lang", "needs_manual", "contains_quran", "unreadable_marks", "quran_parts", "mushaf_text", "quran_range")
+            assert {k: by_reader[k] for k in same} == {k: by_claude[k] for k in same}, page_text[:20]
+        body = self.post(make_client(brain=OfflineBrain(), reader=FakePageReader(surah, "ar")), lang="ar").json()
+        assert body["contains_quran"] is True and body["quran_range"] == {"surah": 112, "from": 1, "to": 4}
+        body = self.post(make_client(brain=OfflineBrain(), reader=FakePageReader(misread, "ar")), lang="ar").json()
+        assert body["mushaf_text"] == text != body["text"] and len(body["quran_parts"]) == 1
+
+    def test_the_log_names_the_reader_never_the_text(
+        self, make_client: Callable[..., TestClient], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        secret = "Quixotic zebras zigzag wildly"
+        client = make_client(brain=OfflineBrain(), reader=FakePageReader(secret, "en"))
+        with caplog.at_level(logging.DEBUG):
+            assert self.post(client, lang="en").json()["text"] == secret
+        assert "brain offline, source offline, reader local" in caplog.text
+        for word in ("Quixotic", "zebras", "zigzag"):
+            assert word not in caplog.text
+
+    def test_the_real_reader_end_to_end(self, make_client: Callable[..., TestClient], caplog: pytest.LogCaptureFixture) -> None:
+        reader = PPOCRReader(ROOT / "models", num_threads=2)
+        if not reader.available:
+            pytest.skip(f"local page reader unavailable: {reader.unavailable_reason}")
+        page = Image.new("RGB", (900, 260), (250, 248, 240))
+        draw = ImageDraw.Draw(page)
+        for y, line in ((40, "Quixotic zebras zigzag"), (120, "around the bright red kite.")):
+            draw.text((40, y), line, fill=(20, 20, 20), font=ImageFont.load_default(size=40))
+        out = io.BytesIO()
+        page.save(out, "JPEG", quality=90)
+        brain = FakeBrain()
+        client = make_client(brain=brain, reader=reader)
+        with caplog.at_level(logging.DEBUG):
+            body = self.post(client, lang=None, image=out.getvalue()).json()
+        assert body["text"] == "Quixotic zebras zigzag around the bright red kite."
+        assert (body["lang"], body["reader"], body["brain"], body["needs_manual"]) == ("en", "local", "offline", False)
+        assert brain.calls == []
+        assert "ocr: image" in caplog.text and "reader local" in caplog.text
+        for word in ("Quixotic", "zebras", "kite"):
+            assert word not in caplog.text
+        assert client.get("/api/health").json()["ocr"] is True

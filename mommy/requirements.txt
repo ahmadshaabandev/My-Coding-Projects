@@ -25,6 +25,12 @@ numpy==2.5.4
 # Image checks (metadata removal)
 pillow==13.0.0
 
+# Local reading of printed pages without Claude (mommy/ocr.py): PP-OCR models run by
+# onnxruntime, OpenCV for the text boxes. Both have manylinux aarch64 wheels for Python
+# 3.13 (the arm64 image: Oracle Ampere, Apple Silicon); headless OpenCV has no GUI libraries.
+onnxruntime==1.31.1
+opencv-python-headless==4.14.0.94
+
 # Tests ("tests only": left out of requirements-runtime.lock, so not in the container image)
 pytest==9.2.0  # tests only
 httpx==0.28.1  # tests only

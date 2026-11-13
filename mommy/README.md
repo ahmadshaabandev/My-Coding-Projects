@@ -3,8 +3,10 @@
 Mommy is a web prototype of a tutor that stands in for a parent while a child (6 to 18
 years old) practises school lessons in **Arabic, English or French**:
 
-- **Prepare a page.** The parent photographs a textbook page (read by Claude when it is
-  configured) or types or pastes the text, then confirms it.
+- **Prepare a page.** The parent photographs a printed textbook page or worksheet, or
+  types or pastes the text, then confirms it. The photo is read by Claude with the
+  parent's AI consent, otherwise by a local reader on the server itself (PP-OCR, no AI
+  service, nothing leaves the server; see "Local page reading").
 - **Recite.** The child reads the text aloud. *Strict* mode checks it word by word;
   *contextual* mode checks that the meaning is right. Mistakes are highlighted and the
   feedback can be spoken.
@@ -19,9 +21,10 @@ It is an AI, not a person, and the app says so at the start of each session.
 
 How it works, in one paragraph: the browser records 16 kHz WAV and resizes photos; the
 FastAPI backend (`backend/mommy`) runs speech recognition locally (Whisper through
-sherpa-onnx), compares words with deterministic code (`align.py`), and speaks with local
-Piper voices. Claude, when configured, only reads images, judges meaning in contextual
-mode and words the feedback. Module boundaries, the HTTP API and the hard rules are in
+sherpa-onnx), reads printed page photos locally (PP-OCR through onnxruntime, `ocr.py`)
+when Claude may not, compares words with deterministic code (`align.py`), and speaks with
+local Piper voices. Claude, when configured, only reads images, judges meaning in
+contextual mode and words the feedback. Module boundaries, the HTTP API and the hard rules are in
 [`docs/CONTRACT.md`](docs/CONTRACT.md).
 
 ## Privacy rules
@@ -33,7 +36,9 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
 - **Audio and photos stay in memory.** Uploads are never written to disk: request bodies
   are size-limited before they are parsed, and the upload parser's spill-to-disk
   threshold is raised above that limit (checked by `tests/test_api.py`). They are never
-  logged; of an upload, the logs carry only its size, duration and timings.
+  logged; of an upload, the logs carry only its size, duration and timings. The local
+  page reader works on the cleaned image in memory too, and logs only sizes, counts and
+  timings (`tests/test_ocr.py` checks that it writes nothing and logs no text).
 - **Photos are cleaned.** The browser resizes them (long edge at most 2000 px) and
   re-encodes them as JPEG, which drops EXIF data such as a GPS position. The server
   decodes and re-encodes every image again, in memory, as a new JPEG of at most 2000 px
@@ -55,9 +60,10 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
   for each request: it calls Claude only for a request that carries `ai_consent=1`, which
   the web client sends only with a consent that counts; any other request (no consent,
   an older tab, another client) is answered without Claude. Until that box is ticked,
-  reading photos stays off, and recitations and dictations are checked without Claude
-  (fixed feedback templates; by meaning, only an approximate check). The Batch and
-  Files APIs are never used.
+  a page photo is read by the local reader on the server (when `/api/health` says
+  `"ocr": true`), a photo of handwriting is not read, and recitations and dictations
+  are checked without Claude (fixed feedback templates; by meaning, only an approximate
+  check). The Batch and Files APIs are never used.
 - **Consent first.** A parent must tick a consent box before the camera or microphone is
   used. The family document (the children's nicknames, age bands and languages, their
   tasks, stars and rewards, the consent and the hashed parent PIN) is kept in the
@@ -79,14 +85,14 @@ mode and words the feedback. Module boundaries, the HTTP API and the hard rules 
 ## Quick start
 
 Requirements: Python 3.13, `curl`, `tar` with bzip2, about 1 GB of disk for the models,
-about 5 GB of RAM with the three recognisers loaded (peaks stay under 6 GB), and a
-recent browser.
+about 5 GB of RAM with the three recognisers loaded (peaks stay under 6 GB; reading a
+page photo locally adds about 0.2 GB, briefly 0.45 GB), and a recent browser.
 
 ```sh
 cd mommy
 python3 -m venv .venv
 .venv/bin/pip install --require-hashes -r requirements.lock   # every package pinned and hashed
-scripts/download_models.sh     # Whisper turbo (537 MB) + Piper voices ar/en/fr (64 MB each)
+scripts/download_models.sh     # Whisper turbo (537 MB) + Piper voices ar/en/fr (64 MB each) + OCR (31 MB)
 ./run.sh                       # serves the API and the web client
 ```
 
@@ -176,8 +182,10 @@ while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
 
 With no Claude configuration the app runs fully offline:
 
-- the parent types the page text and what the child wrote (a photo of the child's
-  writing gets `501 needs_manual`);
+- a photo of a printed page is read by the local reader ("Local page reading" below);
+  the parent checks and corrects the text, or types or pastes it (with `MOMMY_OCR=off`,
+  or without the OCR models, the parent types it). A photo of the child's writing gets
+  `501 needs_manual`: the parent types what the child wrote;
 - contextual mode uses a content-word overlap heuristic, marked `"approximate": true`;
   Prepare and the task form say so under the mode choice ("Without the online AI, the
   meaning check is only approximate."), except for a text with Quran words, which is
@@ -186,6 +194,28 @@ With no Claude configuration the app runs fully offline:
 
 If the Whisper or Piper files are missing, `/api/health` says so and the UI hides those
 features; the server still starts.
+
+## Local page reading
+
+Without Claude for a request (no AI consent, or no Claude on the server), or when a
+Claude call fails, `POST /api/page/read` reads the photo on the server with PP-OCR
+models (PaddleOCR, Apache-2.0) run by onnxruntime (`backend/mommy/ocr.py`): text
+detection PP-OCRv6 small, recognition PP-OCRv5 mobile Arabic and PP-OCRv5 mobile Latin
+(French and English), and a page-orientation classifier (PP-LCNet). The answer has
+`"reader": "local"` (`"claude"` when Claude read it, `"none"` when the parent must type
+it). Arabic lines are put in reading order (right to left, numbers and Latin words kept
+as they are); a word the reader is unsure of is written `[?]` for the parent to type.
+`/api/health` says `"ocr": true` when it can be used. Settings: `MOMMY_OCR` (`on`,
+default, or `off`) and `MOMMY_OCR_THREADS` (default: `MOMMY_ASR_THREADS`).
+
+Measured on 2 cores (`taskset -c 0,1`, generated lesson pages as clean scans and as
+phone-like photos, word accuracy = 1 - WER, details in `docs/CONTRACT.md`): French and
+English 100% on every photo; Arabic without tashkeel 87-92% (68% on a blurred 1000 px
+photo); **Arabic with tashkeel is weak**: 14-53% of the words right when the marks are
+ignored, 0-18% with them, and 16-54% of the printed marks kept (70-88% of those kept are
+right). A page takes 0.9-1.7 s, Arabic with tashkeel up to 3.5 s. A page with tashkeel is
+better read by Claude or typed; the parent must always check the text, the vowel marks
+above all. Handwriting is not read locally.
 
 ## Enabling Claude
 
@@ -213,7 +243,9 @@ Other settings: `MOMMY_ASR_MODEL` (`turbo`, default, or `small`), `MOMMY_ASR_THR
 `MOMMY_ACCESS_CODE` (unset by default: no access gate; see the next section),
 `MOMMY_REQUIRE_ACCESS_CODE` (set in the container image: no start without a code),
 `MOMMY_LIVE_RECITE` (`on`, default, or `off`: the live check of a recitation, see
-"Live recitation" below), `MOMMY_LOG_LEVEL` (default `INFO`), `PORT` (default 8080).
+"Live recitation" below), `MOMMY_OCR` (`on`, default, or `off`: the local page reader)
+and `MOMMY_OCR_THREADS` (default: `MOMMY_ASR_THREADS`), `MOMMY_LOG_LEVEL` (default
+`INFO`), `PORT` (default 8080).
 
 ## Run it on your own computer and share it (Docker + Cloudflare)
 
@@ -451,9 +483,14 @@ and 3 000 words, `/api/tts` 400 characters, 50 ayat per Quran request. At most t
 or audio decodes run at once (`503 busy` after 30 s). Beyond the contract:
 
 - `/api/health` also returns `tts_languages`, `asr_model` (the Whisper model in use),
-  `reasons` (why the recogniser or the voices are unavailable), `online` (the access
-  gate is on, or an allowed host is not a loopback one) and `live_recite` (the live
-  check below is on).
+  `reasons` (why the recogniser, the voices or the page reader are unavailable), `online`
+  (the access gate is on, or an allowed host is not a loopback one), `live_recite` (the
+  live check below is on) and `ocr` (a page photo can be read on the server without
+  Claude, "Local page reading" above).
+- `/api/page/read` also returns `reader`: `"claude"`, `"local"` (read on the server, no
+  AI) or `"none"` (the parent types the text); `reader_error` when the local reader
+  failed. `brain` and `source` keep their meaning (`source` is `"claude"` only for a text
+  Claude read).
 - **Live recitation** (`MOMMY_LIVE_RECITE`, default `on`). While the child reads, the
   browser cuts the recording into phrases at the pauses (0.65 s of silence after at least
   0.4 s of speech, at the latest every 18 s) and sends each one to `POST
@@ -725,6 +762,10 @@ node tests/web/access.cjs         # the access gate of an online deployment, in 
 - **Speech:** [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache 2.0), OpenAI
   Whisper models (MIT) as exported by sherpa-onnx, Piper voices (licences above), and
   the espeak-ng phonemizer (GPL-3.0-or-later; bundled by `espeakng-loader`).
+- **Page reading (OCR):** PP-OCR models of [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)
+  (Apache 2.0) in ONNX form from the releases of [oar-ocr](https://github.com/GreatV/oar-ocr)
+  (Apache 2.0), run by [onnxruntime](https://github.com/microsoft/onnxruntime) (MIT) with
+  [OpenCV](https://opencv.org) (`opencv-python-headless`, Apache 2.0).
 
 ## Layout
 
@@ -739,14 +780,14 @@ mommy/
   deploy/huggingface/          README.md (the Space card) and deploy.py (creates or updates the Space)
   deploy/oracle/               ORACLE.md and setup.sh: the self-hosting kit on an Oracle Cloud Always Free VM;
                                compose.oracle.yaml (both link modes), compose.stable.yaml and Caddyfile (the permanent link)
-  scripts/download_models.sh   fetches the Whisper model(s) and Piper voices into models/ (sha256 checked)
+  scripts/download_models.sh   fetches the Whisper model(s), Piper voices and OCR models into models/ (sha256 checked)
   scripts/space_start.sh       the image's start command: checks the access code, runs uvicorn
   scripts/lock_requirements.py regenerates both lock files (development only)
   scripts/refresh_pins.py      shows or moves the pinned images (cloudflared, Caddy, Python) to newer digests (development only)
   docs/CONTRACT.md             module boundaries, HTTP API, hard rules
   data/quran/                  verbatim Tanzil text and metadata (read-only)
   models/                      git-ignored: downloaded models
-  backend/mommy/               config, textnorm, align, phrases, feedback, quran, guard, asr, tts, llm, app
+  backend/mommy/               config, textnorm, align, phrases, feedback, quran, guard, asr, tts, ocr, llm, app
   web/                         index.html, app.js, recorder.js, styles.css, rewards.js (tasks and
                                rewards logic), family.js (the family UI), access.html and
                                access.js (the code page of an online deployment)

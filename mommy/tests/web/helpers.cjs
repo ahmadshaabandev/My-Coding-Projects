@@ -1085,6 +1085,10 @@ async function newPage(browser, base, viewport, fakeOpts, pageOpts) {
   const page = await context.newPage();
   await page.addInitScript(mediaHook);
   await page.addInitScript(fakeMicHook);
+  // The dictation's pauses to write each word (seconds each) are made short in tests.
+  await page.addInitScript((scale) => {
+    window.__mommyPauseScale = scale;
+  }, po.pauseScale === undefined ? 0.01 : po.pauseScale);
   if (po.initScript) await page.addInitScript(po.initScript, po.initArg);
   page.setDefaultTimeout(10000);
   const fake = makeFakeApi(fakeOpts);
@@ -1291,7 +1295,10 @@ async function enterPin(page, pin) {
   await page.waitForSelector('#pin-dialog:not([open])', { state: 'attached' });
 }
 
-/** Open the parent area from the child's home or the picker, with the PIN. */
+/**
+ * Open the parent area from the child's home or the picker, with the PIN; (redesign) an
+ * area still open (left by moving to another screen) opens without it.
+ */
 async function openParent(page, pin) {
   if (await page.isVisible('#btn-who-parents')) {
     await page.click('#btn-who-parents');
@@ -1302,8 +1309,79 @@ async function openParent(page, pin) {
     }
     await page.click('#btn-home-parents');
   }
-  await enterPin(page, pin);
+  await page.waitForSelector('#pin-dialog[open], #screen-parent:not([hidden])');
+  if (await page.isVisible('#pin-dialog[open]')) await enterPin(page, pin);
   await page.waitForSelector('#screen-parent:not([hidden])');
+}
+
+/**
+ * (Redesign) Save a new text in "My texts" from anywhere on the child's side: My texts,
+ * "New text", the text (and its name, language, mode), "Save". Ends on the editor with the
+ * text saved ("Read aloud" and "Dictation" shown).
+ */
+async function saveText(page, text, o) {
+  const opts = o || {};
+  await openEditor(page, { fresh: true });
+  if (opts.title) await page.fill('#page-title', opts.title);
+  if (opts.lang) await page.selectOption('#page-lang', opts.lang);
+  await page.fill('#page-text', text);
+  if (opts.mode) await page.check(`input[name="mode"][value="${opts.mode}"]`, { force: true });
+  await page.click('#btn-confirm');
+  await page.waitForSelector('#prep-next:not([hidden])');
+}
+
+/**
+ * (Redesign) The editor, as Prepare was: the text being practised ("Change" in My texts),
+ * or a new text when there is none (or with {fresh: true}).
+ */
+async function openEditor(page, o) {
+  if (await page.isVisible('#screen-prepare') && !(o && o.fresh)) return;
+  if (!(await page.isVisible('#screen-texts'))) {
+    if (await page.isVisible('#nav [data-go="texts"]')) await page.click('#nav [data-go="texts"]');
+    else {
+      if (await page.isVisible('#screen-who')) await page.click('#who-list .who-btn');
+      else if (!(await page.isVisible('#screen-home'))) await page.click('#btn-home');
+      await page.waitForSelector('#screen-home:not([hidden])');
+      await page.click('#screen-home [data-go="texts"]');
+    }
+  }
+  await page.waitForSelector('#screen-texts:not([hidden])');
+  const info = await page.evaluate(() => window.MommyApp.pageInfo());
+  if (info.ready && info.textId && !(o && o.fresh) && (await page.isVisible(`#texts-list [data-text-edit="${info.textId}"]`))) {
+    await page.click(`#texts-list [data-text-edit="${info.textId}"]`);
+  } else {
+    await page.click('#texts-new');
+  }
+  await page.waitForSelector('#screen-prepare:not([hidden])');
+}
+
+/** (Redesign) Go to a child's screen by its tab (the home has no tabs, only big buttons). */
+async function goTab(page, screen) {
+  if (await page.isVisible(`#nav [data-go="${screen}"]`)) await page.click(`#nav [data-go="${screen}"]`);
+  else await page.click(`#screen-home [data-go="${screen}"]`);
+  await page.waitForSelector(`#screen-${screen}:not([hidden])`);
+}
+
+/**
+ * (Owner's decision) The end of a dictation: the grown-up taps the words at these indexes
+ * in "Mom's check" (none: "All correct"), and the result shows.
+ */
+async function momCheck(page, wrong) {
+  await page.waitForSelector('[data-stage="mom"]:not([hidden])');
+  const list = wrong || [];
+  for (const i of list) await page.click(`#dict-mom-words .mom-word >> nth=${i}`);
+  await page.click(list.length ? '#dict-mom-done' : '#dict-mom-all');
+  await page.waitForSelector('[data-stage="child"]:not([hidden])');
+}
+
+/** Press Next through every phrase of a running dictation, up to "Mom's check". */
+async function dictateAll(page) {
+  for (let i = 0; i < 60; i++) {
+    if (await page.isVisible('[data-stage="mom"]')) return;
+    await page.waitForSelector('#dict-next:not([disabled]), [data-stage="mom"]:not([hidden])');
+    if (await page.isVisible('[data-stage="mom"]')) return;
+    await page.click('#dict-next');
+  }
 }
 
 async function parentSection(page, name) {
@@ -1314,6 +1392,7 @@ async function parentSection(page, name) {
 async function closeParent(page) {
   await page.click('#btn-parent-close');
   await page.waitForSelector('#screen-parent', { state: 'hidden' });
+  await page.waitForSelector('#screen-home:not([hidden]), #screen-who:not([hidden])');
 }
 
 /** Change the language of the (only or first) child through the parent area. */
@@ -1412,6 +1491,11 @@ module.exports = {
   setupFamily,
   enterPin,
   openParent,
+  saveText,
+  openEditor,
+  goTab,
+  momCheck,
+  dictateAll,
   parentSection,
   closeParent,
   setChildLang,

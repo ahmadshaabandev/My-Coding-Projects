@@ -12,7 +12,7 @@
 #   docker run --rm -p 127.0.0.1:7860:7860 -e MOMMY_ACCESS_CODE \
 #     -e MOMMY_ALLOWED_HOSTS=localhost \
 #     -v "$(readlink -f models/sherpa-onnx-whisper-turbo)":/home/user/app/models/sherpa-onnx-whisper-turbo:ro \
-#     ... (the same for the three vits-piper-* voices) mommy-space
+#     ... (the same for the three vits-piper-* voices and ppocr-onnx, the OCR models) mommy-space
 # Behind a TLS-intercepting proxy, add --network host and
 # --secret id=build_ca,src=<CA bundle> to the build (read by curl and pip only, never
 # stored in a layer).
@@ -40,10 +40,11 @@ FROM ${PYTHON_IMAGE} AS models
 ARG SKIP_MODELS=0
 WORKDIR /build
 COPY scripts/download_models.sh scripts/download_models.sh
-# Turbo and the three Piper voices (no --small: the app uses turbo). The script checks
-# the sha256 of every archive before unpacking it, so a replaced release file stops the
-# build. "bash script": a Space repository does not keep the executable bit. test_wavs/
-# are sample clips.
+# Turbo, the three Piper voices (no --small: the app uses turbo) and the OCR models of the
+# local page reader (models/ppocr-onnx/, 31 MB). The script checks the sha256 of every
+# archive before unpacking it and of every OCR file before keeping it, so a replaced
+# release file stops the build. "bash script": a Space repository does not keep the
+# executable bit. test_wavs/ are sample clips.
 RUN --mount=type=secret,id=build_ca \
     set -eu; \
     mkdir -p models; \
@@ -72,7 +73,9 @@ ENV HOME=/home/user \
     MOMMY_ASR_THREADS=2 \
     MOMMY_REQUIRE_ACCESS_CODE=1
 # PYTHONPATH: the app package lives in backend/ (as in run.sh), absolute so it does not
-# depend on the working directory. MOMMY_ASR_THREADS=2: CPU basic has 2 vCPU. Logs are
+# depend on the working directory. MOMMY_ASR_THREADS=2: CPU basic has 2 vCPU (the local
+# page reader, MOMMY_OCR on by default, uses as many threads unless MOMMY_OCR_THREADS
+# says otherwise). Logs are
 # unbuffered so the Space's log view shows them at once. MOMMY_REQUIRE_ACCESS_CODE=1:
 # the app's settings refuse to start without a usable MOMMY_ACCESS_CODE, whatever the
 # start command (the image listens on every interface; ./run.sh does not set it).
@@ -81,6 +84,8 @@ WORKDIR /home/user/app
 # Every package pinned and hashed, wheels only (nothing is compiled, so no compiler in
 # the image); dependencies first, so that a code change reuses this layer. The runtime
 # lock is requirements.lock without the test tools (scripts/lock_requirements.py).
+# onnxruntime and opencv-python-headless (the local page reader) are manylinux wheels
+# for x86-64 and aarch64 with their libraries inside: nothing to apt-get.
 COPY requirements-runtime.lock ./
 RUN --mount=type=secret,id=build_ca \
     if [ -s /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \

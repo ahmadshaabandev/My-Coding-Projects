@@ -90,7 +90,7 @@ const {
  */
 async function startSession(page, { consent, nickname }) {
   await H.setupFamily(page, { consent: !!consent, nickname: nickname || 'Sami' });
-  await page.click('#nav [data-go="prepare"]');
+  await H.openEditor(page);
   await page.waitForSelector('#screen-prepare:not([hidden])');
 }
 
@@ -98,13 +98,13 @@ async function startSession(page, { consent, nickname }) {
 async function switchLang(page, lang, screen) {
   await H.setChildLang(page, lang);
   if (screen && screen !== 'home') {
-    await page.click(`#nav [data-go="${screen}"]`);
+    await H.goTab(page, screen);
     await page.waitForSelector(`#screen-${screen}:not([hidden])`);
   }
 }
 
 async function confirmPageText(page, text) {
-  await page.click('#nav [data-go="prepare"]');
+  await H.openEditor(page);
   await page.fill('#page-text', text);
   await page.click('#btn-confirm');
   await page.waitForSelector('#prep-next:not([hidden])');
@@ -430,16 +430,16 @@ async function mainFlow(browser, base) {
     assert.ok(await page.isVisible('#nav'));
     assert.ok(await page.isDisabled('#prep-take'));
     assert.ok(await page.isDisabled('#prep-choose'));
-    assert.match(await page.textContent('#why-prep-photo'), /consent/);
+    assert.match(await page.textContent('#why-prep-photo'), /give the OK in Settings/);
     await page.fill('#page-text', PAGE_TEXT);
     await pressConfirm(page);
-    assert.match(await page.textContent('#prep-confirm-status'), /Text confirmed/);
+    assert.match(await page.textContent('#prep-confirm-status'), /Saved in “My texts”/);
     await page.click('#prep-next [data-go="recite"]');
     await page.waitForSelector('#screen-recite:not([hidden])');
     assert.match(await page.textContent('#recite-hello'), /Hi Sami!/);
     assert.ok(await page.isDisabled('#recite-rec'));
     assert.ok(await page.isVisible('#why-recite-rec'));
-    assert.match(await page.textContent('#why-recite-rec'), /consent/);
+    assert.match(await page.textContent('#why-recite-rec'), /Ask a parent to give the OK in Settings/);
     // The child's profile is in the family document; the box was not ticked, so no consent.
     const doc = await H.storedDoc(page);
     assert.equal(doc.children[0].nickname, 'Sami');
@@ -449,11 +449,11 @@ async function mainFlow(browser, base) {
 
   await check('ticking consent (parent area, Settings) enables the microphone and camera', async () => {
     await H.setConsent(page, true);
-    await page.click('#nav [data-go="recite"]');
+    await H.goTab(page, 'recite');
     await page.waitForSelector('#screen-recite:not([hidden])'); // the text is already confirmed
     assert.ok(await page.isEnabled('#recite-rec'));
     assert.ok(await page.isHidden('#why-recite-rec'));
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     assert.ok(await page.isEnabled('#prep-take'));
     assert.ok(await page.isHidden('#why-prep-photo'));
   });
@@ -488,11 +488,11 @@ async function mainFlow(browser, base) {
     await page.waitForFunction((t) => document.querySelector('#page-text').value === t, PAGE_TEXT);
     assert.equal(await page.inputValue('#prep-choose'), '', 'the file input is cleared');
     await pressConfirm(page);
-    assert.match(await page.textContent('#prep-confirm-status'), /Text confirmed/);
+    assert.match(await page.textContent('#prep-confirm-status'), /Saved in “My texts”/);
   });
 
   await check('recite: records a 16 kHz mono PCM16 WAV and releases the microphone', async () => {
-    await page.click('#nav [data-go="recite"]');
+    await H.goTab(page, 'recite');
     await page.waitForSelector('#recite-text');
     assert.equal((await page.textContent('#recite-text')).trim(), PAGE_TEXT);
     await page.click('#recite-rec');
@@ -603,14 +603,14 @@ async function mainFlow(browser, base) {
   await check('recite: leaving the screen mid-recording releases the microphone', async () => {
     await page.click('#recite-rec');
     await page.waitForSelector('#recite-rec[data-state="recording"]');
-    await page.click('#nav [data-go="dictation"]');
+    await H.goTab(page, 'dictation');
     await page.waitForSelector('#screen-dictation:not([hidden])');
     await page.waitForFunction(() => MommyRecorder.openStreams() === 0);
     assert.equal(fake.callsTo('/api/recite/check').length, 3, 'a cancelled recording is not uploaded');
   });
 
   await check('recite: contextual mode shows the meaning verdict and missing ideas', async () => {
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     await page.check('input[name="mode"][value="contextual"]');
     await pressConfirm(page);
     await page.click('#prep-next [data-go="recite"]');
@@ -625,103 +625,100 @@ async function mainFlow(browser, base) {
     // Claude judged the meaning (the AI consent was sent): no "approximate" label.
     assert.ok(await page.isHidden('#recite-approx'));
     assert.equal((await page.textContent('#recite-feedback')).trim(), CONTEXTUAL_RESULT.feedback);
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     await page.check('input[name="mode"][value="strict"]');
     await pressConfirm(page);
   });
 
-  await check('dictation: phrases are spoken slowly with Repeat and Next', async () => {
-    await page.click('#nav [data-go="dictation"]');
+  await check('dictation (owner\'s decision): each sentence is said once at normal speed, then word by word slowly with a pause to write; Repeat replays it from the cache; Next', async () => {
+    await H.goTab(page, 'dictation');
     await page.click('#btn-dict-start');
     const ph = await waitForCall(fake, '/api/dictation/phrases', 1);
     assert.deepEqual(ph.json, { text: PAGE_TEXT, lang: 'en' });
     await page.waitForSelector('#dict-counter');
     assert.match(await page.textContent('#dict-counter'), /Part 1 of 2/);
     await waitForTts(fake, 'The cat sat');
-    assert.deepEqual(fake.ttsFor('The cat sat')[0].json, { text: 'The cat sat', lang: 'en', slow: true });
-    // While the first phrase plays, the next one is fetched ahead.
+    assert.deepEqual(fake.ttsFor('The cat sat')[0].json, { text: 'The cat sat', lang: 'en', slow: false }, 'the sentence at normal speed');
+    // Then each word, slowly (the punctuation left out), fetched once.
+    for (const w of ['The', 'cat', 'sat']) {
+      await waitForTts(fake, w);
+      assert.deepEqual(fake.ttsFor(w)[0].json, { text: w, lang: 'en', slow: true });
+    }
+    // While the child writes, the next sentence and its words are fetched ahead.
     await waitForTts(fake, 'on the mat.');
-    assert.deepEqual(fake.ttsFor('on the mat.')[0].json, { text: 'on the mat.', lang: 'en', slow: true });
+    await waitForTts(fake, 'mat');
+    assert.deepEqual(fake.ttsFor('mat')[0].json, { text: 'mat', lang: 'en', slow: true });
+    await page.waitForSelector('#dict-next:not([disabled])');
     const n = fake.callsTo('/api/tts').length;
     await page.click('#dict-repeat');
-    await sleep(200);
-    assert.equal(fake.callsTo('/api/tts').length, n, 'Repeat reuses the audio already fetched');
+    await sleep(400);
+    assert.equal(fake.callsTo('/api/tts').length, n, 'Repeat reuses the sentence and the words already fetched');
     assert.ok(await page.isHidden('#dict-unclear'), 'the speech check passed: no note');
     assert.ok(await page.isHidden('#dict-phrase'));
     await page.click('#dict-show');
     assert.equal((await page.textContent('#dict-phrase')).trim(), 'The cat sat');
+    assert.equal((await page.textContent('#dict-show')).trim(), 'Hide the words');
+    await page.waitForSelector('#dict-next:not([disabled])');
     await page.click('#dict-next');
     assert.match(await page.textContent('#dict-counter'), /Part 2 of 2/);
     assert.match(await page.textContent('#dict-next'), /I've finished/);
-    await sleep(200);
-    assert.equal(fake.callsTo('/api/tts').length, n, 'the second phrase was already fetched');
+    await sleep(300);
+    assert.equal(fake.callsTo('/api/tts').length, n, 'the second sentence and its words were already fetched');
     await shot(page, 'dictation-360');
+    await page.waitForSelector('#dict-next:not([disabled])');
     await page.click('#dict-next');
-    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+    await page.waitForSelector('[data-stage="mom"]:not([hidden])');
   });
 
-  await check('dictation: the parent confirms the result before the child sees it', async () => {
+  await check('dictation (owner\'s decision): "Mom\'s check" shows the text, a grown-up taps the words that are not right (again to undo), and the child sees the score and the right spellings; nothing is sent to be checked', async () => {
     const ttsBefore = fake.callsTo('/api/tts').length;
-    await page.click('#btn-dict-check');
-    assert.match(await page.textContent('#dict-check-status'), /type what your child wrote/);
-    await page.fill('#dict-written', 'The cat sat on the matt');
-    await page.click('#btn-dict-check');
-    const call = await waitForCall(fake, '/api/dictation/check', 1);
-    assert.equal(call.form.written_text.text, 'The cat sat on the matt');
-    assert.equal(call.form.expected_text.text, PAGE_TEXT);
-    assert.equal(call.form.lang.text, 'en');
-    assert.equal(call.form.age.text, '6-9');
-    assert.equal(call.form.image, undefined);
-    await page.waitForSelector('[data-stage="review"]:not([hidden])');
-    assert.ok(await page.isHidden('[data-stage="child"]'));
-    assert.equal(await page.inputValue('#dict-read-text'), DICTATION_RESULT.read_text);
-    assert.equal((await page.textContent('#dict-review-words .w-sub .w-heard')).trim(), 'matt');
-    assert.equal(fake.callsTo('/api/tts').length, ttsBefore, 'nothing is spoken before the parent confirms');
-    await shot(page, 'dictation-review-360');
-    // The parent can correct what was read and check again (sent as typed text).
-    await page.fill('#dict-read-text', 'The cat sat on the mat');
-    await page.click('#btn-dict-recheck');
-    const again = await waitForCall(fake, '/api/dictation/check', 2);
-    assert.equal(again.form.written_text.text, 'The cat sat on the mat');
-    await page.click('#btn-dict-confirm');
+    assert.deepEqual(await page.$$eval('#dict-mom-words .mom-word', (b) => b.map((x) => x.textContent)), ['The', 'cat', 'sat', 'on', 'the', 'mat.']);
+    assert.equal(await page.getAttribute('#dict-mom-words', 'dir'), 'ltr');
+    assert.match(await page.textContent('[data-stage="mom"]'), /show the paper to Mom/);
+    // Tap, tap again (undo), tap another.
+    await page.click('#dict-mom-words .mom-word >> nth=1');
+    assert.equal(await page.getAttribute('#dict-mom-words .mom-word >> nth=1', 'aria-pressed'), 'true');
+    await page.click('#dict-mom-words .mom-word >> nth=1');
+    assert.equal(await page.getAttribute('#dict-mom-words .mom-word >> nth=1', 'aria-pressed'), 'false');
+    await page.click('#dict-mom-words .mom-word >> nth=5');
+    assert.equal((await page.textContent('#dict-mom-count')).trim(), 'Words to look at again: 1');
+    await shot(page, 'dictation-mom-360');
+    assert.deepEqual(await H.smallTargets(page), []);
+    await page.click('#dict-mom-done');
     await page.waitForSelector('[data-stage="child"]:not([hidden])');
-    assert.ok(await page.isHidden('[data-stage="review"]'));
+    assert.equal((await page.textContent('#dict-child-feedback')).trim(), '5 of 6 words right. Well done for writing it all!');
     assert.equal(await page.locator('#dict-child-words .w-match').count(), 5);
-    assert.equal((await page.textContent('#dict-child-feedback')).trim(), DICTATION_RESULT.feedback);
+    assert.equal((await page.textContent('#dict-child-words .w-fix .w-exp')).trim(), 'mat.');
+    assert.ok(await page.isVisible('#dict-fix-hint'));
+    // Only the score line is said (no word of the text).
     const spoken = await waitForCall(fake, '/api/tts', ttsBefore + 1);
-    assert.deepEqual(spoken.json, { text: DICTATION_RESULT.feedback, lang: 'en', slow: false });
+    assert.deepEqual(spoken.json, { text: '5 of 6 words right. Well done for writing it all!', lang: 'en', slow: false });
+    assert.equal(fake.callsTo('/api/dictation/check').length, 0, 'the paper is checked by a grown-up: nothing is sent');
+    // Free practice of a saved text: not all right, so no star; the child tries again.
+    assert.match(await page.textContent('#task-outcome-dictation'), /Try again whenever you are ready/);
+    await shot(page, 'dictation-result-360');
     await noHorizontalScroll(page);
   });
 
-  await check('dictation: a photo of the paper is sent as a resized JPEG, then reviewed by the parent', async () => {
+  await check('dictation (owner\'s decision): "All correct" gives a star of free practice for the saved text; no photo or typed check in the dictation', async () => {
     await page.click('#btn-dict-new');
     await page.click('#btn-dict-start');
     await waitForCall(fake, '/api/dictation/phrases', 2);
-    await page.click('#dict-next');
-    await page.click('#dict-next');
-    await page.waitForSelector('[data-stage="check"]:not([hidden])');
-    const b64 = await page.evaluate(() => {
-      const c = document.createElement('canvas');
-      c.width = 1200;
-      c.height = 2400;
-      const g = c.getContext('2d');
-      g.fillStyle = '#fff';
-      g.fillRect(0, 0, 1200, 2400);
-      return c.toDataURL('image/png').split(',')[1];
-    });
-    await page.setInputFiles('#dict-choose', { name: 'paper.png', mimeType: 'image/png', buffer: Buffer.from(b64, 'base64') });
-    const call = await waitForCall(fake, '/api/dictation/check', 3);
-    assert.deepEqual(call.aiConsent, ['1']);
-    assert.equal(call.form.image.type, 'image/jpeg');
-    assert.deepEqual(jpegSize(call.form.image.data), { width: 1000, height: 2000 });
-    assert.equal(call.form.written_text, undefined);
-    assert.equal(call.form.expected_text.text, PAGE_TEXT);
-    await page.waitForSelector('[data-stage="review"]:not([hidden])');
-    assert.ok(await page.isHidden('[data-stage="child"]'));
+    await H.dictateAll(page);
+    await H.momCheck(page, []);
+    assert.equal((await page.textContent('#dict-child-feedback')).trim(), 'All 6 words right. Wonderful!');
+    assert.ok(await page.isHidden('#dict-fix-hint'));
+    await page.waitForSelector('#task-outcome-dictation:not([hidden])');
+    assert.match(await page.textContent('#task-outcome-dictation'), /A star for the jar/);
+    const doc = await H.storedDoc(page);
+    const led = doc.jar[doc.children[0].id].ledger.filter((e) => e.reason === 'practice');
+    assert.deepEqual(led.map((e) => [e.act, e.delta]), [['dictation', 1]]);
+    assert.equal(await page.locator('#screen-dictation input[type="file"], #dict-written, #btn-dict-check').count(), 0);
+    assert.equal(fake.callsTo('/api/dictation/check').length, 0);
   });
 
   await check('quran: Juz Amma by default, verbatim Uthmani text in RTL, Hafs – Tanzil attribution', async () => {
-    await page.click('#nav [data-go="quran"]');
+    await H.goTab(page, 'quran');
     await waitForCall(fake, '/api/quran/surahs', 1);
     const ayatCall = await waitForCall(fake, '/api/quran/ayat', 1);
     assert.equal(ayatCall.query.get('surah'), '78');
@@ -839,7 +836,7 @@ async function mainFlow(browser, base) {
     assert.match(await page.textContent('#quran-title'), /القرآن/);
     await shot(page, 'quran-360-ar');
     await noHorizontalScroll(page);
-    await page.click('#nav [data-go="recite"]');
+    await H.goTab(page, 'recite');
     await page.waitForSelector('#recite-main:not([hidden])');
     assert.equal(await page.getAttribute('#recite-text', 'dir'), 'ltr', 'an English text stays LTR in the Arabic UI');
     await shot(page, 'recite-360-ar');
@@ -900,7 +897,7 @@ async function desktopShots(browser, base) {
     await record(page, '#recite-rec', 600);
     await page.waitForSelector('#recite-text .w-sub');
     await shot(page, 'recite-desktop');
-    await page.click('#nav [data-go="quran"]');
+    await H.goTab(page, 'quran');
     await page.waitForSelector('#quran-text .ayah[data-ayah="10"]');
     await record(page, '#quran-rec', 600);
     await page.waitForSelector('#quran-text .w-sub');
@@ -1009,7 +1006,7 @@ async function unavailableFeatures(browser, base) {
     assert.match(await page.textContent('#recite-hello'), /Hi Sami!/);
     assert.ok(await page.isDisabled('#recite-rec'));
     assert.match(await page.textContent('#why-recite-rec'), /speech recognition model is not installed/);
-    await page.click('#nav [data-go="dictation"]');
+    await H.goTab(page, 'dictation');
     await page.click('#btn-dict-start');
     await page.waitForSelector('[data-stage="speak"]:not([hidden])');
     assert.ok(await page.isDisabled('#dict-repeat'));
@@ -1018,8 +1015,10 @@ async function unavailableFeatures(browser, base) {
     assert.equal((await page.textContent('#dict-phrase')).trim(), 'The cat sat', 'a grown-up can read the phrase');
     await page.click('#dict-next');
     await page.click('#dict-next');
-    assert.ok(await page.isDisabled('#dict-take'));
-    await page.click('#nav [data-go="quran"]');
+    // "Mom's check" needs no server part at all.
+    await H.momCheck(page, [0]);
+    assert.match(await page.textContent('#dict-child-feedback'), /5 of 6 words right/);
+    await H.goTab(page, 'quran');
     await page.waitForSelector('#screen-quran:not([hidden])');
     assert.ok(await page.isVisible('[data-why="quran"]'));
     assert.match(await page.textContent('[data-why="quran"]'), /Quran text is not available/);
@@ -1056,7 +1055,7 @@ async function serverDown(browser, base) {
     assert.deepEqual((await waitForCall(fake, '/api/recite/check', 1)).aiConsent, [], 'no AI consent: no field');
     await page.waitForSelector('#recite-result:not([hidden])');
     await H.setConsent(page, true); // the AI box stands under the Claude notice now
-    await page.click('#nav [data-go="recite"]');
+    await H.goTab(page, 'recite');
     await page.waitForSelector('#recite-rec:not([disabled])');
     await record(page, '#recite-rec', 300);
     assert.deepEqual((await waitForCall(fake, '/api/recite/check', 2)).aiConsent, ['1']);
@@ -1115,7 +1114,7 @@ const EN_QURAN_MSG = 'This text is from the Quran. Please practise it in the Qur
 const EN_UNMARKED_MSG = 'This text cannot be used for dictation: the voice found words of the Quran in it that the app could not mark for a grown-up to read. It can still be recited word by word.';
 const AR_UNMARKED_MSG = 'لا يمكن استخدام هذا النص في الإملاء: وجد الصوت فيه كلمات من القرآن الكريم تعذّر تحديدها ليقرأها أحد الكبار. ولكن يمكن تسميعه كلمةً بكلمة.';
 const EN_MEANING_OFF = '“The meaning” is not available for this text: it has words of the Quran, and the app never judges the meaning of the Quran. They are checked word by word.';
-const EN_CONFIRMED_QURAN = 'Text confirmed. It includes words of the Quran: see the note under the text.';
+const EN_CONFIRMED_QURAN = 'Saved. It has words of the Quran: see the note under the text.';
 const DICT_START_WHY = '[data-stage="intro"] [data-why="dict-start"]';
 const WESTERN_DIGIT = /[0-9]/;
 
@@ -1198,11 +1197,11 @@ async function livePage(browser, base, { lang, text, mode, colorScheme, viewport
   const { page } = ctx;
   await page.goto(base + '/');
   await startSession(page, { consent: true });
-  if (lang && lang !== 'en') await switchLang(page, lang, 'prepare');
-  await page.click('#nav [data-go="prepare"]');
+  if (lang && lang !== 'en') await switchLang(page, lang);
+  await H.openEditor(page);
   if (mode === 'contextual') await page.check('input[name="mode"][value="contextual"]');
   await confirmPageText(page, text || LIVE_TEXT);
-  await page.click('#nav [data-go="recite"]');
+  await H.goTab(page, 'recite');
   await page.waitForSelector('#recite-main:not([hidden])');
   return ctx;
 }
@@ -1293,14 +1292,14 @@ async function liveFlow(browser, base) {
       const before = fake.callsTo('/api/recite/phrase').length;
       await startLiveRecording(page, [[0.3, 0.8]]);
       await waitForCall(fake, '/api/recite/phrase', before + 1);
-      await page.click('#nav [data-go="prepare"]'); // leaves the screen: the recording is dropped
-      await page.click('#nav [data-go="recite"]');
+      await H.openEditor(page); // leaves the screen: the recording is dropped
+      await H.goTab(page, 'recite');
       await startLiveRecording(page, []);
       await sleep(3000); // the old answer has arrived meanwhile
       assert.equal(await page.locator('#recite-text .w').count(), 0, 'the new recording shows the plain text');
       assert.equal(fake.callsTo('/api/recite/phrase').length, before + 1);
-      await page.click('#nav [data-go="prepare"]');
-      await page.click('#nav [data-go="recite"]');
+      await H.openEditor(page);
+      await H.goTab(page, 'recite');
     });
 
     for (const [fail, label] of [[500, 'a phrase request fails'], [404, 'an older server (404)'], ['network', 'the network fails']]) {
@@ -1391,7 +1390,7 @@ async function liveFlow(browser, base) {
       await page.goto(base + '/');
       await startSession(page, { consent: true });
       await confirmPageText(page, LIVE_TEXT);
-      await page.click('#nav [data-go="recite"]');
+      await H.goTab(page, 'recite');
       await startLiveRecording(page, [[0.3, 0.8], [1.8, 0.8]]);
       assert.equal((await page.textContent('#recite-status')).trim(), H.uiStrings('en').listening);
       await waitMic(page, 3.4);
@@ -1444,7 +1443,7 @@ async function arabicFlow(browser, base) {
   });
 
   await check('ar: score, timer and dictation counter use Arabic-Indic digits; the score line is grammatical (W4, QUR-7, UX-12)', async () => {
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     await page.fill('#page-text', AR_TEXT);
     await pressConfirm(page);
     await page.waitForSelector('#prep-next:not([hidden])');
@@ -1459,7 +1458,7 @@ async function arabicFlow(browser, base) {
     assert.match(timer, /^[٠-٩]+ ث$/);
     await page.waitForSelector('#recite-result:not([hidden])');
     assert.equal((await page.textContent('#recite-score')).trim(), 'الكلمات الصحيحة: ٤ من ٦');
-    await page.click('#nav [data-go="dictation"]');
+    await H.goTab(page, 'dictation');
     await page.click('#btn-dict-start');
     await page.waitForSelector('[data-stage="speak"]:not([hidden])');
     assert.equal((await page.textContent('#dict-counter')).trim(), 'الجزء ١ من ٢');
@@ -1474,7 +1473,7 @@ async function arabicFlow(browser, base) {
 
   await check('ar: Quran refusals after reciting and from the dictation voice are localized, without the English server text (W1, UX-2)', async () => {
     fake.refuse('/api/recite/check', true);
-    await page.click('#nav [data-go="recite"]');
+    await H.goTab(page, 'recite');
     await record(page, '#recite-rec', 600);
     await page.waitForSelector('#recite-status.is-error');
     assert.equal((await page.textContent('#recite-status')).trim(), AR_QURAN_MSG);
@@ -1485,21 +1484,21 @@ async function arabicFlow(browser, base) {
     // Quran section, and the dictation goes on: a grown-up reads that phrase (the safety
     // net), worded in Arabic.
     fake.refuse('/api/tts', true);
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     await pressConfirm(page); // a new confirmation starts a new dictation
-    await page.click('#nav [data-go="dictation"]');
+    await H.goTab(page, 'dictation');
     const before = fake.callsTo('/api/tts').length;
     await page.click('#btn-dict-start');
     await waitForCall(fake, '/api/tts', before + 1);
     await page.waitForSelector('#dict-gu:not([hidden])');
     assert.ok(await page.isVisible('[data-stage="speak"]'));
-    assert.equal((await page.textContent('#dict-gu-ask-text')).trim(), 'هيا نطلب من أحد الكبار قراءة هذا الجزء.');
+    assert.equal((await page.textContent('#dict-gu-ask-text')).trim(), 'هيا نطلب من أحد قراءة هذا الجزء بصوت مسموع.');
     assert.equal((await page.textContent('#dict-gu-why')).trim(), 'لا يستطيع الصوت قراءة هذا الجزء. يُرجى إظهار الكلمات وقراءتها بصوت مسموع كما هي مكتوبة، ثم الضغط على «انتهاء القراءة».');
     assert.equal((await page.textContent('#dict-speak-status')).trim(), '');
     assert.equal(await page.locator('#dict-speak-status + .status-action, #dict-intro-status + .status-action').count(), 0);
     await shot(page, 'dictation-voice-refused-ar-360');
     fake.refuse('/api/tts', false);
-    await page.click('#nav [data-go="quran"]');
+    await H.goTab(page, 'quran');
     await page.waitForSelector('#screen-quran:not([hidden])');
   });
 
@@ -1605,7 +1604,7 @@ async function fixesFlow(browser, base) {
     assert.match(await page.textContent('#prep-confirm-status'), /set to Arabic/);
     await page.fill('#page-text', PAGE_TEXT);
     await page.click('#btn-confirm');
-    assert.equal((await page.textContent('#prep-confirm-status')).trim(), 'This text is not written in Arabic. Please choose the language of the text.');
+    assert.equal((await page.textContent('#prep-confirm-status')).trim(), 'This text is not written in Arabic. Let’s choose the language of the text.');
     assert.ok(await page.isHidden('#prep-next'));
   });
 
@@ -1625,9 +1624,9 @@ async function fixesFlow(browser, base) {
     await page.click('#prep-next [data-go="recite"]');
     await record(page, '#recite-rec', 600);
     await page.waitForSelector('#recite-text .w-sub');
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     await page.check('input[name="mode"][value="contextual"]');
-    await page.click('#nav [data-go="recite"]');
+    await H.goTab(page, 'recite');
     await page.waitForSelector('#screen-recite:not([hidden])');
     assert.match(await page.textContent('#recite-mode-label'), /The meaning/);
     assert.ok(await page.isHidden('#recite-result'));
@@ -1663,7 +1662,7 @@ async function fixesFlow(browser, base) {
     await waitForCall(fake, '/api/recite/check', before + 2);
     await page.waitForSelector('#recite-result:not([hidden])');
     // ... and opens the Quran section right after the next result.
-    await page.click('#nav [data-go="quran"]');
+    await H.goTab(page, 'quran');
     await sleep(1400);
     const plays = await page.evaluate(() => window.__plays);
     assert.deepEqual(plays.filter((p) => p.recording), [], 'nothing is played while the child is recording');
@@ -1672,8 +1671,9 @@ async function fixesFlow(browser, base) {
   });
 
   await check('dictation: Next and Repeat wait while a phrase is prepared, and a double tap cannot skip a phrase (UX-4)', async () => {
-    fake.setTts({ delay: (j) => (j.slow ? 600 : 0), check: (j) => (j.text === 'Phrase two' ? 'failed' : j.slow ? 'passed' : 'skipped') });
-    await page.click('#nav [data-go="dictation"]');
+    // The sentence (at normal speed) takes a moment to arrive; its words come after it.
+    fake.setTts({ delay: (j) => (!j.slow ? 600 : 0), check: (j) => (j.text === 'Phrase two' ? 'failed' : !j.slow ? 'passed' : 'skipped') });
+    await H.goTab(page, 'dictation');
     await page.click('#btn-dict-start');
     await page.waitForSelector('[data-stage="speak"]:not([hidden])');
     assert.ok(await page.isDisabled('#dict-next'), 'Next waits for the voice');
@@ -1685,7 +1685,8 @@ async function fixesFlow(browser, base) {
     });
     assert.equal((await page.textContent('#dict-counter')).trim(), 'Part 1 of 3');
     await page.waitForSelector('#dict-next:not([disabled])');
-    assert.equal((await page.textContent('#dict-speak-status')).trim(), '');
+    // Heard once: Next is free while the words come, slowly, one by one.
+    assert.equal((await page.textContent('#dict-speak-status')).trim(), 'Now word by word, slowly…');
     await waitForTts(fake, 'Phrase two'); // fetched ahead while phrase one plays
     await page.$eval('#dict-next', (b) => {
       b.click();
@@ -1712,45 +1713,13 @@ async function fixesFlow(browser, base) {
     await page.waitForSelector('#dict-next:not([disabled])');
     assert.equal(fake.callsTo('/api/tts').length, n, 'a phrase that passed is repeated from memory');
     await page.click('#dict-next');
-    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+    await page.waitForSelector('[data-stage="mom"]:not([hidden])');
     fake.setTts(null);
   });
 
-  await check('dictation: a Quran refusal of the check is localized, with a button to the Quran section (W1)', async () => {
-    fake.refuse('/api/dictation/check', true);
-    await page.fill('#dict-written', 'The cat sat on the matt');
-    await page.click('#btn-dict-check');
-    await page.waitForSelector('#dict-check-status.is-error');
-    assert.equal((await page.textContent('#dict-check-status')).trim(), EN_QURAN_MSG);
-    assert.ok(await page.isVisible('#dict-check-status + .status-action'));
-    fake.refuse('/api/dictation/check', false);
-  });
-
-  await check('dictation: after the parent edits "What was read", the result must be checked again before the child sees it (UX-3)', async () => {
-    await page.click('#btn-dict-check');
-    await page.waitForSelector('[data-stage="review"]:not([hidden])');
-    assert.ok(await page.isHidden('#dict-check-status + .status-action'), 'the Quran button went away');
-    assert.ok(await page.isEnabled('#btn-dict-confirm'));
-    assert.ok(await page.isHidden('#dict-stale'));
-    await page.fill('#dict-read-text', 'The cat sat on the mat');
-    assert.ok(await page.isDisabled('#btn-dict-confirm'), 'the shown marks no longer match the text');
-    assert.equal((await page.textContent('#dict-stale')).trim(), 'You changed the text. Press “Check again with this text” before you confirm.');
-    const corrected = JSON.parse(JSON.stringify(DICTATION_RESULT));
-    corrected.read_text = 'The cat sat on the mat';
-    corrected.result.ops[5] = { kind: 'match', exp_index: 5, heard_index: 5, expected: 'mat', heard: 'mat' };
-    corrected.result.n_errors = 0;
-    corrected.result.verdict = 'correct';
-    corrected.feedback = 'Perfect!';
-    fake.queueDictation(corrected);
-    await page.click('#btn-dict-recheck');
-    await page.waitForSelector('#btn-dict-confirm:not([disabled])');
-    assert.ok(await page.isHidden('#dict-stale'));
-    fake.refuse('/api/tts', true); // for the "Listen" check below
-    await page.click('#btn-dict-confirm');
-    await page.waitForSelector('[data-stage="child"]:not([hidden])');
-    assert.equal(await page.locator('#dict-child-words .w-match').count(), 6);
-    assert.equal(await page.locator('#dict-child-words .w-sub').count(), 0);
-    // An error from "Listen" is shown on the child's card, not on the hidden review card.
+  await check('dictation: an error of "Listen" is shown on the child\'s result card', async () => {
+    fake.refuse('/api/tts', true); // the score line cannot be said
+    await H.momCheck(page, []);
     await page.click('#dict-listen');
     await page.waitForSelector('#dict-child-status.is-error');
     assert.equal((await page.textContent('#dict-child-status')).trim(), EN_QURAN_MSG);
@@ -1758,7 +1727,7 @@ async function fixesFlow(browser, base) {
   });
 
   await check('prepare: a text that starts with the basmala is confirmed with its Quran part, recited word by word and dictated with a grown-up; [?] marks are explained (final verification, Q2)', async () => {
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     await page.waitForSelector('#screen-prepare:not([hidden])');
     // A page read with [?] marks: Confirm explains them instead of "Something went wrong".
     await page.selectOption('#page-lang', 'en');
@@ -1786,14 +1755,14 @@ async function fixesFlow(browser, base) {
     assert.ok(await page.isVisible('#recite-quran-note'));
     // Dictation is possible: a grown-up reads the basmala (no request before "Start").
     const before = fake.callsTo('/api/dictation/phrases').length;
-    await page.click('#nav [data-go="dictation"]');
+    await H.goTab(page, 'dictation');
     await page.waitForSelector('#screen-dictation:not([hidden])');
     assert.ok(await page.isEnabled('#btn-dict-start'));
     assert.ok(await page.isHidden(DICT_START_WHY));
     assert.ok(await page.isVisible('#dict-quran-intro'));
     assert.equal(fake.callsTo('/api/dictation/phrases').length, before, 'nothing is asked before "Start the dictation"');
     assert.equal(fake.callsTo('/api/tts').filter((c) => c.json.text.includes('بسم')).length, 0);
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     await page.selectOption('#page-lang', 'en');
     await page.fill('#page-text', PAGE_TEXT);
     await pressConfirm(page);
@@ -1830,7 +1799,7 @@ async function quranPartsFlow(browser, base) {
 
   /** Type `text` (Arabic) on Prepare and press "Confirm text". */
   async function confirmArabic(t) {
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     await page.waitForSelector('#screen-prepare:not([hidden])');
     await page.selectOption('#page-lang', 'ar');
     await page.fill('#page-text', t);
@@ -1839,7 +1808,7 @@ async function quranPartsFlow(browser, base) {
 
   /** Start the dictation and go to phrase `index` (0-based), answering the grown-up steps on the way. */
   async function dictateTo(index) {
-    await page.click('#nav [data-go="dictation"]');
+    await H.goTab(page, 'dictation');
     await page.waitForSelector('#screen-dictation:not([hidden])');
     await page.click('#btn-dict-start');
     await page.waitForSelector('[data-stage="speak"]:not([hidden])');
@@ -1877,8 +1846,9 @@ async function quranPartsFlow(browser, base) {
     await page.waitForSelector('#screen-dictation:not([hidden])');
     assert.ok(await page.isEnabled('#btn-dict-start'), 'a text that includes Quran can be dictated');
     assert.ok(await page.isHidden(DICT_START_WHY));
-    assert.equal(await txt('#dict-quran-intro .tag-parent'), 'For the grown-up');
-    assert.match(await txt('#dict-quran-intro p:last-child'), /^This text has words of the Quran\. When the dictation reaches them, it stops and asks a grown-up/);
+    // (Redesign) Worded for the child: someone reads the Quran words; the rest goes on.
+    assert.equal(await txt('#dict-quran-child'), 'This text has words of the Quran: when we reach them, let’s ask someone to read them aloud.');
+    assert.equal(await txt('#dict-quran-intro'), 'The app’s voice never reads the Quran: someone reads those words, the whole part first, then word by word. The rest goes on as usual.');
   });
 
   await check('Q2: a misread ayah lists the typed word and the mushaf word; "Use the mushaf text" puts the mushaf words in and confirms again', async () => {
@@ -1913,7 +1883,7 @@ async function quranPartsFlow(browser, base) {
     await page.waitForSelector('#recite-main:not([hidden])');
     assert.equal(await page.textContent('#recite-text'), FX.LESSON, 'the reading card shows the mushaf words');
     assert.ok(!(await page.textContent('#recite-text')).includes(FX.MISREAD_TYPED));
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     assert.equal(await page.inputValue('#page-text'), FX.LESSON_MISREAD, 'the typed text stays in the grown-up\'s box');
   });
 
@@ -1934,7 +1904,7 @@ async function quranPartsFlow(browser, base) {
     await page.waitForSelector('#recite-main:not([hidden])');
     assert.match(await txt('#recite-mode-label'), /Word by word/);
     assert.ok(await page.isVisible('#recite-quran-note'));
-    assert.equal(await txt('#recite-quran-note p:last-child'), 'This text has words of the Quran. They are checked word by word, as written in the mushaf. The app’s voice never reads them: to let your child hear the text first, please read it aloud yourself.');
+    assert.equal(await txt('#recite-quran-note'), 'Some words here are from the Quran: they are checked word by word, as they are written in the Quran.');
     // A mistake in the Quran part: the fixed template, quoting the mushaf word.
     const part = LESSON.parts[0];
     const quoting = `في الآية الكريمة كلمة تحتاج إلى انتباه: «${part.clean_display[6]}». هيا نقرؤها مرة أخرى.`;
@@ -1962,7 +1932,7 @@ async function quranPartsFlow(browser, base) {
     assert.ok(await page.isVisible('#recite-listen'));
     assert.ok(await page.isHidden('#recite-fb-quran'));
     // "The meaning" stays off on Prepare for this text.
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     assert.ok(await page.isDisabled('input[name="mode"][value="contextual"]'));
   });
 
@@ -1984,19 +1954,19 @@ async function quranPartsFlow(browser, base) {
     await page.click('#dict-next');
     await page.waitForSelector('#dict-gu:not([hidden])');
     assert.equal(await txt('#dict-counter'), 'Part 3 of 5');
-    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask a grown-up to read this part.');
-    assert.equal(await txt('#dict-gu-why'), 'This part is from the Quran, and the app’s voice never reads the Quran. Please show the words where only you can see them, read them aloud slowly, then press “Done reading”: the words are hidden again before your child writes.');
+    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask someone to read this part aloud.');
+    assert.equal(await txt('#dict-gu-why'), 'This part is from the Quran, and the app’s voice never reads the Quran. Please show the words where only you can see them, read the whole part aloud once, then word by word, slowly, with time to write each word; then press “Done reading”: the words are hidden again. If nobody can read it now, “Next” goes on.');
     assert.equal(await txt('#dict-gu-show'), 'Show the words of the Quran');
     assert.doesNotMatch(await page.getAttribute('#dict-gu-show', 'class'), /btn-primary/, 'an outline button: the child\'s eye goes to the ask line');
     // UX-04: a child who cannot read yet hears the ask line once (no Quran word in it).
-    await waitForTts(fake, 'Let’s ask a grown-up to read this part.');
-    assert.deepEqual(fake.ttsFor('Let’s ask a grown-up to read this part.')[0].json, { text: 'Let’s ask a grown-up to read this part.', lang: 'en', slow: false });
+    await waitForTts(fake, 'Let’s ask someone to read this part aloud.');
+    assert.deepEqual(fake.ttsFor('Let’s ask someone to read this part aloud.')[0].json, { text: 'Let’s ask someone to read this part aloud.', lang: 'en', slow: false });
     assert.equal(await focused(), 'dict-gu-show', 'focus goes to the grown-up\'s button');
     assert.equal(await page.getAttribute('#dict-gu-show', 'aria-expanded'), 'false');
     assert.equal(await page.getAttribute('#dict-gu-ask-text', 'aria-live'), 'polite');
     assert.ok(await page.isHidden('#dict-gu-reveal'));
     assert.equal(await page.textContent('#dict-gu-text'), '', 'the words are not in the page before the tap');
-    assert.ok(await page.isDisabled('#dict-next'), 'Next waits for the grown-up');
+    assert.ok(await page.isEnabled('#dict-next'), '(redesign) the app asks, and never blocks the rest');
     assert.ok(await page.isEnabled('#dict-repeat'));
     assert.ok(await page.isHidden('#dict-show'), 'no "Show the words" for the voice here');
     // Keyboard: Enter on the focused button shows the vowelled mushaf text, large.
@@ -2024,9 +1994,9 @@ async function quranPartsFlow(browser, base) {
     const ttsAtRepeat = ttsTexts().length;
     await page.click('#dict-repeat');
     assert.equal(ttsTexts().length, ttsAtRepeat, 'Repeat never calls the voice');
-    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask the grown-up to read it again.');
+    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask them to read it again.');
     assert.ok(await page.isVisible('#dict-gu-show'));
-    assert.ok(await page.isDisabled('#dict-next'));
+    assert.ok(await page.isEnabled('#dict-next'));
     assert.equal(await focused(), 'dict-gu-show');
     await page.click('#dict-gu-show');
     await page.click('#dict-gu-done');
@@ -2034,7 +2004,7 @@ async function quranPartsFlow(browser, base) {
     await page.click('#dict-next');
     await page.waitForFunction(() => document.querySelector('#dict-counter').textContent.trim() === 'Part 4 of 5');
     assert.ok(await page.isVisible('#dict-gu'));
-    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask a grown-up to read this part.');
+    assert.equal(await txt('#dict-gu-ask-text'), 'Let’s ask someone to read this part aloud.');
     await page.click('#dict-gu-show');
     assert.equal(await page.textContent('#dict-gu-text'), PLAN.read_text[3]);
     await page.click('#dict-gu-done');
@@ -2046,29 +2016,31 @@ async function quranPartsFlow(browser, base) {
       assert.equal(fake.ttsFor(PLAN.phrases[i]).length, 0, 'never sent to the voice: ' + PLAN.phrases[i]);
       assert.equal(fake.ttsFor(PLAN.read_text[i]).length, 0);
     }
-    assert.ok(ttsTexts().slice(ttsBefore).every((t) => t === PLAN.phrases[4] || t === 'Let’s ask a grown-up to read this part.'), 'only the last phrase (and the ask line) was asked of the voice meanwhile');
-    assert.equal(fake.ttsFor('Let’s ask a grown-up to read this part.').length, 1, 'the ask line is fetched once, then said from memory');
+    const lastWords = PLAN.phrases[4].split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''));
+    assert.ok(ttsTexts().slice(ttsBefore).every((t) => t === PLAN.phrases[4] || lastWords.includes(t) || t === 'Let’s ask someone to read this part aloud.'), 'only the last phrase, its words (and the ask line) were asked of the voice meanwhile');
+    assert.equal(fake.ttsFor('Let’s ask someone to read this part aloud.').length, 1, 'the ask line is fetched once, then said from memory');
     await page.waitForSelector('#dict-next:not([disabled])');
     await page.click('#dict-next');
-    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+    await page.waitForSelector('[data-stage="mom"]:not([hidden])');
   });
 
-  await check('Q2 dictation: feedback about a word of the Quran part is shown to the child but never spoken', async () => {
-    const part = LESSON.parts[0];
-    const quoting = `في الآية الكريمة كلمة تحتاج إلى انتباه: «${part.clean_display[6]}». هيا نقرؤها مرة أخرى.`;
-    const res = H.quranStrictResult(FX.LESSON, [part.exp_start + 6], quoting, true, 'dictation');
-    fake.queueDictation(res);
-    await page.fill('#dict-written', res.read_text);
-    await page.click('#btn-dict-check');
-    await page.waitForSelector('[data-stage="review"]:not([hidden])');
+  await check('Q2 dictation (owner\'s decision): "Mom\'s check" shows the Quran part in its mushaf form (verbatim, RTL, the Quran font); a word marked there is shown with its mushaf spelling, and only the score is spoken', async () => {
+    const quranWords = PLAN.read_text[2].split(/\s+/).concat(PLAN.read_text[3].split(/\s+/)).filter(Boolean);
+    const shown = await page.$$eval('#dict-mom-words .mom-word.is-quran', (b) => b.map((x) => x.textContent));
+    assert.equal(shown.join(' ').replace(/\s+/g, ' '), quranWords.join(' '), 'the vowelled mushaf words, verbatim (a pause mark with its word)');
+    assert.equal(await page.getAttribute('#dict-mom-words .mom-word.is-quran >> nth=0', 'dir'), 'rtl');
+    assert.equal(await page.getAttribute('#dict-mom-words', 'dir'), 'rtl');
+    await page.click('#dict-mom-words .mom-word.is-quran >> nth=1');
     const tts0 = fake.callsTo('/api/tts').length;
-    await page.click('#btn-dict-confirm');
+    await page.click('#dict-mom-done');
     await page.waitForSelector('[data-stage="child"]:not([hidden])');
-    assert.equal(await txt('#dict-child-feedback'), quoting);
-    assert.ok(await page.isHidden('#dict-listen'));
-    assert.equal(await txt('#dict-fb-quran'), 'This message quotes the Quran, so it is shown and not spoken.');
-    await sleep(400);
-    assert.equal(fake.callsTo('/api/tts').length, tts0);
+    assert.equal(await page.locator('#dict-child-words .w-fix.is-quran').count(), 1);
+    assert.equal(await txt('#dict-child-words .w-fix .w-exp'), shown[1]);
+    const n = await page.locator('#dict-child-words .w').count();
+    assert.equal(await txt('#dict-child-feedback'), `${n - 1} of ${n} words right. Well done for writing it all!`);
+    const spoken = await waitForCall(fake, '/api/tts', tts0 + 1);
+    assert.equal(spoken.json.text, `${n - 1} of ${n} words right. Well done for writing it all!`, 'only the score line, no word of the Quran');
+    assert.equal(fake.callsTo('/api/dictation/check').length, 0);
   });
 
   await check('Q2 dictation: the basmala on a line of its own starts with the grown-up step (no voice for it)', async () => {
@@ -2077,57 +2049,32 @@ async function quranPartsFlow(browser, base) {
     assert.equal(await txt('#prep-confirm-status'), EN_CONFIRMED_QURAN);
     const plan = H.fakeQuranAnalysis(BASMALA_LINE_TEXT, 'ar').plan([]);
     assert.deepEqual(plan.readers, ['grown_up', 'voice']);
+    // (Redesign) For a child of 6 to 9, a sentence for the voice has at most 4 words: the
+    // six words of the second line are said as two short sentences of three.
+    const halves = plan.phrases[1].split(/\s+/);
+    const short = [halves.slice(0, 3).join(' '), halves.slice(3).join(' ')];
     await dictateTo(0);
     await page.waitForSelector('#dict-gu:not([hidden])');
-    assert.equal(await txt('#dict-counter'), 'Part 1 of 2');
+    assert.equal(await txt('#dict-counter'), 'Part 1 of 3');
     assert.equal(await focused(), 'dict-gu-show');
-    assert.ok(await page.isDisabled('#dict-next'));
+    assert.ok(await page.isEnabled('#dict-next'));
     await page.keyboard.press('Enter');
     assert.equal(await page.textContent('#dict-gu-text'), plan.read_text[0]);
     await page.keyboard.press('Enter');
     assert.equal(fake.ttsFor(plan.phrases[0]).length, 0, 'the basmala never reached the voice');
     assert.equal(fake.callsTo('/api/tts').filter((c) => c.json.text.includes('بسم')).length, 0);
     await page.click('#dict-next');
-    await waitForTts(fake, plan.phrases[1]);
+    await waitForTts(fake, short[0]);
+    assert.equal(fake.ttsFor(plan.phrases[1]).length, 0, 'never the long sentence');
+    await page.waitForSelector('#dict-next:not([disabled])');
+    await page.click('#dict-next');
+    await waitForTts(fake, short[1]);
     assert.equal(await txt('#dict-next-label'), "I've finished");
     await page.waitForSelector('#dict-next:not([disabled])');
     await page.click('#dict-next');
-    await page.waitForSelector('[data-stage="check"]:not([hidden])');
-  });
-
-  await check('dictation: an answer typed on two lines (the basmala on its own line) can be confirmed, also after "Check again" (final verification, P1)', async () => {
-    // A browser sends a form field with CRLF line breaks while the textarea holds LF; an
-    // answer echoing the field as sent (as the server did) must not look edited.
-    const echo = (call) => {
-      const sent = call.form.written_text.text;
-      const words = sent.split(/\s+/).filter(Boolean);
-      const ops = words.map((w, i) => ({ kind: 'match', exp_index: i, heard_index: i, expected: w, heard: w }));
-      return { read_text: sent, source: 'typed', uncertain_words: [], legible: true, result: { ops, n_expected: words.length, n_errors: 0, first_error_exp_index: null, verdict: 'correct', say_again: false, word_accuracy: 1 }, feedback: 'أحسنت!', needs_parent_confirmation: true };
-    };
-    fake.queueDictation(echo);
-    fake.queueDictation(echo);
-    const n = fake.callsTo('/api/dictation/check').length;
-    await page.fill('#dict-written', BASMALA_LINE_TEXT);
-    await page.click('#btn-dict-check');
-    const call = await waitForCall(fake, '/api/dictation/check', n + 1);
-    assert.equal(call.form.written_text.text, BASMALA_LINE_TEXT.replace('\n', '\r\n'), 'the browser sends CRLF');
-    await page.waitForSelector('[data-stage="review"]:not([hidden])');
-    assert.equal(await page.inputValue('#dict-read-text'), BASMALA_LINE_TEXT);
-    assert.ok(await page.isHidden('#dict-stale'), 'nothing was edited');
-    assert.ok(await page.isEnabled('#btn-dict-confirm'));
-    await page.click('#btn-dict-recheck');
-    await waitForCall(fake, '/api/dictation/check', n + 2);
-    await page.waitForSelector('#btn-dict-confirm:not([disabled])');
-    assert.ok(await page.isHidden('#dict-stale'));
-    // An edit still asks for a new check.
-    await page.fill('#dict-read-text', BASMALA_LINE_TEXT + ' x');
-    assert.ok(await page.isDisabled('#btn-dict-confirm'));
-    assert.ok(await page.isVisible('#dict-stale'));
-    await page.fill('#dict-read-text', BASMALA_LINE_TEXT);
-    assert.ok(await page.isEnabled('#btn-dict-confirm'));
-    await page.click('#btn-dict-confirm');
-    await page.waitForSelector('[data-stage="child"]:not([hidden])');
-    assert.equal(await page.locator('#dict-child-words .w-match').count(), 10);
+    await page.waitForSelector('[data-stage="mom"]:not([hidden])');
+    // The basmala is in the check in its mushaf form.
+    assert.equal(await txt('#dict-mom-words .mom-word.is-quran >> nth=0'), plan.read_text[0].split(/\s+/)[0]);
   });
 
   await check('safety net: a phrase the voice refuses as Quran becomes a grown-up step (the words as written), and the dictation goes on', async () => {
@@ -2152,7 +2099,7 @@ async function quranPartsFlow(browser, base) {
     await page.click('#dict-gu-show');
     await page.click('#dict-gu-done');
     await page.click('#dict-next');
-    await page.waitForSelector('[data-stage="check"]:not([hidden])');
+    await page.waitForSelector('[data-stage="mom"]:not([hidden])');
     assert.ok(await page.isHidden(DICT_START_WHY));
     fake.setTts(null);
   });
@@ -2161,7 +2108,7 @@ async function quranPartsFlow(browser, base) {
     fake.setUnmarked((t) => t === FX.LESSON);
     await confirmArabic(FX.LESSON);
     await page.waitForSelector('#prep-next:not([hidden])');
-    assert.equal(await txt('#prep-confirm-status'), 'Text confirmed for reciting. It cannot be used for dictation: the voice found words of the Quran in it that the app could not mark for a grown-up to read.');
+    assert.equal(await txt('#prep-confirm-status'), 'Saved for reading aloud. It cannot be used for a dictation: the voice found words of the Quran in it that the app could not mark.');
     await page.click('#prep-next [data-go="dictation"]');
     assert.ok(await page.isDisabled('#btn-dict-start'));
     assert.equal(await txt(DICT_START_WHY), EN_UNMARKED_MSG);
@@ -2202,7 +2149,7 @@ async function quranPartsFlow(browser, base) {
       c.height = 30;
       return c.toDataURL('image/png').split(',')[1];
     });
-    await page.click('#nav [data-go="prepare"]');
+    await H.openEditor(page);
     fake.setPageRead({ text: FX.LESSON_MISREAD, lang: 'ar', notes: '', source: 'claude', needs_manual: false, contains_quran: true });
     await page.setInputFiles('#prep-choose', { name: 'p.png', mimeType: 'image/png', buffer: Buffer.from(tinyPng, 'base64') });
     await page.waitForFunction((t) => document.querySelector('#page-text').value === t, FX.LESSON_MISREAD);
@@ -2259,9 +2206,9 @@ async function quranPartsLanguages(browser, base) {
   const FX = H.quranFixtures();
   const PLAN = H.fakeQuranAnalysis(FX.LESSON, 'ar').plan([]);
   const WORDS = {
-    en: { ask: 'Let’s ask a grown-up to read this part.', title: 'Words of the Quran in this text', counter: 'Part 3 of 5', show: 'Show the words of the Quran', done: 'Done reading' },
-    fr: { ask: 'Demandons à un adulte de lire ce morceau.', title: 'Des mots du Coran dans ce texte', counter: 'Morceau 3 sur 5', show: 'Montrer les mots du Coran', done: 'Lecture terminée' },
-    ar: { ask: 'هيا نطلب من أحد الكبار قراءة هذا الجزء.', title: 'كلمات من القرآن الكريم في هذا النص', counter: 'الجزء ٣ من ٥', show: 'إظهار كلمات القرآن الكريم', done: 'انتهاء القراءة' },
+    en: { ask: 'Let’s ask someone to read this part aloud.', title: 'Words of the Quran in this text', counter: 'Part 3 of 5', show: 'Show the words of the Quran', done: 'Done reading' },
+    fr: { ask: 'Demandons à quelqu’un de lire ce morceau à voix haute.', title: 'Des mots du Coran dans ce texte', counter: 'Morceau 3 sur 5', show: 'Montrer les mots du Coran', done: 'Lecture terminée' },
+    ar: { ask: 'هيا نطلب من أحد قراءة هذا الجزء بصوت مسموع.', title: 'كلمات من القرآن الكريم في هذا النص', counter: 'الجزء ٣ من ٥', show: 'إظهار كلمات القرآن الكريم', done: 'انتهاء القراءة' },
   };
   for (const [lang, scheme] of [['en', 'light'], ['fr', 'light'], ['ar', 'light'], ['ar', 'dark']]) {
     const w = WORDS[lang];
@@ -2271,7 +2218,7 @@ async function quranPartsLanguages(browser, base) {
       await page.goto(base + '/');
       await H.setupFamily(page, { lang, childLang: lang, consent: true, nickname: lang === 'ar' ? 'سلمى' : 'Lina' });
       assert.equal(await page.getAttribute('html', 'dir'), lang === 'ar' ? 'rtl' : 'ltr');
-      await page.click('#nav [data-go="prepare"]');
+      await H.openEditor(page);
       await page.selectOption('#page-lang', 'ar');
       await page.fill('#page-text', FX.LESSON_MISREAD);
       await pressConfirm(page);
@@ -2310,6 +2257,21 @@ async function quranPartsLanguages(browser, base) {
       assert.deepEqual(await H.overflowing(page), []);
       assert.deepEqual(await H.smallTargets(page), []);
       await H.shot(page, `quran-grownup-show-${tag}`);
+      // (Owner's decision) Then "Mom's check" and the child's result, in the language.
+      await page.click('#dict-gu-done');
+      await H.dictateAll(page);
+      assert.equal(await page.getAttribute('#dict-mom-words', 'dir'), 'rtl', 'the Arabic text, right to left');
+      await page.click('#dict-mom-words .mom-word >> nth=1');
+      await H.noHorizontalScroll(page);
+      assert.deepEqual(await H.overflowing(page), []);
+      assert.deepEqual(await H.smallTargets(page), []);
+      await H.shot(page, `dictation-mom-${tag}`);
+      await page.click('#dict-mom-done');
+      await page.waitForSelector('[data-stage="child"]:not([hidden])');
+      if (lang === 'ar') assert.doesNotMatch(await page.textContent('#dict-child-feedback'), /[0-9]/, 'Arabic-Indic digits');
+      await H.noHorizontalScroll(page);
+      assert.deepEqual(await H.overflowing(page), []);
+      await H.shot(page, `dictation-result-${tag}`);
       for (const i of [2, 3]) assert.equal(fake.ttsFor(PLAN.phrases[i]).length, 0);
       assert.deepEqual(problems, []);
     });
@@ -2431,54 +2393,20 @@ async function consentFlow(browser, base) {
     await page.selectOption('#setup-lang', 'en');
   });
 
-  await check('consent: with Claude configured, a typed dictation check without the AI consent goes without it and the offline brain answers; with it, ai_consent=1 (PRV-1, V6)', async () => {
+  await check('consent (owner\'s decision): a dictation needs neither consent: the voice reads it, a grown-up checks the paper in the app, and nothing is sent to be checked or to Claude', async () => {
     await startSession(page, { consent: false, nickname: '' });
     await page.fill('#page-text', PAGE_TEXT);
     await pressConfirm(page);
     await page.click('#prep-next [data-go="dictation"]');
     await page.click('#btn-dict-start');
-    await page.click('#dict-next');
-    await page.click('#dict-next');
-    await page.waitForSelector('[data-stage="check"]:not([hidden])');
-    await page.fill('#dict-written', 'The cat sat on the matt');
-    // A photo of the paper needs the camera and Claude: off. The typed check is not.
-    assert.ok(await page.isDisabled('#dict-take'));
-    assert.ok(await page.isEnabled('#btn-dict-check'));
-    assert.ok(await page.isHidden('[data-stage="check"] [data-why="dict-check"]'));
-    await page.click('#btn-dict-check');
-    const first = await waitForCall(fake, '/api/dictation/check', 1);
-    assert.deepEqual(first.aiConsent, [], 'no AI consent: the field is not sent');
-    assert.equal(first.form.written_text.text, 'The cat sat on the matt');
-    await page.waitForSelector('[data-stage="review"]:not([hidden])');
-    await H.setConsent(page, true);
-    await page.click('#nav [data-go="dictation"]');
-    await page.waitForSelector('[data-stage="review"]:not([hidden])');
-    await page.click('#btn-dict-recheck');
-    assert.deepEqual((await waitForCall(fake, '/api/dictation/check', 2)).aiConsent, ['1']);
+    await H.dictateAll(page);
+    await H.momCheck(page, [5]);
+    assert.match(await page.textContent('#dict-child-feedback'), /5 of 6 words right/);
+    assert.equal(fake.callsTo('/api/dictation/check').length, 0);
+    assert.equal(fake.callsTo('/api/page/read').length, 0);
     assert.deepEqual(problems, []);
   });
   await context.close();
-
-  const offline = await newPage(browser, base, { width: 360, height: 780 }, { health: { asr: true, tts: true, brain: 'offline', quran: true, languages: ['ar', 'en', 'fr'] } });
-  await check('consent: offline, a typed dictation check needs no consent (nothing leaves the computer)', async () => {
-    const p = offline.page;
-    await p.goto(base + '/');
-    await p.waitForSelector('#consent-extra:not([hidden])');
-    await startSession(p, { consent: false, nickname: '' });
-    await p.fill('#page-text', PAGE_TEXT);
-    await pressConfirm(p);
-    await p.click('#prep-next [data-go="dictation"]');
-    await p.click('#btn-dict-start');
-    await p.click('#dict-next');
-    await p.click('#dict-next');
-    await p.waitForSelector('[data-stage="check"]:not([hidden])');
-    assert.ok(await p.isEnabled('#btn-dict-check'));
-    await p.fill('#dict-written', 'The cat sat on the matt');
-    await p.click('#btn-dict-check');
-    assert.deepEqual((await waitForCall(offline.fake, '/api/dictation/check', 1)).aiConsent, [], 'no Claude: never the field');
-    assert.deepEqual(offline.problems, []);
-  });
-  await offline.context.close();
 }
 
 /**
@@ -2500,7 +2428,9 @@ async function privacyFlow(browser, base) {
         await page.selectOption('#setup-lang', lang);
         assert.equal((await page.textContent('#consent-privacy')).trim(), S[mode.privacy], lang);
         assert.equal((await page.textContent('#consent-extra')).trim(), S[mode.extra], lang);
-        assert.equal((await page.textContent('#setup-form .hint >> nth=0')).trim(), S.fam_privacy_line, lang);
+        // (Redesign) A short line, and the whole family data line behind "More".
+        assert.equal((await page.textContent('#setup-form .privacy-short')).trim(), S.fam_privacy_short, lang);
+        assert.equal((await page.textContent('#setup-more [data-i18n="fam_privacy_line"]')).trim(), S.fam_privacy_line, lang);
         if (mode.online) {
           assert.deepEqual(await H.localSentencesShown(page), [], lang + ': a local-only sentence online');
           assert.match(S[mode.privacy], /Mommy/);
@@ -2552,15 +2482,6 @@ async function textOf(page, sel) {
   return ((await page.textContent(sel)) || '').trim();
 }
 
-/** The dictation of the confirmed page up to its check stage (the voice reads both phrases). */
-async function dictationToCheck(page) {
-  await page.click('#nav [data-go="dictation"]');
-  await page.click('#btn-dict-start');
-  await page.click('#dict-next');
-  await page.click('#dict-next');
-  await page.waitForSelector('[data-stage="check"]:not([hidden])');
-  await page.fill('#dict-written', 'The cat sat on the matt');
-}
 
 /**
  * The AI consent (privacy audit P1; the server's part, V6) in the four ways the app runs.
@@ -2579,7 +2500,7 @@ async function aiConsentFlow(browser, base) {
     const claude = mode.brain === 'claude';
     const where = mode.online ? 'online' : 'local';
     const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(mode) });
-    await check(`AI consent, ${mode.name}: ${claude ? 'the general consent alone keeps the photos off and sends no check with the AI consent (the server answers offline); Recite, the typed check, Confirm text, the voice and the Quran work' : 'the general consent is enough, and no AI box is shown'}`, async () => {
+    await check(`AI consent, ${mode.name}: ${claude ? 'the general consent alone keeps the photos off and sends no check with the AI consent (the server answers offline); Recite, Confirm text, the dictation (voice and Mom\'s check) and the Quran work' : 'the general consent is enough, and no AI box is shown'}`, async () => {
       await page.goto(base + '/');
       await page.waitForSelector('#consent-extra:not([hidden])');
       assert.equal(await page.isVisible('#ai-consent'), claude, 'the AI box stands only under the Claude notice');
@@ -2589,8 +2510,8 @@ async function aiConsentFlow(browser, base) {
       assert.deepEqual([doc.parent.aiConsentAt, doc.parent.aiConsentVersion], [null, null], 'the general consent never sets the AI one');
       await confirmPageText(page, PAGE_TEXT);
       assert.ok(await page.isDisabled('#prep-take'));
-      // Prepare is for the grown-up: it names Claude and where the OK is given (V4).
-      assert.equal(await textOf(page, '#why-prep-photo'), claude ? S.consent_needed_ai_grownup : S.no_brain);
+      // (Redesign) The editor is the child's: a short line asks for a grown-up's OK.
+      assert.equal(await textOf(page, '#why-prep-photo'), claude ? S.consent_needed_ai : S.no_brain);
       assert.equal(await textOf(page, '#screen-prepare .photo-privacy'), S[mode.photo]);
       // The meaning check will be approximate (no Claude for it): said under the mode choice.
       assert.ok(await page.isVisible('#mode-offline-note'));
@@ -2603,7 +2524,7 @@ async function aiConsentFlow(browser, base) {
       assert.deepEqual(strict.aiConsent, [], 'no AI consent: the field is not sent');
       await page.waitForSelector('#recite-result:not([hidden])');
       // By meaning: the server's offline heuristic, and the "approximate" label says so.
-      await page.click('#nav [data-go="prepare"]');
+      await H.openEditor(page);
       await page.check('input[name="mode"][value="contextual"]');
       await pressConfirm(page);
       await page.click('#prep-next [data-go="recite"]');
@@ -2616,62 +2537,47 @@ async function aiConsentFlow(browser, base) {
       assert.ok(await page.isVisible('#recite-approx'));
       assert.equal(await textOf(page, '#recite-approx'), S[mode.approx]);
       if (claude) await H.shot(page, 'ai-consent-recite-offline-360-' + where);
-      await page.click('#nav [data-go="prepare"]');
+      await H.openEditor(page);
       await page.check('input[name="mode"][value="strict"]');
       await pressConfirm(page);
-      await dictationToCheck(page);
-      assert.ok(await page.isEnabled('#btn-dict-check'), 'the typed check never waits for the AI consent');
-      assert.ok(await page.isHidden('[data-stage="check"] [data-why="dict-check"]'));
-      assert.ok(await page.isDisabled('#dict-take'));
-      if (claude) {
-        // The check stage is for the grown-up: the photo names Claude and where the OK is given (V4).
-        assert.equal(await textOf(page, '[data-stage="check"] [data-why="dict-photo"]'), S.consent_needed_ai_grownup);
-        assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-photo"]'));
-        await H.shot(page, 'ai-consent-dict-check-360-' + where);
-      }
-      await page.click('#btn-dict-check');
-      assert.deepEqual((await waitForCall(fake, '/api/dictation/check', 1)).aiConsent, []);
-      await page.waitForSelector('[data-stage="review"]:not([hidden])');
-      await page.click('#nav [data-go="quran"]');
+      // (Owner's decision) The dictation: the voice, then "Mom's check" in the app.
+      await H.goTab(page, 'dictation');
+      await page.click('#btn-dict-start');
+      await H.dictateAll(page);
+      await H.momCheck(page, []);
+      await H.goTab(page, 'quran');
+      await page.waitForSelector('#quran-text .ayah');
+      assert.ok(await page.isEnabled('#quran-rec'), 'the Quran section never uses Claude');      await H.goTab(page, 'quran');
       await page.waitForSelector('#quran-text .ayah');
       assert.ok(await page.isEnabled('#quran-rec'), 'the Quran section never uses Claude');
       await record(page, '#quran-rec', 300);
       await waitForCall(fake, '/api/quran/check', 1);
       assert.ok(fake.callsTo('/api/tts').length > 0, 'the dictation voice was used');
-      assert.equal(fake.callsTo('/api/text/check').length, 3, '"Confirm text" was checked');
+      // "Save" checks the text; a saved text opened again is checked in the background too.
+      assert.ok(fake.callsTo('/api/text/check').length >= 3, '"Save" checked the text');
       assert.equal(fake.callsTo('/api/recite/check').length, 2);
-      assert.equal(fake.callsTo('/api/dictation/check').length, 1);
+      assert.equal(fake.callsTo('/api/dictation/check').length, 0);
       assert.equal(fake.callsTo('/api/page/read').length, 0);
       assert.deepEqual(problems, []);
     });
     if (claude) {
-      await check(`AI consent, ${mode.name}: the parent's prompt behind the PIN (the Claude notice and a box of its own) gives it: the photos open, and each check carries ai_consent=1`, async () => {
+      await check(`AI consent, ${mode.name}: (redesign) given once in Settings, under the Claude notice: the photos open, and each check carries ai_consent=1`, async () => {
         await H.openParent(page);
-        assert.ok(await page.isVisible('#ai-prompt'));
-        assert.equal(await textOf(page, '#ai-prompt-h'), S.fam_ai_title);
-        assert.equal(await textOf(page, '#ai-prompt-claude'), S.consent_claude);
-        assert.equal(await textOf(page, '#ai-prompt label[for="ai-prompt-check"]'), S.consent_ai_label);
-        assert.ok(!(await page.isChecked('#ai-prompt-check')));
-        await page.click('#ai-prompt-save');
-        assert.equal(await textOf(page, '#ai-prompt-status'), S.fam_ai_tick_first);
-        assert.equal((await H.storedDoc(page)).parent.aiConsentAt, null, 'nothing without the tick');
-        await page.check('#ai-prompt-check');
-        await page.click('#ai-prompt-save');
-        await page.waitForSelector('#ai-prompt', { state: 'hidden' });
-        assert.equal(await textOf(page, '#ai-prompt-done'), S.fam_ai_saved);
+        assert.equal(await page.locator('#ai-prompt').count(), 0, 'no prompt of its own: the consent is in Settings (and the setup) only');
+        await H.parentSection(page, 'settings');
+        assert.equal(await textOf(page, '#settings-consent-extra'), S.consent_claude);
+        assert.equal(await textOf(page, 'label[for="settings-ai-consent"]'), S.consent_ai_label);
+        assert.ok(!(await page.isChecked('#settings-ai-consent')));
+        await page.check('#settings-ai-consent');
         const d = await H.storedDoc(page);
         assert.ok(d.parent.aiConsentAt);
         assert.equal(d.parent.aiConsentVersion, require(path.join(WEB, 'rewards.js')).AI_CONSENT_VERSION);
         await H.closeParent(page);
-        await page.click('#nav [data-go="dictation"]');
-        await page.waitForSelector('[data-stage="review"]:not([hidden])');
-        await page.click('#btn-dict-recheck');
-        assert.deepEqual((await waitForCall(fake, '/api/dictation/check', 2)).aiConsent, ['1']);
-        await page.click('#nav [data-go="recite"]');
+        await H.goTab(page, 'recite');
         await page.waitForSelector('#recite-rec:not([disabled])');
         await record(page, '#recite-rec', 300);
         assert.deepEqual((await waitForCall(fake, '/api/recite/check', 3)).aiConsent, ['1']);
-        await page.click('#nav [data-go="prepare"]');
+        await H.openEditor(page);
         assert.ok(await page.isEnabled('#prep-take'));
         assert.ok(await page.isHidden('#mode-offline-note'), 'Claude judges the meaning now');
         await page.setInputFiles('#prep-choose', { name: 'page.png', mimeType: 'image/png', buffer: tinyPng() });
@@ -2689,7 +2595,7 @@ async function aiConsentFlow(browser, base) {
         await page.waitForSelector('#recite-rec:not([disabled])');
         await record(page, '#recite-rec', 300);
         assert.deepEqual((await waitForCall(fake, '/api/recite/check', 4)).aiConsent, []);
-        await page.click('#nav [data-go="prepare"]');
+        await H.openEditor(page);
         assert.ok(await page.isDisabled('#prep-take'));
         assert.equal(fake.callsTo('/api/page/read').length, 1);
         assert.deepEqual(problems, []);
@@ -2720,17 +2626,11 @@ async function aiConsentFlow(browser, base) {
       await page.waitForSelector('#recite-result:not([hidden])');
       assert.notEqual(await textOf(page, '#recite-status'), S.ai_not_sent);
       assert.deepEqual(fake.callsTo('/api/recite/check').map((c) => c.aiConsent), [[], []]);
-      // The typed dictation check, likewise.
-      await dictationToCheck(page);
-      await page.click('#btn-dict-check');
-      assert.deepEqual((await waitForCall(fake, '/api/dictation/check', 1)).aiConsent, []);
       // A reload reads /api/health again: the Claude notice and its box (unticked), the prompt.
       await page.reload();
       await page.waitForSelector('#screen-who:not([hidden])');
       await H.openParent(page);
-      assert.ok(await page.isVisible('#ai-prompt'), 'the prompt, at the top of the parent area');
       await H.parentSection(page, 'settings');
-      assert.ok(await page.isHidden('#ai-prompt'), 'not on Settings, which has the box');
       assert.equal(await textOf(page, '#settings-consent-extra'), S.consent_claude);
       assert.ok(await page.isVisible('#settings-ai-consent'));
       assert.ok(!(await page.isChecked('#settings-ai-consent')));
@@ -2783,7 +2683,7 @@ async function limitFlow(browser, base) {
     await record(page, '#recite-rec', 300); // stopped by the child: no note
     await waitForCall(fake, '/api/recite/check', 2);
     await page.waitForSelector('#recite-limit', { state: 'hidden' });
-    await page.click('#nav [data-go="quran"]');
+    await H.goTab(page, 'quran');
     await page.waitForSelector('#quran-text .ayah[data-ayah="10"]');
     await page.click('#quran-rec');
     await waitForCall(fake, '/api/quran/check', 1);
@@ -2823,7 +2723,9 @@ function privacyStrings() {
   assert.doesNotMatch(en.consent_online_no_photos, /photo/, 'without Claude no photo is ever sent');
   assert.match(en.consent_online_no_photos, /voice recordings and the texts are sent over a secure connection/);
   // P3: the family line says what is saved (and where) and what travels with each check.
-  assert.match(en.fam_privacy_line, /^Your family’s list \(children, tasks, stars, rewards and the PIN\) is saved only in this browser, on this device, /);
+  // (Redesign) The children's saved texts are part of the list.
+  assert.match(en.fam_privacy_line, /^Your family’s list \(children, their texts, tasks, stars, rewards and the PIN\) is saved only in this browser, on this device, /);
+  assert.equal(en.fam_privacy_short, 'The family list (children, texts, stars, rewards and the PIN) stays in this browser, on this device.');
   // B-R5: "Save a copy" puts the list in a file (without the PIN), where the browser saves
   // downloads (on an iPhone that may be iCloud Drive): the line says so in each language,
   // naming the button as it is labelled.
@@ -2861,7 +2763,7 @@ function privacyStrings() {
  * هيا for the child).
  */
 function aiConsentStrings() {
-  const KEYS = ['consent_ai_label', 'consent_needed_ai', 'consent_needed_ai_parent', 'consent_needed_ai_grownup', 'ai_not_sent', 'fam_ai_title', 'fam_ai_lead', 'fam_ai_later', 'fam_ai_tick_first', 'fam_ai_saved'];
+  const KEYS = ['consent_ai_label', 'consent_needed_ai', 'consent_needed_ai_parent', 'consent_needed_ai_grownup', 'ai_not_sent'];
   const GROWNUP = { en: /parent area \(Settings\)/, fr: /espace parents \(Réglages\)/, ar: /قسم الكبار \(الإعدادات\)/ };
   const PHOTOS_FIRST = { en: /^Reading photos uses Claude: /, fr: /^La lecture des photos utilise Claude\u00a0: /, ar: /^قراءة الصور تستخدم Claude: / };
   const MOMMY_STORAGE = ['consent_privacy', 'photo_privacy', 'fam_privacy_line'];
@@ -2901,7 +2803,7 @@ function aiConsentStrings() {
         const words = S[key].replace(/[ً-ْ]/g, '').split(/[\s«»()،؛؟.,:!…]+/u);
         assert.deepEqual(words.filter((w) => /ك$/.test(w)), [], 'ar.' + key);
       }
-      for (const key of ['consent_needed_ai_parent', 'consent_needed_ai_grownup', 'fam_ai_tick_first']) assert.match(S[key], /يُرجى/, 'ar.' + key);
+      for (const key of ['consent_needed_ai_parent', 'consent_needed_ai_grownup']) assert.match(S[key], /يُرجى/, 'ar.' + key);
     }
   }
 }
@@ -2979,6 +2881,9 @@ function frenchTypography() {
   assert.deepEqual(bad, []);
 }
 
+/** MOMMY_ONLY=quranPartsFlow,liveFlow runs only those browser flows (to work on one). */
+const wanted = (name) => !process.env.MOMMY_ONLY || process.env.MOMMY_ONLY.split(',').includes(name);
+
 async function main() {
   console.log('# syntax');
   await check('node --check web/*.js', checkSyntax);
@@ -3004,37 +2909,37 @@ async function main() {
   });
   try {
     console.log('# browser: 360 px main flow');
-    await mainFlow(browser, base);
+    if (wanted('mainFlow')) await mainFlow(browser, base);
     console.log('# browser: desktop');
-    await desktopShots(browser, base);
+    if (wanted('desktopShots')) await desktopShots(browser, base);
     console.log('# browser: record button labels');
-    await recordLabelsFit(browser, base);
+    if (wanted('recordLabelsFit')) await recordLabelsFit(browser, base);
     console.log('# browser: dark mode');
-    await darkMode(browser, base);
+    if (wanted('darkMode')) await darkMode(browser, base);
     console.log('# browser: unavailable features');
-    await unavailableFeatures(browser, base);
+    if (wanted('unavailableFeatures')) await unavailableFeatures(browser, base);
     console.log('# browser: server down');
-    await serverDown(browser, base);
+    if (wanted('serverDown')) await serverDown(browser, base);
     console.log('# browser: online, access revoked');
-    await accessRevoked(browser, base);
+    if (wanted('accessRevoked')) await accessRevoked(browser, base);
     console.log('# browser: Arabic UI (review fixes)');
-    await arabicFlow(browser, base);
+    if (wanted('arabicFlow')) await arabicFlow(browser, base);
     console.log('# browser: review fixes');
-    await fixesFlow(browser, base);
+    if (wanted('fixesFlow')) await fixesFlow(browser, base);
     console.log('# browser: Quran in a school text (Q1, Q2)');
-    await quranPartsFlow(browser, base);
+    if (wanted('quranPartsFlow')) await quranPartsFlow(browser, base);
     console.log('# browser: Quran in a school text, in en, fr and ar at 360 px; dark mode');
-    await quranPartsLanguages(browser, base);
+    if (wanted('quranPartsLanguages')) await quranPartsLanguages(browser, base);
     console.log('# browser: consent and Claude');
-    await consentFlow(browser, base);
+    if (wanted('consentFlow')) await consentFlow(browser, base);
     console.log('# browser: privacy texts, local or online, with or without Claude');
-    await privacyFlow(browser, base);
+    if (wanted('privacyFlow')) await privacyFlow(browser, base);
     console.log('# browser: the AI consent, local or online, with or without Claude; Claude added later');
-    await aiConsentFlow(browser, base);
+    if (wanted('aiConsentFlow')) await aiConsentFlow(browser, base);
     console.log('# browser: length limit');
-    await limitFlow(browser, base);
+    if (wanted('limitFlow')) await limitFlow(browser, base);
     console.log('# browser: live recitation (phrase by phrase)');
-    await liveFlow(browser, base);
+    if (wanted('liveFlow')) await liveFlow(browser, base);
   } finally {
     await browser.close();
     server.close();

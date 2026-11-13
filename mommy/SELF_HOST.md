@@ -391,8 +391,10 @@ code. Open the link above with its beginning replaced by `http://localhost:8080`
   or the consents, not encrypted) where that browser saves downloads: usually the
   Downloads folder, and on an iPhone the Files app, which may be iCloud Drive. Mommy makes
   it and reads it in the browser and never sends it to your computer.
-- **This setup runs Mommy without Claude**: page photos and handwriting are not read
-  automatically (the parent types the text), and nothing is sent to the Claude API.
+- **This setup runs Mommy without Claude**: a photo of a printed page is read, if at
+  all, by Mommy itself on your computer (no outside AI service), handwriting is not read
+  automatically (the parent types what the child wrote), and nothing is sent to the
+  Claude API.
 - **Your home network stays closed:** the tunnel only connects out to Cloudflare. The
   app's port answers only on this computer (`localhost`), not to other devices at home
   (on Linux, with Docker Engine 28 or later: see the Linux note). Even so, it asks for

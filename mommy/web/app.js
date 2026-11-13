@@ -47,8 +47,17 @@
 
   const STRINGS = {
     en: {
-      dict_fix_hint: 'If a word was not read as it was written, let’s fix it here, then check again.',
-      dict_fix_title: 'Was my writing read right?',
+      sr_look_again: 'to look at again',
+      mom_all_right: 'All {n} words right. Wonderful!',
+      mom_score: '{ok} of {n} words right. Well done for writing it all!',
+      mom_done: 'Done',
+      mom_all: 'All correct',
+      mom_count: 'Words to look at again: {n}',
+      mom_intro: 'Mom (or another grown-up): please look at the paper and tap each word that is not right. Tap again to undo.',
+      mom_title: 'Mom’s check',
+      mom_child: 'All written? Let’s show the paper to Mom!',
+      word_by_word: 'Now word by word, slowly…',
+      dict_fix_hint: 'The words in orange are written here the right way: let’s look at them and write them once more.',
       other_text: 'Another text',
       which_text: 'Text:',
       need_page_dict: 'Let’s choose a text for the dictation.',
@@ -99,7 +108,7 @@
       start_button: "Let's start",
       consent_needed: 'Ask a parent to give the OK in Settings.',
       // Claude is set up but the parent has not agreed to it: neutral, for the child.
-      consent_needed_ai: 'Reading photos needs a parent’s OK in Settings. Typing works now.',
+      consent_needed_ai: 'Let’s ask a grown-up to give the OK in Settings to read photos. Typing works now.',
       consent_needed_ai_parent: 'Reading photos uses Claude: please give your OK for Claude in Settings first.',
       // The same on a card for the grown-up outside the parent area (Prepare, the check of a dictation).
       consent_needed_ai_grownup: 'Reading photos uses Claude: please give your OK for Claude in the parent area (Settings) first.',
@@ -206,7 +215,7 @@
       approximate: 'Approximate check (offline)',
       approximate_online: 'Approximate check (without the online AI)',
       dict_title: 'Dictation',
-      dict_intro: 'Get a pencil and paper. I will say the text slowly, one small piece at a time.',
+      dict_intro: 'Get a pencil and paper. I will say each short sentence once, then word by word, slowly.',
       dict_start: 'Start the dictation',
       preparing: 'Getting ready…',
       phrase_n: 'Part {i} of {n}',
@@ -218,27 +227,16 @@
       show_phrase: 'Show the words',
       hide_phrase: 'Hide the words',
       no_phrases: 'There is nothing to dictate in this text.',
-      dict_quran_intro: 'The app’s voice never reads the Quran. The rest of the dictation goes on as usual.',
+      dict_quran_intro: 'The app’s voice never reads the Quran: someone reads those words, the whole part first, then word by word. The rest goes on as usual.',
       gu_ask: 'Let’s ask someone to read this part aloud.',
       gu_ask_again: 'Let’s ask them to read it again.',
-      gu_why: 'This part is from the Quran, and the app’s voice never reads the Quran. Please show the words where only you can see them, read them aloud slowly, then press “Done reading”: the words are hidden again before the writing. If nobody can read it now, “Next” goes on.',
+      gu_why: 'This part is from the Quran, and the app’s voice never reads the Quran. Please show the words where only you can see them, read the whole part aloud once, then word by word, slowly, with time to write each word; then press “Done reading”: the words are hidden again. If nobody can read it now, “Next” goes on.',
       gu_why_plain: 'The voice cannot read this part. Please show the words, read them aloud as they are written, then press “Done reading”.',
       gu_show: 'Show the words of the Quran',
       gu_show_plain: 'Show the words',
       gu_done: 'Done reading',
       gu_write: 'Now let’s write it, then press “Next”.',
       gu_write_last: "Now let’s write it, then press “I've finished”.",
-      dict_check_title: 'Check my writing',
-      dict_check_intro: 'Let’s take a photo of the paper, or type exactly what was written, mistakes included.',
-      written_label: 'What I wrote',
-      check_writing: 'Check',
-      reading_writing: 'Reading the handwriting…',
-      written_empty: 'Let’s type what was written, or take a photo.',
-      needs_manual_writing: 'Reading handwriting needs the online AI. Let’s type what was written.',
-      illegible: 'The writing was hard to read. Let’s look at it carefully.',
-      read_text_label: 'What was read',
-      uncertain: 'Not sure about: {words}',
-      recheck: 'Check again',
       dict_result_title: 'My dictation',
       new_dictation: 'New dictation',
       quran_title: 'Quran',
@@ -279,8 +277,17 @@
     },
 
     fr: {
-      dict_fix_hint: 'Si un mot n’a pas été lu comme il était écrit, corrigeons-le ici, puis vérifions de nouveau.',
-      dict_fix_title: 'Mon écriture a-t-elle été bien lue ?',
+      sr_look_again: 'à revoir',
+      mom_all_right: 'Les {n} mots sont justes. Formidable !',
+      mom_score: '{ok} mots justes sur {n}. Bravo d’avoir tout écrit !',
+      mom_done: 'Terminé',
+      mom_all: 'Tout est juste',
+      mom_count: 'Mots à revoir : {n}',
+      mom_intro: 'Maman (ou un autre adulte) : regardez la feuille et touchez chaque mot qui n’est pas juste. Touchez-le encore pour annuler.',
+      mom_title: 'La vérification de maman',
+      mom_child: 'Tout est écrit ? Montrons la feuille à maman !',
+      word_by_word: 'Maintenant mot à mot, lentement…',
+      dict_fix_hint: 'Les mots en orange sont écrits ici correctement : regardons-les et écrivons-les encore une fois.',
       other_text: 'Un autre texte',
       which_text: 'Texte :',
       need_page_dict: 'Choisissons un texte pour la dictée.',
@@ -325,7 +332,7 @@
       consent_ai_label: 'J’accepte que ces données soient envoyées à Claude.',
       start_button: 'On commence',
       consent_needed: 'Demandons à un parent de donner son accord dans Réglages.',
-      consent_needed_ai: 'Lire les photos demande l’accord d’un parent dans Réglages. Taper le texte marche déjà.',
+      consent_needed_ai: 'Demandons d’abord à un adulte de donner son OK dans Réglages pour lire les photos. Taper le texte marche déjà.',
       consent_needed_ai_parent: 'La lecture des photos utilise Claude : veuillez d’abord donner votre accord pour Claude dans Réglages.',
       consent_needed_ai_grownup: 'La lecture des photos utilise Claude : veuillez d’abord donner votre accord pour Claude dans l’espace parents (Réglages).',
       ai_not_sent: 'Rien n’a été envoyé.',
@@ -430,7 +437,7 @@
       approximate: 'Vérification approximative (hors ligne)',
       approximate_online: 'Vérification approximative (sans l’IA en ligne)',
       dict_title: 'Dictée',
-      dict_intro: 'Prends un crayon et une feuille. Je vais dire le texte lentement, petit morceau par petit morceau.',
+      dict_intro: 'Prenons un crayon et une feuille. Je dis chaque petite phrase une fois, puis mot à mot, lentement.',
       dict_start: 'Commencer la dictée',
       preparing: 'Je me prépare…',
       phrase_n: 'Morceau {i} sur {n}',
@@ -442,27 +449,16 @@
       show_phrase: 'Montrer les mots',
       hide_phrase: 'Cacher les mots',
       no_phrases: "Il n'y a rien à dicter dans ce texte.",
-      dict_quran_intro: 'La voix de l’application ne lit jamais le Coran. Le reste de la dictée continue comme d’habitude.',
+      dict_quran_intro: 'La voix de l’application ne lit jamais le Coran : quelqu’un lit ces mots, d’abord tout le passage, puis mot à mot. Le reste continue comme d’habitude.',
       gu_ask: 'Demandons à quelqu’un de lire ce morceau à voix haute.',
       gu_ask_again: 'Demandons-lui de le relire.',
-      gu_why: 'Ce morceau vient du Coran, et la voix de l’application ne lit jamais le Coran. Affichez les mots en les gardant pour vous, lisez-les lentement à voix haute, puis appuyez sur « Lecture terminée » : les mots sont cachés avant l’écriture. Si personne ne peut le lire maintenant, « Suivant » continue.',
+      gu_why: 'Ce morceau vient du Coran, et la voix de l’application ne lit jamais le Coran. Affichez les mots en les gardant pour vous, lisez tout le morceau une fois à voix haute, puis mot à mot, lentement, en laissant le temps d’écrire chaque mot ; puis appuyez sur « Lecture terminée » : les mots sont de nouveau cachés. Si personne ne peut le lire maintenant, « Suivant » continue.',
       gu_why_plain: 'La voix ne peut pas lire ce morceau. Montrez les mots, lisez-les à voix haute tels qu’ils sont écrits, puis appuyez sur « Lecture terminée ».',
       gu_show: 'Montrer les mots du Coran',
       gu_show_plain: 'Montrer les mots',
       gu_done: 'Lecture terminée',
       gu_write: 'Maintenant, écrivons-le, puis appuyons sur « Suivant ».',
       gu_write_last: 'Maintenant, écrivons-le, puis appuyons sur « J\'ai fini ».',
-      dict_check_title: 'Vérifier mon écriture',
-      dict_check_intro: 'Prenons la feuille en photo, ou tapons exactement ce qui a été écrit, fautes comprises.',
-      written_label: 'Ce que j’ai écrit',
-      check_writing: 'Vérifier',
-      reading_writing: "Lecture de l'écriture…",
-      written_empty: 'Tapons ce qui a été écrit, ou prenons une photo.',
-      needs_manual_writing: 'La lecture de l’écriture demande l’IA en ligne. Tapons ce qui a été écrit.',
-      illegible: 'L’écriture était difficile à lire. Regardons-la bien.',
-      read_text_label: 'Ce qui a été lu',
-      uncertain: 'Mots incertains : {words}',
-      recheck: 'Vérifier de nouveau',
       dict_result_title: 'Ma dictée',
       new_dictation: 'Nouvelle dictée',
       quran_title: 'Coran',
@@ -503,8 +499,17 @@
     },
 
     ar: {
-      dict_fix_hint: 'إذا لم تُقرأ كلمة كما كُتبت، هيا نصحّحها هنا ثم نعيد التحقّق.',
-      dict_fix_title: 'هل قُرئت كتابتي جيدًا؟',
+      sr_look_again: 'للمراجعة',
+      mom_all_right: 'كل الكلمات صحيحة: {n} من {n}. رائع!',
+      mom_score: 'الكلمات الصحيحة: {ok} من {n}. أحسنت على كتابة كل شيء!',
+      mom_done: 'تمّ',
+      mom_all: 'كلها صحيحة',
+      mom_count: 'كلمات للمراجعة: {n}',
+      mom_intro: 'يُرجى من ماما (أو أحد الكبار) النظر في الورقة والضغط على كل كلمة غير صحيحة، والضغط عليها مرة أخرى للتراجع.',
+      mom_title: 'تصحيح ماما',
+      mom_child: 'هل انتهت الكتابة؟ هيا نُري الورقة لماما!',
+      word_by_word: 'والآن كلمةً كلمة، ببطء…',
+      dict_fix_hint: 'الكلمات البرتقالية مكتوبة هنا بالشكل الصحيح: هيا ننظر إليها ونكتبها مرة أخرى.',
       other_text: 'نص آخر',
       which_text: 'النص:',
       need_page_dict: 'هيا نختار نصًا للإملاء.',
@@ -549,7 +554,7 @@
       consent_ai_label: 'أوافق على إرسال هذه البيانات إلى Claude.',
       start_button: 'لنبدأ',
       consent_needed: 'هيا نطلب من أحد الوالدين الموافقة في الإعدادات.',
-      consent_needed_ai: 'قراءة الصور تحتاج إلى موافقة أحد الوالدين في الإعدادات، ويمكن كتابة النص الآن.',
+      consent_needed_ai: 'هيا نطلب من أحد الكبار الموافقة في الإعدادات لقراءة الصور، ويمكن كتابة النص الآن.',
       consent_needed_ai_parent: 'قراءة الصور تستخدم Claude: يُرجى أولًا تسجيل الموافقة على Claude في الإعدادات.',
       consent_needed_ai_grownup: 'قراءة الصور تستخدم Claude: يُرجى أولًا تسجيل الموافقة على Claude في قسم الكبار (الإعدادات).',
       ai_not_sent: 'لم يُرسَل شيء.',
@@ -654,7 +659,7 @@
       approximate: 'تحقّق تقريبي (بلا اتصال)',
       approximate_online: 'تحقّق تقريبي (من دون الذكاء الاصطناعي عبر الإنترنت)',
       dict_title: 'الإملاء',
-      dict_intro: 'هيا نجهّز قلمًا وورقة! سأقول النص ببطء، جزءًا صغيرًا في كل مرة.',
+      dict_intro: 'هيا نُحضر قلمًا وورقة. سأقول كل جملة قصيرة مرة، ثم كلمةً كلمة ببطء.',
       dict_start: 'بدء الإملاء',
       preparing: 'أستعدّ…',
       phrase_n: 'الجزء {i} من {n}',
@@ -666,27 +671,16 @@
       show_phrase: 'إظهار الكلمات',
       hide_phrase: 'إخفاء الكلمات',
       no_phrases: 'لا يوجد في هذا النص شيء للإملاء.',
-      dict_quran_intro: 'صوت التطبيق لا يقرأ القرآن الكريم أبدًا، ويستمر باقي الإملاء كالمعتاد.',
+      dict_quran_intro: 'صوت التطبيق لا يقرأ القرآن الكريم أبدًا: يقرأ أحد هذه الكلمات، الجزء كاملًا أولًا ثم كلمةً كلمة، ويستمر الباقي كالمعتاد.',
       gu_ask: 'هيا نطلب من أحد قراءة هذا الجزء بصوت مسموع.',
       gu_ask_again: 'هيا نطلب قراءته مرة أخرى.',
-      gu_why: 'هذا الجزء من القرآن الكريم، وصوت التطبيق لا يقرأ القرآن الكريم أبدًا. يُرجى إظهار الكلمات بعيدًا عن نظر الطفل، وقراءتها ببطء بصوت مسموع، ثم الضغط على «انتهاء القراءة»، فتُخفى الكلمات قبل الكتابة. وإن لم تتيسّر القراءة الآن، يُكمِل زرّ «التالي» الإملاء.',
+      gu_why: 'هذا الجزء من القرآن الكريم، وصوت التطبيق لا يقرأ القرآن الكريم أبدًا. يُرجى إظهار الكلمات بعيدًا عن نظر الطفل، وقراءة الجزء كاملًا مرة بصوت مسموع، ثم كلمةً كلمة ببطء مع ترك وقت لكتابة كل كلمة، ثم الضغط على «انتهاء القراءة»، فتُخفى الكلمات من جديد. وإن لم تتيسّر القراءة الآن، يُكمِل زرّ «التالي» الإملاء.',
       gu_why_plain: 'لا يستطيع الصوت قراءة هذا الجزء. يُرجى إظهار الكلمات وقراءتها بصوت مسموع كما هي مكتوبة، ثم الضغط على «انتهاء القراءة».',
       gu_show: 'إظهار كلمات القرآن الكريم',
       gu_show_plain: 'إظهار الكلمات',
       gu_done: 'انتهاء القراءة',
       gu_write: 'هيا نكتبه الآن، ثم نضغط «التالي».',
       gu_write_last: 'هيا نكتبه الآن، ثم نضغط «انتهيت».',
-      dict_check_title: 'تصحيح كتابتي',
-      dict_check_intro: 'هيا نصوّر الورقة، أو نكتب ما كُتب عليها كما هو تمامًا، بما في ذلك الأخطاء.',
-      written_label: 'ما كتبتُه',
-      check_writing: 'التحقّق',
-      reading_writing: 'جارٍ قراءة الخط…',
-      written_empty: 'هيا نكتب ما كُتب على الورقة، أو نلتقط صورة لها.',
-      needs_manual_writing: 'قراءة الخط تحتاج إلى الذكاء الاصطناعي عبر الإنترنت. هيا نكتب ما كُتب على الورقة.',
-      illegible: 'كان الخط صعب القراءة. هيا نراجعه بعناية.',
-      read_text_label: 'ما تمّت قراءته',
-      uncertain: 'كلمات غير مؤكَّدة: {words}',
-      recheck: 'إعادة التحقّق',
       dict_result_title: 'نتيجة الإملاء',
       new_dictation: 'إملاء جديد',
       quran_title: 'القرآن الكريم',
@@ -746,6 +740,15 @@
   const DEFAULT_SURAH = 78;
   const DEFAULT_RANGE = 10;
   const LOCATE_MAX_SECONDS = 30;
+  // (Redesign) Dictation: the longest sentence the voice says at once, by age group, and the
+  // pause after each word said slowly (base + per letter, ms; see writePauseMs).
+  const MAX_SENTENCE_WORDS = { '6-9': 4, '10-13': 6, '14-18': 6 };
+  const WRITE_PAUSE = {
+    '6-9': { base: 1500, perLetter: 600 },
+    '10-13': { base: 1000, perLetter: 350 },
+    '14-18': { base: 800, perLetter: 220 },
+  };
+  const MAX_WORD_PAUSE_MS = 9000;
   const ARABIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
 
   /**
@@ -764,10 +767,9 @@
     // 'dictation': the voice would meet Quran words the server could not mark as a Quran
     // part (a safety net: the server's "dictation": false): the text can only be recited.
     'dict-start': ['server', 'dictation'],
-    // A typed check is worded by Claude only with the AI consent (the server decides).
-    'dict-check': ['server'],
+    // (Owner's decision, redesign) The paper is checked by a grown-up in the app ("Mom's
+    // check"): no photo of it and no typed check is sent from the dictation.
     'dict-play': ['server', 'tts'],
-    'dict-photo': ['server', 'brain', 'consent', 'ai-consent'],
     'dict-tts': ['server', 'tts'],
     quran: ['server', 'quran'],
     'quran-rec': ['server', 'quran', 'asr', 'consent', 'mic'],
@@ -820,6 +822,11 @@
       readText: [],
       index: 0,
       audio: new Map(), // phrase index -> Promise of {blob, check}: the synthetic voice (not child data)
+      // (Redesign) word -> Promise of {blob, check}: each word said slowly, kept for Repeat
+      // and for the same word later (the synthetic voice, not child data).
+      wordAudio: new Map(),
+      // "Mom's check": the words of the text, each {text, quran, wrong}.
+      check: [],
       result: null,
       feedbackBlob: null,
       token: 0,
@@ -1946,6 +1953,10 @@
     if (kind === 'ins') {
       return el('ins', { class: 'w w-ins' }, [srOnly('(' + t('sr_extra') + ' '), '[' + heard + ']', srOnly(')')]);
     }
+    if (kind === 'fix') {
+      // "Mom's check": a word to look at again, with its correct spelling.
+      return el('span', { class: 'w w-sub w-fix' }, [el('span', { class: 'w-exp' }, expected), srOnly(' (' + t('sr_look_again') + ')')]);
+    }
     if (kind === 'pending') {
       // Live recitation: a word the child has not reached yet (neutral, no judgement).
       return el('span', { class: 'w w-pending' }, expected);
@@ -2000,15 +2011,20 @@
       markUnconfirmed();
     });
     textarea.addEventListener('input', markUnconfirmed);
-    // The name of the text is saved with it (a change is saved by "Save" again).
-    $('#page-title').addEventListener('input', markUnconfirmed);
+    // The name and the mode of a saved text are saved as soon as they change (no check of
+    // the server is needed for them); a new text gets them with "Save".
+    $('#page-title').addEventListener('change', () => {
+      state.page.title = $('#page-title').value.trim();
+      resaveText();
+      updateWhichText();
+    });
     for (const radio of $$('input[name="mode"]')) {
       radio.addEventListener('change', () => {
         if (radio.checked) {
           state.page.mode = radio.value === 'contextual' ? 'contextual' : 'strict';
           updateReciteModeLabel();
           resetRecite(); // a result of the other mode must not stay under the new label
-          markUnconfirmed(); // the mode is saved with the text: "Save" again
+          resaveText();
         }
       });
     }
@@ -2045,6 +2061,17 @@
     state.page.confirmed = false;
     setStatus(status, 'text_changed');
     $('#prep-next').hidden = true;
+  }
+
+  /** A saved text, confirmed: its name and mode are saved again (family.js). */
+  function resaveText() {
+    const pg = state.page;
+    if (state.task || !pg.confirmed || !pg.textId || !state.hooks.onTextSaved) return;
+    const saved = state.hooks.onTextSaved({ id: pg.textId, title: pg.title, text: pg.text, lang: pg.lang, mode: pg.mode });
+    if (saved && saved.title) {
+      pg.title = saved.title;
+      $('#page-title').value = saved.title;
+    }
   }
 
   /** The text on the screens of the child: its name, and "Another text" (My texts). */
@@ -2935,28 +2962,8 @@
     $('#dict-show').addEventListener('click', togglePhrase);
     $('#dict-gu-show').addEventListener('click', showGrownUpText);
     $('#dict-gu-done').addEventListener('click', doneReading);
-    for (const id of ['#dict-take', '#dict-choose']) {
-      $(id).addEventListener('change', (e) => checkDictationPhoto(e.target));
-    }
-    $('#btn-dict-check').addEventListener('click', () => {
-      if (!isOpen('dict-check')) return;
-      const text = $('#dict-written').value.trim();
-      if (!text) {
-        setStatus($('#dict-check-status'), 'written_empty', null, { error: true });
-        $('#dict-written').focus();
-        return;
-      }
-      checkDictation({ written: text }, $('#dict-check-status'));
-    });
-    $('#btn-dict-recheck').addEventListener('click', () => {
-      if (!isOpen('dict-check')) return;
-      const text = $('#dict-read-text').value.trim();
-      if (!text) {
-        setStatus($('#dict-review-status'), 'written_empty', null, { error: true });
-        return;
-      }
-      checkDictation({ written: text }, $('#dict-review-status'));
-    });
+    $('#dict-mom-all').addEventListener('click', () => finishMomCheck(true));
+    $('#dict-mom-done').addEventListener('click', () => finishMomCheck(false));
     $('#dict-listen').addEventListener('click', () => playFeedback('dictation'));
     $('#btn-dict-new').addEventListener('click', () => {
       resetDictation();
@@ -2987,6 +2994,7 @@
     d.readText = [];
     d.index = 0;
     d.audio.clear();
+    d.check = [];
     d.result = null;
     d.feedbackBlob = null;
     d.stage = 'intro';
@@ -2996,12 +3004,9 @@
     $('#dict-unclear').hidden = true;
     $('#dict-gu').hidden = true;
     hideGrownUpText();
-    $('#dict-fb-quran').hidden = true;
-    $('#dict-written').value = '';
-    $('#dict-read-text').value = '';
-    for (const id of ['#dict-intro-status', '#dict-speak-status', '#dict-check-status', '#dict-review-status', '#dict-child-status']) clearStatus($(id));
+    $('#dict-mom-words').textContent = '';
+    for (const id of ['#dict-intro-status', '#dict-speak-status', '#dict-mom-count', '#dict-child-status']) clearStatus($(id));
     clearTaskOutcome('dictation');
-    $('#dict-fix').open = false;
     setDictStage('intro');
   }
 
@@ -3039,13 +3044,19 @@
     const phrases = [];
     const readers = [];
     const readText = [];
+    const most = MAX_SENTENCE_WORDS[state.profile.age] || MAX_SENTENCE_WORDS['6-9'];
     (Array.isArray(res.phrases) ? res.phrases : []).forEach((p, i) => {
       if (typeof p !== 'string' || !p.trim()) return;
       const grown = Array.isArray(res.readers) && res.readers[i] === 'grown_up';
       const rt = grown && Array.isArray(res.read_text) && typeof res.read_text[i] === 'string' && res.read_text[i].trim() ? res.read_text[i] : null;
-      phrases.push(p);
-      readers.push(grown ? 'grown_up' : 'voice');
-      readText.push(rt);
+      // (Redesign) Short sentences: a long one for the voice is cut into pieces of at most
+      // `most` words (fewer for younger children). A Quran chunk is never cut here.
+      const pieces = grown ? [p] : shortSentences(p, most);
+      for (const piece of pieces) {
+        phrases.push(piece);
+        readers.push(grown ? 'grown_up' : 'voice');
+        readText.push(rt);
+      }
     });
     if (!phrases.length) {
       setStatus(status, 'no_phrases', null, { error: true });
@@ -3063,7 +3074,6 @@
     d.readText = readText;
     d.audio.clear();
     d.index = 0;
-    for (const id of ['#dict-written', '#dict-read-text']) setTextLang($(id), state.page.lang);
     setDictStage('speak');
     showPhrase();
     playPhrase(0);
@@ -3120,7 +3130,8 @@
     if (d.readers[index] !== 'voice') return Promise.reject(new Error('read by a grown-up'));
     if (!fresh && d.audio.has(index)) return d.audio.get(index);
     const token = d.token;
-    const p = fetchSpeech(d.phrases[index], state.page.lang, true);
+    // (Redesign) The whole sentence once at normal speed; then its words, slowly.
+    const p = fetchSpeech(d.phrases[index], state.page.lang, false);
     d.audio.set(index, p);
     p.catch(() => {
       if (token === d.token && d.audio.get(index) === p) d.audio.delete(index);
@@ -3178,18 +3189,100 @@
     }
     // For the grown-up: the voice check failed, so the phrase may be hard to understand.
     $('#dict-unclear').hidden = speech.check !== 'failed';
+    // The words of this sentence are fetched while it plays.
+    const words = sentenceWords(d.phrases[index]);
+    for (const w of words) wordSpeech(w).catch(() => {});
     try {
-      await player.play(speech.blob, () => {
-        if (current()) setNextWaiting(false);
-      });
+      await playToEnd(speech.blob);
     } catch (err) {
       if (!current()) return;
+      setNextWaiting(false);
       if (err && err.name === 'NotAllowedError') setStatus(status, 'press_repeat');
       else showError(status, err);
       return;
     }
-    // While the child listens and writes, the next phrase is fetched.
-    if (token === d.token) prefetch(index + 1);
+    if (!current()) return;
+    // Heard once: Next is free (it stops the words still to come).
+    setNextWaiting(false);
+    // While the child writes, the next sentence is fetched.
+    prefetch(index + 1);
+    // Then word by word, slowly, with a pause after each word to write it.
+    setStatus(status, 'word_by_word');
+    for (const w of words) {
+      if (!current() || state.screen !== 'dictation') return;
+      let ws;
+      try {
+        ws = await wordSpeech(w);
+      } catch (err) {
+        continue; // a word the voice cannot say (or refuses) is skipped: the sentence was heard
+      }
+      if (!current() || state.screen !== 'dictation') return;
+      try {
+        await playToEnd(ws.blob);
+      } catch (err) {
+        return;
+      }
+      await sleepMs(writePauseMs(w, state.profile.age));
+    }
+    if (current()) clearStatus(status);
+  }
+
+  /** Play a blob to its end (or until it is stopped). */
+  function playToEnd(blob) {
+    return new Promise((resolve, reject) => {
+      player.play(blob, resolve).catch(reject);
+    });
+  }
+
+  function sleepMs(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  /** The words of a sentence as the voice says them, without the punctuation around them. */
+  function sentenceWords(text) {
+    return onlyText(text).split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter(Boolean);
+  }
+
+  /** One word said slowly by the voice, fetched once (kept in memory for the dictation). */
+  function wordSpeech(word) {
+    const d = state.dictation;
+    const key = state.page.lang + ' ' + word;
+    if (d.wordAudio.has(key)) return d.wordAudio.get(key);
+    const p = fetchSpeech(word, state.page.lang, true);
+    d.wordAudio.set(key, p);
+    p.catch(() => {
+      if (d.wordAudio.get(key) === p) d.wordAudio.delete(key);
+    });
+    return p;
+  }
+
+  /**
+   * The pause after a word, long enough to write it: a base time plus a time per letter,
+   * by age group (docs/REWARDS.md, "Redesign": handwriting speed grows from about 25-40
+   * letters a minute at 7-8 years to 60-80 at 11-12 and 100 or more at 15; a dictation also
+   * needs time to think of the spelling). At most MAX_WORD_PAUSE_MS.
+   */
+  function writePauseMs(word, age) {
+    const p = WRITE_PAUSE[age] || WRITE_PAUSE['6-9'];
+    const letters = (onlyText(word).match(/\p{L}/gu) || []).length;
+    return Math.min(MAX_WORD_PAUSE_MS, Math.round((p.base + p.perLetter * letters) * dictationPauseScale()));
+  }
+
+  /** Tests make the pauses shorter (window.__mommyPauseScale, a number); 1 otherwise. */
+  function dictationPauseScale() {
+    const v = window.__mommyPauseScale;
+    return typeof v === 'number' && v >= 0 && v <= 1 ? v : 1;
+  }
+
+  /** A sentence cut into pieces of at most `most` words (never splitting a word). */
+  function shortSentences(text, most) {
+    const words = onlyText(text).trim().split(/\s+/).filter(Boolean);
+    if (words.length <= most) return [onlyText(text).trim()];
+    const n = Math.ceil(words.length / most);
+    const size = Math.ceil(words.length / n);
+    const out = [];
+    for (let i = 0; i < words.length; i += size) out.push(words.slice(i, i + size).join(' '));
+    return out;
   }
 
   /** Fetch the voice of phrase `index` ahead (a phrase for the voice only). */
@@ -3197,7 +3290,9 @@
     const d = state.dictation;
     if (index >= d.phrases.length || d.readers[index] !== 'voice') return;
     const token = d.token;
-    speechFor(index).catch((err) => {
+    speechFor(index).then(() => {
+      if (token === d.token && d.readers[index] === 'voice') for (const w of sentenceWords(d.phrases[index])) wordSpeech(w).catch(() => {});
+    }, (err) => {
       // Refused as Quran: it becomes a grown-up step before the child reaches it.
       if (token === d.token && isQuranRefusal(err)) toGrownUp(index);
     });
@@ -3342,8 +3437,8 @@
     player.stop();
     if (d.index >= d.phrases.length - 1) {
       d.audio.clear();
-      setDictStage('check');
-      $('#dict-written').focus();
+      d.playId++;
+      showMomCheck();
       return;
     }
     d.index++;
@@ -3351,72 +3446,85 @@
     playPhrase(d.index);
   }
 
-  async function checkDictationPhoto(input) {
-    const file = takeFile(input);
-    if (!file || !isOpen('dict-photo')) return;
-    const status = $('#dict-check-status');
-    let jpeg;
-    try {
-      jpeg = await shrinkImage(file);
-    } catch (err) {
-      if (err && err.name === 'ApiError') showError(status, err);
-      else setStatus(status, 'photo_bad', null, { error: true });
-      return;
-    }
-    await checkDictation({ image: jpeg }, status);
+  // ---------------------------------------------------------------------------
+  // (Owner's decision, redesign) "Mom's check": a grown-up checks the paper in the app
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The words of the text as the child heard them: a phrase of the voice as written, a
+   * Quran part in its mushaf form (the vowelled text the grown-up read). A pause mark of
+   * the Quran stays with its word.
+   */
+  function checkWords() {
+    const d = state.dictation;
+    const out = [];
+    d.phrases.forEach((p, i) => {
+      const quran = d.readers[i] === 'grown_up' && !!d.readText[i];
+      const src = quran ? d.readText[i] : p;
+      for (const tok of onlyText(src).split(/\s+/).filter(Boolean)) {
+        if (quran && isPauseMark(tok) && out.length) {
+          out[out.length - 1].text += ' ' + tok;
+          continue;
+        }
+        if (!/[\p{L}\p{N}]/u.test(tok)) {
+          if (out.length) out[out.length - 1].text += tok;
+          continue;
+        }
+        out.push({ text: tok, quran, wrong: false });
+      }
+    });
+    return out;
   }
 
-  /** Send the child's writing (a photo or typed text) to /api/dictation/check. */
-  async function checkDictation(input, status) {
-    const form = new FormData();
-    form.append('expected_text', state.page.text);
-    form.append('lang', state.page.lang);
-    form.append('age', state.profile.age);
-    if (input.image) form.append('image', input.image, 'writing.jpg');
-    else form.append('written_text', input.written);
-    setStatus(status, input.image ? 'reading_writing' : 'checking');
+  function showMomCheck() {
     const d = state.dictation;
-    const buttons = [$('#btn-dict-check'), $('#btn-dict-recheck'), ...$$('[data-gate="dict-photo"]')];
-    for (const b of buttons) setBusy(b, true);
-    d.checking = true;
-    const task = state.task; // a task started or left meanwhile drops this answer
-    let res;
-    let sent = false;
-    try {
-      // A photo is read by Claude, which needs the AI consent. A typed check is worded by
-      // Claude with the consent, else by the server's offline templates.
-      if (input.image && !(await photoCallAllowed())) {
-        if (state.task === task) photoCallRefused(status);
-        return;
-      }
-      sent = addAiConsent(form); // after the wait above: the consent as it is now
-      res = await api('api/dictation/check', { form });
-      followBrain(res, sent);
-      if (state.task !== task) return;
-    } catch (err) {
-      if (state.task !== task) return;
-      if (err && err.code === 'needs_manual') {
-        // A photo sent with the consent and not read: the server may have no Claude now.
-        if (sent && input.image) loadHealth({ quiet: true });
-        setStatus(status, 'needs_manual_writing', null, { error: true });
-        $('#dict-written').focus();
-      } else {
-        showError(status, err);
-      }
-      return;
-    } finally {
-      for (const b of buttons) setBusy(b, false);
-      d.checking = false;
-    }
-    clearStatus(status);
+    d.check = checkWords();
+    const box = $('#dict-mom-words');
+    box.textContent = '';
+    setTextLang(box, state.page.lang);
+    d.check.forEach((w, i) => {
+      const b = el('button', { type: 'button', class: 'mom-word' + (w.quran ? ' is-quran' : ''), 'aria-pressed': 'false', 'data-word': String(i) }, w.text);
+      if (w.quran) setTextLang(b, 'ar');
+      b.addEventListener('click', () => {
+        w.wrong = !w.wrong;
+        b.setAttribute('aria-pressed', w.wrong ? 'true' : 'false');
+        updateMomCount();
+      });
+      box.append(b, ' ');
+    });
+    updateMomCount();
+    setDictStage('mom');
+    $('#dict-main [data-stage="mom"]').focus({ preventScroll: true });
+  }
+
+  function updateMomCount() {
+    const wrong = state.dictation.check.filter((w) => w.wrong).length;
+    setT($('#dict-mom-count'), 'mom_count', { n: wrong });
+  }
+
+  /** "Done" (the words tapped are the mistakes) or "All correct". */
+  function finishMomCheck(allCorrect) {
+    const d = state.dictation;
+    if (!d.check.length) return;
+    if (allCorrect) for (const w of d.check) w.wrong = false;
+    const n = d.check.length;
+    const errors = d.check.filter((w) => w.wrong).length;
+    const ok = n - errors;
+    const ops = d.check.map((w) => ({ kind: w.wrong ? 'fix' : 'match', expected: w.text, quran: w.quran }));
+    // The shape of a dictation result (rewards.js reads n_expected, n_errors and
+    // word_accuracy); nothing of it is sent anywhere.
+    const res = {
+      source: 'grown_up',
+      result: { ops, n_expected: n, n_errors: errors, word_accuracy: n ? ok / n : 0, verdict: errors ? 'mistakes' : 'correct', say_again: false },
+      feedback: t(errors ? 'mom_score' : 'mom_all_right', { ok, n }),
+    };
     showDictationResult(res);
   }
 
   /**
-   * (Redesign) The result, straight away: the words marked, the feedback (spoken unless it
-   * quotes the Quran) and, under "Was my writing read right?", the text that was read,
-   * which the child may correct and check again (it is their own writing). Every check
-   * counts for a task or for the stars of free practice; the child can retry freely.
+   * The result of "Mom's check": words right out of the total, each word to look at again
+   * marked with its correct spelling, and the stars (a task, or free practice: family.js).
+   * Only the score line is said by the voice (it holds no word of the text).
    */
   function showDictationResult(res) {
     state.speechToken++;
@@ -3424,29 +3532,25 @@
     const lang = state.page.lang;
     const result = res.result || {};
     const feedback = onlyText(res.feedback);
-    // feedback_is_quran: it quotes the mushaf word of a Quran part, so it is never spoken.
-    d.result = { res, feedback: feedback ? { text: feedback, lang, quran: res.feedback_is_quran === true } : null };
+    d.result = { res, feedback: feedback ? { text: feedback, lang: uiLang(), quran: false } : null };
     d.feedbackBlob = null;
-
-    const readText = $('#dict-read-text');
-    readText.value = onlyText(res.read_text);
-    setTextLang(readText, lang);
-    const uncertain = Array.isArray(res.uncertain_words) ? res.uncertain_words.filter((w) => typeof w === 'string' && w) : [];
-    const unc = $('#dict-uncertain');
-    if (uncertain.length) setT(unc, 'uncertain', { words: uncertain.join(uiLang() === 'ar' ? '، ' : ', ') });
-    else setT(unc, null);
-    unc.hidden = uncertain.length === 0;
-    $('#dict-legible').hidden = res.legible !== false;
-    // A photo that was hard to read: the text that was read is shown at once.
-    if (res.legible === false || uncertain.length) $('#dict-fix').open = true;
-
-    renderOps($('#dict-child-words'), result.ops || [], lang, 'written');
+    const words = $('#dict-child-words');
+    words.textContent = '';
+    setTextLang(words, lang);
+    (result.ops || []).forEach((op, i) => {
+      if (i) words.append(' ');
+      const node = wordNode(op.kind, onlyText(op.expected), '', 'written');
+      if (op.quran) {
+        node.classList.add('is-quran');
+        setTextLang(node, 'ar');
+      }
+      words.append(node);
+    });
     const fb = $('#dict-child-feedback');
     fb.textContent = feedback;
-    setTextLang(fb, lang);
-    const fbQuran = !!(d.result.feedback && d.result.feedback.quran);
-    $('#dict-listen').hidden = !d.result.feedback || fbQuran;
-    $('#dict-fb-quran').hidden = !fbQuran;
+    $('#dict-fix-hint').hidden = !result.n_errors;
+    $('#dict-listen').hidden = !feedback;
+    $('#dict-fb-quran').hidden = true;
     clearTaskOutcome('dictation');
     setDictStage('child');
     $('#dict-main [data-stage="child"]').focus({ preventScroll: true });
@@ -4241,7 +4345,8 @@
     setPageLang(state.page.lang);
     for (const r of $$('input[name="mode"]')) r.checked = r.value === state.page.mode;
     for (const id of ['#prep-status', '#prep-quran-note', '#prep-confirm-status']) clearStatus($(id));
-    $('#prep-next').hidden = true;
+    // A saved text can be practised at once from the editor.
+    $('#prep-next').hidden = !x;
     setBusy($('#btn-confirm'), false);
     setNoDictation(false);
     setNoMeaning(false);

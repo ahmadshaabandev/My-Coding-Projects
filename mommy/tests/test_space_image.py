@@ -128,6 +128,28 @@ def _model_table() -> list[tuple[str, str, str, list[str]]]:
     return [(name, tag, sha, files.split()) for name, tag, sha, files in rows]
 
 
+def _ocr_table() -> list[tuple[str, str, str, str]]:
+    """(file in models/ppocr-onnx/, release tag, release file name, sha256) of each OCR file."""
+    text = DOWNLOAD.read_text("utf-8")
+    return re.findall(r'^\s*"([^">]+)>([^">]+)>([^">]+)>([^">]*)"$', text, flags=re.M)
+
+
+def test_every_ocr_file_has_a_pinned_sha256() -> None:
+    """SEC-4: the OCR models (mommy/ocr.py) are checked before they are moved into place,
+    and they are the files the reader loads."""
+    from mommy.ocr import MODEL_DIR_NAME, MODEL_FILES
+
+    rows = _ocr_table()
+    assert {file for file, *_ in rows} == set(MODEL_FILES.values())
+    for file, tag, asset, sha in rows:
+        assert re.fullmatch(r"[0-9a-f]{64}", sha), file
+        assert re.fullmatch(r"v[0-9.]+", tag) and asset, file
+    text = DOWNLOAD.read_text("utf-8")
+    assert f'OCR_DIR="{MODEL_DIR_NAME}"' in text
+    body = text.split("fetch_file() {", 1)[1]
+    assert body.index('if [[ "$actual" != "$sha" ]]') < body.index('mv "$tmp/file" "$dest"')
+
+
 def test_every_model_archive_has_a_pinned_sha256() -> None:
     """SEC-4: the archives are checked before they are unpacked."""
     rows = _model_table()
@@ -169,11 +191,15 @@ def download_copy(tmp_path: Path) -> tuple[Path, Path, list[tuple[str, str, str,
     for name, tag, _sha, files in rows:
         (served / tag).mkdir(parents=True, exist_ok=True)
         _fake_archive(served / tag, name, files, b"not the real model ")
+    for file, tag, asset, _sha in _ocr_table():
+        (served / "ocr" / tag).mkdir(parents=True, exist_ok=True)
+        (served / "ocr" / tag / asset).write_bytes(b"not the real OCR model " + file.encode())
     (tmp_path / "root" / "scripts").mkdir(parents=True)
     script = tmp_path / "root" / "scripts" / "download_models.sh"
     text = DOWNLOAD.read_text("utf-8")
     text = text.replace('BASE="https://github.com/k2-fsa/sherpa-onnx/releases/download"', f'BASE="file://{served}"')
-    assert f"file://{served}" in text
+    text = text.replace('OCR_BASE="https://github.com/GreatV/oar-ocr/releases/download"', f'OCR_BASE="file://{served}/ocr"')
+    assert f"file://{served}" in text and f"file://{served}/ocr" in text
     script.write_text(text, encoding="utf-8")
     return script, served, rows
 
@@ -187,6 +213,8 @@ def test_download_refuses_an_archive_that_differs(download_copy: tuple[Path, Pat
     assert sorted(p.name for p in models.iterdir()) == []  # no model, no partial download
     for name, _tag, sha, _files in rows:
         assert f"checksum mismatch for {name}: expected sha256 {sha}" in r.stderr
+    for file, _tag, _asset, sha in _ocr_table():
+        assert f"checksum mismatch for ppocr-onnx/{file}: expected sha256 {sha}" in r.stderr
 
 
 def test_download_installs_an_archive_that_matches(download_copy: tuple[Path, Path, list]) -> None:
@@ -197,13 +225,21 @@ def test_download_installs_an_archive_that_matches(download_copy: tuple[Path, Pa
     for name, tag, sha, _files in rows:
         real = hashlib.sha256((served / tag / f"{name}.tar.bz2").read_bytes()).hexdigest()
         text = text.replace(sha, real)
+    ocr = _ocr_table()
+    for _file, tag, asset, sha in ocr:
+        text = text.replace(sha, hashlib.sha256((served / "ocr" / tag / asset).read_bytes()).hexdigest())
     script.write_text(text, encoding="utf-8")
     r = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=120, check=False)
     assert r.returncode == 0, r.stdout + r.stderr
     models = script.parent.parent / "models"
-    assert sorted(p.name for p in models.iterdir()) == sorted(n for n, *_ in rows if n != "sherpa-onnx-whisper-small")
+    assert sorted(p.name for p in models.iterdir()) == sorted(
+        [n for n, *_ in rows if n != "sherpa-onnx-whisper-small"] + ["ppocr-onnx"]
+    )
+    assert sorted(p.name for p in (models / "ppocr-onnx").iterdir()) == sorted(f for f, *_ in ocr)
+    for file, tag, asset, _sha in ocr:
+        assert (models / "ppocr-onnx" / file).read_bytes() == (served / "ocr" / tag / asset).read_bytes()
     r = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=120, check=False)
-    assert r.returncode == 0 and r.stdout.count("skip  ") == 4
+    assert r.returncode == 0 and r.stdout.count("skip  ") == 4 + len(ocr)
 
 
 # ---------------------------------------------------------------------------

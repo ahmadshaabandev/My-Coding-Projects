@@ -1,5 +1,5 @@
 # FOR TESTING THE KIT ONLY. Not part of running Mommy: the owner uses compose.yaml alone
-# (SELF_HOST.md). This override builds the image without the speech models
+# (SELF_HOST.md). This override builds the image without the speech and OCR models
 # (SKIP_MODELS=1) and mounts them read-only from models/ instead (their directories, or
 # symlinks to them, as scripts/download_models.sh leaves them), for a machine whose build
 # cannot download them:
@@ -28,6 +28,7 @@ services:
       - ./models/vits-piper-ar_JO-kareem-medium:/home/user/app/models/vits-piper-ar_JO-kareem-medium:ro
       - ./models/vits-piper-en_US-lessac-medium:/home/user/app/models/vits-piper-en_US-lessac-medium:ro
       - ./models/vits-piper-fr_FR-siwis-medium:/home/user/app/models/vits-piper-fr_FR-siwis-medium:ro
+      - ./models/ppocr-onnx:/home/user/app/models/ppocr-onnx:ro
 
 secrets:
   build_ca:

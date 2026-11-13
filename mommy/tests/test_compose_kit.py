@@ -158,7 +158,7 @@ def test_the_test_override_is_marked_and_mounts_the_models(test_config: dict[str
     mounts = {Path(v["target"]).name: v for v in app["volumes"] if v["type"] == "bind"}
     assert set(mounts) == {
         "sherpa-onnx-whisper-turbo", "vits-piper-ar_JO-kareem-medium", "vits-piper-en_US-lessac-medium",
-        "vits-piper-fr_FR-siwis-medium",
+        "vits-piper-fr_FR-siwis-medium", "ppocr-onnx",
     }
     for name, mount in mounts.items():
         assert mount["read_only"] is True and mount["target"] == f"/home/user/app/models/{name}"

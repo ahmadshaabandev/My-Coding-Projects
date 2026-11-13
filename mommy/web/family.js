@@ -59,6 +59,7 @@
 
   const STRINGS = {
     en: {
+      fam_tf_text_empty: 'Please type or paste some text first.',
       fam_more_setup: 'More: privacy, a copy of the family list',
       fam_led_practice_gone: 'Practice',
       fam_led_practice_quran: 'Practice: Quran',
@@ -387,6 +388,7 @@
     },
 
     fr: {
+      fam_tf_text_empty: 'Tapez ou collez d’abord un texte.',
       fam_more_setup: 'Plus : confidentialité, copie de la liste de la famille',
       fam_led_practice_gone: 'Entraînement',
       fam_led_practice_quran: 'Entraînement : Coran',
@@ -712,6 +714,7 @@
     },
 
     ar: {
+      fam_tf_text_empty: 'يُرجى كتابة نص أو لصقه أولًا.',
       fam_more_setup: 'المزيد: الخصوصية، نسخة من قائمة العائلة',
       fam_led_practice_gone: 'تدرّب',
       fam_led_practice_quran: 'تدرّب: القرآن الكريم',
@@ -4032,7 +4035,7 @@
     } else {
       const text = $('#tf-text').value.trim();
       const lang = $('#tf-lang').value;
-      if (!text) return fail('text_empty', $('#tf-text'));
+      if (!text) return fail('fam_tf_text_empty', $('#tf-text'));
       content.text = text;
       content.lang = lang;
       if (kind === 'recite') content.mode = formMode();

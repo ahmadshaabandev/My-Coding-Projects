@@ -2,8 +2,8 @@
 
 :func:`create_app` wires the components given to it (a :class:`~mommy.asr.Transcriber`, a
 :class:`~mommy.tts.Synthesizer`, a :class:`~mommy.llm.Brain` and the
-:class:`~mommy.quran.Quran`, or None when its files could not be loaded) into the API
-of ``docs/CONTRACT.md``. :func:`build_default_app` builds the real components, for
+:class:`~mommy.quran.Quran`, or None when its files could not be loaded, and optionally
+the local page reader of :mod:`mommy.ocr`) into the API of ``docs/CONTRACT.md``. :func:`build_default_app` builds the real components, for
 ``uvicorn mommy.app:build_default_app --factory`` (see ``run.sh``).
 
 Flows
@@ -23,6 +23,9 @@ Flows
 * Dictation: ``brain.read_handwriting(image, lang)`` reads the child's paper *blind*
   (hard rule 3; the expected text is not an argument), or the parent types it; then
   ``check_writing`` and feedback. The result always needs the parent's confirmation.
+* Page photo (``/api/page/read``): read by Claude with the AI consent, else by the local
+  reader (:mod:`mommy.ocr`, PP-OCR on this server; ``MOMMY_OCR``), else typed by the
+  parent. Whoever read it, the server then finds the Quran parts in the text.
 * Quran: ``transcribe(pcm, "ar")`` -> ``Quran.check`` / ``Quran.locate`` ->
   ``feedback.quran_feedback``. No Quran endpoint touches the brain or the synthesizer
   (hard rule 4).
@@ -75,6 +78,8 @@ Privacy (hard rule 5)
   ``/api/recite/check`` and ``/api/dictation/check`` use the offline brain for that one
   request and Claude is not called at all; each of their answers says which brain
   answered (``"brain"``). The log may name that brain, never a text or the age group.
+  A page photo is then read by the local reader on this server (``"reader": "local"``),
+  in memory, where nothing leaves the server.
 
 Errors are ``{"error": <code>, "message": <text>}`` with status 400 (bad input, or an
 unknown host name), 401 (no access cookie, online only), 403 (a cross-origin write, a
@@ -145,6 +150,7 @@ from .asr import ASRUnavailable, SherpaWhisper, Transcriber, audio_quality, deco
 from .config import DEFAULT_ALLOWED_HOSTS, Settings, load_settings
 from .feedback import AgeBand
 from .llm import VERDICTS, Brain, OfflineBrain, make_brain, meaning_feedback
+from .ocr import OCRBusy, PageReader, PPOCRReader
 from .guard import (
     QURAN_GUARD_CONTAINED_AYAH_WORDS,
     QURAN_GUARD_CONTEXTUAL_RUN_WORDS,
@@ -979,11 +985,17 @@ def create_app(
     tts: Synthesizer,
     brain: Brain,
     quran: Quran | None,
+    reader: PageReader | None = None,
 ) -> FastAPI:
     """The Mommy API (see the module docstring) serving ``settings.web_dir`` at ``/``.
 
     ``quran`` is None when the Tanzil files could not be loaded: ``/api/health`` then
     says ``"quran": false`` and the Quran endpoints answer 503.
+
+    ``reader`` is the local page reader (:class:`mommy.ocr.PPOCRReader`), used by
+    ``/api/page/read`` when Claude may not read the photo; None (``MOMMY_OCR=off``, or
+    a caller that has none) or one that is not ``available``: ``/api/health`` says
+    ``"ocr": false`` and such a photo needs the parent to type the text.
 
     With ``settings.access_code`` set, the access gate of :mod:`mommy.access` guards
     every request and ``POST /api/access`` is added; without it, neither exists.
@@ -1216,6 +1228,11 @@ def create_app(
 
     online = is_online(settings)
     live = bool(getattr(settings, "live_recite", True))
+    if reader is not None and not getattr(settings, "ocr", True):
+        reader = None  # MOMMY_OCR=off: never used, whatever the caller passed
+
+    def local_reader() -> PageReader | None:
+        return reader if reader is not None and getattr(reader, "available", False) else None
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -1232,10 +1249,16 @@ def create_app(
             "languages": list(LANGUAGES),
             "tts_languages": list(tts_langs) if tts_langs is not None else (list(LANGUAGES) if tts_ok else []),
             "live_recite": live,
+            "ocr": local_reader() is not None,
             "asr_model": model if isinstance(model := getattr(transcriber, "model", None), str) else settings.asr_model,
             "reasons": {
                 "asr": getattr(transcriber, "unavailable_reason", None),
                 "tts": getattr(tts, "unavailable_reason", None),
+                "ocr": (
+                    "MOMMY_OCR is off"
+                    if reader is None
+                    else None if local_reader() is not None else getattr(reader, "unavailable_reason", None)
+                ),
             },
         }
 
@@ -1245,8 +1268,10 @@ def create_app(
         consent: AiConsent,
         lang: Annotated[LangField | None, Form()] = None,
     ) -> dict[str, Any]:
-        """Read a printed textbook page with Claude (with the AI consent, ``ai_consent=1``).
-        Offline, or without the consent, the parent types the text instead."""
+        """Read a printed textbook page: with Claude when the request carries the AI
+        consent (``ai_consent=1``) and the server has Claude; otherwise (or when Claude
+        fails) with the local reader on this server (``"reader": "local"``, when
+        ``/api/health`` says ``"ocr": true``); otherwise the parent types the text."""
         started = time.perf_counter()
         used = brain_for(consent)
         data = _read_upload(image, MAX_IMAGE_BYTES, "image")
@@ -1254,11 +1279,31 @@ def create_app(
             raise ApiError(400, "bad_image", "The image file is empty.")
         with decoding():
             data = clean_image(data)
-        try:
-            page = used.read_page(data, lang)
-        except Exception as exc:
-            log.warning("read_page failed (%s); asking the parent to type the text", type(exc).__name__)
-            page = {**offline.read_page(data, lang), "error": type(exc).__name__}
+        page: dict[str, Any] = {}
+        who = "none"
+        if brain_name(used) == "claude":
+            who = "claude"
+            try:
+                page = used.read_page(data, lang)
+            except Exception as exc:
+                log.warning("read_page failed (%s)", type(exc).__name__)
+                page = {**offline.read_page(data, lang), "error": type(exc).__name__}
+        local = local_reader()
+        if local is not None and (who == "none" or "error" in page):
+            # No Claude for this request, or Claude failed: read it here.
+            brain_error = page.get("error")
+            who = "local"
+            try:
+                page = local.read_page(data, lang, timeout=BUSY_TIMEOUT_S)
+            except OCRBusy:
+                raise ApiError(503, "busy", "The server is busy. Please try again in a moment.") from None
+            except Exception as exc:
+                log.warning("local page reading failed (%s); asking the parent to type the text", type(exc).__name__)
+                page = {**offline.read_page(data, lang), "reader_error": type(exc).__name__}
+            if brain_error is not None:
+                page["error"] = brain_error
+        elif who == "none":
+            page = offline.read_page(data, lang)
         text = _scrub(page.get("text")) if isinstance(page.get("text"), str) else ""
         read_lang = page.get("lang") if page.get("lang") in LANGUAGES else lang
         failed = "error" in page or brain_name(used) != "claude"
@@ -1282,12 +1327,17 @@ def create_app(
             "unreadable_marks": sum(1 for t in written if t == UNREADABLE),
             **quran_fields,
             "brain": brain_name(used),
+            # Who read the photo: "claude", "local" (this server, no AI) or "none" (the
+            # parent types the text).
+            "reader": who,
         }
         if "error" in page:
             out["brain_error"] = str(page["error"])
+        if "reader_error" in page:
+            out["reader_error"] = str(page["reader_error"])
         log.info(
-            "page/read: image %d bytes, brain %s, source %s, %.2f s",
-            len(data), out["brain"], out["source"], time.perf_counter() - started,
+            "page/read: image %d bytes, brain %s, source %s, reader %s, %.2f s",
+            len(data), out["brain"], out["source"], who, time.perf_counter() - started,
         )
         return out
 
@@ -1816,6 +1866,8 @@ def build_default_app() -> FastAPI:
     transcriber = SherpaWhisper.from_settings(settings)
     tts = PiperTTS.from_settings(settings)
     brain = make_brain(settings)
+    # The local page reader loads its models at the first page (about 0.5 s).
+    reader = PPOCRReader.from_settings(settings) if settings.ocr else None
     quran: Quran | None
     started = time.perf_counter()
     try:
@@ -1826,10 +1878,11 @@ def build_default_app() -> FastAPI:
     else:
         log.info("Quran text loaded in %.1f s", time.perf_counter() - started)
     log.info(
-        "starting: asr=%s (%s) tts=%s brain=%s quran=%s",
+        "starting: asr=%s (%s) tts=%s brain=%s quran=%s ocr=%s",
         transcriber.available, transcriber.model, tts.available, brain.name, quran is not None,
+        bool(reader and reader.available),
     )
-    app = create_app(settings, transcriber, tts, brain, quran)
+    app = create_app(settings, transcriber, tts, brain, quran, reader)
     if settings.access_code is not None:
         # Online only: local use keeps loading each language on first use.
         start_preload(transcriber, tts)

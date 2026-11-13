@@ -59,7 +59,9 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
      recitation by meaning).
 5. Privacy (children's data):
    - Audio and images are processed in memory and never written to disk. They are never
-     logged; log only sizes and timings.
+     logged; log only sizes and timings. (extra) This holds for the local page reader
+     (`ocr.py`) too: it reads the cleaned JPEG in memory and logs sizes, counts and
+     timings, never text or pixels.
    - No analytics and no third-party scripts in the web client.
    - Images are resized in the browser (long edge at most 2000 px, re-encoded to JPEG,
      which drops EXIF) before upload.
@@ -118,7 +120,10 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
    - Never use the Batch or Files APIs for children's data.
 8. Offline mode:
    - If `ANTHROPIC_API_KEY` or either model variable is missing, the app still runs with
-     `OfflineBrain`. Page reading and handwriting then need the parent to type the text.
+     `OfflineBrain`. Handwriting then needs the parent to type the text; a printed page
+     is read by the local page reader (extra, `ocr.py`, `MOMMY_OCR`, default on) when its
+     models are present, else the parent types it too. The same holds for a request
+     without the AI consent (hard rule 5).
    - If the ASR or TTS model files are missing, `/api/health` says so and the UI hides
      those features. It does not crash.
 9. No network calls at runtime except to the Claude API, and only when it is configured.
@@ -133,7 +138,8 @@ mommy/
   requirements-runtime.lock the same pins and hashes without the "# tests only" requirements (extra; what the image installs)
   run.sh                    starts uvicorn on 127.0.0.1:8080 (PORT to change), serving the API and web/
   scripts/download_models.sh  fetches the sherpa-onnx Whisper turbo model (small with --small) and the Piper voices into models/,
-                            each archive checked against its pinned sha256 before it is unpacked
+                            each archive checked against its pinned sha256 before it is unpacked, and the OCR models
+                            (extra) into models/ppocr-onnx/, each file checked against its pinned sha256
   scripts/lock_requirements.py  regenerates both lock files (development only: the one script that uses the network)
   scripts/refresh_pins.py   shows or moves the image pins (cloudflared, Caddy, the Python base) to a tag's current
                             digest, checking linux/amd64 and linux/arm64 (development only; extra)
@@ -150,6 +156,7 @@ mommy/
     __init__.py
     config.py   textnorm.py   align.py   phrases.py   feedback.py
     quran.py    guard.py      asr.py     tts.py       llm.py       app.py
+    ocr.py      the local page reader (extra; MOMMY_OCR): PP-OCR models through onnxruntime
     access.py   the access gate of an online deployment (extra; MOMMY_ACCESS_CODE), allowed host names, the code file
     share_link.py  python -m mommy.share_link: the link to share a self-hosted Mommy (extra)
     proxies.py     python -m mommy.proxies: the proxies trusted for X-Forwarded-For with
@@ -168,6 +175,7 @@ mommy/
                 with MOMMY_ACCESS_CODE set and fake speech components; then the server's part in
                 the AI consent against the same app with a fake Claude brain)
   tests/test_access.py                the access gate (extra)
+  tests/test_ocr.py                   the local page reader: reading order, limits, privacy, the real models (extra)
   tests/test_selfhost.py              suffix host entries, the code file and share_link against a fake
                                       cloudflared metrics server (extra)
   tests/test_space_image.py           the image's start script, model checksums and Dockerfile (extra)
@@ -183,7 +191,9 @@ mommy/
 
 All public functions have type hints and docstrings. Use Python 3.13 and the standard
 library plus numpy, sherpa_onnx, anthropic, fastapi, pydantic, and pillow. Speech
-synthesis with sherpa-onnx 2.x also needs an espeak-ng phonemizer (see tts.py).
+synthesis with sherpa-onnx 2.x also needs an espeak-ng phonemizer (see tts.py). (extra)
+The local page reader (`ocr.py`) also uses onnxruntime and OpenCV
+(`opencv-python-headless`), imported only by it.
 
 ### config.py
 
@@ -206,6 +216,8 @@ class Settings:
     access_code: str | None = field(default=None, repr=False)   # extra; env MOMMY_ACCESS_CODE (None: no gate)
     access_code_file: Path | None = None   # extra; env MOMMY_ACCESS_CODE_FILE, when the code came from it
     live_recite: bool = True   # extra; env MOMMY_LIVE_RECITE (on/off, 1/0, true/false, yes/no; default on)
+    ocr: bool = True           # extra; env MOMMY_OCR (on/off as MOMMY_LIVE_RECITE; default on): the local page reader
+    ocr_threads: int           # extra; env MOMMY_OCR_THREADS, default asr_threads
     claude_configured: bool    # property (extra): key and both models set
 MIN_ACCESS_CODE_CHARS = 8      # extra
 def load_settings(root: Path | None = None) -> Settings
@@ -213,8 +225,9 @@ def load_settings(root: Path | None = None) -> Settings
 # thread count that is not a positive integer, an allowed-hosts list with no host, an
 # access code shorter than MIN_ACCESS_CODE_CHARS (the message never quotes the code), or
 # (extra) no access code while MOMMY_REQUIRE_ACCESS_CODE is set (any non-blank value; the
-# container image sets it, run.sh does not), or (extra) a MOMMY_LIVE_RECITE that is neither
-# on nor off (parse_switch). "Blank" is str.strip()'s: any Unicode white
+# container image sets it, run.sh does not), or (extra) a MOMMY_LIVE_RECITE or MOMMY_OCR
+# that is neither on nor off (parse_switch), or a MOMMY_OCR_THREADS that is not a positive
+# integer (parse_threads, which also reads MOMMY_ASR_THREADS). "Blank" is str.strip()'s: any Unicode white
 # space, so a no-break space is no code; this is the only place that decides it.
 # The access code is stripped; it is kept out of repr(Settings), so it cannot reach a log.
 def parse_allowed_hosts(value: str) -> tuple[str, ...]   # extra
@@ -714,6 +727,92 @@ def synthesize_verified(tts, asr, text, lang, *, slow, attempts) -> VerifiedSpee
 # Re-synthesises until the recogniser hears exactly the phrase; /api/tts serves its wav.
 ```
 
+### ocr.py (extra: reading printed pages on the server, without Claude)
+
+```python
+MODEL_DIR_NAME = "ppocr-onnx"   # under models/
+MODEL_FILES = {"det": "PP-OCRv6_small_det.onnx", "rec_ar": "arabic_PP-OCRv5_mobile_rec.onnx",
+               "dict_ar": "ppocrv5_arabic_dict.txt", "rec_latin": "latin_PP-OCRv5_mobile_rec.onnx",
+               "dict_latin": "ppocrv5_latin_dict.txt", "doc_ori": "PP-LCNet_x1_0_doc_ori.onnx"}
+class PageReader(Protocol):
+    available: bool
+    def read_page(self, image_jpeg: bytes, lang_hint: Lang | None, *, timeout: float | None = None) -> dict
+    # {"text", "lang", "notes", "contains_quran": False, "needs_manual"}: the shape of
+    # Brain.read_page (the server decides about the Quran from the text).
+class PPOCRReader:   # PPOCRReader(models_dir, num_threads=2); from_settings (ocr_threads); preload();
+    # available / unavailable_reason (a model file, onnxruntime or cv2 missing).
+    # Lazy: the onnxruntime sessions (CPU, intra-op threads = num_threads, no memory arena)
+    # are made at the first page. One lock: one page at a time; read_page waits at most
+    # `timeout` s for it (OCRBusy), the app passes BUSY_TIMEOUT_S (503 busy).
+class FakePageReader   # for tests
+class OCRUnavailable(RuntimeError); class OCRBusy(RuntimeError)
+def decode_image(data) -> np.ndarray   # BGR, at most MAX_IMAGE_EDGE (2000) px, at most 4096 x 4096 px decoded
+def reading_order(visual) / arabic_reading_order(text)   # an Arabic line read left to right, in reading order
+def order_lines(boxes) -> list[Line]; def join_lines(lines) -> str; def tidy(read) -> str
+```
+
+Pipeline, in memory, on the JPEG `clean_image` made (upright from EXIF, at most 2000 px,
+no metadata): the PP-LCNet page orientation classifier turns a page photographed
+sideways or upside down (only at 0.8 confidence or more); text detection (PP-OCRv6
+small det, DB) on the page reduced to 1536 px; each box cut out straight (perspective
+warp) and recognised by CTC: Arabic (the hint, or most letters Arabic in the widest
+boxes) by PP-OCRv5 mobile Arabic, French and English by PP-OCRv5 mobile Latin. The
+Arabic recogniser reads left to right: each line is reversed into reading order, runs
+of digits and Latin letters (with the signs inside numbers) kept in their own order and
+each mark after its letter; a line with many marks (more than 0.25 per letter, Arabic
+with tashkeel) is read again stretched 2x horizontally (the recogniser writes at most
+one symbol per 8 px of input, too few for letters and marks), a mark read with
+confidence under 0.6 is left out (a missing mark is easier to see than a wrong one), and
+a line with Latin letters only is read by the Latin model. Boxes under 0.5 mean
+confidence are dropped; a word with a letter under 0.35 is written `[?]` (the parent
+types it, as for Claude's `[?]`). Lines are grouped along the page's own slope, run top
+to bottom, their boxes right to left when most letters are Arabic; a paragraph's lines
+are joined by spaces, and a short line or a wider space (over 1.35 times the median line
+pitch) starts a new paragraph (`\n`); a first or last line that is only a number (a page
+number) is left out. `lang` is "ar" for Arabic script, else the hint, else "fr" or "en"
+from accents and common words. `notes` says, in the page's language, that the page was
+read without AI and must be checked (the Arabic note names the tashkeel).
+
+Models (`scripts/download_models.sh`, 31 MB, each file sha256-pinned): from the releases
+of oar-ocr (Apache-2.0), PP-OCR models of PaddleOCR (Apache-2.0) in ONNX. The detector is
+byte for byte PaddlePaddle's own ONNX file (Hugging Face `PaddlePaddle/PP-OCRv6_small_det_onnx`,
+same sha256); the recognisers and the orientation classifier are oar-ocr's conversions of
+PaddlePaddle's models (their dictionaries equal the official ones). PP-OCRv6 has no Arabic
+recogniser; PP-OCRv6 small rec was as accurate as PP-OCRv5 Latin on French and English
+here, at three times the size.
+
+Measured (2026-11-13, 2 cores with `taskset -c 0,1`, onnxruntime 1.31.1, x86-64; the six
+generated lesson pages of the OCR lab, Arabic in two fonts with and without tashkeel,
+French and English, each as a clean 1240 x 1754 render, a phone-like photo (4 deg tilt,
+keystone, uneven light, 1200 px, blur, noise, JPEG 60) and a harder one (8-9 deg, a
+shadow band, 1000 px, more blur, JPEG 50); every image through `clean_image`; word
+accuracy = 1 - WER, words split on spaces and punctuation, a `[?]` counted as wrong):
+
+| page | clean | photo | harder photo | time per page (warm) |
+|---|---|---|---|---|
+| English | 100% | 100% | 100% | 0.9-1.2 s |
+| French | 100% | 100% | 100% | 0.9-1.3 s |
+| Arabic, no tashkeel (2 fonts) | 87%, 92% | 90%, 90% | 68% | 1.0-1.7 s |
+| Arabic with tashkeel, marks ignored (2 fonts) | 37%, 53% | 15%, 48% | 21% | 1.0-3.4 s |
+| Arabic with tashkeel, marks counted | 0%, 18% | 2%, 11% | 0% | |
+| tashkeel kept (recall / precision) | 29% / 87%, 54% / 88% | 16% / 70%, 50% / 87% | 0% | |
+
+A photo turned by 90 degrees was read upright in French (100%); in Arabic the classifier
+was not sure and the page was not read (0%). The first page of a process also loads the
+models (0.2-0.5 s). Memory (one process, 1414 x 2000 pages): onnxruntime and OpenCV
++64 MB when imported, the models +69 MB, about 190 MB in all after reading and a peak
+of +458 MB while a page is read (the detector's activations). For comparison, the same
+lab pages earlier (photo, no preprocessing; best preprocessing in brackets): EasyOCR
+French 46% (95%), English 48% (95%), Arabic without tashkeel 61-68% (84-94%), with
+tashkeel, marks ignored, 71-73% (82%), about 1% of the marks kept; Tesseract (best)
+French 94% (99%), English 84% (100%), Arabic without tashkeel 81-87% (86-97%), with
+tashkeel on the Noto font 15% (37%), 39% (71%) of the marks kept (on the other font
+Tesseract failed). So: French and
+English are read best by this reader, without any preprocessing; Arabic without
+tashkeel about as well as the best lab setups; Arabic with tashkeel clearly worse than
+EasyOCR without the marks and than Tesseract with them. A page with tashkeel should be
+read by Claude (with the consent) or typed, and the parent always checks the text.
+
 ### llm.py
 
 ```python
@@ -1093,8 +1192,11 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   empty value, `"0"`, `"true"`, `" 1 "`, a file part, `"1"` beside any other value, and
   `ai_consent=1` in the query string, which is never read. Without the consent the request
   is answered by `OfflineBrain` exactly as by a server without Claude, and the Claude
-  brain is not called at all: a page photo comes back with `"source": "offline"`,
-  `"needs_manual": true` and no text; a photo of handwriting gets `501 needs_manual`; a
+  brain is not called at all: a page photo is read by the local page reader on the
+  server (extra, `ocr.py`: `"reader": "local"`, `"source": "offline"`; see "Local page
+  reading" below), or, without it (`MOMMY_OCR=off`, no OCR models), comes back with
+  `"source": "offline"`, `"reader": "none"`, `"needs_manual": true` and no text; a photo
+  of handwriting gets `501 needs_manual`; a
   typed dictation check and a recitation word by word get the offline templates
   (`feedback.for_result`); a recitation by meaning gets the offline heuristic, with
   `judgement.approximate: true`. With the consent, on a server without Claude, nothing
@@ -1107,7 +1209,30 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
   `brain`. `/api/health` `brain` still says what the server has. The log line of each of
   these requests names its brain ("recite/check strict en: brain offline, ...",
   "dictation/check fr: brain claude, ...", "page/read: image ... bytes, brain claude, source
-  claude, ..."), never a text, the age group or the code.
+  claude, reader claude, ..."), never a text, the age group or the code.
+- **Local page reading (extra; `ocr.py`, `MOMMY_OCR`, default on; `/api/health` `ocr`).**
+  `/api/page/read` decides who reads the photo, for each request: Claude when the
+  request carries the AI consent and the server has Claude (as before); otherwise, and
+  also when a Claude call failed (`brain_error`), the local reader on this server when
+  `/api/health` says `"ocr": true`; otherwise nobody (the parent types the text). The
+  answer has the same fields whoever read it, plus `"reader": "claude" | "local" |
+  "none"`; `brain` keeps its meaning (`"offline"`: nothing of the request went to
+  Claude), and `source` too (`"claude"` only for a text Claude read; a local reading is
+  `"offline"`, the server's own). The text a local reading returns goes through exactly
+  the same steps as Claude's: line breaks as `\n`, `[?]` counted (`unreadable_marks`),
+  and, with Arabic and the Tanzil text, `guard.find_quran_parts` decides
+  `contains_quran`, `quran_parts`, `mushaf_text` and `quran_range` (the reader's own
+  `contains_quran` is always false). The local reader reads one page at a time; a request
+  that waits more than 30 s for it gets `503 busy`; a failure of the reader (a class name
+  in `reader_error`) gives the "type the text" answer. The image is the cleaned JPEG
+  (`clean_image`), read in memory and never written or logged; the log line names the
+  reader ("..., reader local, ...") and `ocr.py` logs sizes, counts and timings only
+  ("ocr: image N bytes, B boxes, L lines, C chars, turned D, wait, read"). With Claude
+  and the consent, Claude stays first: it reads Arabic with tashkeel far better than the
+  local reader (see ocr.py), and the parent chose it; for French and English the local
+  reader was as accurate on the measured pages, so a later version may prefer it for
+  them. `MOMMY_OCR=off`: the reader is never made (no models loaded), `"ocr": false`,
+  `reasons.ocr` = "MOMMY_OCR is off", and a photo without Claude needs typing as before.
 - **Live recitation (extra; `MOMMY_LIVE_RECITE`, default on; `/api/health`
   `live_recite`).** While the child reads, the web client cuts the recording into phrases
   at the pauses (`recorder.js`, `PhraseSegmenter`) and sends each one to `POST
@@ -1339,8 +1464,8 @@ def main(argv=None, *, env=None, stdout=None, stderr=None, interval_s=POLL_INTER
 | Method & path | Request | Response |
 |---|---|---|
 | POST `/api/access` (extra, online only) | JSON `{"code": str}` | `204` with the `mommy_access` cookie; `403 bad_access_code`; `429 too_many_attempts` with `Retry-After`; see "Access gate". Absent (404) when no code is set. |
-| GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts}` (why unavailable), `live_recite` (bool, `Settings.live_recite`: the server checks a recitation phrase by phrase, `/api/recite/phrase`), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE`) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
-| POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional); extra: `ai_consent` (optional, `"1"`: see "AI consent"; without it the offline brain answers) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `brain` (`"claude"`\|`"offline"`, see "AI consent"), `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline) |
+| GET `/api/health` | – | `{"asr": bool, "tts": bool, "brain": "claude"\|"offline", "quran": bool, "languages": ["ar","en","fr"]}`; extra: `tts_languages` (voices that work), `asr_model` (the Whisper model actually in use), `reasons: {asr, tts, ocr}` (why unavailable), `ocr` (bool: a page photo can be read on the server without Claude, see "Local page reading"; false with `MOMMY_OCR=off` or without the OCR models or packages), `live_recite` (bool, `Settings.live_recite`: the server checks a recitation phrase by phrase, `/api/recite/phrase`), `online` (bool, `app.is_online(settings)`: true when the access gate is on (`MOMMY_ACCESS_CODE` set, or `MOMMY_ACCESS_CODE_FILE`) or when any of `MOMMY_ALLOWED_HOSTS` is not a loopback name or address (`is_loopback_host`: `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), so the app may be used from another device; false for the default local run, `./run.sh` with loopback names only; the web client's privacy texts follow it, see "Start screen") |
+| POST `/api/page/read` | multipart: `image` (jpeg/png), `lang` (optional); extra: `ai_consent` (optional, `"1"`: see "AI consent"; without it the offline brain answers) | `{"text","lang","notes","source":"claude"\|"offline","needs_manual":bool}`; extra: `brain` (`"claude"`\|`"offline"`, see "AI consent"), `contains_quran` (decided by the server from the text read when it has Arabic and the Tanzil text is loaded: true only for a page that is Quran (Q1) or has Uthmani script outside its Quran parts, so the client keeps its "page is Quran" message for it; a school page that quotes ayat (Q2) is false and read as usual; without Arabic or without the Tanzil text, the reader's own flag), `quran_parts` (the Quran parts of the text read, see below; `[]` when none or not decided), `mushaf_text` (the text with every differing Quran part replaced by the mushaf words; equal to `text` when nothing differs, for example after an OCR misread of an ayah the parent sees the difference and can take the mushaf text in one tap), `quran_range` (`{surah, from, to}` for a Q1 page whose ayat are one range of one surah, else null), `unreadable_marks` (number of `[?]` in the text), `brain_error` (when Claude failed; source is then offline), `reader` (`"claude"`\|`"local"`\|`"none"`: who read the photo, see "Local page reading"), `reader_error` (the class name, when the local reader failed) |
 | POST `/api/recite/check` | multipart: `audio` (wav), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `age` (`6-9`\|`10-13`\|`14-18`); extra: `ai_consent` (optional, `"1"`: Claude words the feedback and judges the meaning; without it the offline templates and heuristic answer, see "AI consent"), `heard_before` (optional, a live recitation: the transcripts of the phrases `/api/recite/phrase` decoded, joined by spaces, may be empty; `audio` is then only the tail after them, a WAV with no samples when nothing came after; see "Live recitation") | strict: `{"mode":"strict","heard_text","result":{ops,n_expected,n_errors,first_error_exp_index,verdict,say_again,word_accuracy, extra: say_again_reason, stopped_at_exp_index, n_unreadable},"feedback","quality"}`; contextual: `{"mode":"contextual","heard_text","judgement":{verdict,missing_ideas,wrong_ideas,approximate?, extra: say_again},"feedback","quality"}`; extra: top-level `say_again` and `brain` (`"claude"`\|`"offline"`, see "AI consent"); strict also `feedback_is_quran` (bool: the feedback is the fixed Quran-part template, quoting a mushaf word; show it as text, never send it to `/api/tts`) and `quran_parts` (see below; with `exp_start`/`exp_end`, the range of `result.ops` `exp_index` that holds the part's mushaf words). Q1 gives `422 quran_text` (with `quran_range` when one range) in both modes; a Q2 text is recited in strict mode with its Quran parts compared against the mushaf (Simple-Clean) words as `/api/quran/check` compares them, and the rest with the speech tolerances (the ops' `expected` is then the mushaf word inside a part); contextual mode refuses Q2 (`422 quran_text`, `QURAN_MEANING_MESSAGE`). Example: a lesson quoting 2:153 with the child saying another word for its 7th word gives one `sub` whose `expected` is that mushaf word, `feedback_is_quran: true` and `feedback` = `quran_part_feedback("sub", <Uthmani word>, "ar", "recitation")` ("في الآية الكريمة كلمة تحتاج إلى انتباه: «…». هيا نقرؤها مرة أخرى."); the brain is not called. If audio quality is too quiet or too short: the ASR is not run; strict gives verdict `"unclear"`, say_again true (reason `"empty"`); contextual gives judgement verdict `"unclear"` (a fourth value, only for unusable audio or nothing heard) and say_again true. |
 | POST `/api/recite/phrase` (extra, absent with `MOMMY_LIVE_RECITE=off`) | multipart: `audio` (wav, one phrase: at most 4 MB and 30 s; `413 audio_too_large`/`audio_too_long`), `expected_text`, `lang`, `mode` (`strict`\|`contextual`), `heard_before` (optional, default empty: the transcripts of the earlier phrases, as this endpoint returned them, joined by spaces) | `{"mode", "heard_text" (this phrase only, `""` when its audio is too quiet or under 0.5 s, which is not decoded), "quality" (this phrase's), "progress", "brain": "offline"}`; `progress` is null in contextual mode, and in strict mode `{"ops": [{kind: match\|sub\|del\|ins\|pending, exp_index, heard_index, expected, heard}], "n_expected", "n_read", "n_matched", "n_errors"}` (`align.reading_progress` of the strict check of `heard_before` + `heard_text`, see "Live recitation"). The text checks and refusals of `/api/recite/check` in the same mode (`empty_text`, `text_too_long`, `unreadable_text`, `quran_text` with `quran_range` or `"reason": "meaning"`, `lang_mismatch`), and for `heard_before` `bad_text` and `text_too_long`; `503 asr_unavailable`; never a brain, the voice or the AI consent. Example: `expected_text` "The cat sat on the mat.", `heard_before` "the cat", a phrase heard as "sad" -> ops match, match, sub (heard "sad"), pending, pending, pending; `n_read` 3, `n_errors` 1. |
 | POST `/api/dictation/phrases` | JSON `{"text","lang"}` | `{"phrases": [str], "readers": ["voice"\|"grown_up"], "read_text": [null\|str], "parts": [null\|int], "quran_parts": [part]}` (extra: all but `phrases`; the four lists have one entry per phrase). The voice reads a `voice` phrase (`/api/tts`, slow). A `grown_up` phrase is a chunk of a Quran part (at most 6 display words, never across an ayah): `read_text` is its fully vowelled Uthmani text (verbatim Tanzil) for a grown-up to read aloud, `phrase` the same words in Simple-Clean spelling (what the child writes; never sent to `/api/tts`), `parts` the index of its part in `quran_parts`. A text with no Arabic or no Quran part gives `split_phrases` with every reader `voice`. Q1 gives `422 quran_text` with no scope (and `quran_range` when one range). The `"scope": "phrase"` refusal is gone. A text of punctuation only gives `{"phrases": [], ...}` with empty lists. Example: `"الصبر مفتاح الفرج. قال تعالى: " + 2:153 + " ثم شرح المعلم الآية."` -> phrases `["الصبر مفتاح الفرج.", "قال تعالى:", <2:153 display words 1-5, in Simple-Clean words (6 words: يا أيها is one Uthmani word)>, <display words 6-10>, "ثم شرح المعلم الآية."]`, readers `["voice", "voice", "grown_up", "grown_up", "voice"]`, read_text `[null, null, <Uthmani display words 1-5>, <Uthmani display words 6-10>, null]`, parts `[null, null, 0, 0, null]`. |
@@ -1592,6 +1717,17 @@ each language is still loaded on first use.
   2000 px JPEG), then `/api/page/read`. The parent sees an editable textarea with the
   result, or an empty one in offline mode, and must press "Confirm text". Pasting or
   typing text is always possible.
+  - (extra, pending in the web client) With `/api/health` `"ocr": true`, the page photo
+    of Prepare (and of the task form) no longer waits for the AI consent or for Claude:
+    without them it is sent without `ai_consent` and read on the server (`"reader":
+    "local"`); `consent_needed_ai_grownup` and `consent_needed_ai_parent` then apply to
+    the handwriting photo only. Every privacy sentence stays true: a photo read locally
+    goes to the Mommy server only (online: `consent_online` with the photos, not
+    `consent_online_no_photos`; `photo_privacy` / `photo_privacy_online`, never a
+    Claude text unless the consent counts and the server has Claude), and the offline
+    texts no longer say that the parent types every text. With `"reader": "local"` the
+    page says that the text was read without AI and must be checked word by word (vowel
+    marks above all in Arabic); `[?]` marks are typed by the parent as before.
 - **Child: "Recite".**
   - Show the page text; strict or contextual mode is set by the parent.
   - Big record/stop button; record WAV in the browser (16 kHz mono PCM16 via Web Audio,

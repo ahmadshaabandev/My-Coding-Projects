@@ -79,8 +79,10 @@ def test_runtime_lock_is_the_app_part_of_the_lock() -> None:
     runtime = _entries(ROOT / "requirements-runtime.lock")
     assert runtime and all(full[name] == entry for name, entry in runtime.items())
     assert set(runtime) == set(tool.closure(tool.direct_requirements(runtime_only=True)))
-    assert not {"pytest", "pluggy", "iniconfig", "pygments", "httpx", "httpcore", "packaging"} & set(runtime)
-    for needed in ("fastapi", "starlette", "uvicorn", "anthropic", "httpx2", "sherpa-onnx", "numpy", "pillow", "espeakng-loader"):
+    # packaging is a test tool's dependency, but also onnxruntime's (the local page reader).
+    assert not {"pytest", "pluggy", "iniconfig", "pygments", "httpx", "httpcore"} & set(runtime)
+    for needed in ("fastapi", "starlette", "uvicorn", "anthropic", "httpx2", "sherpa-onnx", "numpy", "pillow",
+                   "espeakng-loader", "onnxruntime", "opencv-python-headless"):
         assert needed in runtime, needed
     tests_only = {r.name for r in tool.direct_requirements()} - {r.name for r in tool.direct_requirements(runtime_only=True)}
     assert tests_only == {"pytest", "httpx"}
