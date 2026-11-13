@@ -31,7 +31,9 @@ A web prototype of "Mommy", a tutor that stands in for a parent:
 2. Deciding whether a word is wrong is done by deterministic code (`align.py`), never by an
    LLM. The LLM only reads images, judges meaning in contextual mode, and words feedback.
 3. Handwriting is read blind. The LLM is never shown the expected text when it reads a
-   child's handwriting. Code then compares, and the parent confirms.
+   child's handwriting. Code then compares, and the parent confirms. (Redesign, owner's
+   decision: the web client no longer sends the dictation paper at all; a grown-up checks
+   it in the app, "Mom's check". The server endpoint and this rule stay for any client.)
 4. Quran (revised 2026-11-11 for Quran in school texts; the numbering of the rules is
    unchanged, and the sub-rules below replace the earlier rule that a school text quoting
    an ayah is refused):
@@ -1575,14 +1577,19 @@ each language is still loaded on first use.
   text); a dictation task with it is allowed and uses the grown-up step. The child's
   Recite card shows `mushaf_text` where it differs from the typed text (the check
   expects the mushaf words); the typed text stays in the grown-up's box.
-  - Dictation: for a `voice` phrase the app calls `/api/tts` as before. For a
-    `grown_up` phrase it never calls `/api/tts`: it asks for a grown-up (wording that
-    fits a mother or a father: الكبار, أحد الوالدين), shows `read_text` (vowelled
-    Uthmani, in the Quran font) after a tap, and hides it again when the grown-up taps
-    to go on, before the child writes. Repeat on such a phrase asks the grown-up again
-    and never calls the voice. The child's line ("Let's ask a grown-up to read this
-    part", no Quran word in it) is also said once by the voice, in the child's language,
-    when the step starts (fetched once per dictation).
+  - Dictation: for a `voice` phrase the app calls `/api/tts` as before (redesign: the
+    sentence at normal speed, then each word slowly; see "Child: Dictation"). For a
+    `grown_up` phrase it never calls `/api/tts`, for the sentence or for any of its
+    words: it asks someone to read it (wording that fits a mother, a father or another
+    grown-up), shows `read_text` (vowelled Uthmani, in the Quran font) after a tap, and
+    asks the reader to say the whole part once, then word by word, slowly, with time to
+    write each word; "Done reading" hides the words again before the child writes.
+    (Redesign) The app asks and never blocks: "Next" goes on even when nobody can read
+    the part now. Repeat on such a phrase asks again and never calls the voice. The
+    child's line ("Let's ask someone to read this part aloud", no Quran word in it) is
+    also said once by the voice, in the child's language, when the step starts (fetched
+    once per dictation). In "Mom's check" the words of a Quran part are shown in their
+    mushaf form (`read_text`, the Quran font, RTL).
   - The voice never reads the text as a model (Recite has no such button; its "Listen"
     only speaks the feedback). For a text with Quran parts a note tells the grown-up to
     read it aloud, and feedback with `feedback_is_quran` is never spoken ("Listen" is
@@ -1619,23 +1626,19 @@ each language is still loaded on first use.
     the notice raises the version and every family is asked again; a consent saved before
     the version existed never counts (see `docs/REWARDS.md`). The client adds
     `ai_consent=1` to a call whose server path can use Claude (`/api/page/read`,
-    `/api/recite/check`, `/api/dictation/check`; `addAiConsent` in `app.js`) only when,
+    `/api/recite/check`, `/api/dictation/check` (no longer sent by the web client); `addAiConsent` in `app.js`) only when,
     as the request is built, the consent counts (`state.aiConsent`, which `family.js`
     sets from `hasAiConsent(doc)` after every change of the document) and `/api/health`
     says `"brain": "claude"` (the page shows the Claude notice it was given to); without
     the field the server answers with its offline brain (see "AI consent" under HTTP API),
-    so the server, not this page, keeps Claude out. Until the consent is given, only the
-    photos stay off (reading them needs Claude): a card for the grown-up (Prepare, the
-    check stage of a dictation: headed "For the grown-up") says
-    `consent_needed_ai_grownup` ("Reading photos uses Claude: please give your OK for
-    Claude in the parent area (Settings) first.": it names the photos, since on the check
-    stage it stands beside the typed check, which does not wait), the parent area
-    `consent_needed_ai_parent` ("Reading photos uses Claude: please give your OK for
-    Claude in Settings first."), and the
-    parent area shows a prompt behind the PIN (the Claude notice, the box, "Save", "Not
-    now"); `consent_needed_ai` ("Let's ask a grown-up to open the parent area and give
-    their OK first."), the line for a child's screen, is kept for a gate there (none has
-    one since Recite stopped waiting). Recite, word by word and by meaning, and the typed
+    so the server, not this page, keeps Claude out. Until the consent is given, the page
+    photo waits only when the server has no local page reader (`/api/health` `ocr`
+    false): the child's editor ("New text") then says `consent_needed_ai` ("Let's ask a
+    grown-up to give the OK in Settings to read photos. Typing works now.") and the
+    parent area's task form `consent_needed_ai_parent`. (Redesign) The consent is asked
+    in two places only, the setup and Settings: the prompt at the top of the parent area
+    is gone, and `consent_needed_ai_grownup` is no longer shown (no card for the grown-up
+    outside the parent area). Recite, word by word and by meaning, and the typed
     dictation check work without it: the server answers them with the offline templates
     and, by meaning, the approximate heuristic (the "approximate" label of the result and,
     under the mode choice, `mode_contextual_offline`). Before a photo is sent the
@@ -1651,19 +1654,22 @@ each language is still loaded on first use.
     in memory and never saves them.": Mommy's storage, nothing said of Claude's); online,
     `consent_online` ("Online: your child's voice recordings, the photos and the texts
     are sent over a secure connection to the Mommy server that runs the app, where they
-    are checked in memory and not kept."), or without Claude `consent_online_no_photos`
-    (the same without the photos: the photo buttons need Claude). The second line: with
+    are checked in memory and not kept."), or, without Claude and without the local page
+    reader (`ocr`), `consent_online_no_photos` (the same without the photos: no photo can
+    be read then). The second line: with
     Claude, `consent_claude` (what goes to Claude, local or online), followed by the AI
     consent box; without it, `consent_offline` locally ("Offline mode: nothing leaves
-    this computer, and you type the texts yourself.") and `consent_online_no_ai` online
-    ("Nothing is sent to an outside AI service such as Claude, and you type the texts
-    yourself.": the server's own recogniser is not an outside service). The page counts
+    this computer.") and `consent_online_no_ai` online ("Nothing is sent to an outside AI
+    service such as Claude.": the server's own recogniser and page reader are not an
+    outside service; neither line says any more that the parent types every text). The page counts
     as online when `/api/health` says `online`, and also when it was not loaded from a
     loopback host (a tunnel that rewrites the `Host` header, or the server not reached
-    yet). The photo note of Prepare and of the task form is, without Claude (the photo
-    buttons are then off), `photo_privacy` locally ("Photos are made smaller on this
-    device, and Mommy does not keep them.") and `photo_privacy_online` online (sent to the
-    Mommy server, which does not keep them); with Claude it names where the photos go:
+    yet). The photo note of the editor and of the task form is, unless a photo goes to
+    Claude (the photo is read by the local reader, or cannot be sent), `photo_privacy`
+    locally ("Photos are made smaller on this device, and Mommy does not keep them.") and
+    `photo_privacy_online` online (sent to the Mommy server, which does not keep them);
+    when a photo goes to Claude (Claude set up and the AI consent counting) it names where
+    the photos go:
     `photo_privacy_claude` locally ("Photos are made smaller on this device, then sent to
     Claude to be read. Mommy does not keep them.") and `photo_privacy_online_claude`
     online (to the Mommy server, "which does not keep them and passes them on to Claude to
@@ -1674,8 +1680,10 @@ each language is still loaded on first use.
     there, so "offline" would mislead); `approximate` ("(offline)") only locally without
     Claude;
   - the family data line, in the setup and in Settings, the same in every mode
-    (`fam_privacy_line`: "Your family's list (children, tasks, stars, rewards and the
-    PIN) is saved only in this browser, on this device, unless a copy is saved with “Save
+    (redesign: a short line, `fam_privacy_short`, "The family list (children, texts,
+    stars, rewards and the PIN) stays in this browser, on this device.", with the whole
+    line behind "More"; `fam_privacy_line`: "Your family's list (children, their texts,
+    tasks, stars, rewards and the PIN) is saved only in this browser, on this device, unless a copy is saved with “Save
     a copy”: the copy is a file, without the PIN, where the browser saves downloads. To
     check a text or read it out,
     the Mommy server gets the text and its language, and for a recitation or dictation
@@ -1687,10 +1695,15 @@ each language is still loaded on first use.
   - the parent PIN (a child lock) and the children (nickname, age band, language,
     avatar), in one family document kept in `localStorage` (`mommy.data.v2`) on this
     device only, and in a file only when the parent saves a copy (below).
-- **Parent area** (behind the PIN; locked again when left, when the page is hidden and
-  after 3 minutes without use): To review (Confirm, and "Not yet" with a note), Tasks
-  (with Details and "Confirm anyway"), Rewards, Children, and Settings (PIN change,
-  parent language, a copy of the family list, delete all data). One exception to the
+- **Parent area** (behind the PIN; redesign: it stays open while the grown-up moves around
+  the app, and locks when the page is hidden, after 3 minutes without use in it, or with
+  "Close"; use on a child's screen does not keep it open): Rewards (the jar and its
+  history, with "Take the stars back" on a task's stars, rewards to give, goals,
+  surprises, corrections), Tasks (optional suggestions; Details, "Mark as done", "Take the
+  stars back"; the optional fields under "More options"), Children (add, edit, remove),
+  and Settings (consent, PIN change, parent language, a copy of the family list, delete
+  all data). There is no queue to review: the app gives the stars of a task when it is
+  passed (`rewards.js` `recordAttempt`). One exception to the
   lock when the page is hidden: a parent-area file input ("Load a copy", the task
   form's two photo inputs) opens a picker that some phones show as another app, so the
   first hiding within 10 s of a tap on one does not lock the area; the exemption ends
@@ -1713,23 +1726,33 @@ each language is still loaded on first use.
   refuses (full) is not used: the question stays open and says so. At the setup of a new
   address, "Load a copy" takes the place of the first child; the consent boxes and a new
   PIN are still given there.
-- **Parent: "Prepare a page".** Take a photo or upload one (resized in the browser to
-  2000 px JPEG), then `/api/page/read`. The parent sees an editable textarea with the
-  result, or an empty one in offline mode, and must press "Confirm text". Pasting or
-  typing text is always possible.
-  - (extra, pending in the web client) With `/api/health` `"ocr": true`, the page photo
-    of Prepare (and of the task form) no longer waits for the AI consent or for Claude:
-    without them it is sent without `ai_consent` and read on the server (`"reader":
-    "local"`); `consent_needed_ai_grownup` and `consent_needed_ai_parent` then apply to
-    the handwriting photo only. Every privacy sentence stays true: a photo read locally
-    goes to the Mommy server only (online: `consent_online` with the photos, not
-    `consent_online_no_photos`; `photo_privacy` / `photo_privacy_online`, never a
-    Claude text unless the consent counts and the server has Claude), and the offline
-    texts no longer say that the parent types every text. With `"reader": "local"` the
-    page says that the text was read without AI and must be checked word by word (vowel
-    marks above all in Arabic); `[?]` marks are typed by the parent as before.
+- **Child: "My texts" (redesign; was the parent's "Prepare a page").** The child's saved
+  texts (`rewards.js` `addText`, `updateText`, `removeText`; at most 30 per child, 5000
+  characters each, in the family document and in a copy of it). "New text" opens the
+  editor: a name (optional), the language, a photo (resized in the browser to a 2000 px
+  JPEG, then `/api/page/read`) or the text typed or pasted, the reciting mode, and
+  "Save", which checks the text (`/api/text/check`, as "Confirm text" did) and saves it;
+  "Read aloud" and "Dictation" then open it. Each saved text has "Read aloud",
+  "Dictation", "Change" (the editor; its name and mode are saved as soon as they change)
+  and "Delete" (asked in place; the stars it earned stay). Read aloud and Dictation
+  without a text list the child's texts to pick. A saved text opened again is checked in
+  the background for its Quran parts (as a task's text is).
+  - (extra, done) With `/api/health` `"ocr": true`, the page photo (of the editor and of
+    the task form) no longer waits for the AI consent or for Claude: without them it is
+    sent without `ai_consent` and read on the server (`"reader": "local"`); with the
+    consent and Claude, Claude reads it as before (`ai_consent=1`). "Nothing was sent" is
+    never shown then. Every privacy sentence stays true (see "Start screen"). With
+    `"reader": "local"` the status says that the text was read without AI and should be
+    checked word by word, the vowel marks above all, before saving (`page_read_local`),
+    followed by the reader's `notes` when there are some; `"reader": "none"` (or no text)
+    asks for typing as before; `[?]` marks and the Quran parts work as before.
 - **Child: "Recite".**
-  - Show the page text; strict or contextual mode is set by the parent.
+  - Show the text (redesign: "Read aloud"; the child's saved text, or a task's); the mode
+    (word by word or by meaning) is saved with the text, or fixed by a task.
+  - (Redesign) During a live recitation the page follows the reading: the first word not
+    reached yet stays in view above the sticky record bar and below the top bar
+    (`followReading`; `window.scrollBy`, smooth, or instant with
+    `prefers-reduced-motion`).
   - Big record/stop button; record WAV in the browser (16 kHz mono PCM16 via Web Audio,
     `recorder.js`), then `/api/recite/check`.
   - Extra, live recitation (when `/api/health` `live_recite` and `asr`): while recording,
@@ -1759,13 +1782,29 @@ each language is still loaded on first use.
   - Highlight the words: matched green, substitution orange (showing what was heard),
     deleted grey with a strike, inserted in small brackets.
   - Speak the feedback with TTS if available. Offer "say that again" when `say_again`.
-- **Child: "Dictation".**
-  - The app speaks one phrase at a time (`/api/tts`, slow), with Repeat and Next buttons.
-    The child writes on paper.
-  - At the end the parent photographs the page, or types what the child wrote, then
-    `/api/dictation/check`.
-  - The result is shown to the PARENT first with a "Confirm result" button before the
-    child sees it.
+- **Child: "Dictation"** (owner's decisions, redesign).
+  - Short sentences: the server's phrases (`/api/dictation/phrases`, at most 6 words) are
+    cut again in the browser to at most 4 words for ages 6-9 (`MAX_SENTENCE_WORDS`; 6 for
+    10-13 and 14-18), never splitting a word; a Quran chunk is never cut.
+  - For each sentence the voice says it once at normal speed (`/api/tts`, `slow: false`),
+    then each of its words slowly (`slow: true`, the punctuation left out), with a pause
+    after each word to write it: `base + perLetter × letters`, by age group (6-9: 1.5 s
+    + 0.6 s a letter; 10-13: 1.0 s + 0.35 s; 14-18: 0.8 s + 0.22 s; at most 9 s;
+    `writePauseMs`). Next is free once the sentence has been heard (it stops the words
+    still to come); Repeat replays the sentence, then the words. The audio of every
+    sentence and word is fetched once and kept in memory for the dictation; the next
+    sentence and its words are fetched while the child writes. A word the voice cannot
+    say is skipped (the sentence was heard).
+  - At the end, "Mom's check": the text as the child heard it, large (Arabic RTL; a Quran
+    part in its mushaf form, `read_text`), each word a button; a grown-up taps each word
+    that is not right (tap again to undo), then "Done" or "All correct". Nothing is
+    sent to the server (`/api/dictation/check` stays for other clients). The result is
+    built in the browser in the shape of a dictation result (`n_expected`, `n_errors`,
+    `word_accuracy`, `ops` with `match` and `fix`), shown to the child (words right out
+    of the total, each word to look at again with its correct spelling) and counted by
+    the existing star rules (a task's pass level; free practice: all words right). Only
+    the score line is said by the voice (it holds no word of the text). No PIN for this
+    step (see `docs/REWARDS.md`, "Redesign").
 - **Quran.**
   - Pick a surah and ayah range (default Juz' Amma: surahs 78-114). Display the verbatim
     Uthmani text in an Arabic Quran-friendly font stack (no web fonts from CDNs). Show

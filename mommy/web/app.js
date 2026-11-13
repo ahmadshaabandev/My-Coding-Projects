@@ -1,8 +1,9 @@
 /*
  * app.js: the Mommy web client (vanilla JS, no framework, no external requests).
  *
- * Screens: start (AI disclosure; the family setup form belongs to family.js), prepare a
- * page (parent), recite, dictation, and the Quran. The HTTP API is described in
+ * Screens: start (AI disclosure; the family setup form belongs to family.js), prepare
+ * (redesign: the editor of a child's saved text, "New text"), recite ("Read aloud"),
+ * dictation (the voice, then "Mom's check" in the app), and the Quran. The HTTP API is described in
  * docs/CONTRACT.md. The family screens (who is learning, the child's home, the parent
  * area) and the tasks live in family.js, on top of rewards.js (docs/REWARDS.md).
  *
@@ -47,6 +48,7 @@
 
   const STRINGS = {
     en: {
+      page_read_local: 'Read without AI. Let’s check it word by word, the vowel marks above all, and fix it before saving.',
       sr_look_again: 'to look at again',
       mom_all_right: 'All {n} words right. Wonderful!',
       mom_score: '{ok} of {n} words right. Well done for writing it all!',
@@ -98,10 +100,10 @@
       // The AI consent is given to this text: a change to it, in any language, raises
       // AI_CONSENT_VERSION in rewards.js, and every family is asked again.
       consent_claude: 'Some things are sent to Claude, an AI service made by Anthropic: photos of pages and of handwriting, so that it can read them; the page text and a transcript of what your child says (in “The meaning” mode), so that it can judge the meaning; and the words your child got wrong, with the score, so that it can word the feedback. The language is sent with each of them, and your child’s age group with the meaning check and the feedback. The recordings themselves are not sent.',
-      consent_offline: 'Offline mode: nothing leaves this computer, and you type the texts yourself.',
+      consent_offline: 'Offline mode: nothing leaves this computer.',
       consent_online: 'Online: your child’s voice recordings, the photos and the texts are sent over a secure connection to the Mommy server that runs the app, where they are checked in memory and not kept.',
       consent_online_no_photos: 'Online: your child’s voice recordings and the texts are sent over a secure connection to the Mommy server that runs the app, where they are checked in memory and not kept.',
-      consent_online_no_ai: 'Nothing is sent to an outside AI service such as Claude, and you type the texts yourself.',
+      consent_online_no_ai: 'Nothing is sent to an outside AI service such as Claude.',
       // The AI consent: a box of its own under the Claude notice (setup, Settings, the
       // parent area's prompt), shown only while Claude is set up.
       consent_ai_label: 'I agree that these things are sent to Claude.',
@@ -277,6 +279,7 @@
     },
 
     fr: {
+      page_read_local: 'Lu sans IA. Vérifions-le mot à mot, surtout les signes de voyelles, et corrigeons-le avant d’enregistrer.',
       sr_look_again: 'à revoir',
       mom_all_right: 'Les {n} mots sont justes. Formidable !',
       mom_score: '{ok} mots justes sur {n}. Bravo d’avoir tout écrit !',
@@ -325,10 +328,10 @@
       consent_label: 'Je suis parent des enfants qui utilisent Mommy sur cet appareil, ou j’en ai la charge. J’autorise Mommy à utiliser le micro et l’appareil photo.',
       consent_privacy: 'Mommy traite les enregistrements et les photos en mémoire et ne les enregistre jamais.',
       consent_claude: "Certaines données sont envoyées à Claude, un service d'IA d'Anthropic : les photos de pages et d'écriture, pour qu'il puisse les lire ; le texte de la page et une transcription de ce que dit votre enfant (en mode « Le sens »), pour qu'il juge le sens ; et les mots où votre enfant a fait une erreur, avec le score, pour qu'il rédige le message. La langue est envoyée avec chacun d'eux, et la tranche d'âge de votre enfant avec le jugement du sens et le message. Les enregistrements eux-mêmes ne sont pas envoyés.",
-      consent_offline: 'Mode hors ligne : rien ne quitte cet ordinateur, et vous tapez les textes vous-même.',
+      consent_offline: 'Mode hors ligne : rien ne quitte cet ordinateur.',
       consent_online: 'En ligne : les enregistrements de la voix de votre enfant, les photos et les textes sont envoyés par une connexion sécurisée au serveur Mommy qui fait fonctionner l’application, où ils sont traités en mémoire et ne sont pas conservés.',
       consent_online_no_photos: 'En ligne : les enregistrements de la voix de votre enfant et les textes sont envoyés par une connexion sécurisée au serveur Mommy qui fait fonctionner l’application, où ils sont traités en mémoire et ne sont pas conservés.',
-      consent_online_no_ai: 'Rien n’est envoyé à un service d’IA extérieur comme Claude, et vous tapez les textes vous-même.',
+      consent_online_no_ai: 'Rien n’est envoyé à un service d’IA extérieur comme Claude.',
       consent_ai_label: 'J’accepte que ces données soient envoyées à Claude.',
       start_button: 'On commence',
       consent_needed: 'Demandons à un parent de donner son accord dans Réglages.',
@@ -499,6 +502,7 @@
     },
 
     ar: {
+      page_read_local: 'قُرئ النص من دون ذكاء اصطناعي. هيا نراجعه كلمةً بكلمة، والحركات خاصةً، ونصحّحه قبل الحفظ.',
       sr_look_again: 'للمراجعة',
       mom_all_right: 'كل الكلمات صحيحة: {n} من {n}. رائع!',
       mom_score: 'الكلمات الصحيحة: {ok} من {n}. أحسنت على كتابة كل شيء!',
@@ -547,10 +551,10 @@
       consent_label: 'أنا أحد والدَي الأطفال الذين يستخدمون Mommy على هذا الجهاز أو وليّ أمرهم، وأسمح لـ Mommy باستخدام الميكروفون والكاميرا.',
       consent_privacy: 'تُعالَج التسجيلات والصور في الذاكرة، ولا يحفظها Mommy أبدًا.',
       consent_claude: 'تُرسَل بعض البيانات إلى Claude، وهي خدمة ذكاء اصطناعي من شركة Anthropic: صور الصفحات والكتابة لقراءتها، ونص الصفحة ونسخة مكتوبة مما يقوله الطفل (في طريقة «المعنى») للحكم على المعنى، والكلمات التي أخطأ فيها الطفل مع النتيجة لصياغة الملاحظات. وتُرسَل اللغة مع كلٍّ منها، والفئة العمرية للطفل مع الحكم على المعنى والملاحظات. أمّا التسجيلات الصوتية نفسها فلا تُرسَل.',
-      consent_offline: 'وضع بلا اتصال: لا يخرج شيء من هذا الحاسوب، وتُكتب النصوص يدويًا.',
+      consent_offline: 'وضع بلا اتصال: لا يخرج شيء من هذا الحاسوب.',
       consent_online: 'عبر الإنترنت: تُرسَل تسجيلات صوت الطفل والصور والنصوص من خلال اتصال آمن إلى خادم Mommy الذي يشغّل التطبيق، حيث تُعالَج في الذاكرة ولا تُحفظ.',
       consent_online_no_photos: 'عبر الإنترنت: تُرسَل تسجيلات صوت الطفل والنصوص من خلال اتصال آمن إلى خادم Mommy الذي يشغّل التطبيق، حيث تُعالَج في الذاكرة ولا تُحفظ.',
-      consent_online_no_ai: 'لا يُرسَل شيء إلى أي خدمة ذكاء اصطناعي خارجية مثل Claude، وتُكتب النصوص يدويًا.',
+      consent_online_no_ai: 'لا يُرسَل شيء إلى خدمة ذكاء اصطناعي خارجية مثل Claude.',
       consent_ai_label: 'أوافق على إرسال هذه البيانات إلى Claude.',
       start_button: 'لنبدأ',
       consent_needed: 'هيا نطلب من أحد الوالدين الموافقة في الإعدادات.',
@@ -761,7 +765,9 @@
     // of a dictation is sent with ai_consent=1 only when the consent counts (aiConsentNow),
     // and without it the server answers with its offline brain (the offline templates and
     // the approximate meaning check) and never calls Claude.
-    'prep-photo': ['server', 'brain', 'consent', 'ai-consent'],
+    // 'page-reader' (extra): someone can read the page: the local reader on the server
+    // (/api/health "ocr", no AI consent needed), or Claude with the AI consent.
+    'prep-photo': ['server', 'page-reader', 'consent'],
     'recite-rec': ['server', 'asr', 'consent', 'mic', 'task-meaning'],
     'recite-tts': ['server', 'tts'],
     // 'dictation': the voice would meet Quran words the server could not mark as a Quran
@@ -1320,6 +1326,8 @@
         // The server checks a recitation phrase by phrase while the child reads
         // (/api/recite/phrase); an older server leaves it out.
         live: h.live_recite === true,
+        // (extra) A page photo can be read on the server without Claude (local reader).
+        ocr: h.ocr === true,
       };
       state.healthState = 'ok';
     } catch (e) {
@@ -1349,6 +1357,7 @@
       } else if (need === 'asr' && !h.asr) return 'no_asr';
       else if (need === 'tts' && !h.tts) return 'no_tts';
       else if (need === 'brain' && h.brain !== 'claude') return 'no_brain';
+      else if (need === 'page-reader' && !h.ocr && !(h.brain === 'claude' && state.aiConsent)) return h.brain === 'claude' ? 'consent_needed_ai' : 'no_brain';
       else if (need === 'quran' && !h.quran) return 'no_quran';
       else if (need === 'consent' && !state.consent) return 'consent_needed';
       else if (need === 'ai-consent' && h.brain === 'claude' && !state.aiConsent) return 'consent_needed_ai';
@@ -1405,8 +1414,11 @@
    */
   async function photoCallAllowed() {
     if (aiConsentNow()) return true;
+    // (extra) The local reader on the server needs no AI consent: the photo goes without
+    // the field, and Claude never sees it.
+    if (state.health && state.health.ocr) return true;
     await loadHealth({ quiet: true });
-    return false;
+    return !!(state.health && state.health.ocr);
   }
 
   /**
@@ -1518,7 +1530,8 @@
     const claude = !!h && h.brain === 'claude';
     for (const node of $$('.consent-privacy')) {
       // Without Claude no photo is sent (the photo buttons need it), so none is listed.
-      setT(node, !online ? 'consent_privacy' : claude || !h ? 'consent_online' : 'consent_online_no_photos');
+      // A photo is sent when Claude or the local reader (ocr) can read it.
+      setT(node, !online ? 'consent_privacy' : claude || !h || h.ocr ? 'consent_online' : 'consent_online_no_photos');
     }
     for (const node of $$('.consent-extra')) {
       if (claude) setT(node, 'consent_claude');
@@ -1528,9 +1541,11 @@
     }
     // The AI consent box follows the Claude notice, and only it (family.js keeps its state).
     for (const node of $$('.ai-consent')) node.hidden = !claude;
-    // The photo buttons work only with Claude: then the note says where the photos go.
+    // The note names Claude only when a photo goes to it: Claude set up and the AI
+    // consent counting; otherwise the photo is read on the server (or not sent).
+    const toClaude = claude && state.aiConsent;
     for (const node of $$('.photo-privacy')) {
-      setT(node, online ? (claude ? 'photo_privacy_online_claude' : 'photo_privacy_online') : claude ? 'photo_privacy_claude' : 'photo_privacy');
+      setT(node, online ? (toClaude ? 'photo_privacy_online_claude' : 'photo_privacy_online') : toClaude ? 'photo_privacy_claude' : 'photo_privacy');
     }
     // "(offline)" only where the app runs without the network: local, no Claude. With
     // Claude set up, a check it did not judge (no AI consent that counts, or an error) is
@@ -2135,9 +2150,7 @@
       }
       $('#page-text').value = text;
       markUnconfirmed();
-      if (res.needs_manual || !text.trim()) setStatus(status, 'page_needs_manual');
-      else if (res.notes) setStatus(status, 'page_read_ok', null, { detail: onlyText(res.notes) });
-      else setStatus(status, 'page_read_ok');
+      setPageReadStatus(status, res, text);
       // A page that is Quran (the server decides, from the text read) is practised in the
       // Quran section, against the verbatim text, on its ayat when they are one range. A
       // school page that includes Quran is read as usual, with its Quran parts shown.
@@ -2154,6 +2167,18 @@
     } finally {
       for (const n of $$('[data-gate="prep-photo"]')) setBusy(n, false);
     }
+  }
+
+  /**
+   * The status after a page photo: to type (nobody could read it), read by the local reader
+   * on the server (without AI: to be checked word by word, the vowel marks above all; its
+   * notes are in the page's language), or read by Claude (with its notes).
+   */
+  function setPageReadStatus(status, res, text) {
+    if (res.needs_manual || res.reader === 'none' || !text.trim()) setStatus(status, 'page_needs_manual');
+    else if (res.reader === 'local') setStatus(status, 'page_read_local', null, res.notes ? { detail: onlyText(res.notes) } : null);
+    else if (res.notes) setStatus(status, 'page_read_ok', null, { detail: onlyText(res.notes) });
+    else setStatus(status, 'page_read_ok');
   }
 
   /**
@@ -4174,6 +4199,7 @@
     state.consent = !!(c && c.consent);
     state.aiConsent = !!(c && c.aiConsent);
     if (!state.consent) cancelRecording();
+    updatePrivacyTexts();
     updateOfflineNotes();
     refreshGates();
   }
@@ -4510,6 +4536,7 @@
     el,
     // status lines and errors (localized; the server's English message is never shown)
     setStatus,
+    setPageReadStatus,
     clearStatus,
     showError,
     errorInfo,

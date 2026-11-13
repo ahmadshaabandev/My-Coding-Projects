@@ -614,6 +614,7 @@ async function mainFlow(browser, base) {
     await page.check('input[name="mode"][value="contextual"]');
     await pressConfirm(page);
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     assert.match(await page.textContent('#recite-mode-label'), /The meaning/);
     await record(page, '#recite-rec', 700);
     const call = await waitForCall(fake, '/api/recite/check', 4);
@@ -894,6 +895,7 @@ async function desktopShots(browser, base) {
     await startSession(page, { consent: true, nickname: 'Lina' });
     await confirmPageText(page, PAGE_TEXT);
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     await record(page, '#recite-rec', 600);
     await page.waitForSelector('#recite-text .w-sub');
     await shot(page, 'recite-desktop');
@@ -977,6 +979,7 @@ async function darkMode(browser, base) {
     await startSession(page, { consent: true, nickname: 'Sami' });
     await confirmPageText(page, PAGE_TEXT);
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     await record(page, '#recite-rec', 600);
     await page.waitForSelector('#recite-text .w-sub');
     await shot(page, 'recite-dark-360');
@@ -1003,6 +1006,7 @@ async function unavailableFeatures(browser, base) {
     await page.fill('#page-text', PAGE_TEXT);
     await page.click('#btn-confirm');
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     assert.match(await page.textContent('#recite-hello'), /Hi Sami!/);
     assert.ok(await page.isDisabled('#recite-rec'));
     assert.match(await page.textContent('#why-recite-rec'), /speech recognition model is not installed/);
@@ -1041,6 +1045,7 @@ async function serverDown(browser, base) {
     await page.fill('#page-text', PAGE_TEXT);
     await page.click('#btn-confirm');
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     assert.ok(await page.isDisabled('#recite-rec'));
     fake.setHealthDown(false);
     await page.click('#btn-retry');
@@ -1216,6 +1221,43 @@ async function startLiveRecording(page, pattern) {
 
 async function liveFlow(browser, base) {
   const words = LIVE_TEXT.split(' ');
+  // (Redesign) A long text at 360 px: the line being read stays in view, above the sticky
+  // record bar (the page scrolls to it), and without motion with prefers-reduced-motion.
+  for (const reduce of [false, true]) {
+    const LONG = Array.from({ length: 24 }, (_, i) => `Line ${i + 1} of the long story goes on here.`).join(' ');
+    const ctx = await livePage(browser, base, { text: LONG, viewport: { width: 360, height: 640 } });
+    const { page, fake, problems } = ctx;
+    await check(`live (redesign): on a long text at 360 px the line being read is scrolled into view above the record bar${reduce ? ', with no smooth motion under prefers-reduced-motion' : ''}`, async () => {
+      if (reduce) await page.emulateMedia({ reducedMotion: 'reduce' });
+      fake.setLive({ words: 60 });
+      fake.queueRecite(H.strictResult(LONG, []));
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const behaviors = [];
+      await page.exposeFunction('__scrollSeen', (b) => behaviors.push(b));
+      await page.evaluate(() => {
+        const orig = window.scrollBy.bind(window);
+        window.scrollBy = (o) => {
+          window.__scrollSeen(o && o.behavior);
+          return orig(Object.assign({}, o, { behavior: 'auto' }));
+        };
+      });
+      await startLiveRecording(page, [[0.4, 1.0], [2.2, 1.0]]);
+      await page.waitForFunction(() => document.querySelectorAll('#recite-text .w-match').length >= 60);
+      await page.waitForFunction(() => {
+        const w = document.querySelector('#recite-text .w-pending');
+        const bar = document.querySelector('#screen-recite .rec-bar').getBoundingClientRect();
+        const r = w.getBoundingClientRect();
+        return r.bottom <= bar.top && r.top >= document.querySelector('.topbar').getBoundingClientRect().bottom;
+      });
+      assert.ok(behaviors.length > 0, 'the page scrolled to the line');
+      assert.ok(behaviors.every((b) => b === (reduce ? 'auto' : 'smooth')), JSON.stringify(behaviors));
+      await shot(page, `live-scroll-360${reduce ? '-reduced' : ''}`);
+      await page.click('#recite-rec');
+      await page.waitForSelector('#recite-result:not([hidden])');
+      assert.deepEqual(problems, []);
+    });
+    await ctx.context.close();
+  }
   {
     const { context, page, fake, problems } = await livePage(browser, base);
 
@@ -1449,6 +1491,7 @@ async function arabicFlow(browser, base) {
     await page.waitForSelector('#prep-next:not([hidden])');
     assert.ok(await page.isHidden('#prep-confirm-status + .status-action'), 'the Quran button went away');
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     await page.click('#recite-rec');
     await page.waitForSelector('#recite-rec[data-state="recording"]');
     await page.waitForFunction(() => document.querySelector('#recite-timer').textContent.trim() !== '');
@@ -1622,6 +1665,7 @@ async function fixesFlow(browser, base) {
 
   await check('recite: changing the reciting mode clears the old result (UX-11)', async () => {
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     await record(page, '#recite-rec', 600);
     await page.waitForSelector('#recite-text .w-sub');
     await H.openEditor(page);
@@ -1880,6 +1924,7 @@ async function quranPartsFlow(browser, base) {
     await confirmArabic(FX.LESSON_MISREAD);
     await page.waitForSelector('#prep-quran .qp-diff-list');
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     await page.waitForSelector('#recite-main:not([hidden])');
     assert.equal(await page.textContent('#recite-text'), FX.LESSON, 'the reading card shows the mushaf words');
     assert.ok(!(await page.textContent('#recite-text')).includes(FX.MISREAD_TYPED));
@@ -1901,6 +1946,7 @@ async function quranPartsFlow(browser, base) {
 
   await check('Q2 recite: word by word only, the note for the grown-up, and feedback quoting the mushaf is shown but never spoken', async () => {
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     await page.waitForSelector('#recite-main:not([hidden])');
     assert.match(await txt('#recite-mode-label'), /Word by word/);
     assert.ok(await page.isVisible('#recite-quran-note'));
@@ -2110,6 +2156,7 @@ async function quranPartsFlow(browser, base) {
     await page.waitForSelector('#prep-next:not([hidden])');
     assert.equal(await txt('#prep-confirm-status'), 'Saved for reading aloud. It cannot be used for a dictation: the voice found words of the Quran in it that the app could not mark.');
     await page.click('#prep-next [data-go="dictation"]');
+    await page.waitForSelector('#screen-dictation:not([hidden])');
     assert.ok(await page.isDisabled('#btn-dict-start'));
     assert.equal(await txt(DICT_START_WHY), EN_UNMARKED_MSG);
     // The same answer from /api/dictation/phrases for a text confirmed while the server
@@ -2117,6 +2164,7 @@ async function quranPartsFlow(browser, base) {
     fake.setUnmarked(null);
     await confirmArabic(FX.LESSON);
     await page.click('#prep-next [data-go="dictation"]');
+    await page.waitForSelector('#screen-dictation:not([hidden])');
     assert.ok(await page.isEnabled('#btn-dict-start'));
     fake.setUnmarked((t) => t === FX.LESSON);
     await page.click('#btn-dict-start');
@@ -2398,6 +2446,7 @@ async function consentFlow(browser, base) {
     await page.fill('#page-text', PAGE_TEXT);
     await pressConfirm(page);
     await page.click('#prep-next [data-go="dictation"]');
+    await page.waitForSelector('#screen-dictation:not([hidden])');
     await page.click('#btn-dict-start');
     await H.dictateAll(page);
     await H.momCheck(page, [5]);
@@ -2512,7 +2561,8 @@ async function aiConsentFlow(browser, base) {
       assert.ok(await page.isDisabled('#prep-take'));
       // (Redesign) The editor is the child's: a short line asks for a grown-up's OK.
       assert.equal(await textOf(page, '#why-prep-photo'), claude ? S.consent_needed_ai : S.no_brain);
-      assert.equal(await textOf(page, '#screen-prepare .photo-privacy'), S[mode.photo]);
+      // The photo would not go to Claude without the AI consent: the note does not name it.
+      assert.equal(await textOf(page, '#screen-prepare .photo-privacy'), S[mode.online ? 'photo_privacy_online' : 'photo_privacy']);
       // The meaning check will be approximate (no Claude for it): said under the mode choice.
       assert.ok(await page.isVisible('#mode-offline-note'));
       await page.click('#prep-next [data-go="recite"]');
@@ -2528,6 +2578,7 @@ async function aiConsentFlow(browser, base) {
       await page.check('input[name="mode"][value="contextual"]');
       await pressConfirm(page);
       await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
       await page.waitForSelector('#recite-rec:not([disabled])');
       await record(page, '#recite-rec', 300);
       const meaning = await waitForCall(fake, '/api/recite/check', 2);
@@ -2592,6 +2643,7 @@ async function aiConsentFlow(browser, base) {
         await H.closeParent(page);
         await confirmPageText(page, PAGE_TEXT); // the photo's text, confirmed
         await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
         await page.waitForSelector('#recite-rec:not([disabled])');
         await record(page, '#recite-rec', 300);
         assert.deepEqual((await waitForCall(fake, '/api/recite/check', 4)).aiConsent, []);
@@ -2616,6 +2668,7 @@ async function aiConsentFlow(browser, base) {
       await H.setupFamily(page, { consent: true });
       await confirmPageText(page, PAGE_TEXT);
       await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
       await record(page, '#recite-rec', 300);
       await waitForCall(fake, '/api/recite/check', 1);
       await page.waitForSelector('#recite-result:not([hidden])');
@@ -2637,9 +2690,11 @@ async function aiConsentFlow(browser, base) {
       if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
       await H.closeParent(page);
       if (await page.isVisible('#screen-who')) await page.click('#who-list .who-btn');
+      await page.waitForSelector('#screen-home:not([hidden])');
       await confirmPageText(page, PAGE_TEXT);
       assert.ok(await page.isDisabled('#prep-take'), 'the photos wait for the AI consent');
       await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
       await page.waitForSelector('#recite-rec:not([disabled])');
       await record(page, '#recite-rec', 300);
       assert.deepEqual((await waitForCall(fake, '/api/recite/check', 3)).aiConsent, []);
@@ -2675,6 +2730,7 @@ async function limitFlow(browser, base) {
     await startSession(page, { consent: true, nickname: '' });
     await confirmPageText(page, PAGE_TEXT);
     await page.click('#prep-next [data-go="recite"]');
+    await page.waitForSelector('#screen-recite:not([hidden])');
     await page.click('#recite-rec'); // and never pressed again: the limit stops it
     await waitForCall(fake, '/api/recite/check', 1);
     await page.waitForSelector('#recite-result:not([hidden])');
@@ -2752,7 +2808,7 @@ function privacyStrings() {
   assert.equal(en.photo_privacy_claude, 'Photos are made smaller on this device, then sent to Claude to be read. Mommy does not keep them.');
   assert.equal(en.photo_privacy_online_claude, 'Photos are made smaller on this device, then sent over a secure connection to the Mommy server, which does not keep them and passes them on to Claude to be read.');
   // P4: online without Claude, no OUTSIDE AI service (the server's recogniser is an AI).
-  assert.equal(en.consent_online_no_ai, 'Nothing is sent to an outside AI service such as Claude, and you type the texts yourself.');
+  assert.equal(en.consent_online_no_ai, 'Nothing is sent to an outside AI service such as Claude.');
 }
 
 /**
@@ -2881,6 +2937,76 @@ function frenchTypography() {
   assert.deepEqual(bad, []);
 }
 
+/**
+ * (Extra) The local page reader on the server (/api/health "ocr"): a page photo is read
+ * without Claude and without the AI consent (sent without ai_consent, "reader": "local"),
+ * the child is asked to check it word by word, and the privacy texts stay true in each way
+ * the app runs. With Claude and the AI consent, Claude reads it as before.
+ */
+async function localReaderFlow(browser, base) {
+  const S = H.allStrings('en');
+  const MODES = [
+    { name: 'local, no Claude, ocr', online: false, brain: 'offline', ocr: true, privacy: 'consent_privacy', extra: 'consent_offline', photo: 'photo_privacy' },
+    { name: 'online, no Claude, ocr', online: true, brain: 'offline', ocr: true, privacy: 'consent_online', extra: 'consent_online_no_ai', photo: 'photo_privacy_online' },
+    { name: 'online, Claude, ocr', online: true, brain: 'claude', ocr: true, privacy: 'consent_online', extra: 'consent_claude', photo: 'photo_privacy_online' },
+  ];
+  for (const mode of MODES) {
+    const { context, page, fake, problems } = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(mode) });
+    await check(`local page reader, ${mode.name}: the photo needs no AI consent, goes without it, is read on the server and is to be checked word by word; the privacy texts stay true`, async () => {
+      await page.goto(base + '/');
+      await page.waitForSelector('#consent-extra:not([hidden])');
+      for (const lang of ['en', 'fr', 'ar']) {
+        const L = H.allStrings(lang);
+        await page.selectOption('#setup-lang', lang);
+        assert.equal((await page.textContent('#consent-privacy')).trim(), L[mode.privacy], lang);
+        assert.equal((await page.textContent('#consent-extra')).trim(), L[mode.extra], lang);
+        assert.doesNotMatch(L[mode.extra], /type the texts|tapez les textes|تُكتب النصوص يدويًا/, 'a photo can be read now');
+        if (mode.online) assert.deepEqual(await H.localSentencesShown(page), [], lang);
+      }
+      await page.selectOption('#setup-lang', 'en');
+      await H.setupFamily(page, { consent: true, aiConsent: false });
+      await H.openEditor(page);
+      assert.ok(await page.isEnabled('#prep-choose'), 'the photo works without the AI consent');
+      assert.ok(await page.isHidden('#why-prep-photo'));
+      assert.equal((await page.textContent('#screen-prepare .photo-privacy')).trim(), S[mode.photo], 'never a Claude text: the photo does not go to Claude');
+      fake.setPageRead({ text: 'Le chat dort.', lang: 'fr', notes: 'Une ligne était floue.' });
+      await page.setInputFiles('#prep-choose', { name: 'page.png', mimeType: 'image/png', buffer: tinyPng() });
+      const call = await waitForCall(fake, '/api/page/read', 1);
+      assert.deepEqual(call.aiConsent, [], 'no AI consent: no field');
+      await page.waitForFunction(() => document.querySelector('#page-text').value === 'Le chat dort.');
+      assert.equal((await page.textContent('#prep-status')).trim(), S.page_read_local + ' (Une ligne était floue.)');
+      assert.notEqual((await page.textContent('#prep-status')).trim(), S.ai_not_sent);
+      assert.equal(await page.inputValue('#page-lang'), 'fr');
+      await pressConfirm(page);
+      assert.match(await page.textContent('#prep-confirm-status'), /Saved in “My texts”/);
+      if (mode.brain === 'claude') {
+        // Given in Settings, the consent counts: Claude reads the next photo.
+        await H.setConsent(page, true);
+        await H.openEditor(page, { fresh: true });
+        assert.equal((await page.textContent('#screen-prepare .photo-privacy')).trim(), S.photo_privacy_online_claude);
+        fake.setPageRead(null);
+        await page.setInputFiles('#prep-choose', { name: 'page.png', mimeType: 'image/png', buffer: tinyPng() });
+        assert.deepEqual((await waitForCall(fake, '/api/page/read', 2)).aiConsent, ['1']);
+        await page.waitForFunction((t) => document.querySelector('#page-text').value === t, PAGE_TEXT);
+        assert.equal((await page.textContent('#prep-status')).trim(), S.page_read_ok);
+      }
+      assert.deepEqual(problems, []);
+    });
+    await context.close();
+  }
+  // Without the local reader and without Claude, the photo still waits (typing works).
+  const none = await newPage(browser, base, { width: 360, height: 780 }, { health: H.privacyHealth(H.PRIVACY_MODES[0]) });
+  await check('local page reader: without it (and without Claude) the photo stays off with its reason, and the texts keep saying so', async () => {
+    await none.page.goto(base + '/');
+    await H.setupFamily(none.page, { consent: true });
+    await H.openEditor(none.page);
+    assert.ok(await none.page.isDisabled('#prep-choose'));
+    assert.equal((await none.page.textContent('#why-prep-photo')).trim(), S.no_brain);
+    assert.deepEqual(none.problems, []);
+  });
+  await none.context.close();
+}
+
 /** MOMMY_ONLY=quranPartsFlow,liveFlow runs only those browser flows (to work on one). */
 const wanted = (name) => !process.env.MOMMY_ONLY || process.env.MOMMY_ONLY.split(',').includes(name);
 
@@ -2940,6 +3066,8 @@ async function main() {
     if (wanted('limitFlow')) await limitFlow(browser, base);
     console.log('# browser: live recitation (phrase by phrase)');
     if (wanted('liveFlow')) await liveFlow(browser, base);
+    console.log('# browser: the local page reader (ocr)');
+    if (wanted('localReaderFlow')) await localReaderFlow(browser, base);
   } finally {
     await browser.close();
     server.close();

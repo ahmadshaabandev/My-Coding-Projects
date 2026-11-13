@@ -94,8 +94,9 @@ async function settle(page) {
  * family strings a child sees (home, task cards, the task runner, surprises).
  */
 const CHILD_KEYS = [
-  'fam_jar', 'fam_goal_missing', 'fam_goal_missing_one', 'fam_goal_reached', 'fam_todo', 'fam_waiting', 'fam_done',
-  'fam_todo_empty', 'fam_waiting_empty', 'fam_done_empty', 'fam_due', 'fam_note_label', 'fam_pass_line',
+  'fam_jar', 'fam_goal_missing', 'fam_goal_missing_one', 'fam_goal_reached', 'fam_todo', 'fam_done',
+  'fam_practice_star', 'fam_practice_again', 'fam_practice_limit', 'fam_who_empty', 'fam_wa_err_name',
+  'texts_lead', 'texts_empty', 'texts_full', 'texts_delete_q', 'fam_due', 'fam_note_label', 'fam_pass_line',
   'fam_reward_unlocked', 'fam_reward_given', 'fam_surprise_title', 'fam_surprise_ok', 'fam_task_leave',
   'fam_celebrate', 'fam_celebrate_reward', 'fam_improve', 'fam_improve_one', 'fam_improve_two', 'fam_improve_few',
   'fam_improve_many', 'fam_try_again',
@@ -373,7 +374,8 @@ async function quranTasksFlow(browser, base) {
     await page.click('#btn-dict-start');
     await page.waitForSelector('#dict-gu:not([hidden])');
     assert.equal(await text(page, '#dict-gu-ask-text'), 'هيا نطلب من أحد قراءة هذا الجزء بصوت مسموع.');
-    assert.equal(await text(page, '#dict-counter'), 'الجزء ١ من ٢');
+    // The second line (six words) is said as two short sentences for a child of 6 to 9.
+    assert.equal(await text(page, '#dict-counter'), 'الجزء ١ من ٣');
     await page.click('#dict-gu-show');
     assert.equal(await page.textContent('#dict-gu-text'), BASMALA_PLAN.read_text[0]);
     await H.noHorizontalScroll(page);
@@ -381,21 +383,17 @@ async function quranTasksFlow(browser, base) {
     await H.shot(page, 'family-task-grownup-ar-360');
     await page.click('#dict-gu-done');
     await page.click('#dict-next');
-    await H.waitForTts(fake, BASMALA_PLAN.phrases[1]);
+    const first = BASMALA_PLAN.phrases[1].split(/\s+/).slice(0, 3).join(' ');
+    await H.waitForTts(fake, first);
     assert.equal(fake.ttsFor(BASMALA_PLAN.phrases[0]).length, 0, 'the basmala never reached the voice');
-    await page.waitForSelector('#dict-next:not([disabled])');
-    await page.click('#dict-next');
-    await page.waitForSelector('[data-stage="check"]:not([hidden])');
-    const res = H.quranStrictResult(BASMALA_LINE_TEXT, [], 'أحسنت! كل الكلمات صحيحة.', false, 'dictation');
-    const written = res.read_text;
-    fake.queueDictation(res);
-    await page.fill('#dict-written', written);
-    await page.click('#btn-dict-check');
-    await page.waitForSelector('[data-stage="review"]:not([hidden])');
-    await page.click('#btn-dict-confirm');
+    await H.dictateAll(page);
+    // Mom's check: the basmala in its mushaf form, then the rest; all correct.
+    assert.equal(await page.locator('#dict-mom-words .mom-word.is-quran').count(), BASMALA_PLAN.read_text[0].split(/\s+/).length);
+    await H.shot(page, 'family-task-mom-ar-360');
+    await H.momCheck(page, []);
     await page.waitForSelector('#task-outcome-dictation .celebrate');
     const task = await storedTask((x) => x.title === 'Basmala dictation');
-    assert.deepEqual([task.status, task.attempts.length, task.attempts[0].passed], ['ready', 1, true]);
+    assert.deepEqual([task.status, task.attempts.length, task.attempts[0].passed], ['done', 1, true]);
     await page.click('#task-leave');
     await page.waitForSelector('#screen-home:not([hidden])');
   });
@@ -876,27 +874,28 @@ async function familyFlow(browser, base) {
     const ph = await H.waitForCall(fake, '/api/dictation/phrases', n0 + 1);
     assert.deepEqual(ph.json, { text: FR_TEXT, lang: 'fr' });
     await H.dictateAll(page);
-    // The check is in the child's language (French): Mom taps the words that are not right.
-    assert.equal(await text(page, '#dict-mom-h'), 'La vérification de maman');
-    assert.equal(await page.locator('#dict-mom-words .mom-word').count(), 5);
+    // The check is in the child's language (English; the text is French): a grown-up taps the words that are not right.
+    assert.equal(await text(page, '#dict-mom-h'), 'Mom’s check');
+    assert.equal(await page.getAttribute('#dict-mom-words', 'lang'), 'fr');
+    assert.equal(await page.locator('#dict-mom-words .mom-word').count(), 6);
     await page.click('#dict-mom-words .mom-word >> nth=2');
     await page.click('#dict-mom-done');
     await page.waitForSelector('#task-outcome-dictation:not([hidden])');
-    assert.equal(await text(page, '#task-outcome-dictation'), H.uiStrings('fr', 'family.js').fam_try_again);
-    assert.equal(await page.locator('#task-outcome-dictation .celebrate').count(), 0, '4 of 5: not passed yet');
+    assert.equal(await text(page, '#task-outcome-dictation'), 'Try again whenever you are ready.');
+    assert.equal(await page.locator('#task-outcome-dictation .celebrate').count(), 0, '5 of 6: not passed yet');
     // Again: all correct.
     await page.click('#btn-dict-new');
     await page.click('#btn-dict-start');
     await H.dictateAll(page);
     await H.momCheck(page, []);
     await page.waitForSelector('#task-outcome-dictation .celebrate');
-    assert.match(await text(page, '#task-outcome-dictation .celebrate-title'), /^Bravo ! ⭐⭐ sont dans le bocal, et 🎈 a sticker est gagné/);
+    assert.equal(await text(page, '#task-outcome-dictation .celebrate-title'), 'Well done! ⭐⭐ are in your jar, and 🎈 a sticker is earned: your parent will give it.');
     assert.ok(await page.isHidden('#pin-dialog'), 'no PIN');
     assert.equal(fake.callsTo('/api/dictation/check').length, 0, 'nothing is sent to be checked');
     const doc = await H.storedDoc(page);
     const task = doc.tasks.find((x) => x.kind === 'dictation');
     assert.deepEqual([task.status, task.confirmedBy, task.rewardStatus, task.attempts.length], ['done', 'app_pass', 'unlocked', 2]);
-    assert.deepEqual(task.attempts.map((a) => [a.nErrors, a.nExpected, a.passed]), [[1, 5, false], [0, 5, true]]);
+    assert.deepEqual(task.attempts.map((a) => [a.nErrors, a.nExpected, a.passed]), [[1, 6, false], [0, 6, true]]);
     assert.equal(doc.jar[task.childId].balance, 5);
     await page.click('#btn-home'); // the home button also leaves the task
     await page.waitForSelector('#screen-home:not([hidden])');
@@ -1212,7 +1211,7 @@ async function pinFlow(browser, base) {
   });
 
   await check('Parent area: it locks after 3 minutes without use, and when the page is hidden (UX-02)', async () => {
-    assert.equal(await text(page, '#parent-autolock'), 'It locks after 3 minutes without use, and when the app is left.');
+    assert.equal(await text(page, '#parent-autolock'), 'It stays open while you use it, and locks after 3 minutes without use, when the app is left, or with “Close the parent area”.');
     await page.clock.fastForward(2 * 60 * 1000);
     await page.click('#psec-nav [data-psec="children"]'); // a tap: the 3 minutes start again
     await page.clock.fastForward(2 * 60 * 1000);
@@ -1234,6 +1233,45 @@ async function pinFlow(browser, base) {
     });
     await page.waitForSelector('#screen-who:not([hidden])');
     assert.ok(await page.isHidden('#screen-parent'));
+  });
+
+  await check('Parent area (redesign): it stays open while the grown-up moves around the app (no PIN again); use elsewhere does not keep it open; "Close" locks it', async () => {
+    await page.click('#btn-who-parents');
+    await H.enterPin(page, '97531');
+    await page.waitForSelector('#screen-parent:not([hidden])');
+    await H.parentSection(page, 'settings');
+    // To a child's screen and back: no PIN.
+    await page.click('#psec-nav [data-psec="rewards"]');
+    await page.click('#btn-parent-close');
+    await page.waitForSelector('#screen-who:not([hidden])');
+    await page.click('#btn-who-parents');
+    await page.waitForSelector('#pin-dialog[open]');
+    await page.click('#pin-cancel');
+    await page.click('#btn-who-parents');
+    await H.enterPin(page, '97531');
+    await page.waitForSelector('#screen-parent:not([hidden])');
+    await page.evaluate(() => { location.hash = '#who'; });
+    await page.waitForSelector('#screen-who:not([hidden])');
+    await page.click('#who-list .who-btn');
+    await page.waitForSelector('#screen-home:not([hidden])');
+    await page.click('#btn-home-parents');
+    await page.waitForSelector('#screen-parent:not([hidden])');
+    assert.ok(!(await page.isVisible('#pin-dialog[open]')), 'still open: no PIN asked');
+    // Taps on a child's screen do not keep it open: 3 minutes after the last use in it, it locks.
+    await page.click('#btn-parent-close').catch(() => {});
+    await page.waitForSelector('#screen-home:not([hidden])');
+    await page.click('#btn-home-parents');
+    await H.enterPin(page, '97531');
+    await page.waitForSelector('#screen-parent:not([hidden])');
+    await page.evaluate(() => { location.hash = '#home'; });
+    await page.waitForSelector('#screen-home:not([hidden])');
+    for (let i = 0; i < 4; i++) {
+      await page.clock.fastForward(50 * 1000);
+      await page.click('#home-title');
+    }
+    await page.click('#btn-home-parents');
+    await page.waitForSelector('#pin-dialog[open]');
+    await page.click('#pin-cancel');
   });
 
   await check('PIN flow: no console errors, page errors or external requests', async () => {
@@ -1281,7 +1319,7 @@ async function quranSeededFlow(browser, base) {
       const n = document.querySelector('#home-todo .task-card:has(.task-quran-line:not([hidden]))');
       return n && n.textContent.includes('Patience dictation');
     });
-    assert.equal(await text(page, '#home-todo .task-card:has-text("Patience dictation") .task-quran-line'), 'هيا ننجز هذه المهمة مع أحد الكبار.');
+    assert.equal(await text(page, '#home-todo .task-card:has-text("Patience dictation") .task-quran-line'), 'في هذا النص كلمات من القرآن الكريم: عندما نصل إليها، هيا نطلب من أحد قراءتها بصوت مسموع.');
     assert.ok(await page.isHidden('#home-todo .task-card:has-text("Ready dictation") .task-quran-line'), 'only a text with Quran parts');
     await page.click('#home-todo .task-card:has-text("By meaning") .task-start');
     await page.waitForSelector('#screen-recite:not([hidden])');
@@ -1328,14 +1366,16 @@ async function quranSeededFlow(browser, base) {
     assert.deepEqual([saved.text, saved.mode], [FX.LESSON, 'strict']);
   });
 
-  await check('UX-13: a dictation is confirmed on the paper: the details and the review say so', async () => {
+  await check('UX-13 (owner\'s decision): a dictation is checked on the paper in "Mom\'s check"; the details say so, and "Mark as done" is there; the dictation that waited for review is done (migration)', async () => {
     await page.click('#pt-list .ptask:has-text("Patience dictation") [data-details]');
-    await page.waitForSelector('#pt-list .ptask-detail [data-confirm-anyway]');
-    assert.equal(await text(page, '#pt-list .ptask-detail .hint-parent >> nth=-1'), 'The app has not passed this dictation. If you have checked your child’s paper yourself and it is right, you can confirm it anyway.');
-    // The difference kept as typed is not in this text; the parts are listed.
+    await page.waitForSelector('#pt-list .ptask:has-text("Patience dictation") [data-confirm-anyway]');
+    assert.equal(await text(page, '#pt-list .ptask-detail .hint-parent >> nth=-1'), 'The paper is checked in “Mom’s check” at the end of the dictation. If you have checked the paper yourself another time and it is right, you can mark the task as done.');
     assert.match(await text(page, '#pt-list .ptask-detail .quran-parts'), /Surah Al-Baqara, ayah 153/);
-    await H.parentSection(page, 'review');
-    assert.equal(await text(page, '#pr-list .review-item:has-text("Ready dictation") .hint-parent'), 'Please look at the paper before confirming.');
+    assert.match(await text(page, '#pt-list .ptask:has-text("Ready dictation")'), /Dictation · Done/);
+    const doc = await H.storedDoc(page);
+    const ready = doc.tasks.find((x) => x.title === 'Ready dictation');
+    assert.deepEqual([ready.status, ready.confirmedBy], ['done', 'app_pass']);
+    assert.equal(doc.jar[ready.childId].balance, 2, 'its stars are in the jar');
     await H.closeParent(page);
   });
 
@@ -1447,7 +1487,7 @@ async function storageFlows(browser, base) {
     await H.goTab(page, 'quran');
     await page.waitForSelector('#quran-text .ayah');
     assert.equal(await page.inputValue('#quran-surah'), '100', 'the old Quran range is kept');
-    assert.match(await text(page, '#screen-quran [data-why="quran-rec"]'), /espace parents \(Réglages\)/);
+    assert.equal(await text(page, '#screen-quran [data-why="quran-rec"]'), 'Demandons à un parent de donner son accord dans Réglages.');
     await page.click('#btn-home');
     await page.click('#btn-home-parents');
     await page.waitForSelector('#pin-dialog[open]');
@@ -1534,7 +1574,7 @@ async function arabicFlow(browser, base) {
     await page.selectOption('#setup-lang', 'ar');
     assert.equal(await page.getAttribute('html', 'dir'), 'rtl');
     assert.equal(await page.inputValue('#child-lang'), 'ar', 'the child\'s language follows until it is chosen');
-    assert.equal(await text(page, '#screen-start .lead'), 'يُعِدّ أحد الكبار التطبيق مرة واحدة للعائلة كلها.');
+    assert.equal(await text(page, '#screen-start .lead'), 'إعداد لمرة واحدة للعائلة كلها، ويستغرق دقيقة.');
     assert.match(await text(page, '#setup-form'), /هذا الرمز قفل للأطفال/);
     await H.noHorizontalScroll(page);
     assert.deepEqual(await H.overflowing(page), []);
@@ -1585,7 +1625,7 @@ async function arabicFlow(browser, base) {
     const card = await text(page, '#home-todo .task-card');
     assert.match(card, /الموعد: ٥ ديسمبر/);
     assert.match(card, /📚 قصة/);
-    assert.match(await text(page, '#home-done'), /مفتوحة: هيا نطلبها من أحد الوالدين/);
+    assert.match(await text(page, '#home-done'), /تمّ الفوز بها، وسيقدّمها أحد الوالدين\./);
     assert.doesNotMatch(await page.evaluate(ownText, '#screen-home'), /[0-9]/, 'no Western digit in the Arabic UI');
     await H.noHorizontalScroll(page);
     assert.deepEqual(await H.overflowing(page), []);
@@ -1698,16 +1738,16 @@ async function rewardsFlow(browser, base) {
   const maya = () => doc().then((d) => d.children.find((c) => c.nickname === 'Maya').id);
   let other = null; // a second tab of the same browser (the storage event)
 
-  await check('task details: the figures, the text, and "Confirm anyway" for a task the app never passed', async () => {
+  await check('task details: the figures and the text; "Mark as done" for a task the app never passed (the app may mishear)', async () => {
     await page.goto(base + '/');
     await page.waitForSelector('#screen-who:not([hidden])');
     await H.openParent(page);
-    assert.equal(await page.getAttribute('#psec-nav [data-psec="review"]', 'aria-current'), 'true');
+    assert.equal(await page.getAttribute('#psec-nav [data-psec="rewards"]', 'aria-current'), 'true');
     await H.parentSection(page, 'tasks');
     await pickParentChild(page, '#pt-child', 'Maya');
     const item = page.locator('#pt-list .ptask', { hasText: SUN_TEXT });
     assert.equal(await item.locator('[data-details]').getAttribute('aria-expanded'), 'false');
-    assert.equal(await item.locator('[data-confirm-anyway]').count(), 0, 'in the details only');
+    assert.equal(await item.locator('[data-confirm-anyway]').textContent(), 'Mark as done');
     await item.locator('[data-details]').click();
     await page.waitForSelector('#pt-list .ptask-detail');
     assert.equal(await item.locator('[data-details]').getAttribute('aria-expanded'), 'true');
@@ -1718,18 +1758,18 @@ async function rewardsFlow(browser, base) {
     assert.equal(await detail.locator('.detail-text').textContent(), SUN_TEXT);
     assert.equal(await detail.locator('.detail-text').getAttribute('lang'), 'en');
     assert.doesNotMatch(tx, /Passed:/, 'never passed');
-    assert.equal(await detail.locator('.hint-parent').textContent(), 'The app has not passed this task. If you heard your child do it, you can confirm it anyway.');
+    assert.equal(await detail.locator('.hint-parent').textContent(), 'If the app misheard and you saw your child do it, you can mark it as done: its stars go into the jar.');
     await H.shot(page, 'family-task-detail-360');
     await H.noHorizontalScroll(page);
     assert.deepEqual(await H.smallTargets(page), []);
-    await detail.locator('[data-confirm-anyway]').click();
-    await page.waitForFunction(() => /Confirmed:/.test(document.querySelector('#pt-status').textContent));
-    assert.equal(await text(page, '#pt-status'), 'Confirmed: ⭐⭐ for Maya.');
+    await item.locator('[data-confirm-anyway]').click();
+    await page.waitForFunction(() => /Done:/.test(document.querySelector('#pt-status').textContent));
+    assert.equal(await text(page, '#pt-status'), 'Done: ⭐⭐ for Maya.');
     const d = await doc();
     const task = d.tasks.find((x) => x.text === SUN_TEXT);
     assert.deepEqual([task.status, task.confirmedBy, task.rewardStatus], ['done', 'parent_override', 'none']);
     assert.equal(d.jar[await maya()].balance, 15);
-    assert.match(await text(page, '#pt-list .ptask-detail'), /Confirmed anyway by a grown-up\./);
+    assert.match(await text(page, '#pt-list .ptask-detail'), /Marked as done by a grown-up\./);
     assert.equal(await page.locator('#pt-list [data-confirm-anyway]').count(), 0);
     assert.equal(await page.evaluate(() => document.activeElement.dataset.details), task.id);
     // A done task with an unlocked reward: "Given" in its details too.
@@ -1835,9 +1875,10 @@ async function rewardsFlow(browser, base) {
     await H.noHorizontalScroll(page);
     assert.deepEqual(await H.overflowing(page), []);
     assert.deepEqual(await H.smallTargets(page), []);
-    // Adam: an empty jar has nothing to take away; then a correction is limited to the jar.
+    // Adam (1 star, given by the app for his passed task): a correction is limited to the
+    // jar; then an empty jar has nothing to take away.
     await pickParentChild(page, '#prw-child', 'Adam');
-    assert.equal(await text(page, '#prw-balance'), 'Stars in the jar: 0');
+    assert.equal(await text(page, '#prw-balance'), 'Stars in the jar: 1');
     const adjust = async (way, n, note) => {
       await page.click('#prw-adjust-open');
       await page.check(`input[name="af-way"][value="${way}"]`);
@@ -1845,6 +1886,9 @@ async function rewardsFlow(browser, base) {
       await page.fill('#af-note', note);
       await page.click('#af-save');
     };
+    await adjust('take', '5', 'counted twice');
+    await page.waitForSelector('#af', { state: 'hidden' });
+    assert.equal(await text(page, '#prw-status'), 'Only the stars in the jar were taken away: it is at zero now. Saved. Stars in the jar: 0.');
     await adjust('take', '1', 'counted twice');
     assert.equal(await text(page, '#af-status'), 'There are no stars to take away.');
     await page.click('#af-cancel');
@@ -1856,7 +1900,7 @@ async function rewardsFlow(browser, base) {
     const jar = (await doc()).jar[(await doc()).children[1].id];
     assert.deepEqual([jar.balance, jar.ledger.at(-1).delta, jar.ledger.at(-1).note], [0, -2, 'counted twice']);
     assert.match(await text(page, '#prw-ledger li >> nth=0'), /^−2 ⭐Correction: counted twice/);
-    assert.equal(await page.locator('#prw-ledger .is-minus').evaluate((n) => getComputedStyle(n).color === getComputedStyle(document.querySelector('#prw-ledger .ledger-what')).color), true, 'a correction down is not shown in red');
+    assert.equal(await page.locator('#prw-ledger .is-minus').first().evaluate((n) => getComputedStyle(n).color === getComputedStyle(document.querySelector('#prw-ledger .ledger-what')).color), true, 'a correction down is not shown in red');
     await H.closeParent(page);
   });
 
@@ -1874,7 +1918,7 @@ async function rewardsFlow(browser, base) {
     assert.doesNotMatch(await text(page, '#screen-home'), /−|-\s?\d|lost|taken|correction/i);
     await settle(page);
     await H.shot(page, 'family-home-surprise-360');
-    assert.match(await text(page, '#home-done'), /🏆 The sun is hot today\..*🏆 Le chat dort\..*Unlocked: ask your parent/s);
+    assert.match(await text(page, '#home-done'), /🏆 The sun is hot today\..*🏆 Le chat dort\..*Earned! Your parent will give it\./s);
     await page.click('#home-surprises button');
     await page.waitForFunction(() => !document.querySelector('#home-surprises').children.length);
     assert.ok((await doc()).surprises[0].seenAt);
@@ -2037,31 +2081,31 @@ async function arabicParentFlow(browser, base) {
   const seeded = await H.newPage(browser, base, VIEW, null, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(await arabicParentDoc()) } });
   const page = seeded.page;
 
-  await check('ar: To review in Arabic at 360 px: the child, the task, the results in Arabic-Indic digits, the notes; send back with a note', async () => {
+  await check('ar (redesign): at 360 px, the task that waited for review is done with its stars (migration); "Take the stars back" in Arabic', async () => {
     await page.goto(base + '/');
     await page.waitForSelector('#screen-who:not([hidden])');
     await H.openParent(page);
-    await page.waitForSelector('#pr-list .review-item');
-    assert.equal(await text(page, '#psec-count-review'), '١');
-    const item = await text(page, '#pr-list .review-item');
-    for (const re of [/يوسف/, /سورة الإخلاص ١–٤/, /القرآن الكريم · شرط النجاح: كل الكلمات صحيحة/, /أفضل نتيجة: ١٠٠٪/, /آخر نتيجة: ١٠٠٪/, /المحاولات: ٢/, /جاهزة منذ: /]) assert.match(item, re);
-    assert.equal(await text(page, '#pr-list .improve'), 'كلمات صحيحة إضافية في المحاولة الأخيرة: ٢');
-    assert.match(await text(page, '#pr-notes'), /^قد يُخطئ التطبيق في السماع\./);
-    assert.match(await text(page, '#pr-notes'), /لا يحتفظ التطبيق بأي تسجيل/);
+    await H.parentSection(page, 'tasks');
+    await pickParentChild(page, '#pt-child', 'يوسف');
+    const item = page.locator('#pt-list .ptask', { hasText: 'سورة الإخلاص' });
+    assert.match(await item.textContent(), /القرآن الكريم · منجزة/);
+    let d = await H.storedDoc(page);
+    const yusuf = d.children.find((c) => c.nickname === 'يوسف').id;
+    assert.equal(d.jar[yusuf].balance, 3, 'the migrated task gave its stars');
     await arabicScreenOk(page);
-    await H.shot(page, 'family-review-ar-360');
-    await page.click('#pr-list [data-not-yet]');
-    await page.fill('#pr-list .send-back input', NOTE_AR);
-    await H.shot(page, 'family-review-send-back-ar-360');
+    await item.locator('[data-undo]').click();
+    assert.equal(await text(page, '#pt-list .inline-confirm p'), 'استرجاع نجوم هذه المهمة؟ تعود إلى «مطلوبة»، وتُقفَل مكافأتها من جديد.');
     await arabicScreenOk(page);
-    await page.click('#pr-list [data-send-back]');
-    await page.waitForSelector('#pr-empty:not([hidden])');
-    assert.equal(await text(page, '#pr-status'), 'أُعيدت المهمة إلى يوسف، وهي الآن في «المهام المطلوبة».');
-    assert.match(await text(page, '#pr-empty'), /^لا شيء للمراجعة الآن\./);
+    await H.shot(page, 'family-undo-ar-360');
+    await page.click('#pt-list [data-undo-yes]');
+    await page.waitForFunction(() => document.querySelector('#pt-status').textContent.trim() !== '');
+    assert.equal(await text(page, '#pt-status'), 'استُرجعت النجوم، وعادت المهمة مطلوبة.');
+    d = await H.storedDoc(page);
+    assert.equal(d.jar[yusuf].balance, 0);
     await arabicScreenOk(page);
   });
 
-  await check('ar: task details and "Confirm anyway" in Arabic', async () => {
+  await check('ar: task details and "Mark as done" in Arabic', async () => {
     await H.parentSection(page, 'tasks');
     await pickParentChild(page, '#pt-child', 'سلمى');
     await page.click('#pt-list .ptask.status-assigned [data-details]');
@@ -2069,13 +2113,13 @@ async function arabicParentFlow(browser, base) {
     assert.match(detail, /أُنشئت: ١٠ نوفمبر/);
     assert.match(detail, /الموعد: ٥ ديسمبر/);
     assert.match(detail, /لا توجد محاولة بعد\./);
-    assert.match(detail, /لم يحتسب التطبيق هذه المهمة ناجحة\./);
+    assert.match(detail, /إذا أخطأ التطبيق في السماع/);
     await arabicScreenOk(page);
     await H.shot(page, 'family-task-detail-ar-360');
-    await page.click('#pt-list [data-confirm-anyway]');
-    await page.waitForFunction(() => document.querySelector('#pt-status').textContent.includes('تمّ التأكيد'));
-    assert.equal(await text(page, '#pt-status'), 'تمّ التأكيد: ⭐⭐⭐ لـ سلمى. فُتحت المكافأة 📚 قصة. بعد تقديمها، يُرجى تسجيل ذلك في «المكافآت».');
-    assert.match(await text(page, '#pt-list .ptask-detail'), /أكّدها أحد الكبار على أي حال\./);
+    await page.click('#pt-list .ptask.status-assigned [data-confirm-anyway]');
+    await page.waitForFunction(() => document.querySelector('#pt-status').textContent.includes('تمّ:'));
+    assert.match(await text(page, '#pt-status'), /^تمّ: ⭐⭐⭐ لـ\s?سلمى\. تمّ الفوز بالمكافأة 📚 قصة\. وبعد تقديمها، يُرجى تسجيل ذلك في «المكافآت»\.$/);
+    assert.match(await text(page, '#pt-list .ptask-detail'), /سجّل أحد الكبار إنجازه\./);
   });
 
   await check('ar: Rewards in Arabic: jar, rewards to give, goals, a surprise, a correction, the history', async () => {
@@ -2142,7 +2186,7 @@ async function arabicParentFlow(browser, base) {
     await H.closeParent(page);
   });
 
-  await check('ar: the child\'s home shows the surprise once, the note of the task sent back, and the Done shelf', async () => {
+  await check('ar: the child\'s home shows the surprise once and the trophies; the task whose stars were taken back is a suggestion again', async () => {
     await page.click('#who-list .who-btn:has-text("سلمى")');
     await page.waitForSelector('#screen-home:not([hidden])');
     assert.equal(await page.locator('#home-surprises .surprise').count(), 2, 'the two unseen surprises, oldest first');
@@ -2155,22 +2199,23 @@ async function arabicParentFlow(browser, base) {
     await page.click('#btn-switch-child');
     await page.click('#who-list .who-btn:has-text("يوسف")');
     await page.waitForSelector('#screen-home:not([hidden])');
-    assert.equal(await text(page, '#home-todo .task-note'), '💬 ملاحظة: ' + NOTE_AR);
+    assert.equal(await text(page, '#home-todo-h'), 'اقتراحات الوالدين');
+    assert.match(await text(page, '#home-todo .task-card'), /سورة الإخلاص/);
     assert.deepEqual(seeded.problems, []);
   });
   await seeded.context.close();
 
   const dark = await H.newPage(browser, base, VIEW, null, { colorScheme: 'dark', initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(await rewardsDoc()) } });
-  await check('dark mode: To review, task details, Rewards and Settings follow prefers-color-scheme', async () => {
+  await check('dark mode: Tasks, task details, Rewards and Settings follow prefers-color-scheme', async () => {
     const p = dark.page;
     await p.goto(base + '/');
     await p.waitForSelector('#screen-who:not([hidden])');
     await H.openParent(p);
     assert.equal(await p.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(18, 20, 23)');
-    assert.equal(await p.$eval('#pr-list .review-item', (n) => getComputedStyle(n).backgroundColor), 'rgb(35, 40, 48)');
-    await H.shot(p, 'family-review-dark-360');
+    await H.shot(p, 'family-rewards-open-dark-360');
     await H.parentSection(p, 'tasks');
     await pickParentChild(p, '#pt-child', 'Maya');
+    assert.equal(await p.$eval('#pt-list .ptask', (n) => getComputedStyle(n).backgroundColor), 'rgb(35, 40, 48)');
     await p.click(`#pt-list .ptask:has-text("${SUN_TEXT}") [data-details]`);
     await H.shot(p, 'family-task-detail-dark-360');
     await H.parentSection(p, 'rewards');
@@ -2263,7 +2308,8 @@ async function privacySettingsFlow(browser, base) {
           await page.selectOption('#ps-lang', lang);
           await page.waitForSelector(`html[lang="${lang}"]`);
         }
-        assert.equal(await text(page, `${settings} > .hint`), S.fam_privacy_line, lang);
+        assert.equal(await text(page, `${settings} > .privacy-short`), S.fam_privacy_short, lang);
+        assert.equal(await text(page, `${settings} details.more [data-i18n="fam_privacy_line"]`), S.fam_privacy_line, lang);
         assert.equal(await text(page, `${settings} .consent-privacy`), S[mode.privacy], lang);
         assert.ok(await page.isVisible(`${settings} .consent-extra`));
         assert.equal(await text(page, `${settings} .consent-extra`), S[mode.extra], lang);
@@ -2337,7 +2383,7 @@ async function aiConsentFlow(browser, base) {
     const claude = mode.brain === 'claude';
     const old = await oldConsentDoc('en', 'en');
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) }, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(old) } });
-    await check(`AI consent, ${mode.name}, a document saved before the AI box: ${claude ? 'its consent does not cover Claude (the recite task is sent without it, the server answers offline; the Quran task works) and the parent is asked' : 'nothing changes (the tasks work; no prompt and no AI box)'}`, async () => {
+    await check(`AI consent, ${mode.name}, a document saved before the AI box: ${claude ? 'its consent does not cover Claude (the recite task is sent without it, the server answers offline; the Quran task works) and its box in Settings is unticked' : 'nothing changes (the tasks work; no AI box)'}`, async () => {
       await page.goto(base + '/');
       await page.waitForSelector('#screen-who:not([hidden])');
       await healthKnown(page);
@@ -2361,9 +2407,9 @@ async function aiConsentFlow(browser, base) {
       await page.click('#task-leave');
       await page.waitForSelector('#screen-home:not([hidden])');
       await H.openParent(page);
-      assert.equal(await page.isVisible('#ai-prompt'), claude, 'the prompt at the top of the parent area');
+      // (Redesign) No prompt of its own: the consent is given once, in Settings.
+      assert.equal(await page.locator('#ai-prompt').count(), 0);
       await H.parentSection(page, 'settings');
-      assert.ok(await page.isHidden('#ai-prompt'), 'not on Settings');
       assert.equal(await page.isVisible('#settings-ai-consent'), claude);
       assert.ok(!(await page.isChecked('#settings-ai-consent')), 'the old consent is not shown as given');
       assert.deepEqual(parentShows(await H.storedDoc(page)), [old.parent.consentAt, old.parent.aiConsentAt, null], 'kept as it was, never counted');
@@ -2411,7 +2457,7 @@ async function aiConsentFlow(browser, base) {
     v1.parent.aiConsentVersion = 1;
     assert.deepEqual(R.validateDoc(v1).repaired, []);
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) }, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(v1) } });
-    await check(`AI consent, ${mode.name}, a consent of version 1 (the notice without the age group): it no longer covers Claude; the grown-up card says where the OK is given; asked again under the full notice`, async () => {
+    await check(`AI consent, ${mode.name}, a consent of version 1 (the notice without the age group): it no longer covers Claude; the task form's photo says where the OK is given; asked again in Settings under the full notice`, async () => {
       await page.goto(base + '/');
       await page.waitForSelector('#screen-who:not([hidden])');
       await healthKnown(page);
@@ -2419,46 +2465,41 @@ async function aiConsentFlow(browser, base) {
       await startTask(page, 'Sun', 'recite');
       assert.ok(await page.isEnabled('#recite-rec'), 'Recite never waits for the AI consent (V6)');
       assert.ok(await page.isHidden('#why-recite-rec'));
-      await page.click('#task-leave');
-      await startTask(page, 'Writing', 'dictation');
-      await page.click('#btn-dict-start');
-      for (let i = 0; i < 2; i++) {
-        await page.waitForSelector('#dict-next:not([disabled])');
-        await page.click('#dict-next');
-      }
-      await page.waitForSelector('[data-stage="check"]:not([hidden])');
-      await page.fill('#dict-written', CAT);
-      assert.ok(await page.isEnabled('#btn-dict-check'), 'the typed check is sent without the AI consent (V6)');
-      assert.ok(await page.isHidden('[data-stage="check"] [data-why="dict-check"]'));
-      assert.ok(await page.isDisabled('#dict-take'));
-      assert.ok(await page.isVisible('[data-stage="check"] [data-why="dict-photo"]'));
-      assert.equal(await text(page, '[data-stage="check"] [data-why="dict-photo"]'), S.consent_needed_ai_grownup, 'a card for the grown-up: Claude, and where the OK is given');
-      await H.shot(page, 'ai-consent-v1-dict-check-en-360-' + (mode.online ? 'online' : 'local'));
+      await H.record(page, '#recite-rec', 300);
+      assert.deepEqual((await H.waitForCall(fake, '/api/recite/check', 1)).aiConsent, [], 'a consent of version 1 does not count');
+      await page.waitForSelector('#task-outcome-recite:not([hidden])');
       await page.click('#task-leave');
       await page.waitForSelector('#screen-home:not([hidden])');
+      // (Owner's decision) The dictation sends nothing to check: no photo of the paper.
+      await startTask(page, 'Writing', 'dictation');
+      assert.equal(await page.locator('#dict-take, #dict-choose, #btn-dict-check').count(), 0);
+      await page.click('#task-leave');
+      await page.waitForSelector('#screen-home:not([hidden])');
+      // The task form's page photo (no local reader here) says where the OK is given.
       await H.openParent(page);
-      await page.waitForSelector('#ai-prompt:not([hidden])');
-      assert.equal(await text(page, '#ai-prompt-claude'), S.consent_claude);
+      await H.parentSection(page, 'tasks');
+      await page.click('#pt-new');
+      await page.waitForSelector('#tf:not([hidden])');
+      assert.ok(await page.isDisabled('#tf-take'));
+      assert.equal(await text(page, '#tf [data-why="prep-photo"]'), S.consent_needed_ai_parent);
+      await page.click('#tf-cancel');
+      // Asked again under the full notice: the box of Settings, unticked.
+      await H.parentSection(page, 'settings');
+      assert.equal(await text(page, '#settings-consent-extra'), S.consent_claude);
       assert.match(S.consent_claude, /your child’s age group/);
-      await page.check('#ai-prompt-check');
-      await page.click('#ai-prompt-save');
-      await page.waitForSelector('#ai-prompt', { state: 'hidden' });
+      assert.ok(!(await page.isChecked('#settings-ai-consent')));
+      await H.shot(page, 'ai-consent-v1-settings-en-360-' + (mode.online ? 'online' : 'local'));
+      await page.check('#settings-ai-consent');
       const d = await H.storedDoc(page);
       assert.equal(d.parent.aiConsentVersion, R.AI_CONSENT_VERSION);
       assert.ok(R.AI_CONSENT_VERSION > 1);
       assert.notEqual(d.parent.aiConsentAt, now, 'a new time for the new text');
       await H.closeParent(page);
-      await startTask(page, 'Writing', 'dictation');
-      await page.click('#btn-dict-start');
-      for (let i = 0; i < 2; i++) {
-        await page.waitForSelector('#dict-next:not([disabled])');
-        await page.click('#dict-next');
-      }
-      await page.waitForSelector('[data-stage="check"]:not([hidden])');
-      await page.fill('#dict-written', CAT);
-      await page.click('#btn-dict-check');
-      assert.deepEqual((await H.waitForCall(fake, '/api/dictation/check', 1)).aiConsent, ['1'], 'the new consent counts');
-      assert.equal(fake.callsTo('/api/recite/check').length, 0);
+      await startTask(page, 'Sun', 'recite');
+      await page.waitForSelector('#recite-rec:not([disabled])');
+      await H.record(page, '#recite-rec', 300);
+      assert.deepEqual((await H.waitForCall(fake, '/api/recite/check', 2)).aiConsent, ['1'], 'the new consent counts');
+      assert.equal(fake.callsTo('/api/dictation/check').length, 0);
       if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
       assert.deepEqual(problems, []);
     });
@@ -2469,7 +2510,7 @@ async function aiConsentFlow(browser, base) {
   // both, as before; the AI box alone withdraws only Claude. "Not now" on the prompt.
   {
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(H.PRIVACY_MODES[1]) });
-    await check('AI consent in Settings: its box needs the general one; unticking the general box withdraws both; the AI box alone only Claude; the task form photo says why; "Not now"', async () => {
+    await check('AI consent in Settings: its box needs the general one; unticking the general box withdraws both; the AI box alone only Claude; the task form photo says why', async () => {
       await page.goto(base + '/');
       await H.setupFamily(page, { consent: true, aiConsent: true });
       let d = await H.storedDoc(page);
@@ -2491,23 +2532,14 @@ async function aiConsentFlow(browser, base) {
       assert.deepEqual([d.parent.aiConsentAt, d.parent.aiConsentVersion], [null, null], 'the general box never gives the AI consent');
       assert.ok(await page.isEnabled('#settings-ai-consent'));
       assert.ok(!(await page.isChecked('#settings-ai-consent')));
-      // Elsewhere in the parent area, the prompt; the task form's photo is off, and says why.
+      // The task form's photo is off, and says why.
       await H.parentSection(page, 'tasks');
-      assert.ok(await page.isVisible('#ai-prompt'));
       await page.click('#pt-new');
       await moreOptions(page);
       await page.waitForSelector('#tf:not([hidden])');
       assert.ok(await page.isDisabled('#tf-take'));
       assert.equal(await text(page, '#tf [data-why="prep-photo"]'), S.consent_needed_ai_parent);
       await page.click('#tf-cancel');
-      // "Not now": hidden until the parent area is opened again.
-      await page.click('#ai-prompt-later');
-      assert.ok(await page.isHidden('#ai-prompt'));
-      await H.parentSection(page, 'children');
-      assert.ok(await page.isHidden('#ai-prompt'));
-      await H.closeParent(page);
-      await H.openParent(page);
-      assert.ok(await page.isVisible('#ai-prompt'), 'asked again when the parent area opens');
       // The AI box alone.
       await H.parentSection(page, 'settings');
       await page.check('#settings-ai-consent');
@@ -2527,25 +2559,25 @@ async function aiConsentFlow(browser, base) {
   // it is approximate, as without Claude, and the note follows the consent at once.
   for (const mode of H.PRIVACY_MODES.filter((m) => m.brain === 'claude')) {
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) });
-    await check(`AI consent, ${mode.name}: without it the task form says a check by meaning is approximate; the prompt's OK hides the note at once, withdrawing it in Settings shows it again`, async () => {
+    await check(`AI consent, ${mode.name}: without it the task form says a check by meaning is approximate; the OK in Settings hides the note, withdrawing it shows it again`, async () => {
       await page.goto(base + '/');
       await H.setupFamily(page, { consent: true, aiConsent: false, nickname: 'Sami' });
       await H.openParent(page);
       await newTask(page, 'Sami', 'recite');
-      assert.ok(await page.isVisible('#ai-prompt'));
       await page.check('input[name="tf-mode"][value="contextual"]');
       assert.ok(await page.isVisible('#tf-mode-offline-note'), 'no AI consent: the meaning check will be approximate');
       assert.equal(await text(page, '#tf-mode-offline-note'), S.mode_contextual_offline);
       await page.check('input[name="tf-mode"][value="strict"]');
       assert.ok(await page.isVisible('#tf-mode-offline-note'), 'shown while "The meaning" can be chosen, as on Prepare');
+      await page.click('#tf-cancel');
+      // Given in Settings: the check by meaning goes to Claude now, no note.
+      await H.parentSection(page, 'settings');
+      await page.check('#settings-ai-consent');
+      await newTask(page, 'Sami', 'recite');
       await page.check('input[name="tf-mode"][value="contextual"]');
-      // The prompt's OK, with the form still open: the check by meaning goes to Claude now.
-      await page.check('#ai-prompt-check');
-      await page.click('#ai-prompt-save');
-      await page.waitForSelector('#ai-prompt', { state: 'hidden' });
-      assert.ok(await page.isVisible('#tf'), 'the task form stays open');
       assert.ok(await page.isHidden('#tf-mode-offline-note'), 'with the AI consent, no "approximate" note');
       await page.click('#tf-cancel');
+      // Withdrawn in Settings: the note is back on the next task form.      await page.click('#tf-cancel');
       // Withdrawn in Settings: the note is back on the next task form.
       await H.parentSection(page, 'settings');
       await page.uncheck('#settings-ai-consent');
@@ -2564,7 +2596,7 @@ async function aiConsentFlow(browser, base) {
   // page is loaded again. The general consent given then does not cover Claude.
   for (const mode of H.PRIVACY_MODES.filter((m) => m.brain !== 'claude')) {
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(mode) });
-    await check(`AI consent, Claude added later (${mode.name} at first): the recite task goes without the AI consent, the parent's prompt gives it, and the attempt counts`, async () => {
+    await check(`AI consent, Claude added later (${mode.name} at first): the recite task goes without the AI consent, the box of Settings gives it, and the attempt counts`, async () => {
       await page.goto(base + '/');
       await H.setupFamily(page, { consent: true });
       assert.ok(await page.isHidden('#ai-consent'));
@@ -2592,10 +2624,9 @@ async function aiConsentFlow(browser, base) {
       await page.click('#task-leave');
       await page.waitForSelector('#screen-home:not([hidden])');
       await H.openParent(page);
-      await page.waitForSelector('#ai-prompt:not([hidden])');
-      await page.check('#ai-prompt-check');
-      await page.click('#ai-prompt-save');
-      await page.waitForSelector('#ai-prompt', { state: 'hidden' });
+      await H.parentSection(page, 'settings');
+      assert.equal(await text(page, '#settings-consent-extra'), S.consent_claude, 'after the reload, the Claude notice and its box');
+      await page.check('#settings-ai-consent');
       d = await H.storedDoc(page);
       assert.equal(d.parent.aiConsentVersion, R.AI_CONSENT_VERSION);
       await H.closeParent(page);
@@ -2606,7 +2637,7 @@ async function aiConsentFlow(browser, base) {
       assert.deepEqual((await H.waitForCall(fake, '/api/recite/check', 1)).aiConsent, ['1']);
       await page.waitForSelector('#task-outcome-recite .celebrate');
       d = await H.storedDoc(page);
-      assert.equal(d.tasks[0].status, 'ready');
+      assert.equal(d.tasks[0].status, 'done', 'passed: done with its stars at once');
       if (mode.online) assert.deepEqual(await H.localSentencesShown(page), []);
       assert.deepEqual(problems, []);
     });
@@ -2624,7 +2655,7 @@ async function aiConsentFlow(browser, base) {
     const r = R.addChild(d, { nickname: lang === 'ar' ? 'سلمى' : 'Salma', lang, avatar: '🦊' }, now);
     d = R.createTask(r.doc, { childId: r.child.id, kind: 'recite', text: lang === 'ar' ? AR_TEXT : SUN_TEXT, lang, title: lang === 'ar' ? 'قراءة' : 'Sun' }, now).doc;
     const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: H.privacyHealth(H.PRIVACY_MODES[3]) }, { initScript: seedScript, initArg: { 'mommy.data.v2': JSON.stringify(d) } });
-    await check(`AI consent prompt in ${lang} at 360 px: the Claude notice and a box of its own, behind the PIN; Recite without it`, async () => {
+    await check(`AI consent in ${lang} at 360 px: the Claude notice and its box in Settings, behind the PIN; Recite without it`, async () => {
       await page.goto(base + '/');
       await page.waitForSelector('#screen-who:not([hidden])');
       await healthKnown(page);
@@ -2637,26 +2668,18 @@ async function aiConsentFlow(browser, base) {
       await page.click('#task-leave');
       await page.waitForSelector('#screen-home:not([hidden])');
       await H.openParent(page);
-      await page.waitForSelector('#ai-prompt:not([hidden])');
+      // (Redesign) No prompt: the parent area opens on Settings only without the general
+      // consent; the AI box is there, under the Claude notice.
+      assert.equal(await page.locator('#ai-prompt').count(), 0);
+      await H.parentSection(page, 'settings');
       assert.equal(await page.getAttribute('html', 'dir'), lang === 'ar' ? 'rtl' : 'ltr');
-      assert.equal(await text(page, '#ai-prompt-h'), L.fam_ai_title);
-      assert.equal(await text(page, '#ai-prompt > p:not(.hint):not(.status)'), L.fam_ai_lead);
-      assert.equal(await text(page, '#ai-prompt-claude'), L.consent_claude);
-      assert.equal(await text(page, '#ai-prompt label'), L.consent_ai_label);
-      assert.equal(await text(page, '#ai-prompt-save'), L.fam_save);
-      assert.equal(await text(page, '#ai-prompt-later'), L.fam_ai_later);
+      assert.equal(await text(page, '#settings-consent-extra'), L.consent_claude);
+      assert.equal(await text(page, 'label[for="settings-ai-consent"]'), L.consent_ai_label);
       await H.noHorizontalScroll(page);
       assert.deepEqual(await H.overflowing(page), []);
-      assert.deepEqual((await H.smallTargets(page)).filter((x) => x.includes('ai-prompt')), []);
-      await H.shotEl(page, '#ai-prompt', `ai-prompt-${lang}-360`);
-      await H.shot(page, `ai-prompt-${lang}-360-page`);
-      await page.click('#ai-prompt-save');
-      assert.equal(await text(page, '#ai-prompt-status'), L.fam_ai_tick_first);
-      assert.equal(await page.evaluate(() => document.activeElement.id), 'ai-prompt-check');
-      await page.check('#ai-prompt-check');
-      await page.click('#ai-prompt-save');
-      await page.waitForSelector('#ai-prompt', { state: 'hidden' });
-      assert.equal(await text(page, '#ai-prompt-done'), L.fam_ai_saved);
+      assert.deepEqual(await H.smallTargets(page), []);
+      await H.shot(page, `ai-consent-settings-${lang}-360`);
+      await page.check('#settings-ai-consent');
       assert.ok(R.hasAiConsent(await H.storedDoc(page)));
       assert.deepEqual(await H.localSentencesShown(page), [], 'online: no local-only sentence');
       assert.equal(fake.callsTo('/api/recite/check').length, 0);
@@ -2766,7 +2789,7 @@ async function familyCopyFlow(browser, base) {
     await H.parentSection(page, 'settings');
     const S = H.allStrings('en');
     assert.equal(await text(page, '#ps-copy-h'), S.fam_copy_h);
-    assert.equal(await text(page, `${settings} .copy-note`), 'The file holds the children’s names and age groups, their tasks, stars and rewards, but not the PIN. It is not encrypted: please keep it private.');
+    assert.equal(await text(page, `${settings} .copy-note`), 'The file holds the children’s names and age groups, their texts, tasks, stars and rewards, but not the PIN. It is not encrypted: please keep it private.');
     assert.match(await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', 'content'), /^default-src 'self'; script-src 'self' blob:;/);
     let download;
     const requests = await requestsDuring(page, async () => {
@@ -3063,7 +3086,7 @@ async function familyCopyFlow(browser, base) {
     await H.shot(fresh, 'family-copy-setup-ar-360');
     await fresh.selectOption('#setup-lang', 'en');
     await copySummaryOk(fresh, 'setup-copy', family, 'en');
-    assert.equal(await text(fresh, '#setup-copy-children'), '🐰 Maya — tasks: 2, stars: 13🐻 Adam — tasks: 1, stars: 0');
+    assert.equal(await text(fresh, '#setup-copy-children'), '🐰 Maya — tasks: 2, stars: 13🐻 Adam — tasks: 1, stars: 1');
     assert.deepEqual(await H.smallTargets(fresh), [], 'touch targets of at least 44 px');
     await H.shot(fresh, 'family-copy-setup-en-360');
     // "Do not use this copy" brings the first child back; the copy can be loaded again.
@@ -3182,6 +3205,226 @@ async function handshakeFlow(browser, base) {
   await context.close();
 }
 
+// ---------------------------------------------------------------------------
+// Redesign (docs/REWARDS.md, "Redesign"): a child adds their own profile and texts,
+// practises in 3 taps, earns stars by themselves; texts persist and travel in a copy.
+// ---------------------------------------------------------------------------
+
+async function redesignFlow(browser, base) {
+  const { context, page, fake, problems } = await H.newPage(browser, base, VIEW, { health: { asr: true, tts: true, brain: 'offline', quran: true, ocr: false, languages: ['ar', 'en', 'fr'] } });
+  const doc = () => H.storedDoc(page);
+
+  await check('redesign: "Who is learning?": a child adds their own profile (name, age, language, picture), without a PIN, and lands on their home', async () => {
+    await page.goto(base + '/');
+    await H.setupFamily(page, { nickname: 'Sami' });
+    await page.click('#btn-switch-child');
+    await page.waitForSelector('#screen-who:not([hidden])');
+    assert.ok(await page.isHidden('#who-add'));
+    await page.click('#who-add-open');
+    await page.waitForSelector('#who-add:not([hidden])');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'who-add-h');
+    await page.click('#wa-save');
+    assert.equal(await text(page, '#wa-status'), 'Let’s type a name first.');
+    await page.fill('#wa-nick', 'Lina');
+    await page.selectOption('#wa-age', '10-13');
+    await page.selectOption('#wa-lang', 'fr');
+    await page.check('#wa-avatars input >> nth=5');
+    await H.shot(page, 'redesign-who-add-360');
+    await H.noHorizontalScroll(page);
+    assert.deepEqual(await H.smallTargets(page), []);
+    await page.click('#wa-save');
+    await page.waitForSelector('#screen-home:not([hidden])');
+    assert.ok(await page.isHidden('#pin-dialog'), 'no PIN');
+    assert.equal(await text(page, '#home-title'), 'Coucou Lina !');
+    const d = await doc();
+    const lina = d.children.find((c) => c.nickname === 'Lina');
+    assert.deepEqual([lina.age, lina.lang, lina.avatar], ['10-13', 'fr', R.AVATARS[5]]);
+    assert.equal(d.activeChildId, lina.id);
+    // Removing a profile stays the parent's: the child's side has no way to do it.
+    assert.equal(await page.locator('#screen-who [data-remove], #screen-home [data-remove]').count(), 0);
+  });
+
+  await check('redesign: with no child at all, "Who is learning?" opens on the form (never a dead end)', async () => {
+    const empty = await H.newPage(browser, base, VIEW);
+    const now = new Date().toISOString();
+    let d0 = R.emptyDoc(now, { uiLang: 'en' });
+    d0 = await R.setPin(R.updateParent(d0, { consent: true }, now), PIN, now);
+    await empty.page.addInitScript(seedScript, { 'mommy.data.v2': JSON.stringify(d0) });
+    await empty.page.goto(base + '/');
+    await empty.page.waitForSelector('#screen-who:not([hidden])');
+    assert.ok(await empty.page.isVisible('#who-add'));
+    assert.equal(await text(empty.page, '#who-empty'), 'No one here yet: let’s add the first profile.');
+    assert.ok(await empty.page.isHidden('#who-add-open'));
+    await empty.page.fill('#wa-nick', 'Nour');
+    await empty.page.click('#wa-save');
+    await empty.page.waitForSelector('#screen-home:not([hidden])');
+    assert.deepEqual(empty.problems, []);
+    await empty.context.close();
+  });
+
+  await check('redesign: My texts: the child adds a text (name, language, the text), it is saved in the family list and kept after a reload', async () => {
+    await page.click('#btn-switch-child');
+    await page.click('#who-list .who-btn:has-text("Sami")');
+    await page.waitForSelector('#screen-home:not([hidden])');
+    await page.click('#screen-home [data-go="texts"]');
+    await page.waitForSelector('#screen-texts:not([hidden])');
+    assert.equal(await text(page, '#texts-empty'), 'No text yet. Press “New text” to add one.');
+    await page.click('#texts-new');
+    await page.waitForSelector('#screen-prepare:not([hidden])');
+    assert.equal(await text(page, '#prep-title'), 'New text');
+    assert.equal(await page.locator('#screen-prepare .tag-parent').count(), 0, 'no "For the grown-up": it is the child\'s');
+    await page.fill('#page-title', 'My cat');
+    await page.fill('#page-text', PAGE_TEXT);
+    await page.click('#btn-confirm');
+    await page.waitForSelector('#prep-next:not([hidden])');
+    assert.equal(await text(page, '#prep-title'), 'Change the text');
+    await H.shot(page, 'redesign-new-text-360');
+    let d = await doc();
+    assert.deepEqual(d.texts.map((x) => [x.title, x.text, x.lang, x.mode]), [['My cat', PAGE_TEXT, 'en', 'strict']]);
+    await page.reload();
+    await page.waitForSelector('#screen-who:not([hidden])');
+    await page.click('#who-list .who-btn:has-text("Sami")');
+    await page.click('#screen-home [data-go="texts"]');
+    await page.waitForSelector('#texts-list .text-item');
+    assert.match(await text(page, '#texts-list .text-item'), /My cat.*English · word by word/s);
+    await H.shot(page, 'redesign-my-texts-360');
+    await H.noHorizontalScroll(page);
+    assert.deepEqual(await H.smallTargets(page), []);
+  });
+
+  await check('redesign: free practice of a saved text is 3 taps from the home (My texts, Read aloud, Start); a pass gives a star at once', async () => {
+    await page.click('#btn-home');
+    await page.waitForSelector('#screen-home:not([hidden])');
+    let taps = 0;
+    const tap = async (sel) => {
+      await page.click(sel);
+      taps++;
+    };
+    await tap('#screen-home [data-go="texts"]');
+    await tap('#texts-list [data-text-recite]');
+    await page.waitForSelector('#recite-main:not([hidden])');
+    assert.match(await text(page, '#recite-which'), /Text: My cat/);
+    fake.queueRecite(H.strictResult(PAGE_TEXT, [], 'Wonderful!'));
+    await tap('#recite-rec');
+    await page.waitForSelector('#recite-rec[data-state="recording"]');
+    await sleep(400);
+    await page.click('#recite-rec'); // Stop
+    assert.equal(taps, 3);
+    await page.waitForSelector('#task-outcome-recite:not([hidden])');
+    assert.equal(await text(page, '#task-outcome-recite'), 'Well done! A star for the jar: ⭐');
+    const d = await doc();
+    const sami = d.children.find((c) => c.nickname === 'Sami').id;
+    assert.deepEqual(d.jar[sami].ledger.map((e) => [e.reason, e.act, e.delta]), [['practice', 'recite', 1]]);
+    // The same text again today: no second star for it (the child may retry freely).
+    fake.queueRecite(H.strictResult(PAGE_TEXT, [], 'Wonderful!'));
+    await H.record(page, '#recite-rec', 400);
+    await page.waitForFunction(() => /already earned today/.test(document.querySelector('#task-outcome-recite').textContent));
+    assert.equal((await doc()).jar[sami].balance, 1);
+  });
+
+  await check('redesign: after a reload, Read aloud without a text lists the child\'s texts to pick (3 taps again)', async () => {
+    await page.reload();
+    await page.waitForSelector('#screen-who:not([hidden])');
+    await page.click('#who-list .who-btn:has-text("Sami")');
+    await page.waitForSelector('#screen-home:not([hidden])');
+    await page.click('#screen-home [data-go="recite"]');
+    await page.waitForSelector('#recite-empty:not([hidden])');
+    assert.equal(await text(page, '#recite-empty > p'), 'Let’s choose a text to read aloud.');
+    assert.doesNotMatch(await text(page, '#recite-empty'), /grown-up/);
+    await H.shot(page, 'redesign-recite-pick-360');
+    await page.click('#recite-empty [data-pick-text]');
+    await page.waitForSelector('#recite-main:not([hidden])');
+    assert.ok(await page.isEnabled('#recite-rec'));
+  });
+
+  await check('redesign: the child renames a text ("Change"), and deletes one after a question in place; its stars stay', async () => {
+    await H.goTab(page, 'texts');
+    await page.click('#texts-list [data-text-edit]');
+    await page.waitForSelector('#screen-prepare:not([hidden])');
+    assert.ok(await page.isVisible('#prep-next'), 'a saved text can be practised from here at once');
+    await page.fill('#page-title', 'Cat poem');
+    await page.press('#page-title', 'Tab');
+    await page.waitForFunction(() => window.MommyApp && JSON.parse(localStorage.getItem('mommy.data.v2')).texts[0].title === 'Cat poem');
+    await H.goTab(page, 'texts');
+    assert.match(await text(page, '#texts-list .text-title'), /Cat poem/);
+    await page.click('#texts-list [data-text-delete]');
+    assert.equal(await text(page, '#texts-list .inline-confirm p'), 'Delete this text? Its stars stay in the jar.');
+    await page.click('#texts-list [data-text-delete-no]');
+    assert.equal(await page.locator('#texts-list .text-item').count(), 1);
+    await page.click('#texts-list [data-text-delete]');
+    await page.click('#texts-list [data-text-delete-yes]');
+    await page.waitForSelector('#texts-empty:not([hidden])');
+    assert.equal(await text(page, '#texts-status'), 'The text was deleted.');
+    const d = await doc();
+    assert.equal(d.texts.length, 0);
+    assert.equal(d.jar[d.children.find((c) => c.nickname === 'Sami').id].balance, 1, 'the star stays');
+  });
+
+  await check('redesign: at most 30 texts: "New text" then says so, kindly', async () => {
+    const d = await doc();
+    const sami = d.children.find((c) => c.nickname === 'Sami').id;
+    const now = new Date().toISOString();
+    let x = d;
+    for (let i = 0; i < R.LIMITS.textsPerChild; i++) x = R.addText(x, sami, { text: 'Text ' + i, lang: 'en' }, now).doc;
+    await page.evaluate((raw) => {
+      localStorage.setItem('mommy.data.v2', raw);
+      window.dispatchEvent(new StorageEvent('storage', { key: 'mommy.data.v2' }));
+    }, JSON.stringify(x));
+    await page.waitForFunction(() => document.querySelectorAll('#texts-list .text-item').length === 30);
+    await page.click('#texts-new');
+    assert.equal(await text(page, '#texts-status'), 'There are already 30 texts. Let’s delete one first.');
+    assert.ok(await page.isVisible('#screen-texts'));
+  });
+
+  await check('redesign: a copy of the family list carries the children\'s texts', async () => {
+    await H.openParent(page);
+    await H.parentSection(page, 'settings');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#ps-copy-save')]);
+    const copy = JSON.parse(require('node:fs').readFileSync(await download.path(), 'utf8'));
+    assert.equal(copy.family.texts.length, 30);
+    assert.equal(copy.parent, undefined);
+    await H.closeParent(page);
+  });
+
+  await check('redesign flow: no console errors, page errors or external requests', async () => {
+    assert.deepEqual(problems, []);
+  });
+  await context.close();
+  // Screenshots of the new screens in Arabic and in dark mode at 360 px, with the layout checks.
+  for (const [lang, scheme] of [['ar', 'light'], ['ar', 'dark'], ['en', 'dark']]) {
+    const tag = `${lang}${scheme === 'dark' ? '-dark' : ''}-360`;
+    const v = await H.newPage(browser, base, VIEW, null, { colorScheme: scheme });
+    await check(`redesign screens in ${tag}: setup, who (with the new profile form), home, My texts, a new text; RTL, no overflow, 44 px targets`, async () => {
+      const p = v.page;
+      const ok = async (name) => {
+        await H.noHorizontalScroll(p);
+        assert.deepEqual(await H.overflowing(p), [], name);
+        assert.deepEqual(await H.smallTargets(p), [], name);
+        await H.shot(p, `redesign-${name}-${tag}`);
+      };
+      await p.goto(base + '/');
+      await p.waitForSelector('#setup-form:not([hidden])');
+      if (lang !== 'en') await p.selectOption('#setup-lang', lang);
+      assert.equal(await p.getAttribute('html', 'dir'), lang === 'ar' ? 'rtl' : 'ltr');
+      await ok('setup');
+      await H.setupFamily(p, { lang, childLang: lang, nickname: lang === 'ar' ? 'سلمى' : 'Salma' });
+      await ok('home');
+      await p.click('#btn-switch-child');
+      await p.click('#who-add-open');
+      await ok('who');
+      await p.click('#wa-cancel');
+      await p.click('#who-list .who-btn');
+      await p.waitForSelector('#screen-home:not([hidden])');
+      await H.saveText(p, lang === 'ar' ? 'ذهب الولد إلى المدرسة.' : PAGE_TEXT, { title: lang === 'ar' ? 'المدرسة' : 'My cat', lang });
+      await ok('new-text');
+      await H.goTab(p, 'texts');
+      await ok('my-texts');
+      assert.deepEqual(v.problems, []);
+    });
+    await v.context.close();
+  }
+}
+
 /** MOMMY_ONLY=familyFlow,pinFlow runs only those browser flows (to work on one). */
 const wanted = (name) => !process.env.MOMMY_ONLY || process.env.MOMMY_ONLY.split(',').includes(name);
 
@@ -3231,6 +3474,8 @@ async function main() {
     if (wanted('familyCopyFlow')) await familyCopyFlow(browser, base);
     console.log('# browser: script order');
     if (wanted('handshakeFlow')) await handshakeFlow(browser, base);
+    console.log('# browser: redesign (the child\'s own profile and texts, 3-tap practice, stars of practice)');
+    if (wanted('redesignFlow')) await redesignFlow(browser, base);
   } finally {
     await browser.close();
     server.close();

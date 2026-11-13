@@ -8,9 +8,9 @@
  * behind the PIN). The task runner opens app.js's recite, dictation and Quran screens
  * preloaded (MommyApp.startTask) and records every check result (recordAttempt).
  *
- * The parent area has five sections: To review (the queue across children: Confirm,
- * "Not yet: try again" with a note for the child), Tasks (create, edit, archive, and the
- * details of a task with "Confirm anyway"), Rewards (per child: the jar and its history,
+ * (Redesign) Also 'texts' (My texts: the child's saved texts) and the child's own new
+ * profile on 'who'. The parent area has four sections: Tasks (optional suggestions:
+ * create, edit, archive, "Mark as done", "Take the stars back", details), Rewards (per child: the jar and its history,
  * task rewards to give, goals, surprises, corrections), Children, and Settings (consent,
  * change the PIN, the parent's language, a copy of the family list, delete all data on
  * this device).
@@ -107,7 +107,7 @@
       fam_improve_many: '{n} more words right than last time!',
       fam_improve_few: '{n} more words right than last time!',
       fam_improve_two: '{n} more words right than last time!',
-      fam_detail_anyway_dictation: 'The app has not passed this dictation. If you have checked your child’s paper yourself and it is right, you can confirm it anyway.',
+      fam_detail_anyway_dictation: 'The paper is checked in “Mom’s check” at the end of the dictation. If you have checked the paper yourself another time and it is right, you can mark the task as done.',
       fam_err_quran_meaning_diff: 'This text has words of the Quran, recited word by word only: “Word by word” is now chosen. Some of them are not as in the mushaf (see the note under the text). Please use the mushaf text before saving.',
       fam_err_quran_diff_recite: 'Some words of the Quran in this text are not as in the mushaf: see the note under the text. Please use the mushaf text before saving.',
       fam_setup_lead: 'Set up once, for the whole family: it takes a minute.',
@@ -405,7 +405,7 @@
       texts_mode_words: 'mot à mot',
       texts_mode_meaning: 'par le sens',
       texts_deleted: 'Le texte a été supprimé.',
-      texts_delete_q: 'Supprimer ce texte ? Ses étoiles restent dans le bocal.',
+      texts_delete_q: 'Supprimer ce texte ? Ses étoiles sont gardées dans le bocal.',
       texts_delete: 'Supprimer',
       texts_edit: 'Modifier',
       texts_dict: 'Dictée',
@@ -436,7 +436,7 @@
       fam_improve_many: '{n} mots justes de plus que la dernière fois !',
       fam_improve_few: '{n} mots justes de plus que la dernière fois !',
       fam_improve_two: '{n} mots justes de plus que la dernière fois !',
-      fam_detail_anyway_dictation: 'L’application n’a pas validé cette dictée. Si vous avez vérifié vous-même la feuille de votre enfant et qu’elle est juste, vous pouvez la valider quand même.',
+      fam_detail_anyway_dictation: 'La feuille est vérifiée dans « La vérification de maman » à la fin de la dictée. Si vous avez vérifié la feuille vous-même une autre fois et qu’elle est juste, vous pouvez marquer la tâche comme faite.',
       fam_err_quran_meaning_diff: 'Ce texte contient des mots du Coran, qui se récitent seulement mot à mot : « Mot à mot » est maintenant choisi. Certains ne sont pas comme dans le mushaf (voir la note sous le texte). Prenez le texte du mushaf avant d’enregistrer.',
       fam_err_quran_diff_recite: 'Des mots du Coran de ce texte ne sont pas comme dans le mushaf : voir la note sous le texte. Prenez le texte du mushaf avant d’enregistrer.',
       fam_setup_lead: 'Une seule fois, pour toute la famille : cela prend une minute.',
@@ -762,7 +762,7 @@
       fam_improve_many: '{n} كلمة صحيحة أكثر من المرة السابقة!',
       fam_improve_few: '{n} كلمات صحيحة أكثر من المرة السابقة!',
       fam_improve_two: 'كلمتان صحيحتان أكثر من المرة السابقة!',
-      fam_detail_anyway_dictation: 'لم يحتسب التطبيق هذا الإملاء ناجحًا. بعد مراجعة ورقة الطفل والتأكد من صحتها، يمكن تأكيده على أي حال.',
+      fam_detail_anyway_dictation: 'تُصحَّح الورقة في «تصحيح ماما» في نهاية الإملاء. وإذا صُحّحت الورقة في وقت آخر وكانت صحيحة، فيمكن تسجيل إنجاز المهمة.',
       fam_err_quran_meaning_diff: 'في هذا النص كلمات من القرآن الكريم، وهي تُسمَّع كلمةً بكلمة فقط، وقد اختيرت «كلمة بكلمة». وبعضها ليس كما في المصحف، كما هو مبيَّن تحت النص. يُرجى استخدام نص المصحف قبل الحفظ.',
       fam_err_quran_diff_recite: 'بعض كلمات القرآن الكريم في هذا النص ليست كما في المصحف، كما هو مبيَّن تحت النص. يُرجى استخدام نص المصحف قبل الحفظ.',
       fam_setup_lead: 'إعداد لمرة واحدة للعائلة كلها، ويستغرق دقيقة.',
@@ -4125,9 +4125,7 @@
       if (R.LANGS.includes(res.lang)) $('#tf-lang').value = res.lang;
       $('#tf-text').value = text;
       app.setTextLang($('#tf-text'), $('#tf-lang').value);
-      if (res.needs_manual || !text.trim()) app.setStatus(status, 'page_needs_manual');
-      else if (res.notes) app.setStatus(status, 'page_read_ok', null, { detail: String(res.notes) });
-      else app.setStatus(status, 'page_read_ok');
+      app.setPageReadStatus(status, res, text);
       // A page that is Quran (the server decides): a Quran task, on its ayat when they are
       // one range. A school page that includes Quran: its Quran parts, as on Prepare.
       if (res.contains_quran === true) {

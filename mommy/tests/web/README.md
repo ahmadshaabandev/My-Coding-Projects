@@ -24,6 +24,46 @@ node tests/web/access.cjs         # about 15 s: the access gate of an online dep
 Screenshots (optional): `MOMMY_SHOTS_DIR=/some/dir node tests/web/smoke.cjs` (or
 `family.cjs`).
 
+One flow only (while working on it): `MOMMY_ONLY=quranPartsFlow,liveFlow node
+tests/web/smoke.cjs` or `MOMMY_ONLY=redesignFlow node tests/web/family.cjs` (the names of
+the browser flows in `main()`; the Node checks always run).
+
+### The redesign (docs/REWARDS.md, "Redesign")
+
+Where the tables above describe the earlier rules (To review, "Confirm the task now",
+the parent's review of a dictation, the AI consent prompt), the checks were rewritten
+for the redesign:
+
+- `rewards.test.cjs`: a passing attempt makes a task done with its stars at once;
+  `undoTask` (never below 0; credited again after a new pass); "My texts" (`addText`,
+  `updateText`, `removeText`, `childTexts`, the limit of 30, validation, a copy with
+  texts and an older copy without them); `awardPractice` (once per text and activity a
+  day, at most 3 a day, the Quran section, results that do not fit); the silent
+  migration of tasks that waited for the parent; the random sequence with undo, texts and
+  practice stars.
+- `smoke.cjs`: the dictation says each sentence at normal speed, then word by word
+  slowly (`slow: true`), fetched once and fetched ahead; sentences of at most 4 words for
+  6-9 years; "Mom's check" (tap, tap again to undo, "Done", "All correct"), the result
+  with the score and the right spellings, nothing sent to `/api/dictation/check`, only
+  the score line spoken; the Quran part in its mushaf form in the check; Next free during
+  a grown-up step; screenshots `dictation-mom-*`, `dictation-result-*` (en, fr, ar, ar
+  dark, 360 px); the live recitation keeps the line being read above the record bar
+  (`live-scroll-360`, also with reduced motion); the local page reader (`ocr` in the
+  fake's `/api/health`, `"reader": "local"`): the photo without the AI consent, the
+  "check it word by word" line, the privacy texts in three ways the app runs.
+- `family.cjs` (`redesignFlow` and the rewritten checks): a child adds a profile on "Who
+  is learning?" (no PIN; the form open with no child), adds a text that survives a
+  reload, practises in three taps and earns a star once a day, picks a text after a
+  reload, renames and deletes a text, meets the limit of 30, and a copy carries the
+  texts; the parent area opens on Rewards, has no queue to review, stays open while the
+  grown-up moves around and locks with "Close"; "Mark as done" and "Take the stars back"
+  (en and ar); Mom's check in a task (no PIN); seeded documents with a task that waited
+  for the parent are migrated; the AI consent is given in Settings only.
+- Helpers: `saveText`, `openEditor` (the text being practised, or a new one),
+  `goTab` (the home has no tabs), `momCheck`, `dictateAll`; `newPage` sets
+  `window.__mommyPauseScale` (0.01) so the pauses to write each word are short;
+  `openParent` opens an area that is still open without the PIN.
+
 ## Shared helpers (`helpers.cjs`)
 
 - Harness: `check(name, fn)`, `finish()` (summary and exit code), `sleep`.

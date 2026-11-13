@@ -24,7 +24,9 @@
  *     scores (accuracy, verdict, word counts, passed).
  *   - Quran tasks are always checked word by word: they never carry a mode, and a Quran
  *     attempt passes only on the strict Quran check (/api/quran/check) result.
- *   - Stars are credited exactly once per task, when the parent confirms it. A balance
+ *   - (Redesign) A task's stars are credited when the app passes it (or a grown-up marks
+ *     it done), once until a grown-up takes them back (undoTask); free practice earns at
+ *     most 3 stars a day (awardPractice). A balance
  *     never goes below 0 and every change of it has a ledger entry.
  *   - The PIN is a child lock, not security: PBKDF2-SHA-256 through SubtleCrypto, with a
  *     backoff whose state lives in the document (a reload does not reset it).

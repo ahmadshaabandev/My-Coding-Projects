@@ -770,7 +770,9 @@ function textRefusal(rawText, lang, mode, an) {
 }
 
 function makeFakeApi(opts) {
-  const o = Object.assign({ health: { asr: true, tts: true, brain: 'claude', quran: true, languages: ['ar', 'en', 'fr'] }, phrases: ['The cat sat', 'on the mat.'] }, opts || {});
+  // (extra) "ocr": false by default (no local page reader), as a server without its models.
+  const o = Object.assign({ health: { asr: true, tts: true, brain: 'claude', quran: true, ocr: false, languages: ['ar', 'en', 'fr'] }, phrases: ['The cat sat', 'on the mat.'] }, opts || {});
+  if (o.health && o.health.ocr === undefined) o.health = Object.assign({ ocr: false }, o.health);
   const calls = [];
   const reciteQueue = [];
   const dictationQueue = [];
@@ -821,9 +823,14 @@ function makeFakeApi(opts) {
     }
     const quranRefusal = () => json({ error: 'quran_text', message: QURAN_MESSAGE }, 422);
     if (p === '/api/page/read' && method === 'POST') {
-      // Without Claude (or without the AI consent) the offline brain reads nothing.
-      const offlinePage = { text: '', lang: call.form && call.form.lang ? call.form.lang.text : null, notes: '', source: 'offline', needs_manual: true, contains_quran: false };
-      const page = Object.assign({}, brain === 'claude' ? pageRead || { text: PAGE_TEXT, lang: 'en', notes: '', source: 'claude', needs_manual: false, contains_quran: false } : offlinePage, { brain });
+      // Without Claude (or without the AI consent) the local reader on the server reads it
+      // when /api/health says "ocr" ("reader": "local"), else nobody ("reader": "none").
+      const formLang = call.form && call.form.lang ? call.form.lang.text : null;
+      const offlinePage = { text: '', lang: formLang, notes: '', source: 'offline', needs_manual: true, contains_quran: false, reader: 'none' };
+      const localPage = Object.assign({ text: PAGE_TEXT, lang: 'en', notes: '' }, pageRead || {}, { source: 'offline', needs_manual: false, contains_quran: false, reader: 'local' });
+      if (localPage.lang === undefined) localPage.lang = formLang;
+      const claudePage = Object.assign({}, pageRead || { text: PAGE_TEXT, lang: 'en', notes: '', source: 'claude', needs_manual: false, contains_quran: false }, { reader: 'claude' });
+      const page = Object.assign({}, brain === 'claude' ? claudePage : o.health.ocr ? localPage : offlinePage, { brain });
       const text = typeof page.text === 'string' ? page.text : '';
       // The server decides from the text read when it has Arabic: a page that is Quran
       // (Q1) keeps contains_quran; a school page that includes Quran is read as usual.
@@ -1230,7 +1237,7 @@ const PRIVACY_MODES = [
 
 /** The fake API's /api/health answer for one of PRIVACY_MODES. */
 function privacyHealth(mode) {
-  return { asr: true, tts: true, brain: mode.brain, quran: true, languages: ['ar', 'en', 'fr'], online: mode.online };
+  return { asr: true, tts: true, brain: mode.brain, quran: true, languages: ['ar', 'en', 'fr'], online: mode.online, ocr: !!mode.ocr };
 }
 
 /**
@@ -1300,6 +1307,7 @@ async function enterPin(page, pin) {
  * area still open (left by moving to another screen) opens without it.
  */
 async function openParent(page, pin) {
+  if (await page.isVisible('#screen-parent')) return; // still open, and on it
   if (await page.isVisible('#btn-who-parents')) {
     await page.click('#btn-who-parents');
   } else {
@@ -1353,6 +1361,7 @@ async function openEditor(page, o) {
     await page.click('#texts-new');
   }
   await page.waitForSelector('#screen-prepare:not([hidden])');
+  await settleFrames(page);
 }
 
 /** (Redesign) Go to a child's screen by its tab (the home has no tabs, only big buttons). */
@@ -1393,6 +1402,12 @@ async function closeParent(page) {
   await page.click('#btn-parent-close');
   await page.waitForSelector('#screen-parent', { state: 'hidden' });
   await page.waitForSelector('#screen-home:not([hidden]), #screen-who:not([hidden])');
+  await settleFrames(page);
+}
+
+/** Two animation frames and a short pause: the screen just shown has settled. */
+async function settleFrames(page) {
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 250)))));
 }
 
 /** Change the language of the (only or first) child through the parent area. */

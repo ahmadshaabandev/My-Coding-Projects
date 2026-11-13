@@ -180,7 +180,8 @@ async function onlineConsent(page, lang) {
   await page.waitForSelector('#consent-extra:not([hidden])');
   assert.equal(await page.getAttribute('html', 'lang'), lang);
   const S = H.allStrings(lang);
-  assert.equal((await page.textContent('#consent-privacy')).trim(), S.consent_online_no_photos);
+  // Without Claude, a photo can still be read when the server has its local page reader.
+  assert.equal((await page.textContent('#consent-privacy')).trim(), health.ocr ? S.consent_online : S.consent_online_no_photos);
   assert.equal((await page.textContent('#consent-extra')).trim(), S.consent_online_no_ai);
   assert.deepEqual(await H.localSentencesShown(page), []);
 }

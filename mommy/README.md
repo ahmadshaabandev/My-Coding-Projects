@@ -3,16 +3,19 @@
 Mommy is a web prototype of a tutor that stands in for a parent while a child (6 to 18
 years old) practises school lessons in **Arabic, English or French**:
 
-- **Prepare a page.** The parent photographs a printed textbook page or worksheet, or
-  types or pastes the text, then confirms it. The photo is read by Claude with the
-  parent's AI consent, otherwise by a local reader on the server itself (PP-OCR, no AI
-  service, nothing leaves the server; see "Local page reading").
-- **Recite.** The child reads the text aloud. *Strict* mode checks it word by word;
-  *contextual* mode checks that the meaning is right. Mistakes are highlighted and the
-  feedback can be spoken.
-- **Dictation.** The app reads the text out slowly, one phrase at a time, and the child
-  writes on paper. The parent then photographs the page or types what the child wrote.
-  The result goes to the parent to confirm before the child sees it.
+- **My texts.** The child saves the texts to practise: typed or pasted, or a photo of a
+  printed textbook page or worksheet. The photo is read by Claude with the parent's AI
+  consent, otherwise by a local reader on the server itself (PP-OCR, no AI service,
+  nothing leaves the server; see "Local page reading"); the text can be fixed before it
+  is saved.
+- **Read aloud (Recite).** The child reads a text aloud. *Strict* mode checks it word by
+  word (the words read so far are coloured while the child reads, and the page follows
+  the line); *contextual* mode checks that the meaning is right. Mistakes are
+  highlighted and the feedback can be spoken.
+- **Dictation.** The app says each short sentence once, then word by word, slowly, with
+  time to write each word; the child writes on paper. At the end a grown-up looks at
+  the paper and taps the words that are not right ("Mom's check"); the child sees the
+  score and the right spellings at once. Nothing of the paper is sent anywhere.
 - **Quran.** A separate section for Quran recitation (Hafs), checked strictly against
   the verbatim Tanzil text, with a "where am I?" search for recitation from memory.
   It uses no AI model and no synthetic voice.
@@ -32,7 +35,8 @@ contextual mode and words the feedback. Module boundaries, the HTTP API and the 
 - **The recogniser is never given the expected text** (no prompt, no hotwords). Whether
   a word is wrong is decided by code, never by an AI model.
 - **Handwriting is read blind.** The model that reads the child's paper is never shown
-  the expected text; code compares, and the parent confirms.
+  the expected text; code compares, and the parent confirms. (The web client no longer
+  sends the paper: a grown-up checks it in the app.)
 - **Audio and photos stay in memory.** Uploads are never written to disk: request bodies
   are size-limited before they are parsed, and the upload parser's spill-to-disk
   threshold is raised above that limit (checked by `tests/test_api.py`). They are never
@@ -50,8 +54,8 @@ contextual mode and words the feedback. Module boundaries, the HTTP API and the 
   sites. The web client makes no external requests: no analytics, no third-party
   scripts, no web fonts from CDNs. Putting it online is a separate, deliberate step,
   behind an access code ("Run it online" below).
-- **Claude is optional.** Only when it is configured are page photos, handwriting photos
-  and texts sent to the Claude API, and only after the parent ticks the AI consent box: a
+- **Claude is optional.** Only when it is configured are page photos and texts sent to
+  the Claude API, and only after the parent ticks the AI consent box: a
   box of its own under the notice of what goes to Claude, shown only while Claude is
   configured. The notice names everything Claude gets (the photos, the page text and a
   transcript in meaning mode, the words the child got wrong with the score, the
@@ -61,12 +65,11 @@ contextual mode and words the feedback. Module boundaries, the HTTP API and the 
   the web client sends only with a consent that counts; any other request (no consent,
   an older tab, another client) is answered without Claude. Until that box is ticked,
   a page photo is read by the local reader on the server (when `/api/health` says
-  `"ocr": true`), a photo of handwriting is not read, and recitations and dictations
-  are checked without Claude (fixed feedback templates; by meaning, only an approximate
-  check). The Batch and Files APIs are never used.
+  `"ocr": true`), and recitations are checked without Claude (fixed feedback templates;
+  by meaning, only an approximate check). The Batch and Files APIs are never used.
 - **Consent first.** A parent must tick a consent box before the camera or microphone is
   used. The family document (the children's nicknames, age bands and languages, their
-  tasks, stars and rewards, the consent and the hashed parent PIN) is kept in the
+  saved texts, tasks, stars and rewards, the consent and the hashed parent PIN) is kept in the
   browser's `localStorage` (`mommy.data.v2`) on this device only; there are no accounts.
   It holds scores, never recordings, photos or what the child said. "Save a copy" (parent
   area, Settings) writes the family part of it to a file, made in the browser and never
@@ -132,24 +135,35 @@ sudo apt install libespeak-ng1          # instead of the wheel
 
 ## Tasks and rewards
 
-A parent gives each child study tasks and rewards (the full spec and every decision made
-while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
+Children practise on their own; a parent is needed only for rewards, data that could be
+lost, and (optionally) suggestions. The full spec and every decision made while building
+it are in [`docs/REWARDS.md`](docs/REWARDS.md) (the "Redesign" section supersedes the
+earlier "the parent confirms" rules):
 
-- **Setting it up.** On the first run the start screen is the family setup: the AI
-  disclosure, the consent box (with Claude configured, also the AI consent box), the
-  parent PIN (typed twice) and the first child
-  (nickname, age band, language, avatar). After that, every session starts on "Who is
-  learning?", with a small "For parents" button. In the parent area (behind the PIN) a
-  parent adds children, creates tasks (recite, dictation or Quran, with a pass level,
-  stars and an optional reward), reviews the tasks a child passed ("Confirm", or "Not
-  yet" with a note), sets star goals, gives surprises, and changes the settings. A task
-  is only marked done, and its stars and reward unlocked, when a grown-up confirms it.
+- **Setting it up, once.** On the first run one short screen: the AI disclosure, the
+  consent box (with Claude configured, also the AI consent box), the parent PIN (typed
+  twice) and the first child (nickname, age band, language, avatar); the long privacy
+  text is behind "More". After that, every session starts on "Who is learning?", where a
+  child can also add their own profile (no PIN). Each child's home has four big buttons
+  (My texts, Read aloud, Dictation, Quran), the star jar, the parent's suggestions on
+  top and the trophies.
+- **Stars come by themselves.** A task the app passes is done at once: its stars go into
+  the jar and its reward unlocks. Free practice of a saved text, or of the Quran section,
+  earns one star when it is all right (once per text and activity a day, at most 3 stars
+  of practice a day). The child can retry freely; nothing waits for a grown-up.
+- **The parent area (behind the PIN)** has Rewards (goals, surprises, rewards to give,
+  corrections, and "Take the stars back" for a task the app misheard), Tasks (optional
+  suggestions: recite, dictation or Quran, with stars and, under "More options", a pass
+  level, a reward and a date; "Mark as done"), Children (add, edit, remove) and Settings
+  (consent, PIN, language, a copy of the family list, delete all data). It stays open
+  while the grown-up moves around the app, and locks when the app goes to the
+  background, after 3 minutes without use in it, or with "Close".
 - **The PIN is a child lock, not security.** It keeps the parent area for the grown-ups
   on a shared device: after 5 wrong tries it pauses (30 seconds, doubling up to 15
   minutes), "Forgot the PIN?" asks a multiplication question for grown-ups (wrong
   answers count toward the same pause) and keeps the old PIN until a new one is saved,
-  and the parent area then shows that the PIN was reset. The parent area locks again
-  when it is left, when the app goes to the background and after 3 minutes without use.
+  and the parent area then shows that the PIN was reset. The parent area locks when the
+  app goes to the background, after 3 minutes without use in it, and with "Close".
   Anyone who can open the browser's developer tools can read or change the data.
 - **The family data stays in this browser on this device.** Everything is one document
   in `localStorage`, and the server stores none of it. What a check needs travels with
@@ -167,7 +181,7 @@ while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
 - **A copy of the family list.** The list belongs to one browser and one address (a
   quick tunnel's new address after a restart starts empty), so Settings has "Save a
   copy": a file `mommy-family-YYYY-MM-DD.json`, made in the browser (nothing is sent),
-  with the children, tasks, stars and rewards, without the PIN's hash and salt and
+  with the children, their texts, tasks, stars and rewards, without the PIN's hash and salt and
   without any consent (a 4-digit PIN's hash is easy to break from a file, and a consent
   belongs to the address and the mode where it was given). It is not encrypted. Save a
   copy before a restart or an update, then load it at the new link: "Load a copy" on
@@ -183,11 +197,12 @@ while building it are in [`docs/REWARDS.md`](docs/REWARDS.md)):
 With no Claude configuration the app runs fully offline:
 
 - a photo of a printed page is read by the local reader ("Local page reading" below);
-  the parent checks and corrects the text, or types or pastes it (with `MOMMY_OCR=off`,
-  or without the OCR models, the parent types it). A photo of the child's writing gets
-  `501 needs_manual`: the parent types what the child wrote;
+  the page says it was read without AI and should be checked word by word (the vowel
+  marks above all), and the text can be corrected, or typed or pasted (with
+  `MOMMY_OCR=off`, or without the OCR models, it is typed). The child's dictation paper
+  is never sent: a grown-up checks it in the app;
 - contextual mode uses a content-word overlap heuristic, marked `"approximate": true`;
-  Prepare and the task form say so under the mode choice ("Without the online AI, the
+  the text editor ("New text") and the task form say so under the mode choice ("Without the online AI, the
   meaning check is only approximate."), except for a text with Quran words, which is
   recited word by word only;
 - feedback comes from fixed, age-adapted templates in each language.
@@ -421,7 +436,7 @@ deleting the Space removes it.
   so client addresses and paths are not logged either. The access cookie is always
   `Secure` online and the app sends `Strict-Transport-Security`, so browsers reach it
   over HTTPS only. A restart of the Space keeps nothing.
-- **With Claude configured,** page photos, handwriting photos and texts also go from
+- **With Claude configured,** page photos and texts (and, from another client than this web page, handwriting photos) also go from
   the Space to the Claude API, as they do from a local server, and only after the
   parent's AI consent (its own box, under the notice of what goes to Claude): the
   server calls Claude only for a request that carries it (`ai_consent=1`).

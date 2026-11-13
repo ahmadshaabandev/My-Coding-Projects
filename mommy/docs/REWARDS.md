@@ -1,5 +1,10 @@
 # Mommy: tasks and rewards (spec)
 
+> **Redesign (2026-11-13):** the last section, "Redesign", supersedes the "parent
+> confirms" model below: a task the app passes is done at once, with its stars; children
+> add their own texts and profiles and practise freely; the parent area keeps rewards,
+> data-destroying actions and optional tasks.
+
 The parent (most often the mother) gives each child study tasks and attaches rewards. The
 child does the task in the app; the app checks it as usual; when the child reaches the
 pass level the app marks the task **ready for the parent**; the parent confirms; then the
@@ -16,7 +21,8 @@ This spec adds to `docs/CONTRACT.md`. Every hard rule there still applies.
    accounts later (stable ids, timestamps, one versioned document).
 2. **Both reward types.** A reward per task (written by the parent) and a star jar per
    child with parent-defined goals. The parent can also give a surprise reward at any time.
-3. **The app suggests, the parent confirms.** Passing the level makes a task "ready for
+3. **The app suggests, the parent confirms.** *(Superseded by "Redesign", R5: the app
+   gives the stars itself; the parent can take them back.)* Passing the level makes a task "ready for
    the parent"; nothing unlocks until the parent confirms behind the parent PIN. The
    parent may also confirm a task the app did not pass (she listened herself), or send it
    back ("try again").
@@ -972,3 +978,216 @@ fixes.
 - **B-R6:** `docs/CONTRACT.md` now describes Save and Load a copy under the parent
   area's Settings, the file-picker exception to the lock, the copy in hard rule 5 and the
   family data line as it is now.
+
+## Redesign: children do it on their own; parents only where they are needed (2026-11-13)
+
+The owner's request: "The app UI and permissions are not straightforward and easy.
+Redesign it and make it as easy and straightforward as possible; give parents only the
+very necessary permissions, and give kids the most permissions so they can do everything
+on their own without going back to parents every while." Two later owner decisions
+(the dictation, and the local page reader of the server) are folded in. This section
+**supersedes** the decisions it names; where an earlier section says otherwise, this one
+holds. Every hard rule of `docs/CONTRACT.md` still applies (privacy, consent before the
+microphone and the camera, nothing to Claude without the AI consent, the Quran rules,
+the logs).
+
+### What changed for the child
+
+- **R1, the home (supersedes "Child home (My tasks)" and its sections).** A header with
+  the avatar, the name and the star jar (and the next goal); unseen surprises; then
+  "From your parent" (the parent's tasks to do, as suggestions, shown only when there
+  are some); then four big buttons, always there: My texts, Read aloud, Dictation, Quran;
+  then "My trophies" (done tasks, newest first). There is no "Waiting for your parent"
+  section and no "To do" empty state. The tab bar is hidden on the home (its big
+  buttons are the way in) and shown on the other child's screens. "Read aloud" is the
+  child-facing name of Recite (Arabic keeps تسميع, the school word).
+- **R2, My texts (supersedes Prepare as the parent's screen, "Prepare (parent)", and the
+  memory-only page).** A child saves the texts to practise, per child, in the family
+  document: `texts: [{id, childId, title (1-60), text (1-5000 characters, at most 3000
+  words), lang, mode ('strict' | 'contextual'), createdAt, updatedAt}]`, at most 30 per
+  child (`LIMITS.myText`, `LIMITS.textsPerChild`, so the document stays bounded: 30 × 5000
+  characters per child at most). `rewards.js`: `addText`, `updateText`, `removeText`,
+  `childTexts`, `getText`; `validateDoc` checks them like the rest (unknown fields,
+  duplicate ids, a child that does not exist, an empty text dropped, the language
+  guessed from the script, the newest 30 kept) and reads a document without `texts` as
+  an empty list without a repair; `removeChild` removes them; a copy of the family list
+  carries them (an older copy without them loads with none). The old Prepare screen is
+  the editor of a text ("New text", or "Change the text"): a name (optional, default the
+  first words), the language, "Take a photo" / "Choose a photo", the text, the Quran
+  parts box (references, differences from the mushaf, "Use the mushaf text"), the mode
+  (word by word or by meaning; "The meaning" off for a text with Quran words, as
+  before), and "Save" (was "Confirm text"): the same `/api/text/check` in mode strict,
+  then the text is saved and "Read aloud" / "Dictation" show. The "For the grown-up"
+  tag is gone: the screen is the child's, worded for a child (هيا + "we" in Arabic,
+  "nous" or the infinitive in French). The name and the mode of a saved text are saved
+  as soon as they change; a change of the text needs "Save" (the server checks it
+  again). Each text in My texts has Read aloud and Dictation (big), Change and Delete
+  (asked in place: "Delete this text? Its stars stay in the jar."). Read aloud and
+  Dictation without a text list the child's texts to pick (no more "Ask a grown-up to
+  prepare a page first"). A saved text opened again is checked in the background for
+  its Quran parts, as a task's text is. 30 texts: "New text" says so and asks to delete
+  one.
+- **R3, three taps (measured by `tests/web/family.cjs`).** Free practice of a saved
+  text from the home: My texts, Read aloud, Start (Stop ends it). After a reload: Read
+  aloud, the text in the list, Start. Before: pick the child, Prepare, type or photo,
+  "Confirm text", "Go to Recite", Start (6 to 7 taps, and the text was lost on a reload
+  or when a task set it aside).
+- **R4, the dictation (owner's decision; supersedes the parent review stage, "Confirm
+  result", "Confirm the task now" and the dictation lines of "Doing a task").**
+  - The voice says each short sentence once at normal speed, then word by word, slowly,
+    with a pause after each word to write it. Sentences: the server's phrases (at most 6
+    words) are cut again in the browser to at most 4 words for 6-9 years (6 for 10-13 and
+    14-18), never splitting a word. The pause after a word is `base + perLetter ×
+    letters`: 6-9 years 1.5 s + 0.6 s a letter, 10-13 years 1.0 s + 0.35 s, 14-18 years
+    0.8 s + 0.22 s, at most 9 s. Why these numbers: handwriting-speed norms put copying
+    at about 25-40 letters a minute at 7-8 years (1.5-2.4 s a letter), 60-80 at 11-12
+    (0.75-1 s) and 100 or more at 15 (0.6 s); a dictation also needs time to recall the
+    spelling, and the child hears the word again only on Repeat, so the base time covers
+    starting the word and the per-letter time is about a third to a half of the copying
+    time of the slower children of each age (the whole word was already heard in the
+    sentence, and Next is free at any time, so a pause that is long for one child never
+    blocks it). Next is free once the sentence has been heard (a double tap cannot skip
+    a sentence never heard); it stops the words still to come. Repeat says the sentence
+    and its words again. Every sentence and word is fetched once and kept in memory for
+    the dictation; the next sentence and its words are fetched while the child writes.
+  - Quran parts are never synthesised (hard rule 4): the grown-up step stays, for the
+    sentence and for its words: the reader is asked to say the whole part once, then
+    word by word, slowly. The app asks and never blocks: "Next" goes on even when nobody
+    can read it now (supersedes "Next waits for Done reading").
+  - "Mom's check": at the end, a grown-up looks at the paper. The text is shown large
+    (Arabic RTL; a Quran part in its mushaf form, the vowelled Uthmani text the reader
+    read, in the Quran font), each word a button: the grown-up taps each word that is not
+    right (tap again to undo), then "Done", or "All correct". Nothing is sent to the
+    server: the photo and the typed check of the paper are gone from the child's
+    dictation (`/api/dictation/check` stays for other clients). The result is built in
+    the browser in the shape of a dictation result (`n_expected`, `n_errors`,
+    `word_accuracy`, `ops` with `match` and `fix`), shown to the child at once: "5 of 6
+    words right. Well done for writing it all!", each word to look at again in orange
+    with its correct spelling. Only the score line is spoken (no word of the text). It
+    counts by the existing star rules (a task's pass level; free practice: all words
+    right). Wording: "Mom's check" / « La vérification de maman » / «تصحيح ماما», with
+    "Mom (or another grown-up)" in the instruction: short and warm, and it says who may
+    do it.
+  - **No PIN for "Mom's check" (a trade-off the owner chose).** A child could tap "All
+    correct" alone and get the stars. The owner wants as few parent barriers as
+    possible; the damage is bounded (a task's stars once, at most 3 stars of free
+    practice a day), visible in the history of the stars, and undone in one tap ("Take
+    the stars back", R7). A PIN here would bring back the step the redesign removes.
+- **R5, stars by themselves (supersedes decision 3 "the app suggests, the parent
+  confirms", the review queue, "Waiting for your parent" and "Unlocked: ask your
+  parent").** `recordAttempt`: the first pass of a task to do makes it done at once
+  (`confirmedBy: 'app_pass'`), its stars go into the jar (ledger reason `task`) and its
+  reward unlocks; the outcome says "Well done! ⭐⭐ are in your jar" (with the reward:
+  "… and 🍦 is earned: your parent will give it"). The child can retry freely: attempts
+  after done are recorded and change nothing. `confirmTask(…, 'parent_override')` stays
+  as "Mark as done" (the app may mishear). The trophies say "Earned! Your parent will
+  give it." or "Received".
+- **R6, stars of free practice (new).** `awardPractice(doc, childId, {kind, textId},
+  result, now)`: a check of a saved text (Read aloud or Dictation) or of the Quran
+  section that passes by the default rule of a task (all words right; a text by meaning:
+  the same meaning with no idea missing; the Quran: no error at all) earns 1 star, once
+  per text and activity (the Quran section: once) per UTC day, and at most 3 stars of
+  free practice per child and day (tasks are not counted). The ledger entry is
+  `{reason: 'practice', ref: textId | null, act: 'recite' | 'dictation' | 'quran'}`; a
+  deleted text leaves its stars (ref null). The child sees "Well done! A star for the
+  jar: ⭐", "…already earned today" or "…all earned: more tomorrow"; never a loss. The
+  UTC day was chosen because the pure module has only `now`; near midnight the limit
+  turns at the UTC day, which a child does not notice.
+- **R7, a child adds their own profile (supersedes "A grown-up can add one in the
+  parent area").** "Who is learning?" has "I'm new: add me" (name, age, language,
+  picture), no PIN; with no child at all, the form is open. Removing a child stays the
+  parent's (Children, behind the PIN): it deletes data.
+- **R8, live recitation follows the reading.** While the words are coloured, the first
+  word not reached yet is kept above the sticky record bar and below the top bar (a
+  scroll only when it would be hidden; smooth, instant under `prefers-reduced-motion`).
+
+### What stays the parent's, and why
+
+- **P1, the first setup, once, on one short screen** (supersedes "First run and
+  start"): the language, the consent for the microphone and the camera (legal, hard rule
+  5), the AI consent under the Claude notice while Claude is set up (its version logic
+  and the server's `ai_consent` field unchanged), a PIN typed twice, the first child.
+  The privacy text is one short line ("The family list (children, texts, stars, rewards
+  and the PIN) stays in this browser, on this device.") with "More" for the whole family
+  data line and "Load a copy". The setup says that more children can add themselves.
+- **P2, rewards**: goals and "Give", surprises, rewards to give ("Mark as given"),
+  "Adjust stars", and "Take the stars back" (`undoTask`: a done task is to do again, its
+  stars leave the jar, never below 0, ledger reason `undo` with the task as ref; its
+  reward is locked again, also one already marked given). Offered on a done task in
+  Tasks and on its latest credit in the history, asked in place.
+- **P3, what destroys or replaces data**: removing a child, "Delete all data", "Load a
+  copy" that replaces the list, changing the PIN.
+- **P4, optional tasks** (suggestions), simplified: the kind, the text (or the Quran
+  range), the stars; the title, the pass level, the reward and the date under "More
+  options" (open when a task uses one). Details, "Mark as done", "Take the stars back",
+  Archive.
+- **Sections**: Rewards, Tasks, Children, Settings (To review is gone; the area opens on
+  Rewards, or on Settings while the consent is missing). The counter on Rewards counts
+  the rewards to give.
+- **P5, the lock (supersedes "The parent area locks when it is left" and UX-02's
+  wording).** The area stays open while the grown-up moves around the app (to a child's
+  screen and back: no PIN again). It locks when the page is hidden (with the file-picker
+  grace of B-R1), after 3 minutes without use in it (use on a child's screen does not
+  keep it open: only a tap or a key on the parent area or in the PIN dialog arms the
+  timer again), and with "Close the parent area". Locked away from the parent screen,
+  nothing moves; on it, "Who is learning?" shows.
+- **P6, consent in two places only** (supersedes the prompt "Your OK for Claude" of the
+  AI consent sections): the setup and Settings. The prompt at the top of the parent area
+  and its "Not now" are gone. The gates' lines are short: "Ask a parent to give the OK in
+  Settings." where the general consent is missing; "Let's ask a grown-up to give the OK
+  in Settings to read photos. Typing works now." for the photo when only Claude could
+  read it; the task form keeps `consent_needed_ai_parent`.
+
+### The server's local page reader (owner's decision, client part)
+
+- **O1.** `/api/health` `ocr` true: the page photo (the editor and the task form) is open
+  with the general consent alone (gate need `page-reader`: the local reader, or Claude
+  with the AI consent). Without the AI consent it is sent without `ai_consent` and read
+  on the server; "Nothing was sent" is never shown then. With the AI consent and Claude,
+  Claude reads it as before.
+- **O2.** `"reader": "local"`: "Read without AI. Let's check it word by word, the vowel
+  marks above all, and fix it before saving." with the reader's notes after it;
+  `"none"`: type it, as before. `[?]` and the Quran parts work as before.
+- **O3, privacy texts.** Online without Claude but with `ocr`, the first consent line is
+  `consent_online` (it names the photos), not `consent_online_no_photos`.
+  `consent_offline` and `consent_online_no_ai` no longer say "you type the texts
+  yourself". The photo note names Claude only when a photo goes to it (Claude set up and
+  the AI consent counting); otherwise `photo_privacy` / `photo_privacy_online`.
+
+### Migration and compatibility
+
+- **M1.** A stored or copied document with a task `ready` (waiting for the parent) is
+  migrated by `validateDoc`, silently (no repair notice, no copy kept aside): the task is
+  done (`doneAt` = `readyAt`, `confirmedBy: 'app_pass'`), its stars are added to its
+  child's jar with a `task` ledger entry at `readyAt` (unless a credit of it is already
+  there), `earned` grows with them, its reward unlocks. The result is a fixed point.
+- **M2.** The ledger accepts `undo` and `practice` entries; a task may be credited,
+  taken back and credited again (a credit right after a credit is still dropped as a
+  repair; an undo whose credit was folded into the carry entry is kept as it is).
+- **M3.** `texts` and the ledger's `act` are new optional fields of version 2: an older
+  document reads as having no texts; an older app reading a new document drops them as
+  unknown fields (with its repair notice).
+
+### Tests
+
+`rewards.test.cjs` (auto stars, undo, texts, practice stars with the daily limits, the
+migration, the copy with texts, the 3500-step random sequence with undo and practice),
+`family.cjs` (a redesign flow: a child adds a profile, adds a text that survives a
+reload, practises in three taps and earns a star, picks a text after a reload, renames
+and deletes a text, the limit of 30, a copy with the texts; the parent area staying open
+while moving around and locking with Close; Mark as done and Take the stars back in
+English and Arabic; Mom's check in a task; the migration of seeded documents; the
+consent in Settings only), `smoke.cjs` (the sentence-then-words dictation with its
+cache, Mom's check in en, fr and ar at 360 px and dark mode with its Quran part in the
+mushaf form, nothing sent to `/api/dictation/check`, the short sentences of a 6-9 year
+old, the live recitation's scroll with and without reduced motion, the local page reader
+in three ways the app runs).
+
+### Not done, or risky
+
+- A child can mark "All correct" alone (R4, the owner's trade-off), and can add texts to
+  collect practice stars (bounded by 3 a day). Both are visible to the parent in the
+  history and can be taken back.
+- The pause lengths of the dictation are reasoned from handwriting-speed norms, not
+  measured with children of this app.
+- The daily limit of practice stars turns at UTC midnight, not at the device's.
