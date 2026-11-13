@@ -47,7 +47,17 @@
 
   const STRINGS = {
     en: {
-      dict_quran_child: 'Let’s do this one with a grown-up.',
+      dict_fix_hint: 'If a word was read wrong, let’s fix it here, then check again.',
+      dict_fix_title: 'Was my writing read right?',
+      other_text: 'Another text',
+      which_text: 'Text:',
+      need_page_dict: 'Let’s choose a text for the dictation.',
+      text_not_saved: 'The text is checked, but it could not be saved in “My texts”.',
+      text_name_ph: 'e.g. The cat poem',
+      text_name: 'Name (optional)',
+      prep_title_edit: 'Change the text',
+      nav_texts: 'My texts',
+      dict_quran_child: 'This text has words of the Quran: when we reach them, let’s ask someone to read them aloud.',
       task_needs_change: 'Let’s ask a grown-up to change this task: it has words of the Quran, which are recited word by word.',
       error_quran_meaning: 'This text has words of the Quran, so it is recited word by word only: the app never judges the meaning of the Quran.',
       quran_diff_del_after: 'missing word after {prev}: {mushaf}',
@@ -55,9 +65,9 @@
       skip: 'Skip to content',
       badge: 'AI tutor — not a person',
       nav_label: 'Main',
-      nav_home: 'My tasks',
+      nav_home: 'Home',
       nav_prepare: 'Prepare',
-      nav_recite: 'Recite',
+      nav_recite: 'Read aloud',
       nav_dictation: 'Dictation',
       nav_quran: 'Quran',
       start_title: "Hello! I'm Mommy.",
@@ -87,9 +97,9 @@
       // parent area's prompt), shown only while Claude is set up.
       consent_ai_label: 'I agree that these things are sent to Claude.',
       start_button: "Let's start",
-      consent_needed: 'A parent must tick the consent box in the parent area (Settings) before the microphone or camera can be used.',
+      consent_needed: 'Ask a parent to give the OK in Settings.',
       // Claude is set up but the parent has not agreed to it: neutral, for the child.
-      consent_needed_ai: 'Let’s ask a grown-up to open the parent area and give their OK first.',
+      consent_needed_ai: 'Reading photos needs a parent’s OK in Settings. Typing works now.',
       consent_needed_ai_parent: 'Reading photos uses Claude: please give your OK for Claude in Settings first.',
       // The same on a card for the grown-up outside the parent area (Prepare, the check of a dictation).
       consent_needed_ai_grownup: 'Reading photos uses Claude: please give your OK for Claude in the parent area (Settings) first.',
@@ -105,8 +115,8 @@
       mic_denied: 'The microphone is blocked. Please allow it in the browser settings.',
       mic_missing: 'I could not find a microphone.',
       parent_tag: 'For the grown-up',
-      prep_title: 'Prepare a page',
-      prep_intro: 'Take a photo of the textbook page, or type or paste the text. Then check it and press “Confirm text”.',
+      prep_title: 'New text',
+      prep_intro: 'Type the text, or take a photo of the page. Then press “Save”.',
       text_lang: 'Language of the text',
       take_photo: 'Take a photo',
       choose_photo: 'Choose a photo',
@@ -133,7 +143,7 @@
       use_mushaf: 'Use the mushaf text',
       mushaf_used: 'The words of the mushaf were put into the text.',
       photo_bad: "I couldn't open this picture. Please try a JPEG or PNG photo.",
-      page_text_label: 'Page text',
+      page_text_label: 'The text',
       page_text_ph: 'Type or paste the text here…',
       mode_label: 'Reciting mode',
       mode_strict: 'Word by word',
@@ -142,22 +152,22 @@
       mode_contextual_hint: 'Own words are fine if the meaning is right.',
       mode_contextual_offline: 'Without the online AI, the meaning check is only approximate.',
       mode_meaning_off: '“The meaning” is not available for this text: it has words of the Quran, and the app never judges the meaning of the Quran. They are checked word by word.',
-      confirm_text: 'Confirm text',
+      confirm_text: 'Save',
       checking_text: 'Checking the text…',
-      text_confirmed: 'Text confirmed. Your child can now recite it or do a dictation.',
-      text_confirmed_ar: 'Text confirmed. It is written in Arabic, so its language was set to Arabic.',
-      text_confirmed_quran: 'Text confirmed. It includes words of the Quran: see the note under the text.',
-      text_not_arabic: 'This text is not written in Arabic. Please choose the language of the text.',
-      text_confirmed_no_dictation: 'Text confirmed for reciting. It cannot be used for dictation: the voice found words of the Quran in it that the app could not mark for a grown-up to read.',
-      text_empty: 'Please type or paste some text first.',
-      text_changed: 'The text has changed. Press “Confirm text” again.',
-      go_recite: 'Go to Recite',
-      go_dictation: 'Go to Dictation',
-      recite_title: 'Recite',
+      text_confirmed: 'Saved in “My texts”. Let’s read it aloud or do a dictation!',
+      text_confirmed_ar: 'Saved. It is written in Arabic, so its language was set to Arabic.',
+      text_confirmed_quran: 'Saved. It has words of the Quran: see the note under the text.',
+      text_not_arabic: 'This text is not written in Arabic. Let’s choose the language of the text.',
+      text_confirmed_no_dictation: 'Saved for reading aloud. It cannot be used for a dictation: the voice found words of the Quran in it that the app could not mark.',
+      text_empty: 'Let’s type some text first.',
+      text_changed: 'The text has changed. Press “Save” again.',
+      go_recite: 'Read aloud',
+      go_dictation: 'Dictation',
+      recite_title: 'Read aloud',
       hello_name: 'Hi {name}!',
       hello_anon: 'Hi there!',
-      need_page: 'Ask a grown-up to prepare a page first.',
-      open_prepare: 'Prepare a page',
+      need_page: 'Let’s choose a text to read aloud.',
+      open_prepare: 'My texts',
       recite_intro: 'Read the text aloud. Press the big button to start, and press it again when you finish.',
       mode_is: 'Mode: {mode}',
       rec_start: 'Start',
@@ -172,7 +182,7 @@
       say_again: 'Say that again',
       listen: 'Listen',
       press_listen: 'Press “Listen” to hear it.',
-      recite_quran_note: 'This text has words of the Quran. They are checked word by word, as written in the mushaf. The app’s voice never reads them: to let your child hear the text first, please read it aloud yourself.',
+      recite_quran_note: 'Some words here are from the Quran: they are checked word by word, as they are written in the Quran.',
       feedback_not_spoken: 'This message quotes the Quran, so it is shown and not spoken.',
       too_quiet: 'I could hardly hear you. Come a little closer and speak up.',
       too_short: 'That was very short. Press the button, read the whole text, then press it again.',
@@ -205,35 +215,31 @@
       repeat: 'Repeat',
       next: 'Next',
       finish: "I've finished",
-      show_phrase: 'Show the words (grown-up)',
+      show_phrase: 'Show the words',
       hide_phrase: 'Hide the words',
       no_phrases: 'There is nothing to dictate in this text.',
-      dict_quran_intro: 'This text has words of the Quran. When the dictation reaches them, it stops and asks a grown-up to read them aloud: the app’s voice never reads the Quran. Please stay close.',
-      gu_ask: 'Let’s ask a grown-up to read this part.',
-      gu_ask_again: 'Let’s ask the grown-up to read it again.',
-      gu_why: 'This part is from the Quran, and the app’s voice never reads the Quran. Please show the words where only you can see them, read them aloud slowly, then press “Done reading”: the words are hidden again before your child writes.',
+      dict_quran_intro: 'The app’s voice never reads the Quran. The rest of the dictation goes on as usual.',
+      gu_ask: 'Let’s ask someone to read this part aloud.',
+      gu_ask_again: 'Let’s ask them to read it again.',
+      gu_why: 'This part is from the Quran, and the app’s voice never reads the Quran. Please show the words where only you can see them, read them aloud slowly, then press “Done reading”: the words are hidden again before the writing. If nobody can read it now, “Next” goes on.',
       gu_why_plain: 'The voice cannot read this part. Please show the words, read them aloud as they are written, then press “Done reading”.',
       gu_show: 'Show the words of the Quran',
       gu_show_plain: 'Show the words',
       gu_done: 'Done reading',
       gu_write: 'Now let’s write it, then press “Next”.',
       gu_write_last: "Now let’s write it, then press “I've finished”.",
-      dict_check_title: 'Check the writing',
-      dict_check_intro: "Take a photo of your child's paper, or type exactly what they wrote — mistakes included.",
-      written_label: 'What your child wrote',
+      dict_check_title: 'Check my writing',
+      dict_check_intro: 'Let’s take a photo of the paper, or type exactly what was written, mistakes included.',
+      written_label: 'What I wrote',
       check_writing: 'Check',
       reading_writing: 'Reading the handwriting…',
-      written_empty: 'Please type what your child wrote, or take a photo.',
-      needs_manual_writing: 'Reading handwriting needs the online AI. Please type what your child wrote.',
-      parent_review_title: 'Please check before your child sees it',
-      parent_review_intro: 'The AI may misread handwriting. Fix the text below if needed and check again, then confirm.',
-      illegible: 'The writing was hard to read. Please check it carefully.',
+      written_empty: 'Let’s type what was written, or take a photo.',
+      needs_manual_writing: 'Reading handwriting needs the online AI. Let’s type what was written.',
+      illegible: 'The writing was hard to read. Let’s look at it carefully.',
       read_text_label: 'What was read',
       uncertain: 'Not sure about: {words}',
-      recheck: 'Check again with this text',
-      review_stale: 'You changed the text. Press “Check again with this text” before you confirm.',
-      confirm_result: 'Confirm result',
-      dict_result_title: 'Your dictation',
+      recheck: 'Check again',
+      dict_result_title: 'My dictation',
       new_dictation: 'New dictation',
       quran_title: 'Quran',
       juz_amma_only: "Juz' Amma only (surahs 78–114)",
@@ -273,7 +279,17 @@
     },
 
     fr: {
-      dict_quran_child: 'Faisons celle-ci avec un adulte.',
+      dict_fix_hint: 'Si un mot a été mal lu, corrigeons-le ici, puis vérifions de nouveau.',
+      dict_fix_title: 'Mon écriture a-t-elle été bien lue ?',
+      other_text: 'Un autre texte',
+      which_text: 'Texte :',
+      need_page_dict: 'Choisissons un texte pour la dictée.',
+      text_not_saved: 'Le texte est vérifié, mais il n’a pas pu être enregistré dans « Mes textes ».',
+      text_name_ph: 'par ex. Le poème du chat',
+      text_name: 'Nom (facultatif)',
+      prep_title_edit: 'Modifier le texte',
+      nav_texts: 'Mes textes',
+      dict_quran_child: 'Ce texte contient des mots du Coran : quand nous y arriverons, demandons à quelqu’un de les lire à voix haute.',
       task_needs_change: 'Demandons à un adulte de modifier cette tâche : elle contient des mots du Coran, qui se récitent mot à mot.',
       error_quran_meaning: 'Ce texte contient des mots du Coran : il se récite seulement mot à mot, car l’application ne juge jamais le sens du Coran.',
       quran_diff_del_after: 'mot manquant après {prev} : {mushaf}',
@@ -281,9 +297,9 @@
       skip: 'Aller au contenu',
       badge: 'Tuteur IA — pas une personne',
       nav_label: 'Principal',
-      nav_home: 'Mes tâches',
+      nav_home: 'Accueil',
       nav_prepare: 'Préparer',
-      nav_recite: 'Réciter',
+      nav_recite: 'Lire',
       nav_dictation: 'Dictée',
       nav_quran: 'Coran',
       start_title: 'Bonjour ! Je suis Mommy.',
@@ -308,8 +324,8 @@
       consent_online_no_ai: 'Rien n’est envoyé à un service d’IA extérieur comme Claude, et vous tapez les textes vous-même.',
       consent_ai_label: 'J’accepte que ces données soient envoyées à Claude.',
       start_button: 'On commence',
-      consent_needed: "Un parent doit cocher la case d'accord dans l'espace parents (Réglages) avant d'utiliser le micro ou l'appareil photo.",
-      consent_needed_ai: 'Demandons d’abord à un adulte d’ouvrir l’espace parents et de donner son accord.',
+      consent_needed: 'Demandons à un parent de donner son accord dans Réglages.',
+      consent_needed_ai: 'Lire les photos demande l’accord d’un parent dans Réglages. Taper le texte marche déjà.',
       consent_needed_ai_parent: 'La lecture des photos utilise Claude : veuillez d’abord donner votre accord pour Claude dans Réglages.',
       consent_needed_ai_grownup: 'La lecture des photos utilise Claude : veuillez d’abord donner votre accord pour Claude dans l’espace parents (Réglages).',
       ai_not_sent: 'Rien n’a été envoyé.',
@@ -324,8 +340,8 @@
       mic_denied: 'Le micro est bloqué. Autorisez-le dans les réglages du navigateur.',
       mic_missing: "Je n'ai pas trouvé de micro.",
       parent_tag: "Pour l'adulte",
-      prep_title: 'Préparer une page',
-      prep_intro: 'Prenez la page en photo, ou tapez ou collez le texte. Vérifiez-le, puis appuyez sur « Valider le texte ».',
+      prep_title: 'Nouveau texte',
+      prep_intro: 'Tapons le texte, ou prenons la page en photo. Puis appuyons sur « Enregistrer ».',
       text_lang: 'Langue du texte',
       take_photo: 'Prendre une photo',
       choose_photo: 'Choisir une photo',
@@ -351,7 +367,7 @@
       use_mushaf: 'Prendre le texte du mushaf',
       mushaf_used: 'Les mots du mushaf ont été mis dans le texte.',
       photo_bad: "Je n'arrive pas à ouvrir cette image. Essayez une photo JPEG ou PNG.",
-      page_text_label: 'Texte de la page',
+      page_text_label: 'Le texte',
       page_text_ph: 'Tapez ou collez le texte ici…',
       mode_label: 'Mode de récitation',
       mode_strict: 'Mot à mot',
@@ -360,22 +376,22 @@
       mode_contextual_hint: 'Ses propres mots, si le sens est juste.',
       mode_contextual_offline: "Sans l'IA en ligne, la vérification du sens est seulement approximative.",
       mode_meaning_off: '« Le sens » n’est pas possible pour ce texte : il contient des mots du Coran, et l’application ne juge jamais le sens du Coran. Ils sont vérifiés mot à mot.',
-      confirm_text: 'Valider le texte',
+      confirm_text: 'Enregistrer',
       checking_text: 'Vérification du texte…',
-      text_confirmed: 'Texte validé. Votre enfant peut maintenant le réciter ou faire une dictée.',
-      text_confirmed_ar: "Texte validé. Il est écrit en arabe : sa langue a été réglée sur l'arabe.",
-      text_confirmed_quran: 'Texte validé. Il contient des mots du Coran : voir la note sous le texte.',
-      text_not_arabic: "Ce texte n'est pas écrit en arabe. Choisissez la langue du texte.",
-      text_confirmed_no_dictation: 'Texte validé pour la récitation. Il ne peut pas servir à une dictée : la voix y a trouvé des mots du Coran que l’application n’a pas pu marquer pour qu’un adulte les lise.',
-      text_empty: "Tapez ou collez d'abord un texte.",
-      text_changed: 'Le texte a changé. Appuyez de nouveau sur « Valider le texte ».',
-      go_recite: 'Aller à Réciter',
-      go_dictation: 'Aller à Dictée',
-      recite_title: 'Réciter',
+      text_confirmed: 'Enregistré dans « Mes textes ». Lisons-le à voix haute ou faisons une dictée !',
+      text_confirmed_ar: 'Enregistré. Il est écrit en arabe : sa langue a été réglée sur l’arabe.',
+      text_confirmed_quran: 'Enregistré. Il contient des mots du Coran : voir la note sous le texte.',
+      text_not_arabic: 'Ce texte n’est pas écrit en arabe. Choisissons la langue du texte.',
+      text_confirmed_no_dictation: 'Enregistré pour la lecture à voix haute. Il ne peut pas servir à une dictée : la voix y a trouvé des mots du Coran que l’application n’a pas pu marquer.',
+      text_empty: 'Tapons d’abord un texte.',
+      text_changed: 'Le texte a changé. Appuyons de nouveau sur « Enregistrer ».',
+      go_recite: 'Lire à voix haute',
+      go_dictation: 'Dictée',
+      recite_title: 'Lire à voix haute',
       hello_name: 'Coucou {name} !',
       hello_anon: 'Coucou !',
-      need_page: "Demande d'abord à un adulte de préparer une page.",
-      open_prepare: 'Préparer une page',
+      need_page: 'Choisissons un texte à lire à voix haute.',
+      open_prepare: 'Mes textes',
       recite_intro: 'Lis le texte à voix haute. Appuie sur le gros bouton pour commencer, et appuie encore quand tu as fini.',
       mode_is: 'Mode : {mode}',
       rec_start: 'Démarrer',
@@ -390,7 +406,7 @@
       say_again: 'Redis-le',
       listen: 'Écouter',
       press_listen: 'Appuie sur « Écouter » pour l’entendre.',
-      recite_quran_note: 'Ce texte contient des mots du Coran. Ils sont vérifiés mot à mot, tels qu’ils sont écrits dans le mushaf. La voix de l’application ne les lit jamais : pour que votre enfant entende d’abord le texte, lisez-le-lui à voix haute.',
+      recite_quran_note: 'Certains mots viennent du Coran : ils sont vérifiés mot à mot, tels qu’ils sont écrits dans le Coran.',
       feedback_not_spoken: 'Ce message cite le Coran : il est affiché, pas lu à voix haute.',
       too_quiet: "Je t'entends à peine. Approche-toi un peu et parle plus fort.",
       too_short: "C'était très court. Appuie sur le bouton, lis tout le texte, puis appuie encore.",
@@ -423,35 +439,31 @@
       repeat: 'Répéter',
       next: 'Suivant',
       finish: "J'ai fini",
-      show_phrase: 'Montrer les mots (adulte)',
+      show_phrase: 'Montrer les mots',
       hide_phrase: 'Cacher les mots',
       no_phrases: "Il n'y a rien à dicter dans ce texte.",
-      dict_quran_intro: 'Ce texte contient des mots du Coran. Quand la dictée y arrive, elle s’arrête et demande à un adulte de les lire à voix haute : la voix de l’application ne lit jamais le Coran. Restez tout près, s’il vous plaît.',
-      gu_ask: 'Demandons à un adulte de lire ce morceau.',
-      gu_ask_again: 'Demandons à l’adulte de le relire.',
-      gu_why: 'Ce morceau vient du Coran, et la voix de l’application ne lit jamais le Coran. Affichez les mots en les gardant pour vous, lisez-les lentement à voix haute, puis appuyez sur « Lecture terminée » : les mots sont cachés avant que l’enfant écrive.',
+      dict_quran_intro: 'La voix de l’application ne lit jamais le Coran. Le reste de la dictée continue comme d’habitude.',
+      gu_ask: 'Demandons à quelqu’un de lire ce morceau à voix haute.',
+      gu_ask_again: 'Demandons-lui de le relire.',
+      gu_why: 'Ce morceau vient du Coran, et la voix de l’application ne lit jamais le Coran. Affichez les mots en les gardant pour vous, lisez-les lentement à voix haute, puis appuyez sur « Lecture terminée » : les mots sont cachés avant l’écriture. Si personne ne peut le lire maintenant, « Suivant » continue.',
       gu_why_plain: 'La voix ne peut pas lire ce morceau. Montrez les mots, lisez-les à voix haute tels qu’ils sont écrits, puis appuyez sur « Lecture terminée ».',
       gu_show: 'Montrer les mots du Coran',
       gu_show_plain: 'Montrer les mots',
       gu_done: 'Lecture terminée',
       gu_write: 'Maintenant, écrivons-le, puis appuyons sur « Suivant ».',
       gu_write_last: 'Maintenant, écrivons-le, puis appuyons sur « J\'ai fini ».',
-      dict_check_title: "Vérifier l'écriture",
-      dict_check_intro: "Prenez la feuille en photo, ou tapez exactement ce que l'enfant a écrit, fautes comprises.",
-      written_label: "Ce que l'enfant a écrit",
+      dict_check_title: 'Vérifier mon écriture',
+      dict_check_intro: 'Prenons la feuille en photo, ou tapons exactement ce qui a été écrit, fautes comprises.',
+      written_label: 'Ce que j’ai écrit',
       check_writing: 'Vérifier',
       reading_writing: "Lecture de l'écriture…",
-      written_empty: "Tapez ce que l'enfant a écrit, ou prenez une photo.",
-      needs_manual_writing: "La lecture de l'écriture demande l'IA en ligne. Tapez ce que l'enfant a écrit.",
-      parent_review_title: "À vérifier avant de montrer à l'enfant",
-      parent_review_intro: "L'IA peut mal lire l'écriture. Corrigez le texte ci-dessous si besoin et revérifiez, puis validez.",
-      illegible: "L'écriture était difficile à lire. Vérifiez-la bien.",
+      written_empty: 'Tapons ce qui a été écrit, ou prenons une photo.',
+      needs_manual_writing: 'La lecture de l’écriture demande l’IA en ligne. Tapons ce qui a été écrit.',
+      illegible: 'L’écriture était difficile à lire. Regardons-la bien.',
       read_text_label: 'Ce qui a été lu',
       uncertain: 'Mots incertains : {words}',
-      recheck: 'Revérifier avec ce texte',
-      review_stale: 'Vous avez modifié le texte. Appuyez sur « Revérifier avec ce texte » avant de valider.',
-      confirm_result: 'Valider le résultat',
-      dict_result_title: 'Ta dictée',
+      recheck: 'Vérifier de nouveau',
+      dict_result_title: 'Ma dictée',
       new_dictation: 'Nouvelle dictée',
       quran_title: 'Coran',
       juz_amma_only: "Juz' Amma seulement (sourates 78 à 114)",
@@ -491,7 +503,17 @@
     },
 
     ar: {
-      dict_quran_child: 'هيا ننجز هذه المهمة مع أحد الكبار.',
+      dict_fix_hint: 'إذا قُرئت كلمة خطأً، هيا نصحّحها هنا ثم نعيد التحقّق.',
+      dict_fix_title: 'هل قُرئت كتابتي جيدًا؟',
+      other_text: 'نص آخر',
+      which_text: 'النص:',
+      need_page_dict: 'هيا نختار نصًا للإملاء.',
+      text_not_saved: 'تمّ التحقّق من النص، ولكن تعذّر حفظه في «نصوصي».',
+      text_name_ph: 'مثلًا: قصيدة القطة',
+      text_name: 'الاسم (اختياري)',
+      prep_title_edit: 'تعديل النص',
+      nav_texts: 'نصوصي',
+      dict_quran_child: 'في هذا النص كلمات من القرآن الكريم: عندما نصل إليها، هيا نطلب من أحد قراءتها بصوت مسموع.',
       task_needs_change: 'هيا نطلب من أحد الكبار تعديل هذه المهمة: فيها كلمات من القرآن الكريم تُسمَّع كلمةً بكلمة.',
       error_quran_meaning: 'في هذا النص كلمات من القرآن الكريم، فيُسمَّع كلمةً بكلمة فقط، لأن التطبيق لا يحكم أبدًا على معاني القرآن الكريم.',
       quran_diff_del_after: 'كلمة ناقصة بعد {prev}: {mushaf}',
@@ -499,7 +521,7 @@
       skip: 'الانتقال إلى المحتوى',
       badge: 'معلّم ذكاء اصطناعي — ليس إنسانًا',
       nav_label: 'القائمة الرئيسية',
-      nav_home: 'مهامي',
+      nav_home: 'الرئيسية',
       nav_prepare: 'تحضير',
       nav_recite: 'تسميع',
       nav_dictation: 'إملاء',
@@ -526,8 +548,8 @@
       consent_online_no_ai: 'لا يُرسَل شيء إلى أي خدمة ذكاء اصطناعي خارجية مثل Claude، وتُكتب النصوص يدويًا.',
       consent_ai_label: 'أوافق على إرسال هذه البيانات إلى Claude.',
       start_button: 'لنبدأ',
-      consent_needed: 'يجب أولًا وضع علامة في خانة الموافقة في قسم الكبار (الإعدادات) قبل استخدام الميكروفون أو الكاميرا.',
-      consent_needed_ai: 'هيا نطلب من أحد الكبار فتح قسم الكبار والموافقة أولًا.',
+      consent_needed: 'هيا نطلب من أحد الوالدين الموافقة في الإعدادات.',
+      consent_needed_ai: 'قراءة الصور تحتاج إلى موافقة أحد الوالدين في الإعدادات، ويمكن كتابة النص الآن.',
       consent_needed_ai_parent: 'قراءة الصور تستخدم Claude: يُرجى أولًا تسجيل الموافقة على Claude في الإعدادات.',
       consent_needed_ai_grownup: 'قراءة الصور تستخدم Claude: يُرجى أولًا تسجيل الموافقة على Claude في قسم الكبار (الإعدادات).',
       ai_not_sent: 'لم يُرسَل شيء.',
@@ -542,8 +564,8 @@
       mic_denied: 'الميكروفون محظور. يُرجى السماح به من إعدادات المتصفح.',
       mic_missing: 'لم أجد ميكروفونًا.',
       parent_tag: 'للكبار',
-      prep_title: 'تحضير صفحة',
-      prep_intro: 'يُرجى تصوير صفحة الكتاب، أو كتابة النص أو لصقه، ثم مراجعته والضغط على «تأكيد النص».',
+      prep_title: 'نص جديد',
+      prep_intro: 'هيا نكتب النص، أو نصوّر الصفحة، ثم نضغط «حفظ».',
       text_lang: 'لغة النص',
       take_photo: 'التقاط صورة',
       choose_photo: 'اختيار صورة',
@@ -569,7 +591,7 @@
       use_mushaf: 'استخدام نص المصحف',
       mushaf_used: 'وُضعت كلمات المصحف في النص.',
       photo_bad: 'لم أستطع فتح هذه الصورة. يُرجى تجربة صورة بصيغة JPEG أو PNG.',
-      page_text_label: 'نص الصفحة',
+      page_text_label: 'النص',
       page_text_ph: 'يُرجى كتابة النص أو لصقه هنا…',
       mode_label: 'طريقة التسميع',
       mode_strict: 'كلمة بكلمة',
@@ -578,22 +600,22 @@
       mode_contextual_hint: 'يمكن استخدام كلمات أخرى إذا كان المعنى صحيحًا.',
       mode_contextual_offline: 'من دون الذكاء الاصطناعي عبر الإنترنت، يكون التحقّق من المعنى تقريبيًا فقط.',
       mode_meaning_off: '«المعنى» غير متاح لهذا النص: فيه كلمات من القرآن الكريم، والتطبيق لا يحكم أبدًا على معاني القرآن الكريم، فتُراجَع كلمةً بكلمة.',
-      confirm_text: 'تأكيد النص',
+      confirm_text: 'حفظ',
       checking_text: 'جارٍ التحقّق من النص…',
-      text_confirmed: 'تمّ تأكيد النص. يمكن الآن تسميعه أو كتابته إملاءً.',
-      text_confirmed_ar: 'تمّ تأكيد النص. وبما أنه مكتوب بالعربية، فقد ضُبطت لغته على العربية.',
-      text_confirmed_quran: 'تمّ تأكيد النص. وفيه كلمات من القرآن الكريم، كما هو مبيَّن تحت النص.',
-      text_not_arabic: 'هذا النص غير مكتوب بالعربية. يُرجى اختيار لغة النص.',
-      text_confirmed_no_dictation: 'تمّ تأكيد النص للتسميع. لا يمكن استخدامه في الإملاء: وجد الصوت فيه كلمات من القرآن الكريم تعذّر تحديدها ليقرأها أحد الكبار.',
-      text_empty: 'يُرجى كتابة نص أو لصقه أولًا.',
-      text_changed: 'تغيّر النص. يُرجى الضغط على «تأكيد النص» مرة أخرى.',
-      go_recite: 'الانتقال إلى التسميع',
-      go_dictation: 'الانتقال إلى الإملاء',
+      text_confirmed: 'تمّ الحفظ في «نصوصي». هيا نقرؤه بصوت عالٍ أو نكتبه إملاءً!',
+      text_confirmed_ar: 'تمّ الحفظ. وبما أنه مكتوب بالعربية، فقد ضُبطت لغته على العربية.',
+      text_confirmed_quran: 'تمّ الحفظ. وفيه كلمات من القرآن الكريم، كما هو مبيَّن تحت النص.',
+      text_not_arabic: 'هذا النص غير مكتوب بالعربية. هيا نختار لغة النص.',
+      text_confirmed_no_dictation: 'تمّ الحفظ للتسميع. لا يمكن استخدامه في الإملاء: وجد الصوت فيه كلمات من القرآن الكريم تعذّر تحديدها.',
+      text_empty: 'هيا نكتب نصًا أولًا.',
+      text_changed: 'تغيّر النص. هيا نضغط «حفظ» مرة أخرى.',
+      go_recite: 'التسميع',
+      go_dictation: 'الإملاء',
       recite_title: 'التسميع',
       hello_name: 'أهلًا يا {name}!',
       hello_anon: 'أهلًا وسهلًا!',
-      need_page: 'هيا نطلب من أحد الكبار تحضير صفحة أولًا.',
-      open_prepare: 'تحضير صفحة',
+      need_page: 'هيا نختار نصًا للتسميع.',
+      open_prepare: 'نصوصي',
       recite_intro: 'هيا نقرأ النص بصوت عالٍ! نضغط الزر الكبير للبدء، ثم نضغطه مرة أخرى عند الانتهاء.',
       mode_is: 'الطريقة: {mode}',
       rec_start: 'بدء',
@@ -608,7 +630,7 @@
       say_again: 'المحاولة مرة أخرى',
       listen: 'استماع',
       press_listen: 'هيا نضغط «استماع» لنسمعه.',
-      recite_quran_note: 'في هذا النص كلمات من القرآن الكريم، وهي تُراجَع كلمةً بكلمة كما هي في المصحف. وصوت التطبيق لا يقرؤها أبدًا، فلسماع النص قبل التسميع يُرجى قراءته بصوت مسموع.',
+      recite_quran_note: 'بعض الكلمات هنا من القرآن الكريم، وهي تُراجَع كلمةً بكلمة كما هي مكتوبة في المصحف.',
       feedback_not_spoken: 'هذه الملاحظة تقتبس من القرآن الكريم، لذلك تُعرَض مكتوبةً ولا تُقرأ بالصوت.',
       too_quiet: 'الصوت منخفض جدًا. هيا نقترب قليلًا ونتكلّم بصوت أعلى.',
       too_short: 'كان ذلك قصيرًا جدًا. هيا نضغط الزر، ونقرأ النص كله، ثم نضغطه مرة أخرى.',
@@ -641,34 +663,30 @@
       repeat: 'إعادة',
       next: 'التالي',
       finish: 'انتهيت',
-      show_phrase: 'إظهار الكلمات (للكبار)',
+      show_phrase: 'إظهار الكلمات',
       hide_phrase: 'إخفاء الكلمات',
       no_phrases: 'لا يوجد في هذا النص شيء للإملاء.',
-      dict_quran_intro: 'في هذا النص كلمات من القرآن الكريم. عندما يصل الإملاء إليها يتوقّف ويطلب من أحد الكبار قراءتها بصوت مسموع، فصوت التطبيق لا يقرأ القرآن الكريم أبدًا. يُرجى البقاء بالقرب.',
-      gu_ask: 'هيا نطلب من أحد الكبار قراءة هذا الجزء.',
-      gu_ask_again: 'هيا نطلب من أحد الكبار قراءته مرة أخرى.',
-      gu_why: 'هذا الجزء من القرآن الكريم، وصوت التطبيق لا يقرأ القرآن الكريم أبدًا. يُرجى إظهار الكلمات بعيدًا عن نظر الطفل، وقراءتها ببطء بصوت مسموع، ثم الضغط على «انتهاء القراءة»، فتُخفى الكلمات قبل الكتابة.',
+      dict_quran_intro: 'صوت التطبيق لا يقرأ القرآن الكريم أبدًا، ويستمر باقي الإملاء كالمعتاد.',
+      gu_ask: 'هيا نطلب من أحد قراءة هذا الجزء بصوت مسموع.',
+      gu_ask_again: 'هيا نطلب قراءته مرة أخرى.',
+      gu_why: 'هذا الجزء من القرآن الكريم، وصوت التطبيق لا يقرأ القرآن الكريم أبدًا. يُرجى إظهار الكلمات بعيدًا عن نظر الطفل، وقراءتها ببطء بصوت مسموع، ثم الضغط على «انتهاء القراءة»، فتُخفى الكلمات قبل الكتابة. وإن لم تتيسّر القراءة الآن، يُكمِل زرّ «التالي» الإملاء.',
       gu_why_plain: 'لا يستطيع الصوت قراءة هذا الجزء. يُرجى إظهار الكلمات وقراءتها بصوت مسموع كما هي مكتوبة، ثم الضغط على «انتهاء القراءة».',
       gu_show: 'إظهار كلمات القرآن الكريم',
       gu_show_plain: 'إظهار الكلمات',
       gu_done: 'انتهاء القراءة',
       gu_write: 'هيا نكتبه الآن، ثم نضغط «التالي».',
       gu_write_last: 'هيا نكتبه الآن، ثم نضغط «انتهيت».',
-      dict_check_title: 'تصحيح الكتابة',
-      dict_check_intro: 'يُرجى تصوير ورقة الطفل، أو كتابة ما كُتب عليها كما هو تمامًا، بما في ذلك الأخطاء.',
-      written_label: 'ما كُتب على الورقة',
+      dict_check_title: 'تصحيح كتابتي',
+      dict_check_intro: 'هيا نصوّر الورقة، أو نكتب ما كُتب عليها كما هو تمامًا، بما في ذلك الأخطاء.',
+      written_label: 'ما كتبتُه',
       check_writing: 'التحقّق',
       reading_writing: 'جارٍ قراءة الخط…',
-      written_empty: 'يُرجى كتابة ما كُتب على الورقة، أو التقاط صورة لها.',
-      needs_manual_writing: 'قراءة الخط تحتاج إلى الذكاء الاصطناعي عبر الإنترنت. يُرجى كتابة ما كُتب على الورقة.',
-      parent_review_title: 'يُرجى المراجعة قبل عرض النتيجة على الطفل',
-      parent_review_intro: 'قد يخطئ الذكاء الاصطناعي في قراءة الخط. يُرجى تصحيح النص أدناه إن لزم وإعادة التحقّق، ثم التأكيد.',
-      illegible: 'كان الخط صعب القراءة. يُرجى مراجعته بعناية.',
+      written_empty: 'هيا نكتب ما كُتب على الورقة، أو نلتقط صورة لها.',
+      needs_manual_writing: 'قراءة الخط تحتاج إلى الذكاء الاصطناعي عبر الإنترنت. هيا نكتب ما كُتب على الورقة.',
+      illegible: 'كان الخط صعب القراءة. هيا نراجعه بعناية.',
       read_text_label: 'ما تمّت قراءته',
       uncertain: 'كلمات غير مؤكَّدة: {words}',
-      recheck: 'إعادة التحقّق بهذا النص',
-      review_stale: 'تغيّر النص. يُرجى الضغط على «إعادة التحقّق بهذا النص» قبل التأكيد.',
-      confirm_result: 'تأكيد النتيجة',
+      recheck: 'إعادة التحقّق',
       dict_result_title: 'نتيجة الإملاء',
       new_dictation: 'إملاء جديد',
       quran_title: 'القرآن الكريم',
@@ -712,9 +730,11 @@
   const LANGS = ['en', 'fr', 'ar'];
   const AGE_BANDS = ['6-9', '10-13', '14-18'];
   // 'start' is the family setup; 'who', 'home' and 'parent' are drawn by family.js.
-  const SCREENS = ['start', 'who', 'home', 'parent', 'prepare', 'recite', 'dictation', 'quran'];
+  // 'texts' (redesign): the child's saved texts ("My texts", family.js); 'prepare' is the
+  // editor of one of them (a new text, or a change).
+  const SCREENS = ['start', 'who', 'home', 'parent', 'texts', 'prepare', 'recite', 'dictation', 'quran'];
   // The screens of the active child (the nav tabs and the home button show on them).
-  const CHILD_SCREENS = ['home', 'prepare', 'recite', 'dictation', 'quran'];
+  const CHILD_SCREENS = ['home', 'texts', 'prepare', 'recite', 'dictation', 'quran'];
   // The screen of each kind of task.
   const TASK_SCREENS = { recite: 'recite', dictation: 'dictation', quran: 'quran' };
   const MAX_IMAGE_EDGE = 2000;
@@ -1019,7 +1039,8 @@
   }
 
   function emptyPage(lang) {
-    return { text: '', lang: lang || 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0, noDictation: false, noMeaning: false, noMeaningTask: false, quran: null, checked: false };
+    // textId, title (redesign): the child's saved text this page is ("My texts"), or null.
+    return { text: '', lang: lang || 'en', mode: 'strict', confirmed: false, langChosen: false, confirmToken: 0, noDictation: false, noMeaning: false, noMeaningTask: false, quran: null, checked: false, textId: null, title: '' };
   }
 
   /** The Quran screen state of the child changed: family.js stores it (not during a task). */
@@ -1978,12 +1999,15 @@
       markUnconfirmed();
     });
     textarea.addEventListener('input', markUnconfirmed);
+    // The name of the text is saved with it (a change is saved by "Save" again).
+    $('#page-title').addEventListener('input', markUnconfirmed);
     for (const radio of $$('input[name="mode"]')) {
       radio.addEventListener('change', () => {
         if (radio.checked) {
           state.page.mode = radio.value === 'contextual' ? 'contextual' : 'strict';
           updateReciteModeLabel();
           resetRecite(); // a result of the other mode must not stay under the new label
+          markUnconfirmed(); // the mode is saved with the text: "Save" again
         }
       });
     }
@@ -1995,6 +2019,7 @@
 
   function enterPrepare() {
     $('#page-lang').value = state.page.lang;
+    setT($('#prep-title'), state.page.textId ? 'prep_title_edit' : 'prep_title');
   }
 
   /** Set the language of the page text (the select, and the textarea's lang and dir). */
@@ -2019,6 +2044,23 @@
     state.page.confirmed = false;
     setStatus(status, 'text_changed');
     $('#prep-next').hidden = true;
+  }
+
+  /** The text on the screens of the child: its name, and "Another text" (My texts). */
+  function updateWhichText() {
+    for (const id of ['#recite-which', '#dict-which']) {
+      const node = $(id);
+      node.textContent = '';
+      if (state.task || !state.page.confirmed) {
+        node.hidden = true;
+        continue;
+      }
+      const name = state.page.title || '';
+      const other = el('button', { type: 'button', class: 'btn btn-small btn-ghost' }, t('other_text'));
+      other.addEventListener('click', () => go('texts'));
+      node.append(el('span', { class: 'which-label' }, t('which_text') + ' '), el('bdi', { class: 'which-name', dir: 'auto' }, name || '…'), ' ', other);
+      node.hidden = false;
+    }
   }
 
   /** 'arabic' or 'latin': the script most letters of `text` are written in, or null. */
@@ -2153,6 +2195,7 @@
     state.page.text = text;
     state.page.lang = lang;
     state.page.checked = checked;
+    state.page.title = $('#page-title').value.trim();
     setNoMeaning(noMeaning);
     const mode = $('input[name="mode"]:checked');
     state.page.mode = mode && mode.value === 'contextual' && !noMeaning ? 'contextual' : 'strict';
@@ -2167,8 +2210,20 @@
     if (noDictation) key = 'text_confirmed_no_dictation';
     else if (quran) key = 'text_confirmed_quran';
     else if (switched) key = 'text_confirmed_ar';
-    setStatus(status, key);
+    // (Redesign) Saved in the child's texts (family.js): a new one, or the one changed.
+    const saved = state.hooks.onTextSaved ? state.hooks.onTextSaved({ id: state.page.textId, title: state.page.title, text, lang, mode: state.page.mode }) : null;
+    if (saved && saved.id) {
+      state.page.textId = saved.id;
+      state.page.title = saved.title || state.page.title;
+      $('#page-title').value = state.page.title;
+      setT($('#prep-title'), 'prep_title_edit');
+      setStatus(status, key);
+    } else {
+      // Not saved (30 texts already, a full storage): it can still be practised now.
+      setStatus(status, (saved && saved.error) || 'text_not_saved', null, { error: true });
+    }
     $('#prep-next').hidden = false;
+    updateWhichText();
     // A child screen opened meanwhile shows the new text.
     if (state.screen === 'recite') enterRecite();
     else if (state.screen === 'dictation') enterDictation();
@@ -2427,6 +2482,7 @@
     const ready = state.page.confirmed;
     $('#recite-empty').hidden = ready;
     $('#recite-main').hidden = !ready;
+    updateWhichText();
     updateReciteModeLabel();
     updateQuranNotes();
     if (ready && !$('#recite-text').childNodes.length) showPlainPage();
@@ -2699,7 +2755,7 @@
     closeLive(live);
     clearStatus(status);
     showReciteResult(res, info);
-    notifyTask('recite', res);
+    notifyResult('recite', res);
   }
 
   /** Non-empty strings of a list of ideas from the judgement. */
@@ -2888,6 +2944,7 @@
     const ready = state.page.confirmed;
     $('#dict-empty').hidden = ready;
     $('#dict-main').hidden = !ready;
+    updateWhichText();
     updateQuranNotes();
     setDictStage(state.dictation.stage);
   }
@@ -3146,7 +3203,9 @@
     d.playId++; // a voice still on its way for this phrase is not played
     player.stop();
     setPhraseLoading(false);
-    setNextWaiting(true);
+    // (Redesign) The app asks, and never blocks the rest: "Next" goes on even when nobody
+    // can read the part now.
+    setNextWaiting(false);
     const plain = !d.readText[index];
     $('#dict-gu').hidden = false;
     $('#dict-gu .gu-box').hidden = false;
@@ -3765,6 +3824,7 @@
     // A Quran task counts only a check of exactly its own range.
     const tq = task && task.quran;
     if (tq && loaded.surah === tq.surah && loaded.from === tq.from && loaded.to === tq.to) notifyTask('quran', res);
+    else if (!task) notifyResult('quran', res);
   }
 
   /**
@@ -4192,6 +4252,22 @@
     if (!node) return;
     node.textContent = '';
     node.hidden = true;
+  }
+
+  /**
+   * A check result: of the running task (notifyTask), or of free practice (redesign):
+   * family.js may give a star for it (the Quran section, or a saved text of "My texts").
+   */
+  function notifyResult(kind, res) {
+    if (state.task) {
+      notifyTask(kind, res);
+      return;
+    }
+    const cb = state.hooks.onPractice;
+    if (!cb) return;
+    const textId = kind === 'quran' ? null : state.page.textId;
+    if (kind !== 'quran' && !textId) return;
+    cb({ kind, textId }, res, $('#task-outcome-' + kind));
   }
 
   /** Give a check result of the running task to family.js, with the node for its outcome. */

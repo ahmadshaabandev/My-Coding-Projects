@@ -181,7 +181,7 @@ test('emptyDoc: shape, now is required, and validateDoc repairs nothing', () => 
   assert.deepEqual(d, {
     version: 2, createdAt: at(0), updatedAt: at(0),
     parent: { pin: null, failedAttempts: 0, lockedUntil: null, pinResetAt: null, consentAt: null, aiConsentAt: null, aiConsentVersion: null, uiLang: 'fr' },
-    children: [], activeChildId: null, tasks: [], jar: {}, surprises: [],
+    children: [], activeChildId: null, tasks: [], jar: {}, surprises: [], texts: [],
   });
   assertClean(d);
   assert.equal(R.emptyDoc(at(0)).parent.uiLang, 'en');
@@ -226,8 +226,14 @@ test('no operation mutates its input document (deep-frozen inputs all the way)',
   step((x) => R.updateTask(x, t1, { stars: 3 }, at(12)));
   step((x) => R.recordAttempt(x, t1, reciteStrict(10, 10), at(13)));
   step((x) => R.recordAttempt(x, t2, quranRes(10, 9), at(14)));
-  step((x) => R.confirmTask(x, t1, 'app_pass', at(15)));
+  // (Redesign) the passing attempt made t1 done with its stars: no confirmation.
   step((x) => R.markRewardGiven(x, t1, at(16)));
+  step((x) => R.undoTask(x, t1, at(16)));
+  step((x) => R.recordAttempt(x, t1, reciteStrict(10, 10), at(16)));
+  const tx = step((x) => R.addText(x, a, { text: TEXT_EN, lang: 'en' }, at(16), o)).text.id;
+  step((x) => R.updateText(x, tx, { title: 'Cat', mode: 'contextual' }, at(16)));
+  step((x) => R.awardPractice(x, a, { kind: 'dictation', textId: tx }, dictationRes(10, 10), at(16)));
+  R.childTexts(d, a);
   step((x) => R.sendBack(x, t2, 'Again', at(17)));
   step((x) => R.confirmTask(x, t2, 'parent_override', at(18)));
   const g = step((x) => R.addGoal(x, a, { cost: 3, reward: { text: 'Park', emoji: '🌳' } }, at(19), o)).goal.id;
@@ -240,6 +246,7 @@ test('no operation mutates its input document (deep-frozen inputs all the way)',
   step((x) => R.setActiveChild(x, null, at(26)));
   step((x) => R.updateParent(x, { uiLang: 'ar', consent: true }, at(27)));
   step((x) => R.archiveTask(x, t1, at(28)));
+  step((x) => R.removeText(x, tx, at(28)));
   R.childSummary(d, a, at(29));
   R.reviewQueue(d);
   R.validateDoc(d);
@@ -422,12 +429,13 @@ test('removeChild: cascades to tasks, jar, goals, ledger and surprises; other ch
   [d, ta] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en' }, at(10), o);
   [d, tb] = addTask(d, { childId: b, kind: 'dictation', text: 'Le chat dort', lang: 'fr' }, at(11), o);
   d = R.recordAttempt(d, ta, reciteStrict(10, 10), at(12)).doc;
-  d = R.confirmTask(d, ta, 'app_pass', at(13));
+  d = R.addText(d, a, { text: TEXT_EN, lang: 'en' }, at(13), o).doc;
+  d = R.addText(d, b, { text: 'Le chat dort', lang: 'fr' }, at(13), o).doc;
   d = R.addGoal(d, a, { cost: 5, reward: { text: 'Cinema', emoji: '🎬' } }, at(14), o).doc;
   d = R.addSurprise(d, a, { text: 'Stickers' }, at(15), o).doc;
   d = R.addSurprise(d, b, { text: 'Book', emoji: '📚' }, at(16), o).doc;
   assert.equal(d.activeChildId, a);
-  const before = JSON.stringify([d.children[1], d.jar[b], d.tasks.filter((t) => t.childId === b), d.surprises.filter((s) => s.childId === b)]);
+  const before = JSON.stringify([d.children[1], d.jar[b], d.tasks.filter((t) => t.childId === b), d.surprises.filter((s) => s.childId === b), d.texts.filter((x) => x.childId === b)]);
   const d2 = R.removeChild(d, a, at(20));
   assert.deepEqual(d2.children.map((c) => c.id), [b]);
   assert.equal(d2.tasks.some((t) => t.childId === a), false);
@@ -435,7 +443,8 @@ test('removeChild: cascades to tasks, jar, goals, ledger and surprises; other ch
   assert.equal(Object.prototype.hasOwnProperty.call(d2.jar, a), false);
   assert.equal(d2.surprises.some((s) => s.childId === a), false);
   assert.equal(d2.activeChildId, null, 'the removed child was active');
-  assert.equal(JSON.stringify([d2.children[0], d2.jar[b], d2.tasks, d2.surprises]), before);
+  assert.equal(d2.texts.some((x) => x.childId === a), false, 'the child\'s texts go too');
+  assert.equal(JSON.stringify([d2.children[0], d2.jar[b], d2.tasks, d2.surprises, d2.texts]), before);
   assertClean(d2);
   assert.equal(R.removeChild(d, b, at(20)).activeChildId, a, 'another active child stays active');
   throwsCode(() => R.removeChild(d2, a, at(21)), 'not_found');
@@ -528,16 +537,15 @@ test('Quran tasks never carry a mode: createTask and updateTask refuse it, valid
   assert.deepEqual(v.doc, d1);
 });
 
-test('updateTask: edits, content changes send a ready task back to "to do", done and archived refuse', () => {
+test('updateTask: edits to a task to do; done and archived refuse', () => {
   let { d, a, o } = family();
   let id;
   [d, id] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en', reward: { text: 'Ice cream', emoji: '🍦' } }, at(10), o);
-  d = R.recordAttempt(d, id, reciteStrict(10, 10), at(11)).doc;
-  assert.equal(task(d, id).status, 'ready');
-  // Stars, title, reward, due: still ready.
+  d = R.recordAttempt(d, id, reciteStrict(10, 7), at(11)).doc;
+  assert.equal(task(d, id).status, 'assigned');
   let d2 = R.updateTask(d, id, { stars: 4, title: 'Cat poem', due: '2026-12-01', reward: { text: 'Cake', emoji: '🍰' } }, at(12));
   let t = task(d2, id);
-  assert.deepEqual([t.status, t.stars, t.title, t.due, t.reward.text, t.rewardStatus, t.updatedAt], ['ready', 4, 'Cat poem', '2026-12-01', 'Cake', 'locked', at(12)]);
+  assert.deepEqual([t.status, t.stars, t.title, t.due, t.reward.text, t.rewardStatus, t.updatedAt], ['assigned', 4, 'Cat poem', '2026-12-01', 'Cake', 'locked', at(12)]);
   assertClean(d2);
   // Undefined fields change nothing; null clears the reward and the date; '' resets the title.
   d2 = R.updateTask(d2, id, { reward: undefined, due: undefined, title: undefined }, at(13));
@@ -545,19 +553,17 @@ test('updateTask: edits, content changes send a ready task back to "to do", done
   d2 = R.updateTask(d2, id, { reward: null, due: null, title: '' }, at(13));
   t = task(d2, id);
   assert.deepEqual([t.reward, t.rewardStatus, t.due, t.title], [null, 'none', null, 'The little cat sat on the warm mat and looked at the birds']);
-  // Text, mode or pass level changes: back to assigned.
   for (const patch of [{ text: 'A new text' }, { mode: 'contextual' }, { pass: { minAccuracy: 0.9 } }, { lang: 'fr' }]) {
     const t3 = task(R.updateTask(d, id, patch, at(14)), id);
     assert.deepEqual([t3.status, t3.readyAt], ['assigned', null], JSON.stringify(patch));
   }
-  assert.equal(task(R.updateTask(d, id, { text: TEXT_EN, pass: { minAccuracy: 1 } }, at(14)), id).status, 'ready', 'same content stays ready');
   throwsCode(() => R.updateTask(d, id, { kind: 'dictation' }, at(14)), 'bad_input', 'kind');
   throwsCode(() => R.updateTask(d, id, { childId: 'x' }, at(14)), 'bad_input', 'childId');
   throwsCode(() => R.updateTask(d, id, { status: 'done' }, at(14)), 'bad_input', 'status');
   throwsCode(() => R.updateTask(d, id, { quran: { surah: 1 } }, at(14)), 'bad_input', 'quran');
   throwsCode(() => R.updateTask(d, id, { stars: 9 }, at(14)), 'bad_input', 'stars');
   throwsCode(() => R.updateTask(d, 'nope', { stars: 1 }, at(14)), 'not_found', 'taskId');
-  const done = R.confirmTask(d, id, 'app_pass', at(15));
+  const done = R.recordAttempt(d, id, reciteStrict(10, 10), at(15)).doc;
   throwsCode(() => R.updateTask(done, id, { stars: 1 }, at(16)), 'bad_state');
   throwsCode(() => R.updateTask(R.archiveTask(d, id, at(15)), id, { stars: 1 }, at(16)), 'bad_state');
   // A Quran range is merged; a dictation task refuses a mode.
@@ -573,37 +579,29 @@ test('updateTask: edits, content changes send a ready task back to "to do", done
 // State transitions
 // ---------------------------------------------------------------------------
 
-test('transitions: assigned -> ready on a passing attempt -> done (app_pass); reward locked -> unlocked -> given', () => {
+test('transitions (redesign): a passing attempt makes the task done at once, its stars in the jar and its reward unlocked; then given', () => {
   let { d, a, o } = family();
   let id;
   [d, id] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en', stars: 3, reward: { text: 'Ice cream', emoji: '🍦' } }, at(10), o);
   assert.equal(task(d, id).rewardStatus, 'locked');
   // A failing attempt: still to do, nothing lost.
   let r = R.recordAttempt(d, id, reciteStrict(10, 7), at(11));
-  assert.deepEqual([r.passed, r.becameReady, task(r.doc, id).status], [false, false, 'assigned']);
+  assert.deepEqual([r.passed, r.becameDone, task(r.doc, id).status], [false, false, 'assigned']);
   assert.deepEqual(r.attempt, { at: at(11), accuracy: 0.7, verdict: 'mistakes', nErrors: 3, nExpected: 10, passed: false });
   d = r.doc;
   r = R.recordAttempt(d, id, reciteStrict(10, 10), at(12));
-  assert.deepEqual([r.passed, r.becameReady, r.task.status, r.task.readyAt], [true, true, 'ready', at(12)]);
+  assert.deepEqual([r.passed, r.becameDone, r.task.status, r.task.doneAt, r.task.confirmedBy, r.task.rewardStatus], [true, true, 'done', at(12), 'app_pass', 'unlocked']);
   d = r.doc;
   assert.equal(JSON.stringify(d).includes(SECRET), false, 'no transcript or feedback text is stored');
   assert.deepEqual(Object.keys(task(d, id).attempts[0]).sort(), ['accuracy', 'at', 'nErrors', 'nExpected', 'passed', 'verdict']);
-  // More attempts while ready: recorded, no status change.
-  r = R.recordAttempt(d, id, reciteStrict(10, 4), at(13));
-  assert.deepEqual([r.becameReady, r.task.status, r.task.readyAt, r.task.attempts.length], [false, 'ready', at(12), 3]);
-  d = r.doc;
-  assert.equal(d.jar[a].balance, 0, 'nothing is credited before the parent confirms');
-  d = R.confirmTask(d, id, 'app_pass', at(14));
-  const t = task(d, id);
-  assert.deepEqual([t.status, t.doneAt, t.confirmedBy, t.rewardStatus], ['done', at(14), 'app_pass', 'unlocked']);
-  assert.deepEqual(d.jar[a], { balance: 3, earned: 3, goals: [], ledger: [{ at: at(14), delta: 3, reason: 'task', ref: id, note: null }] });
+  assert.deepEqual(d.jar[a], { balance: 3, earned: 3, goals: [], ledger: [{ at: at(12), delta: 3, reason: 'task', ref: id, note: null }] });
   assertClean(d);
-  // Confirming again credits nothing and throws bad_state (both ways).
+  // Confirming afterwards credits nothing and throws bad_state (both ways).
   throwsCode(() => R.confirmTask(d, id, 'app_pass', at(15)), 'bad_state');
   throwsCode(() => R.confirmTask(d, id, 'parent_override', at(15)), 'bad_state');
-  // Attempts after done are recorded, the status stays done, no stars.
+  // Attempts after done are recorded, the status stays done, no more stars.
   r = R.recordAttempt(d, id, reciteStrict(10, 10), at(16));
-  assert.deepEqual([r.task.status, r.becameReady, r.doc.jar[a].balance], ['done', false, 3]);
+  assert.deepEqual([r.task.status, r.becameDone, r.doc.jar[a].balance, r.task.attempts.length], ['done', false, 3, 3]);
   // The reward: unlocked -> given, once.
   throwsCode(() => R.markRewardGiven(R.archiveTask(d, id, at(16)), 'nope', at(17)), 'not_found');
   const g = R.markRewardGiven(d, id, at(17));
@@ -614,7 +612,7 @@ test('transitions: assigned -> ready on a passing attempt -> done (app_pass); re
   throwsCode(() => R.confirmTask(d, 'nope', 'app_pass', at(15)), 'not_found');
 });
 
-test('transitions: confirm anyway (parent_override) from assigned only; app_pass from ready only', () => {
+test('transitions: "mark as done" (parent_override) from a task to do only', () => {
   let { d, a, o } = family();
   let id;
   [d, id] = addTask(d, { childId: a, kind: 'dictation', text: TEXT_EN, lang: 'en', stars: 4 }, at(10), o);
@@ -622,33 +620,55 @@ test('transitions: confirm anyway (parent_override) from assigned only; app_pass
   d = R.recordAttempt(d, id, dictationRes(10, 6), at(11)).doc;
   const over = R.confirmTask(d, id, 'parent_override', at(12));
   const t = task(over, id);
-  assert.deepEqual([t.status, t.confirmedBy, t.readyAt, t.rewardStatus, over.jar[a].balance], ['done', 'parent_override', null, 'none', 4]);
+  assert.deepEqual([t.status, t.confirmedBy, t.rewardStatus, over.jar[a].balance], ['done', 'parent_override', 'none', 4]);
   assertClean(over);
-  const ready = R.recordAttempt(d, id, dictationRes(10, 10), at(13)).doc;
-  throwsCode(() => R.confirmTask(ready, id, 'parent_override', at(14)), 'bad_state');
-  assert.equal(task(R.confirmTask(ready, id, 'app_pass', at(14)), id).confirmedBy, 'app_pass');
+  const done = R.recordAttempt(d, id, dictationRes(10, 10), at(13)).doc;
+  throwsCode(() => R.confirmTask(done, id, 'parent_override', at(14)), 'bad_state');
 });
 
-test('transitions: send back (ready or assigned -> assigned) with an optional note', () => {
+test('transitions (redesign): undoTask takes the stars back (never below 0), the task is to do again, and a new pass credits it again', () => {
+  let { d, a, o } = family();
+  let id;
+  [d, id] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en', stars: 3, reward: { text: 'Park', emoji: '🌳' } }, at(10), o);
+  throwsCode(() => R.undoTask(d, id, at(11)), 'bad_state');
+  d = R.recordAttempt(d, id, reciteStrict(10, 10), at(11)).doc;
+  d = R.markRewardGiven(d, id, at(12));
+  let u = R.undoTask(d, id, at(13));
+  let t = task(u, id);
+  assert.deepEqual([t.status, t.doneAt, t.confirmedBy, t.readyAt, t.rewardStatus, t.rewardGivenAt], ['assigned', null, null, null, 'locked', null]);
+  assert.deepEqual([u.jar[a].balance, u.jar[a].earned], [0, 0]);
+  assert.deepEqual(u.jar[a].ledger[1], { at: at(13), delta: -3, reason: 'undo', ref: id, note: null });
+  assertClean(u);
+  throwsCode(() => R.undoTask(u, id, at(14)), 'bad_state');
+  // A new pass credits the task again; then confirming is refused (already credited).
+  u = R.recordAttempt(u, id, reciteStrict(10, 10), at(14)).doc;
+  assert.deepEqual([task(u, id).status, u.jar[a].balance, u.jar[a].ledger.length], ['done', 3, 3]);
+  assertClean(u);
+  // Never below 0: with stars spent on a goal, the undo takes what is left.
+  const g = R.addGoal(d, a, { cost: 2, reward: { text: 'Toy' } }, at(14), o);
+  let spent = R.giveGoal(g.doc, a, g.goal.id, at(15));
+  spent = R.undoTask(spent, id, at(16));
+  assert.deepEqual([spent.jar[a].balance, spent.jar[a].ledger[spent.jar[a].ledger.length - 1].delta], [0, -1]);
+  assertClean(spent);
+  throwsCode(() => R.undoTask(d, 'nope', at(16)), 'not_found');
+});
+
+test('transitions: send back (assigned -> assigned) with an optional note; kept for older documents', () => {
   let { d, a, o } = family();
   let id;
   [d, id] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en' }, at(10), o);
-  d = R.recordAttempt(d, id, reciteStrict(10, 10), at(11)).doc;
+  d = R.recordAttempt(d, id, reciteStrict(10, 5), at(11)).doc;
   let s = R.sendBack(d, id, '  Read the last line slowly  ', at(12));
   let t = task(s, id);
   assert.deepEqual([t.status, t.readyAt, t.sentBackAt, t.sentBackNote], ['assigned', null, at(12), 'Read the last line slowly']);
   assertClean(s);
-  // A later pass makes it ready again; nothing was credited.
-  s = R.recordAttempt(s, id, reciteStrict(10, 10), at(13)).doc;
-  assert.deepEqual([task(s, id).status, task(s, id).readyAt, s.jar[a].balance], ['ready', at(13), 0]);
-  // From assigned, without a note.
   t = task(R.sendBack(R.sendBack(d, id, null, at(12)), id, '', at(13)), id);
   assert.deepEqual([t.status, t.sentBackNote, t.sentBackAt], ['assigned', null, at(13)]);
   assert.equal(task(R.sendBack(d, id, undefined, at(12)), id).sentBackNote, null);
   assert.equal(task(R.sendBack(d, id, 'x'.repeat(120), at(12)), id).sentBackNote.length, 120);
   throwsCode(() => R.sendBack(d, id, 'x'.repeat(121), at(12)), 'bad_input', 'note');
   throwsCode(() => R.sendBack(d, id, 5, at(12)), 'bad_input', 'note');
-  const done = R.confirmTask(d, id, 'app_pass', at(14));
+  const done = R.recordAttempt(d, id, reciteStrict(10, 10), at(14)).doc;
   throwsCode(() => R.sendBack(done, id, null, at(15)), 'bad_state');
   throwsCode(() => R.sendBack(R.archiveTask(d, id, at(14)), id, null, at(15)), 'bad_state');
 });
@@ -659,11 +679,10 @@ test('transitions: any state -> archived; archived cannot be confirmed; an unloc
     let x;
     let id;
     [x, id] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en', reward: { text: 'Park', emoji: '🌳' } }, at(10), o);
-    if (status !== 'assigned') x = R.recordAttempt(x, id, reciteStrict(10, 10), at(11)).doc;
-    if (status === 'done') x = R.confirmTask(x, id, 'app_pass', at(12));
+    if (status === 'done') x = R.recordAttempt(x, id, reciteStrict(10, 10), at(11)).doc;
     return [x, id];
   };
-  for (const status of ['assigned', 'ready', 'done']) {
+  for (const status of ['assigned', 'done']) {
     const [x, id] = mk(status);
     const arch = R.archiveTask(x, id, at(20));
     const t = task(arch, id);
@@ -673,9 +692,10 @@ test('transitions: any state -> archived; archived cannot be confirmed; an unloc
     throwsCode(() => R.archiveTask(arch, id, at(21)), 'bad_state');
     throwsCode(() => R.confirmTask(arch, id, 'app_pass', at(21)), 'bad_state');
     throwsCode(() => R.confirmTask(arch, id, 'parent_override', at(21)), 'bad_state');
+    throwsCode(() => R.undoTask(arch, id, at(21)), 'bad_state');
     // Attempts on an archived task change no status and credit nothing.
     const r = R.recordAttempt(arch, id, reciteStrict(10, 10), at(22));
-    assert.deepEqual([r.task.status, r.becameReady, r.doc.jar[a].balance], ['archived', false, status === 'done' ? 2 : 0]);
+    assert.deepEqual([r.task.status, r.becameDone, r.doc.jar[a].balance], ['archived', false, status === 'done' ? 2 : 0]);
     if (status === 'done') assert.equal(task(R.markRewardGiven(arch, id, at(23)), id).rewardStatus, 'given');
     else throwsCode(() => R.markRewardGiven(arch, id, at(23)), 'bad_state');
   }
@@ -760,7 +780,7 @@ test('pass rules: contextual recite passes on verdict same_meaning with no missi
   [d, id] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en', mode: 'contextual' }, at(10), o);
   throwsCode(() => R.recordAttempt(d, id, reciteStrict(10, 10), at(11)), 'bad_input', 'result');
   const rr = R.recordAttempt(d, id, reciteMeaning('same_meaning'), at(11));
-  assert.deepEqual([rr.passed, rr.task.status], [true, 'ready']);
+  assert.deepEqual([rr.passed, rr.task.status], [true, 'done']);
   assert.equal(R.improvement(R.recordAttempt(rr.doc, id, reciteMeaning('partly', ['x']), at(12)).task), null);
 });
 
@@ -791,7 +811,7 @@ test('pass rules: a Quran task passes only on the strict Quran check; minAccurac
   const r1 = R.recordAttempt(d, id, quranRes(15, 15, 1), at(11));
   assert.deepEqual([r1.passed, r1.task.status, r1.attempt.nErrors, r1.attempt.accuracy], [false, 'assigned', 1, 1]);
   const r2 = R.recordAttempt(r1.doc, id, quranRes(15, 15), at(12));
-  assert.deepEqual([r2.passed, r2.becameReady, r2.task.status], [true, true, 'ready']);
+  assert.deepEqual([r2.passed, r2.becameDone, r2.task.status], [true, true, 'done']);
   assert.equal(JSON.stringify(r2.doc).includes(SECRET), false);
   assertClean(r2.doc);
 });
@@ -816,8 +836,7 @@ test('stars: credited once per task, every balance change has a ledger entry, ad
   [d, t1] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en', stars: 3 }, at(10), o);
   [d, t2] = addTask(d, { childId: a, kind: 'dictation', text: TEXT_EN, lang: 'en', stars: 5 }, at(11), o);
   [d, t3] = addTask(d, { childId: b, kind: 'quran', quran: { surah: 114, from: 1, to: 6 }, stars: 1 }, at(12), o);
-  d = R.recordAttempt(d, t1, reciteStrict(10, 10), at(13)).doc;
-  d = R.confirmTask(d, t1, 'app_pass', at(14));
+  d = R.recordAttempt(d, t1, reciteStrict(10, 10), at(14)).doc;
   d = R.confirmTask(d, t2, 'parent_override', at(15));
   d = R.confirmTask(d, t3, 'parent_override', at(16));
   check();
@@ -931,7 +950,7 @@ test('surprises: add at any time, shown once (seen), idempotent, removed with th
 // Views
 // ---------------------------------------------------------------------------
 
-test('childSummary and reviewQueue: sections, order, counts, rewards to give', () => {
+test('childSummary and reviewQueue: sections, order, counts, rewards to give (redesign: nothing waits for the parent)', () => {
   let { d, a, b, o } = family();
   const ids2 = {};
   const mk = (name, child, extra, sec) => {
@@ -942,45 +961,38 @@ test('childSummary and reviewQueue: sections, order, counts, rewards to give', (
   mk('late', a, {}, 10);
   mk('due-dec', a, { due: '2026-12-10' }, 11);
   mk('due-nov', a, { due: '2026-11-20' }, 12);
-  mk('ready-1', a, { reward: { text: 'Cake', emoji: '🍰' } }, 13);
-  mk('ready-2', b, {}, 14);
-  mk('ready-3', a, {}, 15);
-  mk('done-1', a, { reward: { text: 'Park', emoji: '🌳' }, stars: 1 }, 16);
+  mk('passed-1', a, { reward: { text: 'Cake', emoji: '🍰' }, stars: 1 }, 13);
+  mk('passed-2', b, {}, 14);
   mk('done-2', a, { stars: 1 }, 17);
   mk('old', a, {}, 18);
-  d = R.recordAttempt(d, ids2['ready-3'], reciteStrict(4, 4), at(20)).doc;
-  d = R.recordAttempt(d, ids2['ready-2'], reciteStrict(4, 2), at(21)).doc;
-  d = R.recordAttempt(d, ids2['ready-2'], reciteStrict(4, 4), at(22)).doc;
-  d = R.recordAttempt(d, ids2['ready-1'], reciteStrict(4, 4), at(23)).doc;
-  d = R.confirmTask(d, ids2['done-1'], 'parent_override', at(24));
+  d = R.recordAttempt(d, ids2['passed-2'], reciteStrict(4, 2), at(21)).doc;
+  d = R.recordAttempt(d, ids2['passed-2'], reciteStrict(4, 4), at(22)).doc;
+  d = R.recordAttempt(d, ids2['passed-1'], reciteStrict(4, 4), at(23)).doc;
   d = R.confirmTask(d, ids2['done-2'], 'parent_override', at(25));
   d = R.archiveTask(d, ids2.old, at(26));
   const s = R.childSummary(d, a, at(30));
   const titles = (list) => list.map((t) => t.title);
   assert.deepEqual(titles(s.todo), ['due-nov', 'due-dec', 'late'], 'due first, then oldest');
-  assert.deepEqual(titles(s.waiting), ['ready-3', 'ready-1'], 'oldest ready first');
-  assert.deepEqual(titles(s.done), ['done-2', 'done-1'], 'newest first');
-  assert.deepEqual(titles(s.rewardsToGive), ['done-1']);
-  assert.deepEqual(s.counts, { todo: 3, waiting: 2, done: 2, archived: 1, goals: 0, rewardsToGive: 1, unseenSurprises: 0 });
+  assert.deepEqual(titles(s.waiting), [], 'nothing waits for the parent');
+  assert.deepEqual(titles(s.done), ['done-2', 'passed-1'], 'newest first');
+  assert.deepEqual(titles(s.rewardsToGive), ['passed-1']);
+  assert.deepEqual(s.counts, { todo: 3, waiting: 0, done: 2, archived: 1, goals: 0, rewardsToGive: 1, unseenSurprises: 0 });
   assert.deepEqual([s.child.nickname, s.balance, s.earned, s.nextGoal, s.starsMissing, s.goalProgress], ['Sara', 2, 2, null, null, null]);
   throwsCode(() => R.childSummary(d, 'nobody', at(30)), 'not_found');
   // The summary is a copy.
   s.todo[0].title = 'changed';
   assert.equal(task(d, ids2['due-nov']).title, 'due-nov');
-  const q = R.reviewQueue(d);
-  assert.deepEqual(q.map((e) => [e.task.title, e.child.nickname, e.readyAt]), [['ready-3', 'Sara', at(20)], ['ready-2', 'Omar', at(22)], ['ready-1', 'Sara', at(23)]]);
-  const omar = q[1];
-  assert.deepEqual([omar.attemptCount, omar.passedCount, omar.bestAccuracy, omar.lastAccuracy, omar.lastPassed, omar.improvement], [2, 1, 1, 1, true, 2]);
-  assert.deepEqual(omar.child, { id: b, nickname: 'Omar', avatar: R.AVATARS[1] });
-  assert.deepEqual(R.taskActions(task(d, ids2['ready-1'])), { edit: true, confirm: true, confirmAnyway: false, sendBack: true, archive: true, markRewardGiven: false });
-  assert.deepEqual(R.taskActions(task(d, ids2['done-1'])), { edit: false, confirm: false, confirmAnyway: false, sendBack: false, archive: true, markRewardGiven: true });
+  assert.deepEqual(R.reviewQueue(d), []);
+  const st = R.taskStats(task(d, ids2['passed-2']));
+  assert.deepEqual([st.attemptCount, st.passedCount, st.bestAccuracy, st.lastAccuracy, st.lastPassed, st.improvement], [2, 1, 1, 1, true, 2]);
+  assert.deepEqual(R.taskActions(task(d, ids2['passed-1'])), { edit: false, confirm: false, confirmAnyway: false, sendBack: false, archive: true, markRewardGiven: true });
   assert.deepEqual(R.taskActions(task(d, ids2.late)), { edit: true, confirm: false, confirmAnyway: true, sendBack: true, archive: true, markRewardGiven: false });
   // Lookups return copies.
   const c = R.getChild(d, a);
   c.nickname = 'X';
   assert.equal(d.children[0].nickname, 'Sara');
   assert.equal(R.getTask(d, 'nope'), null);
-  assert.equal(R.getJar(d, b).balance, 0);
+  assert.equal(R.getJar(d, b).balance, 2);
   assert.equal(R.getJar(d, 'nope'), null);
 });
 
@@ -1011,7 +1023,7 @@ test('migrateV1: the v1 profile becomes a v2 document with one child', () => {
     version: 2, createdAt: at(0), updatedAt: at(0),
     parent: { pin: null, failedAttempts: 0, lockedUntil: null, pinResetAt: null, consentAt: null, aiConsentAt: null, aiConsentVersion: null, uiLang: 'fr' },
     children: [{ id: 'kid1', nickname: 'Lina', age: '10-13', lang: 'fr', avatar: R.AVATARS[0], createdAt: at(0), quran: { surah: 2, from: 255, to: 257, juzAmma: false } }],
-    activeChildId: 'kid1', tasks: [], jar: { kid1: { balance: 0, earned: 0, goals: [], ledger: [] } }, surprises: [],
+    activeChildId: 'kid1', tasks: [], jar: { kid1: { balance: 0, earned: 0, goals: [], ledger: [] } }, surprises: [], texts: [],
   });
   assertClean(d);
   // From the JSON string stored under the v1 key.
@@ -1056,18 +1068,21 @@ function richDoc() {
   [d, t3] = addTask(d, { childId: b, kind: 'dictation', text: TEXT_AR, lang: 'ar', stars: 4 }, at(12), o);
   [d, t4] = addTask(d, { childId: b, kind: 'recite', text: TEXT_AR, lang: 'ar', mode: 'contextual' }, at(13), o);
   d = R.recordAttempt(d, t1, reciteStrict(10, 10), at(14)).doc;
-  d = R.confirmTask(d, t1, 'app_pass', at(15));
   d = R.recordAttempt(d, t2, quranRes(15, 13), at(16)).doc;
   d = R.recordAttempt(d, t3, dictationRes(5, 5), at(17)).doc;
-  d = R.confirmTask(d, t3, 'app_pass', at(18));
   d = R.recordAttempt(d, t4, reciteMeaning('same_meaning'), at(19)).doc;
+  d = R.undoTask(d, t4, at(19));
   const ga = R.addGoal(d, a, { cost: 2, reward: { text: 'Park', emoji: '🌳' } }, at(20), o);
   d = R.giveGoal(ga.doc, a, ga.goal.id, at(21));
   d = R.addGoal(d, b, { cost: 10, reward: { text: 'Zoo', emoji: '🎡' } }, at(22), o).doc;
   d = R.adjustStars(d, b, 3, at(23), 'Kind');
   d = R.addSurprise(d, a, { text: 'Stickers' }, at(24), o).doc;
   d = R.sendBack(d, t2, 'Slowly', at(25));
-  return { d, a, b, t1, t2, t3, t4, goalA: ga.goal.id };
+  const xa = R.addText(d, a, { text: TEXT_EN, lang: 'en', title: 'Cat' }, at(26), o);
+  d = R.awardPractice(xa.doc, a, { kind: 'recite', textId: xa.text.id }, reciteStrict(10, 10), at(27)).doc;
+  d = R.awardPractice(d, a, { kind: 'quran', textId: null }, quranRes(4, 4), at(27)).doc;
+  d = R.addText(d, b, { text: TEXT_AR, lang: 'ar', mode: 'contextual' }, at(28), o).doc;
+  return { d, a, b, t1, t2, t3, t4, goalA: ga.goal.id, textA: xa.text.id };
 }
 
 test('validateDoc: rejects what is not a version 2 document, never throws', () => {
@@ -1153,18 +1168,19 @@ test('validateDoc: drops unknown fields, clamps numbers, makes status fields con
   y.tasks[0].rewardStatus = 'given'; // given without rewardGivenAt
   y.tasks[1].readyAt = at(5); // assigned with readyAt
   y.tasks[1].doneAt = at(5);
-  y.tasks[3].readyAt = null; // ready without readyAt
+  y.tasks[3].readyAt = at(5); // to do with readyAt
   y.tasks[3].rewardStatus = 'unlocked'; // no reward
   y.tasks[2].status = 'finished';
   const w = repairs(y);
   const U = (id) => task(w.doc, id);
   assert.deepEqual([U(t1).status, U(t1).doneAt, U(t1).confirmedBy, U(t1).rewardStatus, U(t1).rewardGivenAt], ['done', U(t1).updatedAt, 'parent_override', 'given', U(t1).updatedAt]);
   assert.deepEqual([U(t2).readyAt, U(t2).doneAt], [null, null]);
-  assert.deepEqual([w.doc.tasks[3].readyAt, w.doc.tasks[3].rewardStatus], [w.doc.tasks[3].updatedAt, 'none']);
+  assert.deepEqual([w.doc.tasks[3].readyAt, w.doc.tasks[3].rewardStatus], [null, 'none']);
   assert.equal(U(t3).status, 'assigned');
   assert.equal(U(t3).doneAt, null);
-  // Its 'task' ledger entry no longer points to a confirmed task: the reference is cleared, the stars stay.
-  assert.deepEqual([w.doc.jar[b].ledger[0].ref, w.doc.jar[b].balance], [null, 7]);
+  // (Redesign) Its 'task' ledger entry still points to a task of the child (a task can be
+  // credited, undone and credited again), so it is kept; the stars stay.
+  assert.deepEqual([w.doc.jar[b].ledger[0].ref, w.doc.jar[b].balance], [t3, 7]);
 });
 
 test('validateDoc: caps attempts at 20 and the ledger at 200, keeps the balance equal to the ledger', () => {
@@ -1482,7 +1498,8 @@ test('random sequence: 3500 seeded operations over 3 children keep every invaria
   }
 
   const OPS = [
-    [6, 'createTask'], [24, 'recordAttempt'], [11, 'confirmTask'], [4, 'sendBack'], [3, 'archiveTask'], [4, 'updateTask'],
+    [6, 'createTask'], [24, 'recordAttempt'], [6, 'confirmTask'], [4, 'undoTask'], [2, 'sendBack'], [3, 'archiveTask'], [4, 'updateTask'],
+    [3, 'addText'], [1, 'removeText'], [8, 'practice'],
     [4, 'markRewardGiven'], [4, 'addGoal'], [6, 'giveGoal'], [2, 'removeGoal'], [16, 'adjustStars'], [3, 'addSurprise'],
     [3, 'markSurpriseSeen'], [2, 'setActiveChild'], [2, 'updateChild'], [0.4, 'replaceChild'], [2, 'badInput'],
   ];
@@ -1532,9 +1549,71 @@ test('random sequence: 3500 seeded operations over 3 children keep every invaria
         }
         const r = R.recordAttempt(doc, t.id, res, now());
         assert.equal(r.passed, passed, JSON.stringify({ t: t.kind, mode: t.mode, min: t.pass.minAccuracy, res: res.result || res.judgement || res }));
-        assert.equal(r.becameReady, t.status === 'assigned' && passed);
-        assert.equal(r.task.status, r.becameReady ? 'ready' : t.status);
+        assert.equal(r.becameDone, t.status === 'assigned' && passed);
+        assert.equal(r.task.status, r.becameDone ? 'done' : t.status);
         assert.equal(r.task.attempts.length, Math.min(20, t.attempts.length + 1));
+        if (r.becameDone) {
+          assert.equal(model.credited.has(t.id), false, 'a task is credited only once at a time');
+          model.credited.add(t.id);
+          credit(t.childId, t.stars);
+          count('confirmed');
+        }
+        doc = r.doc;
+        break;
+      }
+      case 'undoTask': {
+        const t = anyTask();
+        if (!t) break;
+        if (t.status !== 'done') {
+          expectErr(() => R.undoTask(doc, t.id, now()), 'bad_state');
+          break;
+        }
+        doc = R.undoTask(doc, t.id, now());
+        const bal = model.balance.get(t.childId);
+        const eff = Math.min(t.stars, bal);
+        model.balance.set(t.childId, bal - eff);
+        model.earned.set(t.childId, Math.max(bal - eff, model.earned.get(t.childId) - t.stars));
+        model.credited.delete(t.id);
+        assert.equal(task(doc, t.id).status, 'assigned');
+        count('undone');
+        break;
+      }
+      case 'addText': {
+        const cid = kid();
+        const mine = (doc.texts || []).filter((x) => x.childId === cid).length;
+        const input = { text: pick([TEXT_EN, TEXT_AR, 'Le petit chat']), lang: pick(R.LANGS), mode: pick(R.MODES) };
+        if (mine >= R.LIMITS.textsPerChild) {
+          expectErr(() => R.addText(doc, cid, input, now(), opts), 'bad_input');
+          break;
+        }
+        doc = R.addText(doc, cid, input, now(), opts).doc;
+        break;
+      }
+      case 'removeText': {
+        if (!doc.texts.length) break;
+        doc = R.removeText(doc, pick(doc.texts).id, now());
+        break;
+      }
+      case 'practice': {
+        const cid = kid();
+        const mine = doc.texts.filter((x) => x.childId === cid);
+        const kindP = mine.length && rand() < 0.8 ? pick(['recite', 'dictation']) : 'quran';
+        const x = kindP === 'quran' ? null : pick(mine);
+        const fake = { kind: kindP === 'quran' ? 'quran' : kindP, mode: x ? x.mode : undefined, pass: { minAccuracy: 1 } };
+        const { res, fits } = randomResult(fake);
+        const tnow = now();
+        if (!fits) {
+          expectErr(() => R.awardPractice(doc, cid, { kind: kindP, textId: x ? x.id : null }, res, tnow), 'bad_input');
+          break;
+        }
+        const r = R.awardPractice(doc, cid, { kind: kindP, textId: x ? x.id : null }, res, tnow);
+        if (r.stars) {
+          credit(cid, 1);
+          count('practiceStar');
+        }
+        const day = tnow.slice(0, 10);
+        const today = r.doc.jar[cid].ledger.filter((e) => e.reason === 'practice' && e.at.slice(0, 10) === day);
+        assert.ok(today.length <= R.LIMITS.practiceStarsPerDay, 'at most 3 stars of free practice a day');
         doc = r.doc;
         break;
       }
@@ -1542,7 +1621,7 @@ test('random sequence: 3500 seeded operations over 3 children keep every invaria
         const t = anyTask();
         if (!t) break;
         const how = pick(['app_pass', 'parent_override']);
-        const ok = (how === 'app_pass' && t.status === 'ready') || (how === 'parent_override' && t.status === 'assigned');
+        const ok = how === 'parent_override' && t.status === 'assigned';
         if (!ok) {
           expectErr(() => R.confirmTask(doc, t.id, how, now()), 'bad_state');
           break;
@@ -1693,9 +1772,14 @@ test('random sequence: 3500 seeded operations over 3 children keep every invaria
       assert.equal(j.balance, model.balance.get(c.id), 'balance follows the operations');
       assert.equal(j.earned, model.earned.get(c.id), 'earned follows the operations');
       assert.ok(j.ledger.length <= 200);
-      const refs = j.ledger.filter((e) => e.reason === 'task' && e.ref !== null).map((e) => e.ref);
-      assert.equal(new Set(refs).size, refs.length, "no task's stars are credited twice");
-      for (const ref of refs) assert.ok(model.credited.has(ref));
+      // A task's stars are never credited twice in a row (an undo comes between).
+      const state = new Map();
+      for (const e of j.ledger) {
+        if (e.ref === null || (e.reason !== 'task' && e.reason !== 'undo')) continue;
+        if (e.reason === 'task') assert.notEqual(state.get(e.ref), true, "no task's stars are credited twice");
+        state.set(e.ref, e.reason === 'task');
+      }
+      for (const [ref, on] of state) if (on) assert.ok(model.credited.has(ref));
     }
     for (const t of doc.tasks) {
       assert.ok(t.attempts.length <= 20);
@@ -1713,6 +1797,7 @@ test('random sequence: 3500 seeded operations over 3 children keep every invaria
   // The sequence really exercised the interesting paths.
   assert.ok(N >= 3000);
   assert.ok(stats.confirmed >= 50, JSON.stringify(stats));
+  assert.ok(stats.undone >= 10 && stats.practiceStar >= 20, JSON.stringify(stats));
   assert.ok(stats.goalGiven >= 10, JSON.stringify(stats));
   assert.ok(stats.rewardGiven >= 5, JSON.stringify(stats));
   assert.ok(stats['error:bad_state'] >= 50 && stats['error:bad_input'] >= 20 && stats['error:insufficient_stars'] >= 5, JSON.stringify(stats));
@@ -1978,6 +2063,7 @@ test('family copy: "__proto__" and "constructor" keys anywhere pollute nothing a
   x.family.tasks = x.family.tasks.map((t) => (t.childId === a ? Object.assign(t, { childId: 'constructor' }) : t));
   x.family.jar = { constructor: x.family.jar[a], [d.children[1].id]: x.family.jar[d.children[1].id] };
   x.family.surprises = x.family.surprises.map((s) => Object.assign(s, { childId: 'constructor' }));
+  x.family.texts = x.family.texts.map((s) => (s.childId === a ? Object.assign(s, { childId: 'constructor' }) : s));
   x.family.activeChildId = 'constructor';
   const c = R.readFamilyCopy(JSON.stringify(x));
   assert.deepEqual([c.ok, c.repairs], [true, []]);
@@ -2127,6 +2213,223 @@ test('family copy: familySummary counts the children, their tasks (not archived)
   assert.deepEqual(s.children.map((c) => [c.tasks, c.stars]), [[own(a), archived.jar[a].balance], [own(b), archived.jar[b].balance]]);
   assert.equal(s.tasks, archived.tasks.length - 1);
   assert.equal(s.stars, archived.jar[a].balance + archived.jar[b].balance);
-  assert.deepEqual(R.familySummary(null), { children: [], tasks: 0, stars: 0 });
-  assert.deepEqual(R.familySummary({ children: [{ id: 'x', nickname: 'X', avatar: '🐱' }] }).children, [{ id: 'x', nickname: 'X', avatar: '🐱', tasks: 0, stars: 0 }]);
+  assert.deepEqual(s.children.map((c) => c.texts), [1, 1]);
+  assert.equal(s.texts, 2);
+  assert.deepEqual(R.familySummary(null), { children: [], tasks: 0, texts: 0, stars: 0 });
+  assert.deepEqual(R.familySummary({ children: [{ id: 'x', nickname: 'X', avatar: '🐱' }] }).children, [{ id: 'x', nickname: 'X', avatar: '🐱', tasks: 0, texts: 0, stars: 0 }]);
+});
+
+// ---------------------------------------------------------------------------
+// Redesign: My texts, stars of free practice, auto stars and the migration of tasks
+// that waited for the parent (docs/REWARDS.md, "Redesign")
+// ---------------------------------------------------------------------------
+
+test('my texts: a child adds, renames, changes and deletes a text; validation and the limit of 30 per child', () => {
+  let { d, a, b, o } = family();
+  let r = R.addText(d, a, { text: '  ' + TEXT_EN + '  ', lang: 'en' }, at(10), o);
+  assert.deepEqual(r.text, { id: r.text.id, childId: a, title: 'The little cat sat on the warm mat and looked at the birds', text: TEXT_EN, lang: 'en', mode: 'strict', createdAt: at(10), updatedAt: at(10) });
+  d = r.doc;
+  assertClean(d);
+  const id = r.text.id;
+  d = R.updateText(d, id, { title: '  My cat  ' }, at(11));
+  assert.deepEqual([R.getText(d, id).title, R.getText(d, id).updatedAt], ['My cat', at(11)]);
+  d = R.updateText(d, id, { text: 'Le chat dort', lang: 'fr', mode: 'contextual' }, at(12));
+  assert.deepEqual([R.getText(d, id).text, R.getText(d, id).lang, R.getText(d, id).mode, R.getText(d, id).title], ['Le chat dort', 'fr', 'contextual', 'My cat']);
+  d = R.updateText(d, id, { title: '' }, at(13));
+  assert.equal(R.getText(d, id).title, 'Le chat dort', 'an empty title gets the default again');
+  assertClean(d);
+  for (const [input, field] of [[{ text: '', lang: 'en' }, 'text'], [{ text: 'x'.repeat(5001), lang: 'en' }, 'text'], [{ text: 'x' }, 'lang'],
+    [{ text: 'x', lang: 'de' }, 'lang'], [{ text: 'x', lang: 'en', mode: 'fast' }, 'mode'], [{ text: 'x', lang: 'en', title: 'y'.repeat(61) }, 'title'],
+    [{ text: 'x', lang: 'en', childId: b }, 'childId'], [{ lang: 'en' }, 'text']]) {
+    throwsCode(() => R.addText(d, a, input, at(14), o), 'bad_input', field);
+  }
+  throwsCode(() => R.addText(d, 'nobody', { text: 'x', lang: 'en' }, at(14)), 'not_found');
+  throwsCode(() => R.updateText(d, 'nope', { title: 'x' }, at(14)), 'not_found', 'textId');
+  throwsCode(() => R.updateText(d, id, { childId: b }, at(14)), 'bad_input', 'childId');
+  // At most 30 texts per child; another child still has room.
+  let full = d;
+  for (let i = 1; i < R.LIMITS.textsPerChild; i++) full = R.addText(full, a, { text: 'Text ' + i, lang: 'en' }, at(20 + i), o).doc;
+  throwsCode(() => R.addText(full, a, { text: 'One more', lang: 'en' }, at(60), o), 'bad_input', 'texts');
+  assert.equal(R.addText(full, b, { text: 'Encore', lang: 'fr' }, at(60), o).text.childId, b);
+  // childTexts: the most recently changed first, copies.
+  const list = R.childTexts(full, a);
+  assert.equal(list.length, 30);
+  assert.equal(list[0].title, 'Text 29');
+  list[0].title = 'changed';
+  assert.equal(R.childTexts(full, a)[0].title, 'Text 29');
+  assert.deepEqual(R.childTexts(full, b), []);
+  // Deleting a text keeps the stars it earned (the ledger ref becomes null); removing a child deletes their texts.
+  d = R.awardPractice(d, a, { kind: 'recite', textId: id }, reciteMeaning('same_meaning'), at(70)).doc;
+  assert.equal(d.jar[a].ledger[0].ref, id);
+  const gone = R.removeText(d, id, at(71));
+  assert.deepEqual([gone.texts.length, gone.jar[a].balance, gone.jar[a].ledger[0].ref], [0, 1, null]);
+  assertClean(gone);
+  throwsCode(() => R.removeText(gone, id, at(72)), 'not_found');
+  assert.equal(R.removeChild(d, a, at(72)).texts.length, 0);
+});
+
+test('practice stars: a pass earns 1 star, once per text and activity a day, at most 3 a day; tasks do not count; nothing but the ledger entry is stored', () => {
+  let { d, a, b, o } = family();
+  const add = (text) => {
+    const r = R.addText(d, a, { text, lang: 'en' }, at(10), o);
+    d = r.doc;
+    return r.text.id;
+  };
+  const t1 = add('One two three');
+  const t2 = add('Four five six');
+  const t3 = add('Seven eight nine');
+  const tm = R.addText(d, a, { text: 'By meaning', lang: 'en', mode: 'contextual' }, at(10), o);
+  d = tm.doc;
+  // Not passed: nothing.
+  let r = R.awardPractice(d, a, { kind: 'recite', textId: t1 }, reciteStrict(10, 9), at(11));
+  assert.deepEqual([r.passed, r.stars, r.why], [false, 0, 'not_passed']);
+  assert.deepEqual(r.doc, d);
+  // Passed: one star with its ledger entry.
+  r = R.awardPractice(d, a, { kind: 'recite', textId: t1 }, reciteStrict(10, 10), at(12));
+  assert.deepEqual([r.passed, r.stars, r.why], [true, 1, 'star']);
+  d = r.doc;
+  assert.deepEqual(d.jar[a].ledger, [{ at: at(12), delta: 1, reason: 'practice', ref: t1, note: null, act: 'recite' }]);
+  assert.deepEqual([d.jar[a].balance, d.jar[a].earned], [1, 1]);
+  assert.equal(JSON.stringify(d).includes(SECRET), false, 'no transcript or feedback is stored');
+  assertClean(d);
+  // The same text and activity again today: no star; another activity of the same text: a star.
+  assert.equal(R.awardPractice(d, a, { kind: 'recite', textId: t1 }, reciteStrict(10, 10), at(13)).why, 'again_today');
+  d = R.awardPractice(d, a, { kind: 'dictation', textId: t1 }, dictationRes(10, 10), at(14)).doc;
+  d = R.awardPractice(d, a, { kind: 'recite', textId: t2 }, reciteStrict(5, 5), at(15)).doc;
+  assert.equal(d.jar[a].balance, 3);
+  // The fourth star of the day is refused; a task still gives its stars.
+  assert.equal(R.awardPractice(d, a, { kind: 'recite', textId: t3 }, reciteStrict(5, 5), at(16)).why, 'daily_limit');
+  assert.equal(R.awardPractice(d, a, { kind: 'quran', textId: null }, quranRes(4, 4), at(16)).why, 'daily_limit');
+  let tid;
+  [d, tid] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en', stars: 2 }, at(17), o);
+  d = R.recordAttempt(d, tid, reciteStrict(10, 10), at(18)).doc;
+  assert.equal(d.jar[a].balance, 5);
+  // The next day: stars again; the other child has their own count.
+  const tomorrow = new Date(T0 + 86400 * 1000).toISOString();
+  r = R.awardPractice(d, a, { kind: 'recite', textId: t1 }, reciteStrict(10, 10), tomorrow);
+  assert.equal(r.why, 'star');
+  // The Quran section: no error at all, once a day; a meaning text passes on the same meaning.
+  assert.equal(R.awardPractice(d, b, { kind: 'quran', textId: null }, quranRes(4, 4, 1), at(19)).why, 'not_passed', 'an added word is a mistake');
+  const q = R.awardPractice(d, b, { kind: 'quran', textId: null }, quranRes(4, 4), at(19));
+  assert.deepEqual([q.why, q.doc.jar[b].ledger[0].ref, q.doc.jar[b].ledger[0].act], ['star', null, 'quran']);
+  assert.equal(R.awardPractice(q.doc, b, { kind: 'quran', textId: null }, quranRes(4, 4), at(20)).why, 'again_today');
+  assert.equal(R.awardPractice(r.doc, a, { kind: 'recite', textId: tm.text.id }, reciteMeaning('same_meaning'), tomorrow).why, 'star');
+  // Results that do not fit, texts of another child, bad input.
+  throwsCode(() => R.awardPractice(d, a, { kind: 'recite', textId: tm.text.id }, reciteStrict(5, 5), at(21)), 'bad_input', 'result');
+  throwsCode(() => R.awardPractice(d, a, { kind: 'recite', textId: t1 }, quranRes(5, 5), at(21)), 'bad_input', 'result');
+  throwsCode(() => R.awardPractice(d, a, { kind: 'quran', textId: null }, reciteStrict(5, 5), at(21)), 'bad_input', 'result');
+  throwsCode(() => R.awardPractice(d, b, { kind: 'recite', textId: t1 }, reciteStrict(5, 5), at(21)), 'not_found', 'textId');
+  throwsCode(() => R.awardPractice(d, a, { kind: 'quran', textId: t1 }, quranRes(5, 5), at(21)), 'bad_input', 'textId');
+  throwsCode(() => R.awardPractice(d, a, { kind: 'essay', textId: t1 }, reciteStrict(5, 5), at(21)), 'bad_input', 'kind');
+  throwsCode(() => R.awardPractice(d, 'nobody', { kind: 'quran', textId: null }, quranRes(5, 5), at(21)), 'not_found');
+  assertClean(d);
+});
+
+test('migration (redesign): a task that waited for the parent ("ready") is done with its stars and its reward unlocked, silently and once', () => {
+  let { d, a, b, o } = family();
+  let t1;
+  let t2;
+  let t3;
+  [d, t1] = addTask(d, { childId: a, kind: 'recite', text: TEXT_EN, lang: 'en', stars: 3, reward: { text: 'Cake', emoji: '🍰' } }, at(10), o);
+  [d, t2] = addTask(d, { childId: b, kind: 'quran', quran: { surah: 112, from: 1, to: 4 }, stars: 2 }, at(11), o);
+  [d, t3] = addTask(d, { childId: a, kind: 'dictation', text: TEXT_EN, lang: 'en' }, at(12), o);
+  d = R.adjustStars(d, a, 4, at(13));
+  // As a document of the earlier version stored them: waiting, nothing credited, no texts.
+  const old = JSON.parse(JSON.stringify(d));
+  delete old.texts;
+  for (const [id, sec] of [[t1, 20], [t2, 21]]) {
+    const t = old.tasks.find((x) => x.id === id);
+    t.status = 'ready';
+    t.readyAt = at(sec);
+    t.attempts = [{ at: at(sec), accuracy: 1, verdict: 'correct', nErrors: 0, nExpected: 4, passed: true }];
+  }
+  const v = R.validateDoc(JSON.stringify(old));
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.repaired, [], 'a migration, not a repair: no notice for the parent');
+  const T = (id) => task(v.doc, id);
+  assert.deepEqual([T(t1).status, T(t1).doneAt, T(t1).confirmedBy, T(t1).rewardStatus], ['done', at(20), 'app_pass', 'unlocked']);
+  assert.deepEqual([T(t2).status, T(t2).doneAt], ['done', at(21)]);
+  assert.equal(T(t3).status, 'assigned');
+  assert.deepEqual([v.doc.jar[a].balance, v.doc.jar[a].earned, v.doc.jar[b].balance, v.doc.jar[b].earned], [7, 7, 2, 2]);
+  assert.deepEqual(v.doc.jar[a].ledger[1], { at: at(20), delta: 3, reason: 'task', ref: t1, note: null });
+  assert.deepEqual(v.doc.texts, []);
+  assertClean(v.doc);
+  assert.equal(R.childSummary(v.doc, a).waiting.length, 0);
+  assert.deepEqual(R.childSummary(v.doc, a).rewardsToGive.map((x) => x.id), [t1]);
+  // Once: a ready task whose stars are already in the jar is not credited twice.
+  const twice = JSON.parse(JSON.stringify(old));
+  twice.jar[a].ledger.push({ at: at(20), delta: 3, reason: 'task', ref: t1, note: null });
+  twice.jar[a].balance += 3;
+  twice.jar[a].earned += 3;
+  const w = R.validateDoc(twice);
+  assert.deepEqual([w.doc.jar[a].balance, w.doc.jar[a].ledger.filter((e) => e.ref === t1).length], [7, 1]);
+  // The migrated document is a fixed point, and a copy of it carries the done task.
+  assert.deepEqual(R.validateDoc(v.doc).doc, v.doc);
+  const copy = R.readFamilyCopy(JSON.stringify(R.makeFamilyCopy(v.doc, at(30))));
+  assert.equal(copy.family.tasks.find((x) => x.id === t1).status, 'done');
+});
+
+test('validateDoc (redesign): texts are checked like the rest; ledger entries of free practice and undo are kept or repaired', () => {
+  const { d, a, b, t1, textA } = richDoc();
+  assertClean(d);
+  const x = JSON.parse(JSON.stringify(d));
+  x.texts.push(Object.assign({}, x.texts[0])); // duplicate id
+  x.texts.push({ id: 'orphan', childId: 'gone', title: 'x', text: 'x', lang: 'en', mode: 'strict', createdAt: at(1), updatedAt: at(1) });
+  x.texts.push({ id: 'empty', childId: a, title: 'x', text: '   ', lang: 'en', mode: 'strict', createdAt: at(1), updatedAt: at(1) });
+  x.texts.push({ id: 'fixme', childId: b, title: '', text: 'مرحبا بكم', lang: 'xx', mode: 'loud', createdAt: 'bad', updatedAt: 'bad', extra: 1 });
+  x.jar[a].ledger.push({ at: at(500), delta: 1, reason: 'practice', ref: 'no-text', note: null, act: 'sing' });
+  x.jar[a].ledger.push({ at: at(501), delta: 1, reason: 'adjust', ref: null, note: null, act: 'recite' });
+  x.jar[a].ledger.push({ at: at(502), delta: -1, reason: 'undo', ref: 'no-task', note: null });
+  const v = repairs(x);
+  assert.deepEqual(v.doc.texts.map((y) => y.id), d.texts.map((y) => y.id).concat(['fixme']));
+  const fixed = v.doc.texts.find((y) => y.id === 'fixme');
+  assert.deepEqual([fixed.lang, fixed.mode, fixed.title, fixed.createdAt], ['ar', 'strict', 'مرحبا بكم', v.doc.createdAt]);
+  const tail = v.doc.jar[a].ledger.slice(-3);
+  assert.deepEqual(tail, [
+    { at: at(500), delta: 1, reason: 'practice', ref: null, note: null, act: 'recite' },
+    { at: at(501), delta: 1, reason: 'adjust', ref: null, note: null },
+    { at: at(502), delta: -1, reason: 'undo', ref: null, note: null },
+  ]);
+  for (const re of [/^texts\[\d\]: duplicate id, dropped$/, /^texts\[\d\]: its child does not exist, dropped$/, /^texts\[\d\]: no text, dropped$/,
+    /\.act: only a star of free practice has an activity, cleared$/, /\.ref: no such text, cleared$/, /\.ref: no such task, cleared$/, /\.act: invalid, set to recite$/]) {
+    hasRepair(v, re);
+  }
+  // A credit, an undo and a credit again of the same task are kept; two credits in a row are not.
+  const y = JSON.parse(JSON.stringify(d));
+  y.jar[a].ledger.push({ at: at(600), delta: -1, reason: 'undo', ref: t1, note: null });
+  y.jar[a].ledger.push({ at: at(601), delta: 1, reason: 'task', ref: t1, note: null });
+  y.jar[a].ledger.push({ at: at(602), delta: 1, reason: 'task', ref: t1, note: null });
+  const w = repairs(y);
+  assert.deepEqual(w.doc.jar[a].ledger.slice(-2).map((e) => [e.reason, e.ref]), [['undo', t1], ['task', t1]]);
+  hasRepair(w, /credited twice, dropped/);
+  // More than 30 texts of a child: the newest are kept.
+  const z = JSON.parse(JSON.stringify(d));
+  for (let i = 0; i < 35; i++) z.texts.push({ id: 'n' + i, childId: a, title: 'T' + i, text: 'x', lang: 'en', mode: 'strict', createdAt: at(1000 + i), updatedAt: at(1000 + i) });
+  const u = repairs(z);
+  assert.equal(u.doc.texts.filter((q) => q.childId === a).length, 30);
+  assert.ok(!u.doc.texts.some((q) => q.id === textA), 'the oldest text went');
+  hasRepair(u, /more than 30 texts of a child/);
+});
+
+test('family copy (redesign): the children\'s texts travel with the copy; a copy made before texts loads with none', () => {
+  const { d, a } = richDoc();
+  const copy = R.makeFamilyCopy(d, at(40));
+  assert.deepEqual(copy.family.texts, d.texts);
+  const back = R.readFamilyCopy(JSON.stringify(copy));
+  assert.deepEqual([back.ok, back.repairs], [true, []]);
+  assert.deepEqual(back.family.texts, d.texts);
+  const used = R.useFamilyCopy(R.emptyDoc(at(41)), back.family, at(42));
+  assert.deepEqual(R.childTexts(used, a), R.childTexts(d, a));
+  assert.equal(R.familySummary(back.family).texts, d.texts.length);
+  // An older copy (no texts): no repair, no texts.
+  const older = JSON.parse(JSON.stringify(copy));
+  delete older.family.texts;
+  for (const e of Object.values(older.family.jar)) e.ledger = e.ledger.filter((x) => x.reason !== 'practice');
+  for (const e of Object.values(older.family.jar)) e.balance = e.ledger.reduce((s2, x) => s2 + x.delta, 0);
+  const o2 = R.readFamilyCopy(JSON.stringify(older));
+  assert.deepEqual([o2.ok, o2.repairs, o2.family.texts], [true, [], []]);
+  // texts that are not a list: damaged.
+  const bad = JSON.parse(JSON.stringify(copy));
+  bad.family.texts = { a: 1 };
+  assert.equal(R.readFamilyCopy(JSON.stringify(bad)).error, 'damaged');
 });

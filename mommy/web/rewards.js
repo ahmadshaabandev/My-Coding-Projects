@@ -65,7 +65,11 @@
   const GOAL_STATUSES = ['open', 'given'];
   // 'carry' (extra): the oldest entries folded into one when the ledger is capped, so that
   // the balance always equals the sum of the ledger.
-  const LEDGER_REASONS = ['task', 'goal', 'adjust', 'carry'];
+  // (Redesign) 'undo': the parent took back the stars of a task (undoTask, ref: the task);
+  // 'practice': a star of free practice (awardPractice, ref: the child's text or null for
+  // the Quran section, with `act`: 'recite' | 'dictation' | 'quran').
+  const LEDGER_REASONS = ['task', 'goal', 'adjust', 'carry', 'undo', 'practice'];
+  const PRACTICE_ACTS = ['recite', 'dictation', 'quran'];
   const WORD_VERDICTS = ['correct', 'mistakes', 'unclear'];
   const MEANING_VERDICTS = ['same_meaning', 'partly', 'different', 'unclear'];
   const VERDICTS = ['correct', 'mistakes', 'unclear', 'same_meaning', 'partly', 'different'];
@@ -105,6 +109,10 @@
     adjustMax: 500, // |delta| of one adjustStars call
     attempts: 20,
     ledger: 200,
+    // (Redesign) "My texts": the texts a child saves for free practice.
+    myText: 5000, // characters (code points) of one saved text
+    textsPerChild: 30,
+    practiceStarsPerDay: 3, // stars of free practice per child and (UTC) day
     surahs: 114,
     ayahMax: 286,
     ayatPerTask: 50,
@@ -130,7 +138,7 @@
   const EPS = 1e-9;
 
   // Allowed keys of each stored object (anything else is dropped by validateDoc).
-  const DOC_KEYS = ['version', 'createdAt', 'updatedAt', 'parent', 'children', 'activeChildId', 'tasks', 'jar', 'surprises'];
+  const DOC_KEYS = ['version', 'createdAt', 'updatedAt', 'parent', 'children', 'activeChildId', 'tasks', 'jar', 'surprises', 'texts'];
   const PARENT_KEYS = ['pin', 'failedAttempts', 'lockedUntil', 'pinResetAt', 'consentAt', 'aiConsentAt', 'aiConsentVersion', 'uiLang'];
   const PIN_KEYS = ['salt', 'hash', 'iterations'];
   const CHILD_KEYS = ['id', 'nickname', 'age', 'lang', 'avatar', 'createdAt', 'quran'];
@@ -143,7 +151,9 @@
   const REWARD_KEYS = ['text', 'emoji'];
   const JAR_KEYS = ['balance', 'earned', 'goals', 'ledger'];
   const GOAL_KEYS = ['id', 'cost', 'reward', 'status', 'givenAt', 'createdAt'];
-  const LEDGER_KEYS = ['at', 'delta', 'reason', 'ref', 'note'];
+  const LEDGER_KEYS = ['at', 'delta', 'reason', 'ref', 'note', 'act'];
+  const TEXT_KEYS = ['id', 'childId', 'title', 'text', 'lang', 'mode', 'createdAt', 'updatedAt'];
+  const TEXT_INPUT_KEYS = ['title', 'text', 'lang', 'mode'];
   const SURPRISE_KEYS = ['id', 'childId', 'reward', 'at', 'seenAt'];
 
   // Input keys accepted by the API functions (anything else is 'bad_input').
@@ -398,7 +408,8 @@
   function assertDoc(doc) {
     if (
       !isPlainObject(doc) || doc.version !== VERSION || !isPlainObject(doc.parent) || !Array.isArray(doc.children) ||
-      !Array.isArray(doc.tasks) || !isPlainObject(doc.jar) || !Array.isArray(doc.surprises)
+      !Array.isArray(doc.tasks) || !isPlainObject(doc.jar) || !Array.isArray(doc.surprises) ||
+      (doc.texts !== undefined && !Array.isArray(doc.texts))
     ) {
       fail('bad_input', 'not a version 2 document (pass it through validateDoc first)', 'doc');
     }
@@ -410,6 +421,7 @@
     checkNow(now);
     const d = clone(doc);
     d.updatedAt = now;
+    if (d.texts === undefined) d.texts = []; // a document made before "My texts"
     return d;
   }
 
@@ -439,6 +451,7 @@
     for (const c of d.children) ids.add(c.id);
     for (const t of d.tasks) ids.add(t.id);
     for (const s of d.surprises) ids.add(s.id);
+    for (const x of d.texts || []) ids.add(x.id);
     for (const k of Object.keys(d.jar)) {
       const j = d.jar[k];
       if (j && Array.isArray(j.goals)) for (const g of j.goals) ids.add(g.id);
@@ -508,6 +521,7 @@
       tasks: [],
       jar: {},
       surprises: [],
+      texts: [],
     };
   }
 
@@ -667,6 +681,7 @@
     d.children = d.children.filter((c) => c.id !== childId);
     d.tasks = d.tasks.filter((t) => t.childId !== childId);
     d.surprises = d.surprises.filter((s) => s.childId !== childId);
+    d.texts = d.texts.filter((x) => x.childId !== childId);
     delete d.jar[childId];
     if (d.activeChildId === childId) d.activeChildId = null;
     return d;
@@ -941,9 +956,11 @@
 
   /**
    * Records an attempt from an API response (only scores are kept, newest last, at most
-   * 20). On the first pass while 'assigned' the task becomes 'ready'; attempts on a
-   * 'ready', 'done' or 'archived' task change no status. Throws 'bad_input' when the
-   * response does not fit the task. Returns {doc, task, attempt, passed, becameReady}.
+   * 20). (Redesign) On the first pass while 'assigned' the task is done at once: its stars
+   * go into the jar and its reward unlocks (confirmedBy 'app_pass'); there is no
+   * "waiting for the parent" any more. Attempts on a 'done' or 'archived' task change no
+   * status. Throws 'bad_input' when the response does not fit the task. Returns {doc,
+   * task, attempt, passed, becameDone}.
    */
   function recordAttempt(doc, taskId, result, now) {
     const d = begin(doc, now);
@@ -954,13 +971,42 @@
     t.attempts.push(attempt);
     if (t.attempts.length > LIMITS.attempts) t.attempts = t.attempts.slice(-LIMITS.attempts);
     t.updatedAt = now;
-    let becameReady = false;
-    if (t.status === 'assigned' && r.passed) {
-      t.status = 'ready';
-      t.readyAt = now;
-      becameReady = true;
+    let becameDone = false;
+    if ((t.status === 'assigned' || t.status === 'ready') && r.passed) {
+      completeTask(d, t, 'app_pass', now);
+      becameDone = true;
     }
-    return { doc: d, task: clone(t), attempt: clone(attempt), passed: r.passed, becameReady };
+    return { doc: d, task: clone(t), attempt: clone(attempt), passed: r.passed, becameDone };
+  }
+
+  /**
+   * For each task ref of a ledger, whether its stars are in the jar now: a 'task' entry
+   * credits them, an 'undo' entry takes them back (entries folded into 'carry' are not
+   * seen, so a credit that was folded counts as not credited).
+   */
+  function creditState(ledger) {
+    const m = new Map();
+    for (const e of ledger) {
+      if (e.ref === null || e.ref === undefined) continue;
+      if (e.reason === 'task') m.set(e.ref, true);
+      else if (e.reason === 'undo') m.set(e.ref, false);
+    }
+    return m;
+  }
+
+  /** The task is done: status, its stars into the jar (once), its reward unlocked. */
+  function completeTask(d, t, how, now) {
+    const jar = jarOf(d, t.childId);
+    if (creditState(jar.ledger).get(t.id) === true) fail('bad_state', 'the stars of this task were already given');
+    if (t.readyAt === null || t.status !== 'ready') t.readyAt = now;
+    t.status = 'done';
+    t.doneAt = now;
+    t.confirmedBy = how;
+    t.rewardStatus = t.reward ? 'unlocked' : 'none';
+    t.rewardGivenAt = null;
+    t.updatedAt = now;
+    addToJar(jar, t.stars, 'task', t.id, null, now);
+    jar.earned += t.stars;
   }
 
   // ---------------------------------------------------------------------------
@@ -978,8 +1024,10 @@
     return [carry].concat(ledger.slice(k));
   }
 
-  function addToJar(jar, delta, reason, ref, note, at) {
-    jar.ledger.push({ at, delta, reason, ref, note });
+  function addToJar(jar, delta, reason, ref, note, at, act) {
+    const entry = { at, delta, reason, ref, note };
+    if (reason === 'practice') entry.act = act;
+    jar.ledger.push(entry);
     jar.ledger = foldLedger(jar.ledger);
     jar.balance += delta;
   }
@@ -996,15 +1044,34 @@
     const t = findTask(d, taskId);
     if (how === 'app_pass' && t.status !== 'ready') fail('bad_state', 'only a task waiting for the parent can be confirmed');
     if (how === 'parent_override' && t.status !== 'assigned') fail('bad_state', 'only a task still to do can be confirmed anyway');
+    completeTask(d, t, how, now);
+    return d;
+  }
+
+  /**
+   * (Redesign) The parent takes back the stars of a done task (the app may have misheard):
+   * the task is to do again, its stars leave the jar (never below 0; ledger reason 'undo'
+   * with the task as ref) and its reward is locked again (also one already marked given).
+   * Only a 'done' task ('bad_state' otherwise). Returns doc.
+   */
+  function undoTask(doc, taskId, now) {
+    const d = begin(doc, now);
+    const t = findTask(d, taskId);
+    if (t.status !== 'done') fail('bad_state', 'only a done task can be undone');
     const jar = jarOf(d, t.childId);
-    if (jar.ledger.some((e) => e.reason === 'task' && e.ref === t.id)) fail('bad_state', 'the stars of this task were already given');
-    t.status = 'done';
-    t.doneAt = now;
-    t.confirmedBy = how;
-    t.rewardStatus = t.reward ? 'unlocked' : 'none';
+    const credited = creditState(jar.ledger).get(t.id) === true;
+    const delta = noNegZero(-Math.min(t.stars, jar.balance));
+    // The ref marks the stars as taken back; a credit already folded into the carry entry
+    // is not seen, so its undo carries no ref (a later pass may credit the task again).
+    addToJar(jar, delta, 'undo', credited ? t.id : null, null, now);
+    jar.earned = Math.max(jar.balance, jar.earned - t.stars);
+    t.status = 'assigned';
+    t.readyAt = null;
+    t.doneAt = null;
+    t.confirmedBy = null;
+    t.rewardStatus = t.reward ? 'locked' : 'none';
+    t.rewardGivenAt = null;
     t.updatedAt = now;
-    addToJar(jar, t.stars, 'task', t.id, null, now);
-    jar.earned += t.stars;
     return d;
   }
 
@@ -1124,6 +1191,139 @@
     const d = begin(doc, now);
     d.surprises.find((x) => x.id === surpriseId).seenAt = now;
     return d;
+  }
+
+  // ===========================================================================
+  // (Redesign) My texts: the texts a child saves for free practice
+  // ===========================================================================
+
+  function findText(d, id) {
+    const x = d.texts.find((y) => y.id === id);
+    if (!x) fail('not_found', 'no such text', 'textId');
+    return x;
+  }
+
+  /** {text, lang, mode?} of a saved text, checked: 1-5000 characters, at most 3000 words. */
+  function textContent(src, base) {
+    const text = src.text === undefined ? base.text : reqText(src.text, 'text', 1, LIMITS.myText);
+    if (text.split(/\s+/).length > LIMITS.textWords) fail('bad_input', `text must have at most ${LIMITS.textWords} words`, 'text');
+    const lang = src.lang === undefined ? base.lang : reqEnum(src.lang, 'lang', LANGS);
+    const mode = src.mode === undefined ? base.mode : reqEnum(src.mode, 'mode', MODES);
+    return { text, lang, mode };
+  }
+
+  /**
+   * A child saves a text (typed, or read from a photo): input {title?, text (1-5000
+   * characters), lang, mode? ('strict' default, or 'contextual')}. The title defaults to
+   * the text's first words. At most 30 texts per child ('bad_input', field 'texts').
+   * Returns {doc, text}.
+   */
+  function addText(doc, childId, input, now, opts) {
+    const d = begin(doc, now);
+    findChild(d, childId);
+    reqObject(input, 'input');
+    checkKeys(input, TEXT_INPUT_KEYS, 'input');
+    if (d.texts.filter((x) => x.childId === childId).length >= LIMITS.textsPerChild) {
+      fail('bad_input', `at most ${LIMITS.textsPerChild} texts per child`, 'texts');
+    }
+    if (input.text === undefined) fail('bad_input', 'text is required', 'text');
+    if (input.lang === undefined) fail('bad_input', 'lang is required', 'lang');
+    const content = textContent(input, { mode: 'strict' });
+    const title = titleOf(input.title, 'recite', content, opts);
+    const text = { id: newId(opts, allIds(d)), childId, title, text: content.text, lang: content.lang, mode: content.mode, createdAt: now, updatedAt: now };
+    d.texts.push(text);
+    return { doc: d, text: clone(text) };
+  }
+
+  /** Renames or changes a saved text: patch {title?, text?, lang?, mode?}; title '' or null: the default. */
+  function updateText(doc, textId, patch, now) {
+    const d = begin(doc, now);
+    const x = findText(d, textId);
+    reqObject(patch, 'patch');
+    checkKeys(patch, TEXT_INPUT_KEYS, 'patch');
+    const content = textContent(patch, x);
+    Object.assign(x, content);
+    if (patch.title !== undefined) x.title = titleOf(patch.title, 'recite', content);
+    x.updatedAt = now;
+    return d;
+  }
+
+  /** Deletes a saved text; the stars it earned stay in the jar (their ledger ref becomes null). */
+  function removeText(doc, textId, now) {
+    const d = begin(doc, now);
+    const x = findText(d, textId);
+    d.texts = d.texts.filter((y) => y.id !== textId);
+    const jar = jarOf(d, x.childId);
+    for (const e of jar.ledger) if (e.reason === 'practice' && e.ref === textId) e.ref = null;
+    return d;
+  }
+
+  /** A child's texts, the most recently changed first (copies). */
+  function childTexts(doc, childId) {
+    assertDoc(doc);
+    return clone((doc.texts || []).filter((x) => x.childId === childId)
+      .sort((a, b) => -(cmpTime(a.updatedAt, b.updatedAt) || cmpTime(a.createdAt, b.createdAt) || cmpStr(a.id, b.id))));
+  }
+
+  function getText(doc, textId) {
+    assertDoc(doc);
+    const x = (doc.texts || []).find((y) => y.id === textId);
+    return x ? clone(x) : null;
+  }
+
+  // ===========================================================================
+  // (Redesign) Stars of free practice
+  // ===========================================================================
+
+  /** The UTC day of an ISO time ('YYYY-MM-DD'). */
+  function utcDay(iso) {
+    return new Date(isoMs(iso)).toISOString().slice(0, 10);
+  }
+
+  /**
+   * A check result of free practice (no task): input {kind: 'recite' | 'dictation' |
+   * 'quran', textId: the child's text (recite, dictation) | null (quran)}. It passes by
+   * the default rule of a task (all words right; for a text recited by meaning, the same
+   * meaning with no idea missing; the Quran: no error at all). A pass earns 1 star, once
+   * per text and activity (the Quran section: once) per UTC day, and at most
+   * LIMITS.practiceStarsPerDay stars of free practice per child and day (tasks are not
+   * counted). Nothing about the attempt is stored but the ledger entry. Returns {doc,
+   * passed, stars: 0 | 1, why: 'star' | 'not_passed' | 'again_today' | 'daily_limit'};
+   * doc is the input document unchanged (a copy) when no star is given. Throws
+   * 'bad_input' when the result does not fit the activity, 'not_found' for no such text.
+   */
+  function awardPractice(doc, childId, input, result, now) {
+    assertDoc(doc);
+    checkNow(now);
+    findChild(doc, childId);
+    reqObject(input, 'input');
+    checkKeys(input, ['kind', 'textId'], 'input');
+    const kind = reqEnum(input.kind, 'kind', PRACTICE_ACTS);
+    let ref = null;
+    let rule;
+    if (kind === 'quran') {
+      if (input.textId !== undefined && input.textId !== null) fail('bad_input', 'the Quran section has no text', 'textId');
+      rule = { kind: 'quran', pass: { minAccuracy: 1 } };
+    } else {
+      const x = (doc.texts || []).find((y) => y.id === input.textId && y.childId === childId);
+      if (!x) fail('not_found', 'no such text', 'textId');
+      ref = x.id;
+      rule = { kind, mode: kind === 'recite' ? x.mode : undefined, pass: { minAccuracy: 1 } };
+    }
+    const r = readResult(rule, result);
+    if (!r) fail('bad_input', 'the result does not fit this activity', 'result');
+    const same = (why) => ({ doc: clone(doc), passed: r.passed, stars: 0, why });
+    if (!r.passed) return same('not_passed');
+    const jar = hasOwn(doc.jar, childId) && isPlainObject(doc.jar[childId]) ? doc.jar[childId] : emptyJar();
+    const day = utcDay(now);
+    const today = jar.ledger.filter((e) => e.reason === 'practice' && utcDay(e.at) === day);
+    if (today.some((e) => e.ref === ref && e.act === kind)) return same('again_today');
+    if (today.reduce((n, e) => n + e.delta, 0) >= LIMITS.practiceStarsPerDay) return same('daily_limit');
+    const d = begin(doc, now);
+    const j = jarOf(d, childId);
+    addToJar(j, 1, 'practice', ref, null, now, kind);
+    j.earned += 1;
+    return { doc: d, passed: true, stars: 1, why: 'star' };
   }
 
   // ===========================================================================
@@ -1937,13 +2137,15 @@
     return out;
   }
 
-  function vLedger(list, doneTaskIds, givenGoalIds, docCreatedAt, path, note) {
+  function vLedger(list, childTaskIds, givenGoalIds, textIds, docCreatedAt, path, note) {
     if (!Array.isArray(list)) {
       note(path, 'not a list, reset');
       return [];
     }
     let out = [];
-    const seenTask = new Set();
+    // (Redesign) A task's stars may be credited again after an undo: per task, a credit
+    // while credited is dropped; an undo is kept as it is (its credit may be folded).
+    const credited = new Map();
     const seenGoal = new Set();
     list.forEach((e, i) => {
       const p = `${path}[${i}]`;
@@ -1958,14 +2160,19 @@
         note(p + '.ref', 'invalid, cleared');
         ref = null;
       }
-      if (reason === 'task' && ref !== null) {
-        if (!doneTaskIds.has(ref)) {
-          note(p + '.ref', 'no such confirmed task, cleared');
+      if ((reason === 'task' || reason === 'undo') && ref !== null) {
+        if (!childTaskIds.has(ref)) {
+          note(p + '.ref', 'no such task, cleared');
           ref = null;
-        } else if (seenTask.has(ref)) {
+        } else if (reason === 'task' && credited.get(ref) === true) {
           return note(p, 'stars of a task credited twice, dropped');
         } else {
-          seenTask.add(ref);
+          credited.set(ref, reason === 'task');
+        }
+      } else if (reason === 'practice' && ref !== null) {
+        if (!textIds.has(ref)) {
+          note(p + '.ref', 'no such text, cleared');
+          ref = null;
         }
       } else if (reason === 'goal' && ref !== null) {
         if (!givenGoalIds.has(ref)) {
@@ -1983,7 +2190,10 @@
       let n = null;
       if (reason === 'adjust') n = vOptText(e.note, LIMITS.adjustNote, p + '.note', note);
       else if (e.note !== undefined && e.note !== null) note(p + '.note', 'only an adjustment has a note, cleared');
-      out.push({ at, delta, reason, ref, note: n });
+      const entry = { at, delta, reason, ref, note: n };
+      if (reason === 'practice') entry.act = vEnum(e.act, PRACTICE_ACTS, 'recite', p + '.act', note);
+      else if (e.act !== undefined) note(p + '.act', 'only a star of free practice has an activity, cleared');
+      out.push(entry);
     });
     if (out.length > LIMITS.ledger) {
       note(path, `more than ${LIMITS.ledger} entries, the oldest folded into one carry entry`);
@@ -1992,7 +2202,7 @@
     return out;
   }
 
-  function vJar(raw, childId, tasks, goalIds, docCreatedAt, docUpdatedAt, note) {
+  function vJar(raw, childId, tasks, goalIds, textIds, migrated, docCreatedAt, docUpdatedAt, note) {
     const path = `jar.${childId}`;
     let j = raw;
     if (!isPlainObject(j)) {
@@ -2001,9 +2211,19 @@
     }
     vKeys(j, JAR_KEYS, path, note);
     const goals = vGoals(j.goals, goalIds, docCreatedAt, path + '.goals', note);
-    const doneTaskIds = new Set(tasks.filter((t) => t.childId === childId && t.doneAt !== null).map((t) => t.id));
+    const childTaskIds = new Set(tasks.filter((t) => t.childId === childId).map((t) => t.id));
     const givenGoalIds = new Set(goals.filter((g) => g.status === 'given').map((g) => g.id));
-    let ledger = vLedger(j.ledger, doneTaskIds, givenGoalIds, docCreatedAt, path + '.ledger', note);
+    let ledger = vLedger(j.ledger, childTaskIds, givenGoalIds, textIds, docCreatedAt, path + '.ledger', note);
+    // (Redesign) A task that was waiting for the parent ('ready') is done now: its stars
+    // go into the jar, silently (a migration, not a repair).
+    let migratedStars = 0;
+    const state = creditState(ledger);
+    for (const t of migrated) {
+      if (t.childId !== childId || state.get(t.id) === true) continue;
+      ledger.push({ at: t.doneAt, delta: t.stars, reason: 'task', ref: t.id, note: null });
+      migratedStars += t.stars;
+    }
+    if (migratedStars) ledger = foldLedger(ledger);
     let sum = 0;
     for (const e of ledger) sum += e.delta;
     if (sum < 0) {
@@ -2012,8 +2232,8 @@
       ledger = foldLedger(ledger.concat([{ at, delta: -sum, reason: 'adjust', ref: null, note: null }]));
       sum = 0;
     }
-    if (j.balance !== sum) note(path + '.balance', `set to ${sum} to match the ledger`);
-    let earned = vInt(j.earned, 0, 1000000000, 0, path + '.earned', note);
+    if (j.balance !== sum - migratedStars) note(path + '.balance', `set to ${sum} to match the ledger`);
+    let earned = vInt(j.earned, 0, 1000000000, 0, path + '.earned', note) + migratedStars;
     if (earned < sum) {
       note(path + '.earned', 'below the balance, raised');
       earned = sum;
@@ -2049,6 +2269,54 @@
     return out;
   }
 
+  /** (Redesign) The children's saved texts: at most LIMITS.textsPerChild per child (the newest kept). */
+  function vTexts(list, childIds, docCreatedAt, note) {
+    if (list === undefined) return []; // a document saved before "My texts": no repair
+    if (!Array.isArray(list)) {
+      note('texts', 'not a list, reset');
+      return [];
+    }
+    const out = [];
+    const seen = new Set();
+    list.forEach((x, i) => {
+      const p = `texts[${i}]`;
+      if (!isPlainObject(x)) return note(p, 'not an object, dropped');
+      if (!isId(x.id)) return note(p, 'no valid id, dropped');
+      if (seen.has(x.id)) return note(p, 'duplicate id, dropped');
+      if (!childIds.has(x.childId)) return note(p, 'its child does not exist, dropped');
+      const text = vText(x.text, LIMITS.myText, p + '.text', note);
+      if (!text) return note(p, 'no text, dropped');
+      seen.add(x.id);
+      vKeys(x, TEXT_KEYS, p, note);
+      const lang = LANGS.includes(x.lang) ? x.lang : ARABIC_RE.test(text) ? 'ar' : 'en';
+      if (lang !== x.lang) note(p + '.lang', `invalid, set to ${lang}`);
+      let title = vText(x.title, LIMITS.title, p + '.title', note);
+      if (!title) {
+        title = defaultTitle('recite', { text });
+        note(p + '.title', 'empty, set to the default');
+      }
+      const createdAt = vIso(x.createdAt, docCreatedAt, p + '.createdAt', note);
+      out.push({
+        id: x.id,
+        childId: x.childId,
+        title,
+        text,
+        lang,
+        mode: vEnum(x.mode, MODES, 'strict', p + '.mode', note),
+        createdAt,
+        updatedAt: vIso(x.updatedAt, createdAt, p + '.updatedAt', note),
+      });
+    });
+    // Per child, the newest texts are kept when there are too many.
+    const keep = new Set();
+    for (const c of childIds) {
+      const mine = out.filter((x) => x.childId === c).sort((a, b) => -(cmpTime(a.updatedAt, b.updatedAt) || cmpStr(a.id, b.id)));
+      mine.slice(0, LIMITS.textsPerChild).forEach((x) => keep.add(x.id));
+      if (mine.length > LIMITS.textsPerChild) note('texts', `more than ${LIMITS.textsPerChild} texts of a child, the oldest dropped`);
+    }
+    return out.filter((x) => keep.has(x.id));
+  }
+
   function validateInner(input) {
     let raw = input;
     if (typeof raw === 'string') {
@@ -2080,6 +2348,19 @@
     } else {
       note('tasks', 'not a list, reset');
     }
+    // (Redesign) No task waits for the parent any more: one saved 'ready' is done, with its
+    // stars (added to its child's jar below) and its reward unlocked. Not a repair.
+    const migrated = [];
+    for (const t of tasks) {
+      if (t.status !== 'ready') continue;
+      t.status = 'done';
+      t.doneAt = t.readyAt;
+      t.confirmedBy = 'app_pass';
+      t.rewardStatus = t.reward ? 'unlocked' : 'none';
+      migrated.push(t);
+    }
+    const texts = vTexts(raw.texts, childIds, createdAt, note);
+    const textIds = new Set(texts.map((x) => x.id));
     let rawJar = raw.jar;
     if (!isPlainObject(rawJar)) {
       note('jar', 'not an object, reset');
@@ -2089,7 +2370,7 @@
     const jar = {};
     const goalIds = new Set();
     for (const c of children) {
-      jar[c.id] = vJar(hasOwn(rawJar, c.id) ? rawJar[c.id] : undefined, c.id, tasks, goalIds, createdAt, updatedAt, note);
+      jar[c.id] = vJar(hasOwn(rawJar, c.id) ? rawJar[c.id] : undefined, c.id, tasks, goalIds, textIds, migrated, createdAt, updatedAt, note);
     }
     const surprises = vSurprises(raw.surprises, childIds, createdAt, note);
     let activeChildId = raw.activeChildId === undefined ? null : raw.activeChildId;
@@ -2097,7 +2378,7 @@
       note('activeChildId', 'no such child, cleared');
       activeChildId = null;
     }
-    const doc = { version: VERSION, createdAt, updatedAt, parent, children, activeChildId, tasks, jar, surprises };
+    const doc = { version: VERSION, createdAt, updatedAt, parent, children, activeChildId, tasks, jar, surprises, texts };
     return { ok: true, doc, repaired, errors: [] };
   }
 
@@ -2139,7 +2420,8 @@
   const COPY_VERSION = 1;
   const COPY_MAX_BYTES = 2 * 1024 * 1024; // bytes of UTF-8, the file as saved
   const COPY_KEYS = ['app', 'kind', 'version', 'savedAt', 'family'];
-  const COPY_FAMILY_KEYS = ['version', 'createdAt', 'updatedAt', 'children', 'activeChildId', 'tasks', 'jar', 'surprises'];
+  // (Redesign) 'texts', the children's saved texts: a copy made before them has none.
+  const COPY_FAMILY_KEYS = ['version', 'createdAt', 'updatedAt', 'children', 'activeChildId', 'tasks', 'jar', 'surprises', 'texts'];
   // A copy made here starts like this (JSON.stringify keeps the key order of
   // makeFamilyCopy): a file that does, but is not JSON, was cut short or changed.
   const COPY_START_RE = /^\s*\{\s*"app"\s*:\s*"mommy"/;
@@ -2243,6 +2525,7 @@
       // (validateDoc would read each as empty, and the copy as a family with no child).
       for (const k of ['children', 'tasks', 'surprises']) if (!Array.isArray(ownValue(fam, k))) return no('damaged');
       if (!isPlainObject(ownValue(fam, 'jar'))) return no('damaged');
+      if (ownValue(fam, 'texts') !== undefined && !Array.isArray(ownValue(fam, 'texts'))) return no('damaged');
       const repairs = [];
       for (const k of Object.keys(raw)) if (!COPY_KEYS.includes(k)) repairs.push(`copy.${k}: unknown field, dropped`);
       let savedAt = ownValue(raw, 'savedAt');
@@ -2291,6 +2574,7 @@
   function familySummary(family) {
     const f = isPlainObject(family) ? family : {};
     const tasks = Array.isArray(f.tasks) ? f.tasks : [];
+    const texts = Array.isArray(f.texts) ? f.texts : [];
     const jar = isPlainObject(f.jar) ? f.jar : {};
     const children = (Array.isArray(f.children) ? f.children : []).filter(isPlainObject).map((c) => {
       const j = hasOwn(jar, c.id) && isPlainObject(jar[c.id]) ? jar[c.id] : null;
@@ -2299,12 +2583,14 @@
         nickname: c.nickname,
         avatar: c.avatar,
         tasks: tasks.filter((t) => isPlainObject(t) && t.childId === c.id && t.status !== 'archived').length,
+        texts: texts.filter((x) => isPlainObject(x) && x.childId === c.id).length,
         stars: j && Number.isInteger(j.balance) ? j.balance : 0,
       };
     });
     return {
       children,
       tasks: children.reduce((s, c) => s + c.tasks, 0),
+      texts: children.reduce((s, c) => s + c.texts, 0),
       stars: children.reduce((s, c) => s + c.stars, 0),
     };
   }
@@ -2327,6 +2613,7 @@
     STATUSES: Object.freeze(STATUSES.slice()),
     REWARD_STATUSES: Object.freeze(REWARD_STATUSES.slice()),
     LEDGER_REASONS: Object.freeze(LEDGER_REASONS.slice()),
+    PRACTICE_ACTS: Object.freeze(PRACTICE_ACTS.slice()),
     ERROR_CODES: Object.freeze(ERROR_CODES.slice()),
     AVATARS: Object.freeze(AVATARS.slice()),
     REWARD_EMOJIS: Object.freeze(REWARD_EMOJIS.slice()),
@@ -2368,6 +2655,14 @@
     },
     // review
     confirmTask,
+    undoTask,
+    // My texts and the stars of free practice
+    addText,
+    updateText,
+    removeText,
+    childTexts,
+    getText,
+    awardPractice,
     sendBack,
     markRewardGiven,
     // jar

@@ -29,6 +29,8 @@
     <symbol id="i-home" viewBox="0 0 24 24"><path d="M12 3 2 12h3v8h6v-6h2v6h6v-8h3L12 3z"/></symbol>
     <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></symbol>
     <symbol id="i-book" viewBox="0 0 24 24"><path d="M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 2v16h12V4h-2v7l-2.5-1.5L11 11V4H6z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5L13 3.5zM8 13v2h8v-2H8zm0 4v2h5v-2H8z"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3H9z"/></symbol>
   </svg>
 
@@ -48,8 +50,8 @@
     </div>
   </header>
   <nav class="tabs" id="nav" hidden data-i18n-attr="aria-label:nav_label">
-    <button type="button" class="tab" data-go="prepare" data-i18n="nav_prepare">Prepare</button>
-    <button type="button" class="tab" data-go="recite" data-i18n="nav_recite">Recite</button>
+    <button type="button" class="tab" data-go="texts" data-i18n="nav_texts">My texts</button>
+    <button type="button" class="tab" data-go="recite" data-i18n="nav_recite">Read aloud</button>
     <button type="button" class="tab" data-go="dictation" data-i18n="nav_dictation">Dictation</button>
     <button type="button" class="tab" data-go="quran" data-i18n="nav_quran">Quran</button>
   </nav>
@@ -90,11 +92,12 @@
         <p data-i18n="disclosure_text">Mommy is a computer program (an AI). It is not a person, and it is not your mum or dad. It can make mistakes, so a grown-up should stay close.</p>
       </div>
 
-      <!-- Shown by family.js once it is ready (without it, the form would do nothing). -->
+      <!-- Shown by family.js once it is ready (without it, the form would do nothing).
+           (Redesign) One short screen, once: the language, the consents, a PIN and the
+           first child; the long privacy text is behind "More". -->
       <form class="card" id="setup-form" novalidate hidden>
         <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
         <h2 class="card-title" data-i18n="fam_setup_title">Family setup</h2>
-        <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device, unless a copy is saved with “Save a copy”: the copy is a file, without the PIN, where the browser saves downloads. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
         <div class="field">
           <label for="setup-lang" data-i18n="fam_parent_lang">Language for the grown-ups</label>
           <select id="setup-lang">
@@ -102,26 +105,6 @@
             <option value="fr" lang="fr">Français</option>
             <option value="ar" lang="ar">العربية</option>
           </select>
-        </div>
-
-        <!-- A copy of the family list saved at another address or on another device
-             (family.js): its children, tasks, stars and rewards are used instead of a first
-             child; the consents and the PIN are still given here. -->
-        <div class="copy-pick" id="setup-copy">
-          <p class="hint" data-i18n="fam_copy_setup_hint">Do you have a copy of your family list from another address or device? Load it here: its children, tasks, stars and rewards are then used instead of a first child.</p>
-          <label class="btn btn-small btn-ghost file-btn copy-file">
-            <input type="file" id="setup-copy-file" accept=".json,application/json">
-            <span data-i18n="fam_copy_load">Load a copy</span>
-          </label>
-          <p class="status" id="setup-copy-status" role="status" aria-live="polite"></p>
-          <div class="copy-box" id="setup-copy-box" tabindex="-1" role="group" aria-labelledby="setup-copy-title" hidden>
-            <p class="copy-title" id="setup-copy-title"></p>
-            <p class="copy-count" id="setup-copy-count"></p>
-            <ul class="copy-children" id="setup-copy-children"></ul>
-            <p class="hint" id="setup-copy-repaired" data-i18n="fam_copy_repaired" hidden>Part of this copy was damaged: it has been repaired as far as possible.</p>
-            <p data-i18n="fam_copy_setup_using">The children, tasks, stars and rewards of this copy will be used. The consents and the PIN are not in the copy: they are asked here, as for a new family.</p>
-            <button type="button" class="btn btn-small" id="setup-copy-drop" data-i18n="fam_copy_drop">Do not use this copy</button>
-          </div>
         </div>
 
         <fieldset class="consent">
@@ -184,7 +167,34 @@
           <fieldset class="emoji-pick" id="setup-avatars" data-name="setup-avatar">
             <legend data-i18n="fam_avatar">Picture</legend>
           </fieldset>
+          <p class="hint" data-i18n="fam_setup_more_children">More children can add themselves later, on “Who is learning?”.</p>
         </fieldset>
+
+        <!-- A copy of the family list saved at another address or on another device
+             (family.js): its children, tasks, stars, rewards and texts are used instead of a
+             first child; the consents and the PIN are still given here. -->
+        <div class="copy-pick" id="setup-copy">
+          <p class="hint" data-i18n="fam_copy_setup_hint">Do you have a copy of your family list from another address or device? Load it here: its children, tasks, stars and rewards are then used instead of a first child.</p>
+          <label class="btn btn-small btn-ghost file-btn copy-file">
+            <input type="file" id="setup-copy-file" accept=".json,application/json">
+            <span data-i18n="fam_copy_load">Load a copy</span>
+          </label>
+          <p class="status" id="setup-copy-status" role="status" aria-live="polite"></p>
+          <div class="copy-box" id="setup-copy-box" tabindex="-1" role="group" aria-labelledby="setup-copy-title" hidden>
+            <p class="copy-title" id="setup-copy-title"></p>
+            <p class="copy-count" id="setup-copy-count"></p>
+            <ul class="copy-children" id="setup-copy-children"></ul>
+            <p class="hint" id="setup-copy-repaired" data-i18n="fam_copy_repaired" hidden>Part of this copy was damaged: it has been repaired as far as possible.</p>
+            <p data-i18n="fam_copy_setup_using">The children, tasks, stars and rewards of this copy will be used. The consents and the PIN are not in the copy: they are asked here, as for a new family.</p>
+            <button type="button" class="btn btn-small" id="setup-copy-drop" data-i18n="fam_copy_drop">Do not use this copy</button>
+          </div>
+        </div>
+
+        <p class="hint privacy-short" data-i18n="fam_privacy_short">The family list (children, texts, stars, rewards and the PIN) stays in this browser, on this device.</p>
+        <details class="more">
+          <summary data-i18n="fam_more">More</summary>
+          <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device, unless a copy is saved with “Save a copy”: the copy is a file, without the PIN, where the browser saves downloads. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
+        </details>
 
         <p class="status" id="setup-status" role="status" aria-live="polite"></p>
         <button type="submit" class="btn btn-primary btn-wide" id="btn-start" data-i18n="start_button">Let's start</button>
@@ -202,7 +212,45 @@
         <p data-i18n="disclosure_text">Mommy is a computer program (an AI). It is not a person, and it is not your mum or dad. It can make mistakes, so a grown-up should stay close.</p>
       </div>
       <ul class="who-list" id="who-list"></ul>
-      <p class="hint" id="who-empty" data-i18n="fam_who_empty" hidden>No child yet. A grown-up can add one in the parent area.</p>
+      <p class="hint" id="who-empty" data-i18n="fam_who_empty" hidden>No one here yet. Add yourself!</p>
+      <!-- (Redesign) A child adds their own profile: no PIN (removing one stays the parent's). -->
+      <button type="button" class="btn btn-primary btn-wide" id="who-add-open" aria-expanded="false" aria-controls="who-add">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>
+        <span data-i18n="fam_who_add">I’m new here</span>
+      </button>
+      <form class="card who-add" id="who-add" novalidate hidden aria-labelledby="who-add-h">
+        <h2 class="card-title" id="who-add-h" tabindex="-1" data-i18n="fam_who_add_title">A new learner</h2>
+        <div class="field">
+          <label for="wa-nick" data-i18n="fam_wa_name">Name</label>
+          <input id="wa-nick" type="text" maxlength="24" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:nickname_ph">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="wa-age" data-i18n="age">Age</label>
+            <select id="wa-age">
+              <option value="6-9" data-i18n="age_6_9">6–9 years</option>
+              <option value="10-13" data-i18n="age_10_13">10–13 years</option>
+              <option value="14-18" data-i18n="age_14_18">14–18 years</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="wa-lang" data-i18n="fam_wa_lang">Language</label>
+            <select id="wa-lang">
+              <option value="en" lang="en">English</option>
+              <option value="fr" lang="fr">Français</option>
+              <option value="ar" lang="ar">العربية</option>
+            </select>
+          </div>
+        </div>
+        <fieldset class="emoji-pick" id="wa-avatars" data-name="wa-avatar">
+          <legend data-i18n="fam_avatar">Picture</legend>
+        </fieldset>
+        <p class="status" id="wa-status" role="status" aria-live="polite"></p>
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary" id="wa-save" data-i18n="fam_wa_save">Add me</button>
+          <button type="button" class="btn" id="wa-cancel" data-i18n="fam_cancel">Cancel</button>
+        </div>
+      </form>
       <div class="btn-row btn-row-end">
         <button type="button" class="btn btn-small btn-parent" id="btn-who-parents">
           <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>
@@ -225,30 +273,37 @@
 
       <div id="home-surprises" aria-live="polite"></div>
 
-      <section class="home-sec" aria-labelledby="home-todo-h">
-        <h2 id="home-todo-h" data-i18n="fam_todo">To do</h2>
+      <!-- (Redesign) Tasks from the parent: suggestions on top, never a gate. -->
+      <section class="home-sec" id="home-todo-sec" aria-labelledby="home-todo-h" hidden>
+        <h2 id="home-todo-h" data-i18n="fam_todo">From your parent</h2>
         <ul class="task-list" id="home-todo"></ul>
-        <p class="hint" id="home-todo-empty" data-i18n="fam_todo_empty" hidden>Nothing to do right now.</p>
-      </section>
-      <section class="home-sec" aria-labelledby="home-wait-h">
-        <h2 id="home-wait-h" data-i18n="fam_waiting">Waiting for your parent</h2>
-        <ul class="task-list" id="home-wait"></ul>
-        <p class="hint" id="home-wait-empty" data-i18n="fam_waiting_empty" hidden>Nothing is waiting.</p>
-      </section>
-      <section class="home-sec" aria-labelledby="home-done-h">
-        <h2 id="home-done-h" data-i18n="fam_done">Done</h2>
-        <ul class="task-list shelf" id="home-done"></ul>
-        <p class="hint" id="home-done-empty" data-i18n="fam_done_empty" hidden>Finished tasks will be shown here.</p>
       </section>
 
-      <section class="card" aria-labelledby="home-free-h">
-        <h2 id="home-free-h" data-i18n="fam_free">Free practice</h2>
-        <div class="practice-grid">
-          <button type="button" class="btn" data-go="prepare" data-i18n="nav_prepare">Prepare</button>
-          <button type="button" class="btn" data-go="recite" data-i18n="nav_recite">Recite</button>
-          <button type="button" class="btn" data-go="dictation" data-i18n="nav_dictation">Dictation</button>
-          <button type="button" class="btn" data-go="quran" data-i18n="nav_quran">Quran</button>
+      <section class="home-sec" aria-labelledby="home-free-h">
+        <h2 id="home-free-h" class="sr-only" data-i18n="fam_free">Practise</h2>
+        <div class="home-actions">
+          <button type="button" class="home-act act-texts" data-go="texts">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-doc"/></svg>
+            <span data-i18n="nav_texts">My texts</span>
+          </button>
+          <button type="button" class="home-act act-recite" data-go="recite">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-mic"/></svg>
+            <span data-i18n="nav_recite">Read aloud</span>
+          </button>
+          <button type="button" class="home-act act-dictation" data-go="dictation">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-pencil"/></svg>
+            <span data-i18n="nav_dictation">Dictation</span>
+          </button>
+          <button type="button" class="home-act act-quran" data-go="quran">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-book"/></svg>
+            <span data-i18n="nav_quran">Quran</span>
+          </button>
         </div>
+      </section>
+
+      <section class="home-sec" id="home-done-sec" aria-labelledby="home-done-h" hidden>
+        <h2 id="home-done-h" data-i18n="fam_done">My trophies</h2>
+        <ul class="task-list shelf" id="home-done"></ul>
       </section>
 
       <div class="btn-row">
@@ -260,13 +315,29 @@
       </div>
     </section>
 
-    <!-- ===================== Prepare (parent) ===================== -->
+    <!-- ===================== My texts (redesign: the child's saved texts) ===================== -->
+    <section class="screen" id="screen-texts" data-screen="texts" aria-labelledby="texts-title" hidden>
+      <h1 id="texts-title" data-i18n="texts_title">My texts</h1>
+      <p class="lead" data-i18n="texts_lead">Save a text once, then read it aloud or write it as a dictation, as often as you like.</p>
+      <button type="button" class="btn btn-primary btn-wide" id="texts-new">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>
+        <span data-i18n="texts_new">New text</span>
+      </button>
+      <p class="status" id="texts-status" role="status" aria-live="polite"></p>
+      <ul class="text-list" id="texts-list"></ul>
+      <p class="hint" id="texts-empty" data-i18n="texts_empty" hidden>No text yet. Press “New text” to add one.</p>
+    </section>
+
+    <!-- ===================== A text of "My texts": new or changed (was Prepare) ===================== -->
     <section class="screen" id="screen-prepare" data-screen="prepare" aria-labelledby="prep-title" hidden>
-      <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
-      <h1 id="prep-title" data-i18n="prep_title">Prepare a page</h1>
-      <p class="lead" data-i18n="prep_intro">Take a photo of the textbook page, or type or paste the text. Then check it and press “Confirm text”.</p>
+      <h1 id="prep-title" data-i18n="prep_title">New text</h1>
+      <p class="lead" data-i18n="prep_intro">Type the text, or take a photo of the page. Then press “Save”.</p>
 
       <div class="card">
+        <div class="field">
+          <label for="page-title" data-i18n="text_name">Name (optional)</label>
+          <input id="page-title" type="text" maxlength="60" autocomplete="off" spellcheck="false" dir="auto" data-i18n-attr="placeholder:text_name_ph">
+        </div>
         <div class="field">
           <label for="page-lang" data-i18n="text_lang">Language of the text</label>
           <select id="page-lang">
@@ -294,7 +365,7 @@
         <p class="status" id="prep-quran-note" role="status" aria-live="polite"></p>
 
         <div class="field">
-          <label for="page-text" data-i18n="page_text_label">Page text</label>
+          <label for="page-text" data-i18n="page_text_label">The text</label>
           <textarea id="page-text" rows="8" spellcheck="false" data-i18n-attr="placeholder:page_text_ph"></textarea>
         </div>
         <!-- The Quran parts the server found in the text (a school text that includes
@@ -320,12 +391,12 @@
 
         <button type="button" class="btn btn-primary btn-wide" id="btn-confirm">
           <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
-          <span data-i18n="confirm_text">Confirm text</span>
+          <span data-i18n="confirm_text">Save</span>
         </button>
         <p class="status" id="prep-confirm-status" role="status" aria-live="polite"></p>
         <div class="btn-row" id="prep-next" hidden>
-          <button type="button" class="btn" data-go="recite" data-i18n="go_recite">Go to Recite</button>
-          <button type="button" class="btn" data-go="dictation" data-i18n="go_dictation">Go to Dictation</button>
+          <button type="button" class="btn btn-primary" data-go="recite" data-i18n="go_recite">Read aloud</button>
+          <button type="button" class="btn" data-go="dictation" data-i18n="go_dictation">Dictation</button>
         </div>
       </div>
     </section>
@@ -335,19 +406,19 @@
       <h1 id="recite-title" data-i18n="recite_title">Recite</h1>
       <p class="hello" id="recite-hello"></p>
 
+      <!-- (Redesign) No text chosen: the child's texts to pick from (family.js), or a new one. -->
       <div class="card card-empty" id="recite-empty">
-        <p data-i18n="need_page">Ask a grown-up to prepare a page first.</p>
-        <button type="button" class="btn" data-go="prepare" data-i18n="open_prepare">Prepare a page</button>
+        <p data-i18n="need_page">Choose a text to read aloud.</p>
+        <ul class="pick-list" data-pick="recite"></ul>
+        <button type="button" class="btn" data-go="texts" data-i18n="open_prepare">My texts</button>
       </div>
 
       <div id="recite-main" hidden>
+        <p class="which-text" id="recite-which"></p>
         <p class="lead" data-i18n="recite_intro">Read the text aloud. Press the big button to start, and press it again when you finish.</p>
         <p class="chip" id="recite-mode-label"></p>
         <!-- A text with Quran parts: checked word by word, and never read by the voice. -->
-        <div class="hint-parent" id="recite-quran-note" hidden>
-          <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
-          <p data-i18n="recite_quran_note">This text has words of the Quran. They are checked word by word, as written in the mushaf. The app’s voice never reads them: to let your child hear the text first, please read it aloud yourself.</p>
-        </div>
+        <p class="hint" id="recite-quran-note" data-i18n="recite_quran_note" hidden>Some words here are from the Quran: they are checked word by word, as they are written in the Quran.</p>
 
         <div class="card">
           <div class="words reading" id="recite-text"></div>
@@ -407,19 +478,18 @@
       <p class="hello" id="dict-hello"></p>
 
       <div class="card card-empty" id="dict-empty">
-        <p data-i18n="need_page">Ask a grown-up to prepare a page first.</p>
-        <button type="button" class="btn" data-go="prepare" data-i18n="open_prepare">Prepare a page</button>
+        <p data-i18n="need_page_dict">Choose a text for the dictation.</p>
+        <ul class="pick-list" data-pick="dictation"></ul>
+        <button type="button" class="btn" data-go="texts" data-i18n="open_prepare">My texts</button>
       </div>
 
       <div id="dict-main" hidden>
+        <p class="which-text" id="dict-which"></p>
         <!-- Stage 1: intro -->
         <div class="card stage" data-stage="intro">
           <p class="lead" data-i18n="dict_intro">Get a pencil and paper. I will say the text slowly, one small piece at a time.</p>
-          <p class="gu-child" id="dict-quran-child" data-i18n="dict_quran_child" hidden>Let’s do this one with a grown-up.</p>
-          <div class="hint-parent" id="dict-quran-intro" hidden>
-            <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
-            <p data-i18n="dict_quran_intro">This text has words of the Quran. When the dictation reaches them, it stops and asks a grown-up to read them aloud: the app’s voice never reads the Quran. Please stay close.</p>
-          </div>
+          <p class="gu-child" id="dict-quran-child" data-i18n="dict_quran_child" hidden>This text has words of the Quran: when we reach them, let’s ask someone to read them aloud.</p>
+          <p class="hint" id="dict-quran-intro" data-i18n="dict_quran_intro" hidden>The app’s voice never reads the Quran. The rest of the dictation goes on as usual.</p>
           <button type="button" class="btn btn-primary btn-wide" id="btn-dict-start" data-gate="dict-start">
             <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-speaker"/></svg>
             <span data-i18n="dict_start">Start the dictation</span>
@@ -474,16 +544,15 @@
           <p class="status" id="dict-speak-status" role="status" aria-live="polite"></p>
           <p class="hint hint-parent" id="dict-unclear" data-i18n="voice_unclear" role="status" hidden>The voice may be unclear in this part. Press “Repeat” to hear a new take, or show the words.</p>
           <button type="button" class="btn btn-small btn-ghost" id="dict-show" aria-expanded="false" aria-controls="dict-phrase">
-            <span data-i18n="show_phrase">Show the words (grown-up)</span>
+            <span data-i18n="show_phrase">Show the words</span>
           </button>
           <p class="phrase" id="dict-phrase" hidden></p>
         </div>
 
-        <!-- Stage 3: the parent gives the child's writing -->
+        <!-- Stage 3: the child checks their own paper (redesign: no grown-up stage) -->
         <div class="card stage" data-stage="check" hidden>
-          <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
-          <h2 class="card-title" data-i18n="dict_check_title">Check the writing</h2>
-          <p data-i18n="dict_check_intro">Take a photo of your child's paper, or type exactly what they wrote — mistakes included.</p>
+          <h2 class="card-title" data-i18n="dict_check_title">Check my writing</h2>
+          <p data-i18n="dict_check_intro">Take a photo of the paper, or type exactly what was written, mistakes included.</p>
           <div class="btn-row">
             <label class="btn file-btn" data-gate-label="dict-photo">
               <input type="file" id="dict-take" accept="image/*" capture="environment" data-gate="dict-photo">
@@ -498,7 +567,7 @@
           </div>
           <p class="why" data-why="dict-photo" hidden></p>
           <div class="field">
-            <label for="dict-written" data-i18n="written_label">What your child wrote</label>
+            <label for="dict-written" data-i18n="written_label">What I wrote</label>
             <textarea id="dict-written" rows="5" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
           </div>
           <button type="button" class="btn btn-primary btn-wide" id="btn-dict-check" data-gate="dict-check" data-i18n="check_writing">Check</button>
@@ -506,35 +575,10 @@
           <p class="status" id="dict-check-status" role="status" aria-live="polite"></p>
         </div>
 
-        <!-- Stage 4: the parent reviews the result first -->
-        <div class="card stage" data-stage="review" hidden tabindex="-1">
-          <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
-          <h2 class="card-title" data-i18n="parent_review_title">Please check before your child sees it</h2>
-          <p data-i18n="parent_review_intro">The AI may misread handwriting. Fix the text below if needed and check again, then confirm.</p>
-          <p class="hint" id="dict-legible" data-i18n="illegible" hidden>The writing was hard to read. Please check it carefully.</p>
-          <div class="field">
-            <label for="dict-read-text" data-i18n="read_text_label">What was read</label>
-            <textarea id="dict-read-text" rows="4" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
-          </div>
-          <p class="hint" id="dict-uncertain" hidden></p>
-          <div class="words" id="dict-review-words"></div>
-          <ul class="legend" data-legend="written"></ul>
-          <p class="feedback feedback-small" id="dict-review-feedback"></p>
-          <p class="hint hint-parent" id="dict-stale" data-i18n="review_stale" role="status" hidden>You changed the text. Press “Check again with this text” before you confirm.</p>
-          <div class="btn-row">
-            <button type="button" class="btn" id="btn-dict-recheck" data-gate="dict-check" data-i18n="recheck">Check again with this text</button>
-            <button type="button" class="btn btn-primary" id="btn-dict-confirm" aria-describedby="dict-stale">
-              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
-              <span data-i18n="confirm_result">Confirm result</span>
-            </button>
-          </div>
-          <p class="why" data-why="dict-check" hidden></p>
-          <p class="status" id="dict-review-status" role="status" aria-live="polite"></p>
-        </div>
-
-        <!-- Stage 5: the child sees the confirmed result -->
+        <!-- Stage 4: the result, straight away; the text read from a photo can be corrected
+             and checked again (it is the child's own writing). -->
         <div class="card stage result" data-stage="child" hidden tabindex="-1">
-          <h2 class="card-title" data-i18n="dict_result_title">Your dictation</h2>
+          <h2 class="card-title" data-i18n="dict_result_title">My dictation</h2>
           <p class="feedback" id="dict-child-feedback"></p>
           <p class="hint" id="dict-fb-quran" data-i18n="feedback_not_spoken" hidden>This message quotes the Quran, so it is shown and not spoken.</p>
           <div class="words" id="dict-child-words"></div>
@@ -549,6 +593,19 @@
           </div>
           <p class="why" data-why="dict-tts" hidden></p>
           <p class="status" id="dict-child-status" role="status" aria-live="polite"></p>
+          <details class="more dict-fix" id="dict-fix">
+            <summary data-i18n="dict_fix_title">Was my writing read right?</summary>
+            <p class="hint" id="dict-legible" data-i18n="illegible" hidden>The writing was hard to read. Please check it carefully.</p>
+            <p class="hint" id="dict-uncertain" hidden></p>
+            <div class="field">
+              <label for="dict-read-text" data-i18n="read_text_label">What was read</label>
+              <textarea id="dict-read-text" rows="4" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+            </div>
+            <p class="hint" data-i18n="dict_fix_hint">If a word was read wrong, fix it here, then check again.</p>
+            <button type="button" class="btn" id="btn-dict-recheck" data-gate="dict-check" data-i18n="recheck">Check again</button>
+            <p class="why" data-why="dict-check" hidden></p>
+            <p class="status" id="dict-review-status" role="status" aria-live="polite"></p>
+          </details>
         </div>
       </div>
     </section>
@@ -662,56 +719,26 @@
     <section class="screen" id="screen-parent" data-screen="parent" aria-labelledby="parent-title" hidden>
       <p class="tag-parent" data-i18n="parent_tag">For the grown-up</p>
       <h1 id="parent-title" data-i18n="fam_parent_title">Parent area</h1>
-      <p class="hint hint-parent" id="parent-autolock" data-i18n="fam_parent_autolock">It locks after 3 minutes without use, and when the app is left.</p>
+      <p class="hint hint-parent" id="parent-autolock" data-i18n="fam_parent_autolock">It stays open while you use it, and locks after 3 minutes without use, when the app is left, or with “Close”.</p>
       <div class="data-notice parent-reset" id="parent-reset-notice" role="status" hidden>
         <p id="parent-reset-text"></p>
         <button type="button" class="btn btn-small" id="parent-reset-ok" data-i18n="fam_dismiss">Hide this</button>
       </div>
 
-      <!-- The AI consent, asked when Claude is set up and the parent has not agreed to it
-           (never agreed, or a document saved before the AI consent had a box of its own):
-           the Claude notice and a box of its own. Not shown on Settings, which has the box. -->
-      <section class="card card-notice ai-prompt" id="ai-prompt" aria-labelledby="ai-prompt-h" hidden>
-        <h2 id="ai-prompt-h" tabindex="-1" data-i18n="fam_ai_title">Your OK for Claude</h2>
-        <p data-i18n="fam_ai_lead">Mommy is set up to use Claude. Until you agree, reading photos stays off, and recitations and dictations are checked without Claude (by meaning, only approximately); the Quran section works without it.</p>
-        <p class="hint" id="ai-prompt-claude" data-i18n="consent_claude"></p>
-        <div class="check">
-          <input type="checkbox" id="ai-prompt-check" aria-describedby="ai-prompt-claude">
-          <label for="ai-prompt-check" data-i18n="consent_ai_label">I agree that these things are sent to Claude.</label>
-        </div>
-        <p class="status" id="ai-prompt-status" role="status" aria-live="polite"></p>
-        <div class="btn-row">
-          <button type="button" class="btn btn-primary" id="ai-prompt-save" data-i18n="fam_save">Save</button>
-          <button type="button" class="btn" id="ai-prompt-later" data-i18n="fam_ai_later">Not now</button>
-        </div>
-      </section>
-      <p class="status" id="ai-prompt-done" role="status" aria-live="polite"></p>
-
+      <!-- (Redesign) Only what needs a grown-up: rewards, tasks (optional), children and
+           settings. Nothing waits for the parent: the app gives the stars itself. -->
       <nav class="psec-nav" id="psec-nav" data-i18n-attr="aria-label:fam_parent_sections">
         <!-- The number after a label counts what waits for the parent there. -->
-        <button type="button" class="psec-tab" data-psec="review"><span data-i18n="fam_sec_review">To review</span><span class="psec-count" id="psec-count-review" hidden></span></button>
-        <button type="button" class="psec-tab" data-psec="tasks" data-i18n="fam_sec_tasks">Tasks</button>
         <button type="button" class="psec-tab" data-psec="rewards"><span data-i18n="fam_sec_rewards">Rewards</span><span class="psec-count" id="psec-count-rewards" hidden></span></button>
+        <button type="button" class="psec-tab" data-psec="tasks" data-i18n="fam_sec_tasks">Tasks</button>
         <button type="button" class="psec-tab" data-psec="children" data-i18n="fam_sec_children">Children</button>
         <button type="button" class="psec-tab" data-psec="settings" data-i18n="fam_sec_settings">Settings</button>
       </nav>
 
-      <!-- To review: the tasks that reached their pass level, across children, oldest first.
-           Confirm, or "Not yet: try again" with an optional note for the child. -->
-      <section class="psec card" data-psec="review" aria-labelledby="psec-review-h" hidden>
-        <h2 id="psec-review-h" tabindex="-1" data-i18n="fam_sec_review">To review</h2>
-        <p class="status" id="pr-status" role="status" aria-live="polite"></p>
-        <div class="review-notes" id="pr-notes" hidden>
-          <p class="hint-parent" data-i18n="fam_review_mishear">The app can mishear. If you heard your child do it, you can confirm anyway.</p>
-          <p class="hint-parent" data-i18n="fam_review_norec">The app keeps no recordings, so there is nothing to listen to afterwards. To hear it, ask your child to show you.</p>
-        </div>
-        <ul class="ptask-list review-list" id="pr-list"></ul>
-        <p class="hint review-empty" id="pr-empty" data-i18n="fam_review_empty" hidden>Nothing to review right now.</p>
-      </section>
-
       <!-- Tasks: per child, create / edit / archive. -->
       <section class="psec card" data-psec="tasks" aria-labelledby="psec-tasks-h" hidden>
         <h2 id="psec-tasks-h" tabindex="-1" data-i18n="fam_sec_tasks">Tasks</h2>
+        <p class="help-line" data-i18n="fam_tasks_about">Optional: suggestions for a child. The app gives the stars when the child does it; children can always practise freely too.</p>
         <div class="field" id="pt-child-field">
           <label for="pt-child" data-i18n="fam_tasks_of">Tasks of</label>
           <select id="pt-child"></select>
@@ -740,11 +767,6 @@
               <span class="seg-body"><span class="seg-title" data-i18n="fam_kind_quran">Quran</span></span>
             </label>
           </fieldset>
-
-          <div class="field">
-            <label for="tf-title" data-i18n="fam_tf_title">Title (optional)</label>
-            <input id="tf-title" type="text" maxlength="60" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:fam_tf_title_ph">
-          </div>
 
           <div id="tf-text-group">
             <div class="field">
@@ -826,6 +848,17 @@
             </fieldset>
           </div>
 
+          <div class="field">
+            <label for="tf-stars" data-i18n="fam_tf_stars">Stars</label>
+            <select id="tf-stars"></select>
+          </div>
+
+          <details class="more" id="tf-more">
+          <summary data-i18n="fam_tf_more">More options (title, pass level, reward, date)</summary>
+          <div class="field">
+            <label for="tf-title" data-i18n="fam_tf_title">Title (optional)</label>
+            <input id="tf-title" type="text" maxlength="60" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:fam_tf_title_ph">
+          </div>
           <fieldset class="segmented segmented-3" id="tf-pass">
             <legend data-i18n="fam_tf_pass">Pass level</legend>
             <label class="seg">
@@ -843,15 +876,9 @@
           </fieldset>
           <p class="hint" id="tf-pass-meaning" data-i18n="fam_tf_pass_meaning" hidden>By meaning, the task passes when the meaning is the same, with no idea missing.</p>
 
-          <div class="field-row">
-            <div class="field">
-              <label for="tf-stars" data-i18n="fam_tf_stars">Stars</label>
-              <select id="tf-stars"></select>
-            </div>
-            <div class="field">
-              <label for="tf-due" data-i18n="fam_tf_due">Due date (optional)</label>
-              <input id="tf-due" type="date">
-            </div>
+          <div class="field">
+            <label for="tf-due" data-i18n="fam_tf_due">Due date (optional)</label>
+            <input id="tf-due" type="date">
           </div>
 
           <fieldset>
@@ -864,6 +891,7 @@
               <legend data-i18n="fam_tf_reward_emoji">Picture of the reward</legend>
             </fieldset>
           </fieldset>
+          </details>
 
           <p class="status" id="tf-status" role="status" aria-live="polite"></p>
           <!-- A text that is Quran: the form becomes a Quran task on its ayat. -->
@@ -1039,7 +1067,11 @@
            load), delete all data on this device. -->
       <section class="psec card" data-psec="settings" aria-labelledby="psec-settings-h" hidden>
         <h2 id="psec-settings-h" tabindex="-1" data-i18n="fam_sec_settings">Settings</h2>
+        <p class="hint privacy-short" data-i18n="fam_privacy_short">The family list (children, texts, stars, rewards and the PIN) stays in this browser, on this device.</p>
+        <details class="more">
+        <summary data-i18n="fam_more">More</summary>
         <p class="hint" data-i18n="fam_privacy_line">Your family’s list (children, tasks, stars, rewards and the PIN) is saved only in this browser, on this device, unless a copy is saved with “Save a copy”: the copy is a file, without the PIN, where the browser saves downloads. To check a text or read it out, the Mommy server gets the text and its language, and for a recitation or dictation check also the child’s age group; a Quran check sends the surah and ayat numbers instead. The server does not keep the texts or the age group; its log notes the language, the kind of check and the ayat numbers.</p>
+        </details>
         <fieldset class="consent">
           <legend data-i18n="consent_title">For the parent</legend>
           <div class="check">
@@ -1126,7 +1158,7 @@
       </section>
 
       <div class="btn-row">
-        <button type="button" class="btn" id="btn-parent-close" data-i18n="fam_parent_close">Close the parent area</button>
+        <button type="button" class="btn btn-primary" id="btn-parent-close" data-i18n="fam_parent_close">Close the parent area</button>
       </div>
     </section>
   </main>
