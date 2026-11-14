@@ -55,6 +55,30 @@ Environment variables:
   parent to type the text, as before;
 * ``MOMMY_OCR_THREADS``: CPU threads for the local page reader (default: the value of
   ``MOMMY_ASR_THREADS``).
+* ``MOMMY_CLOUD_ASR``: ``off`` (default) or ``google``, an optional paid recogniser in the
+  cloud (extra, :mod:`mommy.cloud_asr`): Google Cloud Speech-to-Text V2 (model
+  ``MOMMY_GOOGLE_MODEL``, default ``chirp_3``). Used only for a request whose form says
+  ``cloud=1``, which the web client sends only with the family's consent to it; Whisper
+  stays the fallback for every failure, timeout and for the monthly cap. Like Whisper, it
+  is given the audio and the language only (hard rule 1);
+* ``MOMMY_CLOUD_ASR_LANGS``: the languages it is used for (default ``ar,en,fr``);
+* ``MOMMY_GOOGLE_CREDENTIALS``: the path of a service-account JSON key file, or
+  ``MOMMY_GOOGLE_CREDENTIALS_B64``: that file's content in base64 (an env file cannot
+  hold the JSON's line breaks and quotes safely). Speech-to-Text V2 does not accept API
+  keys (it answers 401 "API keys are not supported by this API"), so
+  ``MOMMY_GOOGLE_API_KEY`` is not used: a warning says so. The key is never logged and
+  never in ``repr(Settings)``;
+* ``MOMMY_GOOGLE_PROJECT``: the Google Cloud project id (default: the key file's
+  ``project_id``); ``MOMMY_GOOGLE_REGION``: ``eu`` (default), ``us`` or another
+  Speech-to-Text location (``global`` is ``speech.googleapis.com``);
+* ``MOMMY_GOOGLE_LOCALE_AR`` / ``_EN`` / ``_FR``: the language code sent for each app
+  language (default ``ar-SA``, ``en-US``, ``fr-FR``);
+* ``MOMMY_GOOGLE_MAX_MINUTES``: the monthly cap in minutes of audio (default 1000, about
+  16 USD at 0.016 USD a minute; 0 sends nothing), counted per request in whole seconds
+  rounded up as Google bills them, kept in ``MOMMY_GOOGLE_USAGE_FILE`` (compose.yaml:
+  ``/data/google-usage.json``; unset: counted in memory, so a restart starts again
+  from 0) and started again on the first day of each month (UTC);
+* ``MOMMY_GOOGLE_TIMEOUT``: seconds to wait for one Google request (default 8).
 
 When the key or either model is missing, the app runs offline (see ``Settings.claude_configured``).
 """
@@ -63,6 +87,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
@@ -75,6 +100,15 @@ ASR_MODELS: tuple[str, ...] = ("small", "turbo")
 #: The values of ``MOMMY_LIVE_ASR_MODEL``.
 LIVE_ASR_MODELS: tuple[str, ...] = ("auto", "whisper")
 EFFORT_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+#: The values of ``MOMMY_CLOUD_ASR`` that turn a cloud recogniser on (``off``: none).
+CLOUD_ASR_PROVIDERS: tuple[str, ...] = ("google",)
+#: The app languages (textnorm.LANGUAGES; repeated here, config imports no other module of ours but access).
+_APP_LANGS: tuple[str, ...] = ("ar", "en", "fr")
+DEFAULT_GOOGLE_LOCALES: dict[str, str] = {"ar": "ar-SA", "en": "en-US", "fr": "fr-FR"}
+DEFAULT_GOOGLE_REGION = "eu"
+DEFAULT_GOOGLE_MODEL = "chirp_3"
+DEFAULT_GOOGLE_MAX_MINUTES = 1000
+DEFAULT_GOOGLE_TIMEOUT = 8.0
 
 DEFAULT_ASR_MODEL = "turbo"
 DEFAULT_LIVE_ASR_MODEL = "auto"
@@ -111,6 +145,19 @@ class Settings:
     live_asr_model: str = DEFAULT_LIVE_ASR_MODEL  # env MOMMY_LIVE_ASR_MODEL: "auto" or "whisper"
     ocr: bool = True  # env MOMMY_OCR, default on
     ocr_threads: int = DEFAULT_ASR_THREADS  # env MOMMY_OCR_THREADS, default asr_threads
+    # -- the optional cloud recogniser (extra, mommy.cloud_asr) --
+    cloud_asr: str | None = None  # env MOMMY_CLOUD_ASR: None (off) or "google"
+    cloud_asr_langs: tuple[str, ...] = _APP_LANGS  # env MOMMY_CLOUD_ASR_LANGS
+    google_credentials_file: Path | None = None  # env MOMMY_GOOGLE_CREDENTIALS
+    #: env MOMMY_GOOGLE_CREDENTIALS_B64 (the key file in base64). Never in repr.
+    google_credentials_b64: str | None = field(default=None, repr=False)
+    google_project: str | None = None  # env MOMMY_GOOGLE_PROJECT (default: the key's project_id)
+    google_region: str = DEFAULT_GOOGLE_REGION  # env MOMMY_GOOGLE_REGION
+    google_model: str = DEFAULT_GOOGLE_MODEL  # env MOMMY_GOOGLE_MODEL
+    google_locales: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_GOOGLE_LOCALES))
+    google_max_minutes: int = DEFAULT_GOOGLE_MAX_MINUTES  # env MOMMY_GOOGLE_MAX_MINUTES
+    google_timeout: float = DEFAULT_GOOGLE_TIMEOUT  # env MOMMY_GOOGLE_TIMEOUT
+    google_usage_file: Path | None = None  # env MOMMY_GOOGLE_USAGE_FILE
 
     @property
     def claude_configured(self) -> bool:
@@ -159,6 +206,89 @@ def parse_threads(env: Mapping[str, str], name: str, default: int) -> int:
     if value < 1:
         raise ValueError(f"{name} must be at least 1, got {value}")
     return value
+
+
+_REGION_RE = re.compile(r"[a-z][a-z0-9-]{0,40}")
+_LOCALE_RE = re.compile(r"[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}")
+_MODEL_RE = re.compile(r"[a-z][a-z0-9_.-]{0,40}")
+_PROJECT_RE = re.compile(r"[a-z][a-z0-9-]{4,61}[a-z0-9]|[a-z0-9.:-]{1,100}")
+
+
+def parse_cloud_asr(env: Mapping[str, str]) -> dict[str, object]:
+    """The settings of the optional cloud recogniser (``MOMMY_CLOUD_ASR`` and the
+    ``MOMMY_GOOGLE_*`` variables), as keyword arguments of :class:`Settings`.
+
+    ValueError (never quoting a credential) for an unknown provider or language, a bad
+    region, locale, model or project id, a cap that is not a whole number of minutes at
+    least 0, or a timeout that is not a number between 1 and 60. Whether the credentials
+    work is not decided here: :mod:`mommy.cloud_asr` loads them when the app starts, and a
+    key that cannot be used leaves the app running without the cloud recogniser."""
+    out: dict[str, object] = {}
+    raw = (_get(env, "MOMMY_CLOUD_ASR") or "off").lower()
+    if raw in FALSE_VALUES or raw == "none":
+        out["cloud_asr"] = None
+    elif raw in CLOUD_ASR_PROVIDERS:
+        out["cloud_asr"] = raw
+    else:
+        raise ValueError(f"MOMMY_CLOUD_ASR must be off or one of {', '.join(CLOUD_ASR_PROVIDERS)}, got {raw!r}")
+    langs_raw = _get(env, "MOMMY_CLOUD_ASR_LANGS")
+    if langs_raw is not None:
+        langs = tuple(dict.fromkeys(x.strip().lower() for x in langs_raw.split(",") if x.strip()))
+        bad = [x for x in langs if x not in _APP_LANGS]
+        if bad or not langs:
+            raise ValueError(f"MOMMY_CLOUD_ASR_LANGS must list some of {', '.join(_APP_LANGS)}, got {langs_raw!r}")
+        out["cloud_asr_langs"] = tuple(x for x in _APP_LANGS if x in langs)
+    if _get(env, "MOMMY_GOOGLE_API_KEY") is not None:
+        # The value is never read further, printed or kept.
+        log.warning(
+            "MOMMY_GOOGLE_API_KEY is ignored: Speech-to-Text V2 does not accept API keys; "
+            "set MOMMY_GOOGLE_CREDENTIALS (a service-account key file) instead"
+        )
+    cred = _get(env, "MOMMY_GOOGLE_CREDENTIALS")
+    out["google_credentials_file"] = Path(cred) if cred is not None else None
+    out["google_credentials_b64"] = _get(env, "MOMMY_GOOGLE_CREDENTIALS_B64")
+    project = _get(env, "MOMMY_GOOGLE_PROJECT")
+    if project is not None and not _PROJECT_RE.fullmatch(project):
+        raise ValueError(f"MOMMY_GOOGLE_PROJECT is not a Google Cloud project id: {project!r}")
+    out["google_project"] = project
+    region = (_get(env, "MOMMY_GOOGLE_REGION") or DEFAULT_GOOGLE_REGION).lower()
+    if not _REGION_RE.fullmatch(region):
+        raise ValueError(f"MOMMY_GOOGLE_REGION must be a location such as eu or us, got {region!r}")
+    out["google_region"] = region
+    model = (_get(env, "MOMMY_GOOGLE_MODEL") or DEFAULT_GOOGLE_MODEL).lower()
+    if not _MODEL_RE.fullmatch(model):
+        raise ValueError(f"MOMMY_GOOGLE_MODEL is not a model name: {model!r}")
+    out["google_model"] = model
+    locales = dict(DEFAULT_GOOGLE_LOCALES)
+    for lang in _APP_LANGS:
+        name = f"MOMMY_GOOGLE_LOCALE_{lang.upper()}"
+        value = _get(env, name)
+        if value is not None:
+            if not _LOCALE_RE.fullmatch(value):
+                raise ValueError(f"{name} must be a language code such as {DEFAULT_GOOGLE_LOCALES[lang]}, got {value!r}")
+            locales[lang] = value
+    out["google_locales"] = locales
+    minutes_raw = _get(env, "MOMMY_GOOGLE_MAX_MINUTES")
+    if minutes_raw is not None:
+        try:
+            minutes = int(minutes_raw)
+        except ValueError:
+            raise ValueError(f"MOMMY_GOOGLE_MAX_MINUTES must be a whole number of minutes, got {minutes_raw!r}") from None
+        if minutes < 0:
+            raise ValueError(f"MOMMY_GOOGLE_MAX_MINUTES must be 0 or more, got {minutes}")
+        out["google_max_minutes"] = minutes
+    timeout_raw = _get(env, "MOMMY_GOOGLE_TIMEOUT")
+    if timeout_raw is not None:
+        try:
+            timeout = float(timeout_raw)
+        except ValueError:
+            raise ValueError(f"MOMMY_GOOGLE_TIMEOUT must be a number of seconds, got {timeout_raw!r}") from None
+        if not 1.0 <= timeout <= 60.0:
+            raise ValueError(f"MOMMY_GOOGLE_TIMEOUT must be between 1 and 60 seconds, got {timeout_raw!r}")
+        out["google_timeout"] = timeout
+    usage = _get(env, "MOMMY_GOOGLE_USAGE_FILE")
+    out["google_usage_file"] = Path(usage) if usage is not None else None
+    return out
 
 
 def parse_allowed_hosts(value: str) -> tuple[str, ...]:
@@ -239,7 +369,8 @@ def load_settings(root: Path | None = None) -> Settings:
     code file that cannot be read or made (:func:`code_from_file`), no access code
     while ``MOMMY_REQUIRE_ACCESS_CODE`` is set, a ``MOMMY_LIVE_RECITE`` or ``MOMMY_OCR``
     that is neither on nor off (:func:`parse_switch`), or a ``MOMMY_LIVE_ASR_MODEL`` that
-    is not one of :data:`LIVE_ASR_MODELS`.
+    is not one of :data:`LIVE_ASR_MODELS`, or a cloud recogniser setting
+    :func:`parse_cloud_asr` refuses.
 
     With ``MOMMY_ACCESS_CODE`` unset and ``MOMMY_ACCESS_CODE_FILE`` set, this reads that
     file, and writes a new code to it first when it does not exist.
@@ -296,11 +427,13 @@ def load_settings(root: Path | None = None) -> Settings:
         live_asr_model=live_asr_model,
         ocr=ocr,
         ocr_threads=ocr_threads,
+        **parse_cloud_asr(env),  # type: ignore[arg-type]
     )
 
 
 __all__ = [
     "ASR_MODELS",
+    "CLOUD_ASR_PROVIDERS",
     "DEFAULT_ALLOWED_HOSTS",
     "EFFORT_LEVELS",
     "LIVE_ASR_MODELS",
@@ -311,6 +444,7 @@ __all__ = [
     "code_from_file",
     "load_settings",
     "parse_allowed_hosts",
+    "parse_cloud_asr",
     "parse_switch",
     "parse_threads",
 ]
