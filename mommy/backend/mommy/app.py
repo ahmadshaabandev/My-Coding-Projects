@@ -24,10 +24,6 @@ Flows
   decodes the phrase or tail first, given the audio only; its words are kept when they
   add no mistake to the words read so far, else Whisper decodes the same audio
   (:func:`quick_kept`).
-* Cloud recogniser (extra, ``MOMMY_CLOUD_ASR=google``, :mod:`mommy.cloud_asr`): for a
-  request that carries ``cloud=1`` (the family's consent, :func:`cloud_consent_given`),
-  Google Speech-to-Text decodes the clip where Whisper would, given the audio and the
-  language only; Whisper answers whenever it cannot (``timings["via"]``).
 * Dictation: ``brain.read_handwriting(image, lang)`` reads the child's paper *blind*
   (hard rule 3; the expected text is not an argument), or the parent types it; then
   ``check_writing`` and feedback. The result always needs the parent's confirmation.
@@ -165,7 +161,6 @@ from .asr import (
     is_empty_wav,
     wav_duration,
 )
-from .cloud_asr import CloudASRError, CloudRecognizer, make_cloud_recognizer
 from .config import DEFAULT_ALLOWED_HOSTS, Settings, load_settings
 from .feedback import AgeBand
 from .llm import VERDICTS, Brain, OfflineBrain, make_brain, meaning_feedback
@@ -1029,35 +1024,6 @@ async def ai_consent_given(request: Request) -> bool:
 #: The dependency of every endpoint whose handling can reach the Claude brain.
 AiConsent = Annotated[bool, Depends(ai_consent_given)]
 
-#: The form field by which an audio request carries the family's consent to the cloud
-#: recogniser (extra, ``MOMMY_CLOUD_ASR``; the web client sends it only with that consent).
-CLOUD_FIELD = "cloud"
-
-
-async def cloud_consent_given(request: Request) -> bool:
-    """True only when the request's form body has :data:`CLOUD_FIELD`, every copy exactly
-    ``"1"`` (the same rule as :func:`ai_consent_given`). Anything else, no field included
-    (an older client), keeps the recording on this server: Whisper (or the quick
-    recogniser) decodes it and nothing goes to the cloud."""
-    form = await request.form()
-    values = form.getlist(CLOUD_FIELD)
-    return bool(values) and all(isinstance(v, str) and v == AI_CONSENT_VALUE for v in values)
-
-
-#: The dependency of every endpoint that recognises a child's recording.
-CloudConsent = Annotated[bool, Depends(cloud_consent_given)]
-
-#: How /api/openapi.json describes :data:`CLOUD_FIELD` (:func:`document_ai_consent`).
-CLOUD_SCHEMA: dict[str, Any] = {
-    "type": "string",
-    "title": "Cloud",
-    "description": (
-        "Optional, opt-in: the family's consent to the cloud speech recogniser (MOMMY_CLOUD_ASR). "
-        "Only the exact value \"1\" in the form body counts (every copy, when sent more than once). "
-        "Without it the recording is recognised on this server only."
-    ),
-}
-
 #: How /api/openapi.json describes :data:`AI_CONSENT_FIELD` (:func:`document_ai_consent`).
 AI_CONSENT_SCHEMA: dict[str, Any] = {
     "type": "string",
@@ -1082,9 +1048,9 @@ BRAIN_SCHEMA: dict[str, Any] = {
 }
 
 
-def _uses_ai_consent(dependant: Any, call: Any = ai_consent_given) -> bool:
-    """True when ``call`` (:func:`ai_consent_given`) is one of the dependencies, at any depth."""
-    return any(dep.call is call or _uses_ai_consent(dep, call) for dep in dependant.dependencies)
+def _uses_ai_consent(dependant: Any) -> bool:
+    """True when :func:`ai_consent_given` is one of the dependencies, at any depth."""
+    return any(dep.call is ai_consent_given or _uses_ai_consent(dep) for dep in dependant.dependencies)
 
 
 def document_ai_consent(schema: dict[str, Any], routes: Any) -> dict[str, Any]:
@@ -1100,18 +1066,7 @@ def document_ai_consent(schema: dict[str, Any], routes: Any) -> dict[str, Any]:
     """
     components = schema.get("components", {}).get("schemas", {})
     for route in routes:
-        if not isinstance(route, APIRoute):
-            continue
-        if _uses_ai_consent(route.dependant, cloud_consent_given):
-            for method in route.methods:
-                operation = schema.get("paths", {}).get(route.path_format, {}).get(method.lower())
-                for media in (operation or {}).get("requestBody", {}).get("content", {}).values():
-                    body = media.setdefault("schema", {})
-                    ref = body.get("$ref", "")
-                    if ref.startswith("#/components/schemas/"):
-                        body = components[ref.rsplit("/", 1)[1]]
-                    body.setdefault("properties", {})[CLOUD_FIELD] = dict(CLOUD_SCHEMA)
-        if not _uses_ai_consent(route.dependant):
+        if not isinstance(route, APIRoute) or not _uses_ai_consent(route.dependant):
             continue
         for method in route.methods:
             operation = schema.get("paths", {}).get(route.path_format, {}).get(method.lower())
@@ -1132,14 +1087,6 @@ def document_ai_consent(schema: dict[str, Any], routes: Any) -> dict[str, Any]:
     return schema
 
 
-def cloud_note(timings: dict[str, Any]) -> str:
-    """The cloud recogniser's part of a log line (``", cloud 0.84 s, ok"``), or ``""``
-    on a server without one (the log lines stay as they were)."""
-    if timings.get("cloud", "off") == "off":
-        return ""
-    return f", cloud {timings['cloud_s']:.2f} s, {timings['cloud']}"
-
-
 def brain_name(brain: Any) -> Literal["claude", "offline"]:
     """``"claude"`` for the Claude brain, ``"offline"`` for anything else."""
     return "claude" if getattr(brain, "name", None) == "claude" else "offline"
@@ -1158,7 +1105,6 @@ def create_app(
     quran: Quran | None,
     reader: PageReader | None = None,
     quick: QuickRecognizer | None = None,
-    cloud: CloudRecognizer | None = None,
 ) -> FastAPI:
     """The Mommy API (see the module docstring) serving ``settings.web_dir`` at ``/``.
 
@@ -1168,11 +1114,6 @@ def create_app(
     ``quick`` holds the quick recognisers of a live recitation (extra; used only with
     ``settings.live_asr_model == "auto"`` and the live recitation on): see
     :func:`quick_kept`.
-
-    ``cloud`` is the optional cloud recogniser (extra, :mod:`mommy.cloud_asr`; None: off),
-    used only for a request that carries ``cloud=1`` (:func:`cloud_consent_given`) and a
-    language it is set up for, where Whisper would decode; Whisper decodes whenever it
-    cannot answer.
 
     ``reader`` is the local page reader (:class:`mommy.ocr.PPOCRReader`), used by
     ``/api/page/read`` when Claude may not read the photo; None (``MOMMY_OCR=off``, or
@@ -1292,15 +1233,6 @@ def create_app(
     def quick_languages() -> list[str]:
         return [lang for lang in LANGUAGES if quick_on and quick is not None and quick.available_for(lang)]
 
-    cloud_reason = (
-        None if cloud is not None
-        else "MOMMY_CLOUD_ASR is off" if getattr(settings, "cloud_asr", None) is None
-        else "the cloud recogniser could not be set up (the server log says why)"
-    )
-
-    def cloud_languages() -> list[str]:
-        return [lang for lang in LANGUAGES if cloud is not None and cloud.available_for(lang)]
-
     def listen(
         upload: UploadFile,
         lang: Lang,
@@ -1309,7 +1241,6 @@ def create_app(
         max_seconds: float = MAX_AUDIO_SECONDS,
         allow_empty: bool = False,
         keep: Callable[[str], tuple[str | None, str]] | None = None,
-        cloud_ok: bool = False,
     ) -> tuple[str, dict, dict[str, Any]]:
         """Audio upload -> (heard text, quality, timings). The recogniser gets the audio
         and the language only, and is not run on an unclear clip (an empty one included,
@@ -1322,14 +1253,7 @@ def create_app(
         clip. ``timings["via"]``: ``"quick"``, ``"whisper"`` or ``"none"`` (not decoded);
         ``quick_s``: the quick decode's time; ``quick``: why the quick transcript was or
         was not used (``"kept"``, ``"empty"``, ``"mistake: ..."``, ``"failed"``, ``"too
-        long"``, ``"no model"``, ``"off"``), for the log.
-
-        With ``cloud_ok`` (the request carries ``cloud=1``) and a cloud recogniser for the
-        language, it decodes the clip where Whisper would (after a quick transcript that
-        was not kept), and Whisper only when it fails: ``via`` is then ``"google"``;
-        ``cloud_s`` its time; ``cloud``: ``"ok"``, ``"off"`` (none on the server), ``"no
-        consent"``, ``"lang"``, ``"not used"`` (the quick transcript was kept) or the
-        reason it failed (:class:`mommy.cloud_asr.CloudASRError`)."""
+        long"``, ``"no model"``, ``"off"``), for the log."""
         started = time.perf_counter()
         data = _read_upload(upload, max_bytes, "audio")
         n_bytes = len(data)
@@ -1342,8 +1266,6 @@ def create_app(
         via = "none"
         quick_s = 0.0
         quick_why = "off"
-        cloud_s = 0.0
-        cloud_why = "off" if cloud is None else "no consent" if not cloud_ok else "lang" if not cloud.available_for(lang) else "not used"
         if not _quality_unclear(quality):
             if keep is not None and quick_on and quick is not None and not quick.available_for(lang):
                 quick_why = "no model"
@@ -1362,21 +1284,7 @@ def create_app(
                     kept, quick_why = keep(quick_heard)
                     if kept is not None:
                         heard, via = kept, "quick"
-            if via != "quick" and cloud is not None and cloud_why == "not used":
-                cloud_started = time.perf_counter()
-                try:
-                    heard = cloud.transcribe(pcm, lang)  # the audio and the language only (hard rule 1)
-                    via, cloud_why = getattr(cloud, "name", "cloud"), "ok"
-                except CloudASRError as exc:
-                    cloud_why = exc.reason
-                except Exception as exc:  # noqa: BLE001 - Whisper answers instead
-                    cloud_why = f"failed {type(exc).__name__}"
-                cloud_s = time.perf_counter() - cloud_started
-                if cloud_why != "ok":
-                    heard = ""
-                    if cloud_why != "cap":  # the cap is logged once a month by the meter
-                        log.warning("the cloud recogniser had no answer for %s (%s); Whisper decodes", lang, cloud_why)
-            if via == "none":
+            if via != "quick":
                 try:
                     heard = transcriber.transcribe(pcm, lang)
                 except ASRUnavailable as exc:
@@ -1384,7 +1292,7 @@ def create_app(
                 via = "whisper"
         timings = {
             "bytes": n_bytes, "decode_s": decoded - started, "asr_s": time.perf_counter() - decoded,
-            "quick_s": quick_s, "via": via, "quick": quick_why, "cloud_s": cloud_s, "cloud": cloud_why,
+            "quick_s": quick_s, "via": via, "quick": quick_why,
         }
         return heard, quality, timings
 
@@ -1509,15 +1417,11 @@ def create_app(
             "tts_languages": list(tts_langs) if tts_langs is not None else (list(LANGUAGES) if tts_ok else []),
             "live_recite": live,
             "live_quick": quick_languages(),
-            # (extra) The languages a cloud recogniser is set up for (MOMMY_CLOUD_ASR): the
-            # client asks for the family's consent to it when this is not empty.
-            "cloud_asr": cloud_languages(),
             "ocr": local_reader() is not None,
             "asr_model": model if isinstance(model := getattr(transcriber, "model", None), str) else settings.asr_model,
             "reasons": {
                 "asr": getattr(transcriber, "unavailable_reason", None),
                 "tts": getattr(tts, "unavailable_reason", None),
-                "cloud_asr": None if cloud is not None else cloud_reason,
                 "ocr": (
                     "MOMMY_OCR is off"
                     if reader is None
@@ -1615,7 +1519,6 @@ def create_app(
         mode: Annotated[Literal["strict", "contextual"], Form()],
         age: Annotated[AgeField, Form()],
         consent: AiConsent,
-        cloud_ok: CloudConsent,
         live_tail: HeardBeforeSent,
         heard_before: Annotated[str | None, Form(description=HEARD_BEFORE_CHECK_DOC)] = None,
     ) -> dict[str, Any]:
@@ -1635,14 +1538,14 @@ def create_app(
         before = _heard_before(heard_before or "", lang) if live_tail else None
         require_asr()
         if before is None:
-            heard, quality, timings = listen(audio, lang, cloud_ok=cloud_ok)
+            heard, quality, timings = listen(audio, lang)
         else:
             def keep_tail(quick_heard: str) -> tuple[str | None, str]:
                 progress, transcript, reason = quick_verdict(analysis, before, quick_heard)
                 return (transcript if progress is not None else None), reason
 
             keep = keep_tail if mode == "strict" else None
-            tail, tail_quality, timings = listen(audio, lang, allow_empty=True, keep=keep, cloud_ok=cloud_ok)
+            tail, tail_quality, timings = listen(audio, lang, allow_empty=True, keep=keep)
             heard = join_heard(before, tail)
             quality = live_quality(tail_quality, before, lang)
 
@@ -1696,9 +1599,8 @@ def create_app(
             else f", tail after {len(tokenize(before, lang))} words, via {timings['via']} (quick {timings['quick_s']:.2f} s, {timings['quick']})"
         )
         log.info(
-            "recite/check %s %s: brain %s, audio %d bytes, %.1f s, decode %.2f s, asr %.2f s%s, total %.2f s%s",
+            "recite/check %s %s: brain %s, audio %d bytes, %.1f s, decode %.2f s, asr %.2f s, total %.2f s%s",
             mode, lang, out["brain"], timings["bytes"], quality["seconds"], timings["decode_s"], timings["asr_s"],
-            f" (via {timings['via']}{cloud_note(timings)})" if cloud is not None else "",
             time.perf_counter() - started, live_note,
         )
         return out
@@ -1711,7 +1613,6 @@ def create_app(
             expected_text: Annotated[str, Form()],
             lang: Annotated[LangField, Form()],
             mode: Annotated[Literal["strict", "contextual"], Form()],
-            cloud_ok: CloudConsent,
             heard_before: Annotated[str, Form(description=HEARD_BEFORE_PHRASE_DOC)] = "",
         ) -> dict[str, Any]:
             """One phrase of a live recitation: the recogniser decodes this phrase only
@@ -1738,7 +1639,7 @@ def create_app(
 
             heard, quality, timings = listen(
                 audio, lang, max_bytes=MAX_PHRASE_BYTES, max_seconds=MAX_PHRASE_SECONDS,
-                keep=keep if mode == "strict" else None, cloud_ok=cloud_ok,
+                keep=keep if mode == "strict" else None,
             )
             progress: dict[str, Any] | None = None
             if mode == "strict":
@@ -1751,9 +1652,9 @@ def create_app(
             out = {"mode": mode, "heard_text": heard, "quality": quality, "progress": progress, "brain": "offline"}
             log.info(
                 "recite/phrase %s %s: audio %d bytes, %.1f s, after %d words, decode %.2f s, asr %.2f s "
-                "(via %s, quick %.2f s, %s%s), check %.3f s, total %.2f s",
+                "(via %s, quick %.2f s, %s), check %.3f s, total %.2f s",
                 mode, lang, timings["bytes"], quality["seconds"], len(tokenize(before, lang)), timings["decode_s"],
-                timings["asr_s"], timings["via"], timings["quick_s"], timings["quick"], cloud_note(timings),
+                timings["asr_s"], timings["via"], timings["quick_s"], timings["quick"],
                 checked - started - timings["decode_s"] - timings["asr_s"], time.perf_counter() - started,
             )
             return out
@@ -1980,16 +1881,13 @@ def create_app(
         surah: Annotated[int, Form()],
         start: Annotated[int, Form(alias="from")],
         end: Annotated[int, Form(alias="to")],
-        cloud_ok: CloudConsent,
     ) -> dict[str, Any]:
-        """Strict check of a recitation of ayat ``from..to`` against the Tanzil text. With
-        ``cloud=1`` the recitation may be recognised by the cloud recogniser (the audio and
-        the language only; the Quran text is never sent anywhere)."""
+        """Strict check of a recitation of ayat ``from..to`` against the Tanzil text."""
         started = time.perf_counter()
         q = require_quran()
         quran_range(q, surah, start, end)
         require_asr()
-        heard, quality, timings = listen(audio, "ar", cloud_ok=cloud_ok)
+        heard, quality, timings = listen(audio, "ar")
         checked = q.check(surah, start, end, heard)
         out = {
             "heard_text": heard,
@@ -2001,16 +1899,13 @@ def create_app(
             "source_url": SOURCE_URL,
         }
         log.info(
-            "quran/check %d:%d-%d: audio %d bytes, %.1f s, asr %.2f s%s, total %.2f s",
-            surah, start, end, timings["bytes"], quality["seconds"], timings["asr_s"],
-            f" (via {timings['via']}{cloud_note(timings)})" if cloud is not None else "",
-            time.perf_counter() - started,
+            "quran/check %d:%d-%d: audio %d bytes, %.1f s, asr %.2f s, total %.2f s",
+            surah, start, end, timings["bytes"], quality["seconds"], timings["asr_s"], time.perf_counter() - started,
         )
         return out
 
     @app.post("/api/quran/locate")
     def quran_locate(
-        cloud_ok: CloudConsent,
         audio: Annotated[UploadFile | None, File()] = None,
         heard_text: Annotated[str | None, Form()] = None,
         surah: Annotated[int | None, Form()] = None,
@@ -2024,7 +1919,7 @@ def create_app(
         quality: dict | None = None
         if audio is not None:
             require_asr()
-            heard, quality, _ = listen(audio, "ar", cloud_ok=cloud_ok)
+            heard, quality, _ = listen(audio, "ar")
         elif heard_text is not None:
             heard = _lines(heard_text).strip()
             _check_chars(heard, "heard_text")
@@ -2178,15 +2073,11 @@ def build_default_app() -> FastAPI:
     else:
         log.info("Quran text loaded in %.1f s", time.perf_counter() - started)
     log.info(
-        "starting: asr=%s (%s) live quick=%s tts=%s brain=%s quran=%s ocr=%s cloud asr=%s",
+        "starting: asr=%s (%s) live quick=%s tts=%s brain=%s quran=%s ocr=%s",
         transcriber.available, transcriber.model, ",".join(quick.languages) if quick else "off", tts.available,
-        brain.name, quran is not None, bool(reader and reader.available), settings.cloud_asr or "off",
+        brain.name, quran is not None, bool(reader and reader.available),
     )
-    cloud, _why = make_cloud_recognizer(settings)  # None unless MOMMY_CLOUD_ASR is set (logged)
-    app = create_app(settings, transcriber, tts, brain, quran, reader, quick, cloud)
-    if cloud is not None:
-        # The first access token in the background, so the first reading does not wait.
-        threading.Thread(target=cloud.warm, name="mommy-cloud-token", daemon=True).start()
+    app = create_app(settings, transcriber, tts, brain, quran, reader, quick)
     if settings.access_code is not None:
         # Online only: local use keeps loading each language on first use.
         start_preload(transcriber, tts, quick)
@@ -2195,7 +2086,6 @@ def build_default_app() -> FastAPI:
 
 __all__ = [
     "BODY_LIMITS",
-    "CLOUD_FIELD",
     "MAX_AUDIO_BYTES",
     "MAX_AUDIO_SECONDS",
     "MAX_AYAT",
@@ -2215,7 +2105,6 @@ __all__ = [
     "body_limit",
     "build_default_app",
     "clean_image",
-    "cloud_consent_given",
     "contains_short_ayah",
     "create_app",
     "find_quran_parts",
