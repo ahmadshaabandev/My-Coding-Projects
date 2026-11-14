@@ -19,4 +19,4 @@ stopped. Requests are spaced 3.2 s apart (--pace) for the free tier; an empty 40
 retried for about 6 minutes with its response headers printed (never the key).
 
 The key goes in on stdin: it is not on the command line, in the output or in any file
-the script writes. The free tier takes one request at a time: about 10-15 minutes.
+the script writes. With 3.2 s between requests the whole run takes about 20-25 minutes.
