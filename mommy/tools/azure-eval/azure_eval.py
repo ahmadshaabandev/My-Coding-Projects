@@ -196,15 +196,14 @@ def main():
     ap.add_argument("--conds", default="clean,noisy"); ap.add_argument("--ar-locale", default="ar-SA")
     ap.add_argument("--concurrency", type=int, default=1); ap.add_argument("--prosody", action="store_true")
     ap.add_argument("--endpoint"); ap.add_argument("--cache"); ap.add_argument("--seed", default="0")
-    ap.add_argument("--region"); ap.add_argument("--pace", type=float, default=3.2, help="least seconds between requests"); ap.add_argument("--key-stdin", action="store_true", help="read the key from the first line of stdin")
+    ap.add_argument("--region"); ap.add_argument("--combine", action="store_true", help="also print the AND/OR tables (local x Azure)"); ap.add_argument("--pace", type=float, default=3.2, help="least seconds between requests"); ap.add_argument("--key-stdin", action="store_true", help="read the key from the first line of stdin")
     a = ap.parse_args()
     global KEY
     if a.key_stdin:
         KEY = sys.stdin.readline().strip().strip('"').strip("'")
     elif os.environ.get("AZURE_SPEECH_KEY"):
         KEY = os.environ["AZURE_SPEECH_KEY"].strip()
-    if not a.fake and (not KEY or KEY == "dummy") and not os.path.exists("/root/.ccr/ca-bundle.crt"):
-        raise SystemExit("no key: pass it on stdin with --key-stdin (see README.md)")
+
     LOCALES["ar"] = a.ar_locale
     items = [i for i in load_sets() if i["lang"] in a.langs.split(",") and i["style"] in a.styles.split(",")
              and i["cond"] in a.conds.split(",")]
@@ -228,6 +227,8 @@ def main():
         endpoint = f"https://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1"
     ctx = None if a.fake else ssl_context()
     todo = [i for i in items if i["id"] not in done]
+    if todo and not a.fake and (not KEY or KEY == "dummy") and not os.path.exists("/root/.ccr/ca-bundle.crt"):
+        raise SystemExit("no key: pass it on stdin with --key-stdin (see README.md)")
     print(f"{len(items)} items, {len(todo)} to send ({'FAKE' if a.fake else endpoint}); cache {cache}")
 
     def one(it):
@@ -299,6 +300,52 @@ def main():
         best = max(best or (j, t), (j, t), key=lambda x: x[0])
         print(f"   {str(t):5s}| " + " | ".join(cells) + f" | recall-FArate {j:.3f}")
     print(f"   best trade-off (max recall - FA rate): t = {best[1]}")
+
+    # --- both must agree (AND) / either one (OR): local recogniser x Azure, same items
+    if a.combine:
+        print("\n== combined: a word counts as a mistake when BOTH the local recogniser and Azure flag it (AND), or when EITHER does (OR)")
+        print("   (Azure flags: ErrorType Mispronunciation/Omission, plus AccuracyScore < t when t is given; insertions are not counted here)")
+        for label, fname in (("Whisper turbo (app)", "out_sherpa_turbo.json"), ("quick models (en/fr)", "out_sherpa_quick.json")):
+            p = os.path.join(HERE, fname)
+            if not os.path.exists(p):
+                continue
+            tr = json.load(open(p))
+            local = {it["id"]: flags_from_transcript(it["expected"], tr[it["id"]]["heard"], it["lang"])[0]
+                     for it in items if it["id"] in tr}
+            print(f"  -- {label}")
+            print("   rule          | " + " | ".join(f"{l}: caught  FA/100w" for l in ("en", "fr", "ar", "ALL")))
+            rows = [("local alone", None, None)]
+            for t in (None, 70, 80, 85, 90):
+                rows += [(f"AND t={t}", "and", t), (f"OR  t={t}", "or", t)]
+            for name, mode, t in rows:
+                outs = {}
+                for it in items:
+                    if it["id"] not in local:
+                        continue
+                    lf = local[it["id"]]
+                    if mode is None:
+                        f = lf
+                    else:
+                        af = flags_from_azure(it, resp.get(it["id"]), t)[0]
+                        f = (lf & af) if mode == "and" else (lf | af)
+                    outs[it["id"]] = (f, 0)
+                agg = score(items, outs)
+                cells = []
+                for l in ("en", "fr", "ar", "ALL"):
+                    g = agg.get((l, "ALL", "ALL"))
+                    cells.append(f"{l}: {g['caught']:3d}/{g['n_mis']:<3d} {100 * g['fa'] / max(1, g['ok_words']):5.1f}" if g and g["n_mis"] else " " * 19)
+                print(f"   {name:13s} | " + " | ".join(cells))
+            for l in ("ar",):
+                print(f"   {l} by style, AND t=85:", end="")
+                outs = {it["id"]: (local[it["id"]] & flags_from_azure(it, resp.get(it["id"]), 85)[0], 0) for it in items if it["id"] in local}
+                agg = score(items, outs)
+                for st in ("fluent", "wbw", "para"):
+                    for c in ("clean", "noisy"):
+                        g = agg.get((l, st, c))
+                        if g:
+                            cm = f"{g['caught']}/{g['n_mis']}" if g["n_mis"] else "-"
+                            print(f"  {st}/{c} caught {cm} FA {100 * g['fa'] / max(1, g['ok_words']):.1f}", end=";")
+                print()
 
     # --- local pipeline, same items, same scoring
     print("\n== local pipeline on the same items (app comparison mommy.align.check_recitation on the transcript)")

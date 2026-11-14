@@ -20,3 +20,11 @@ retried for about 6 minutes with its response headers printed (never the key).
 
 The key goes in on stdin: it is not on the command line, in the output or in any file
 the script writes. With 3.2 s between requests the whole run takes about 20-25 minutes.
+
+Both-must-agree tables (local recogniser AND Azure, or OR), from the saved answers only:
+nothing is sent to Azure and no key is needed once all 384 answers are in the cache.
+
+    cd ~/mommy-app/mommy
+    sudo docker compose run --rm -T --no-deps --entrypoint python \
+      -v "$PWD/tools/azure-eval:/eval:ro" -v "$HOME/azure-eval-cache:/cache" mommy \
+      /eval/azure_eval.py --region northeurope --combine 2>&1 | tee ~/azure-combined.txt
