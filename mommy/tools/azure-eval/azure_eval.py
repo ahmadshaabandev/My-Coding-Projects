@@ -44,6 +44,19 @@ PROSODY_TYPES = {"UnexpectedBreak", "MissingBreak", "Monotone"}
 
 # ---------------------------------------------------------------- request side
 KEY = "dummy"  # replaced by --key-stdin or AZURE_SPEECH_KEY; never printed
+PACE_S = 3.2  # least time between two request starts (free tier: about 20 requests a minute)
+_last_start = [0.0]
+T0 = time.time()
+
+
+def safe_headers(h):
+    """The response headers, for diagnosis: cookies left out, anything equal to the key masked."""
+    out = []
+    for k, v in (h.items() if h else []):
+        if k.lower() == "set-cookie":
+            continue
+        out.append(f"{k}: {'***' if KEY and KEY in v else v}")
+    return "; ".join(out)
 
 
 def audio_bytes(item):
@@ -76,7 +89,12 @@ def call_azure(endpoint, locale, audio, reference, prosody, ctx, max_tries=8):
                "Content-Type": "audio/ogg; codecs=opus",
                "Accept": "application/json", "Pronunciation-Assessment": pa_header(reference, prosody)}
     delay = 1.0
-    for attempt in range(1, max_tries + 1):
+    auth_waits = [float(x) for x in os.environ.get("AZ_AUTH_WAITS", "15,30,60,60,90,120").split(",")]  # an empty 401/403 seen after a burst: wait and retry
+    for attempt in range(1, max_tries + 20):
+        gap = PACE_S - (time.time() - _last_start[0])
+        if gap > 0:
+            time.sleep(gap)
+        _last_start[0] = time.time()
         req = urllib.request.Request(url, data=audio, headers=headers, method="POST")
         t = time.perf_counter()
         try:
@@ -86,12 +104,19 @@ def call_azure(endpoint, locale, audio, reference, prosody, ctx, max_tries=8):
         except urllib.error.HTTPError as e:
             txt = e.read().decode("utf-8", "replace")[:300]
             if e.code in (429, 500, 502, 503, 504) and attempt < max_tries:
+                print(f"   headers: {safe_headers(e.headers)}", file=sys.stderr)
                 ra = e.headers.get("Retry-After")
                 wait = float(ra) if ra and ra.replace(".", "").isdigit() else delay
                 print(f"   HTTP {e.code}, retry {attempt} in {wait:.1f} s", file=sys.stderr)
                 time.sleep(wait); delay = min(delay * 2, 30); continue
             if e.code in (401, 403):
-                raise SystemExit(f"HTTP {e.code} from Azure ({txt}). Is AZURE_SPEECH_KEY right for this region?")
+                print(f"   HTTP {e.code} at {time.time() - T0:.0f} s, body {txt!r}; headers: {safe_headers(e.headers)}", file=sys.stderr)
+                if auth_waits:
+                    w = auth_waits.pop(0)
+                    print(f"   waiting {w} s, then the same clip again", file=sys.stderr, flush=True)
+                    time.sleep(w); continue
+                raise SystemExit(f"HTTP {e.code} from Azure ({txt}) on every retry for about 6 minutes. "
+                                 "Answers so far are kept in the cache; run the same command again later to go on.")
             raise SystemExit(f"HTTP {e.code}: {txt}")
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             if attempt < max_tries:
@@ -171,7 +196,7 @@ def main():
     ap.add_argument("--conds", default="clean,noisy"); ap.add_argument("--ar-locale", default="ar-SA")
     ap.add_argument("--concurrency", type=int, default=1); ap.add_argument("--prosody", action="store_true")
     ap.add_argument("--endpoint"); ap.add_argument("--cache"); ap.add_argument("--seed", default="0")
-    ap.add_argument("--region"); ap.add_argument("--key-stdin", action="store_true", help="read the key from the first line of stdin")
+    ap.add_argument("--region"); ap.add_argument("--pace", type=float, default=3.2, help="least seconds between requests"); ap.add_argument("--key-stdin", action="store_true", help="read the key from the first line of stdin")
     a = ap.parse_args()
     global KEY
     if a.key_stdin:
@@ -185,7 +210,12 @@ def main():
              and i["cond"] in a.conds.split(",")]
     if a.limit:
         items = items[: a.limit]
-    cache = a.cache or os.path.join("/tmp", "azure_fake.jsonl" if a.fake else "azure_responses.jsonl")
+    global PACE_S
+    PACE_S = a.pace
+    cache_dir = "/cache" if os.path.isdir("/cache") and os.access("/cache", os.W_OK) else "/tmp"
+    if cache_dir == "/tmp" and not a.fake and not a.cache:
+        print("note: no writable /cache folder: answers are lost when the container ends (see README.md)")
+    cache = a.cache or os.path.join(cache_dir, "azure_fake.jsonl" if a.fake else "azure_responses.jsonl")
     done = {}
     if os.path.exists(cache):
         for line in open(cache, encoding="utf-8"):
@@ -213,7 +243,7 @@ def main():
         for n, r in enumerate(ex.map(one, todo), 1):
             fo.write(json.dumps(r, ensure_ascii=False) + "\n"); fo.flush(); done[r["id"]] = r
             if n % 25 == 0 or n == len(todo):
-                print(f"  sent {n}/{len(todo)}", flush=True)
+                print(f"  sent {n}/{len(todo)} ({time.time() - T0:.0f} s)", flush=True)
 
     # --- Azure tables
     resp = {i["id"]: done[i["id"]]["response"] for i in items if i["id"] in done}
