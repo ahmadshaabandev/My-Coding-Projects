@@ -2892,7 +2892,8 @@ class TestLivePhrase:
         op = spec["paths"]["/api/recite/phrase"]["post"]
         ref = op["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"].rsplit("/", 1)[1]
         body = spec["components"]["schemas"][ref]
-        assert set(body["properties"]) == {"audio", "expected_text", "lang", "mode", "heard_before"}
+        # (extra) cloud: the opt-in consent to the cloud recogniser (MOMMY_CLOUD_ASR), never required.
+        assert set(body["properties"]) == {"audio", "expected_text", "lang", "mode", "heard_before", "cloud"}
         assert set(body["required"]) == {"audio", "expected_text", "lang", "mode"}
         assert "ai_consent" not in body["properties"]
         check = spec["paths"]["/api/recite/check"]["post"]
@@ -2900,6 +2901,7 @@ class TestLivePhrase:
         body = spec["components"]["schemas"][ref]
         assert "heard_before" in body["properties"] and "heard_before" not in body["required"]
         assert "audio" in body["required"] and "ai_consent" in body["properties"]
+        assert "cloud" in body["properties"] and "cloud" not in body["required"]
 
 
 class TestLiveTail:
