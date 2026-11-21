@@ -1,0 +1,16 @@
+name = "linktocard"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+
+# .wasm must be imported as precompiled WebAssembly.Module objects: workerd forbids
+# compiling WebAssembly from bytes at runtime.
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = true
+
+# Font files are imported as ArrayBuffer.
+[[rules]]
+type = "Data"
+globs = ["**/*.woff", "**/*.ttf"]
+fallthrough = true
