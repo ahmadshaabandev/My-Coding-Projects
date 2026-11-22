@@ -1,16 +1,193 @@
+# Link To Card - one Worker serves the static site (Workers Static Assets) and the API.
+#
+#   top level        local development (wrangler dev) and the test suite
+#   [env.staging]    https://linktocard-staging.<your-subdomain>.workers.dev  (Paddle sandbox)
+#   [env.production] https://linktocard.com                                   (Paddle live)
+#
+# Bindings and [vars] are NOT inherited by environments - every environment repeats them.
+# Secrets are never in this file: see README.md "Secrets" (wrangler secret put ... --env <env>).
+
 name = "linktocard"
 main = "src/index.ts"
-compatibility_date = "2026-08-15"
+compatibility_date = "2026-11-19"
 
-# .wasm must be imported as precompiled WebAssembly.Module objects: workerd forbids
-# compiling WebAssembly from bytes at runtime.
+# Hard per-request CPU ceiling (enforced on Cloudflare's network only). A normal render
+# uses 100-400 ms; this stops a pathological template from burning CPU time.
+[limits]
+cpu_ms = 10000
+
+# Static site. Requests that do not match run_worker_first are served straight from
+# assets, never invoke the Worker, and are not billed.
+[assets]
+directory = "./site/dist"
+binding = "ASSETS"
+html_handling = "auto-trailing-slash"   # /terms -> site/dist/terms.html, HTTP 200, no redirect
+not_found_handling = "404-page"
+run_worker_first = ["/v1/*", "/api/*", "/auth/*", "/webhooks/*", "/i/*", "/playground/*", "/healthz"]
+
+# .wasm is imported as a precompiled WebAssembly.Module (workerd forbids compiling
+# WebAssembly from bytes at runtime); fonts are imported as ArrayBuffer.
 [[rules]]
 type = "CompiledWasm"
 globs = ["**/*.wasm"]
 fallthrough = true
 
-# Font files are imported as ArrayBuffer.
 [[rules]]
 type = "Data"
-globs = ["**/*.woff", "**/*.ttf"]
+globs = ["**/*.woff", "**/*.woff2", "**/*.ttf", "**/*.otf"]
 fallthrough = true
+
+# ---------------------------------------------------------------- local development
+[vars]
+ENVIRONMENT = "development"
+APP_URL = "http://localhost:8787"
+SUPPORT_EMAIL = "support@linktocard.com"
+MAIL_FROM = "Link To Card <login@linktocard.com>"
+PADDLE_ENV = "sandbox"
+PADDLE_CLIENT_TOKEN = ""
+PADDLE_PRICE_STARTER = ""
+PADDLE_PRICE_PRO = ""
+PADDLE_PRICE_TOPUP = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "linktocard-dev"
+database_id = "00000000-0000-0000-0000-000000000000"   # local only, never deployed
+migrations_dir = "src/db/migrations"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "linktocard-dev"
+
+# Rate limiters. Keep limit/period in sync with RATE_LIMITS in src/config.ts
+# (tests/node/config.test.ts fails if they drift). period must be 10 or 60.
+[[ratelimits]]
+name = "RL_IP"
+namespace_id = "1001"
+simple = { limit = 300, period = 60 }
+
+[[ratelimits]]
+name = "RL_KEY"
+namespace_id = "1002"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "RL_AUTH"
+namespace_id = "1003"
+simple = { limit = 5, period = 60 }
+
+[[ratelimits]]
+name = "RL_PLAYGROUND"
+namespace_id = "1004"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "RL_PREVIEW"
+namespace_id = "1005"
+simple = { limit = 60, period = 60 }
+
+# ---------------------------------------------------------------- staging (Paddle sandbox)
+[env.staging]
+workers_dev = true
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+# TODO(Ahmad): replace <your-subdomain> with your workers.dev subdomain after the first deploy.
+APP_URL = "https://linktocard-staging.<your-subdomain>.workers.dev"
+SUPPORT_EMAIL = "support@linktocard.com"
+MAIL_FROM = "Link To Card <login@linktocard.com>"
+PADDLE_ENV = "sandbox"
+# TODO(Ahmad): paste from the Paddle SANDBOX dashboard (see scripts/seed-paddle-sandbox.md).
+PADDLE_CLIENT_TOKEN = ""
+PADDLE_PRICE_STARTER = ""
+PADDLE_PRICE_PRO = ""
+PADDLE_PRICE_TOPUP = ""
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "linktocard-staging"
+# TODO(Ahmad): paste the id printed by `npx wrangler d1 create linktocard-staging`.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "src/db/migrations"
+
+[[env.staging.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "linktocard-staging"
+
+[[env.staging.ratelimits]]
+name = "RL_IP"
+namespace_id = "2001"
+simple = { limit = 300, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "RL_KEY"
+namespace_id = "2002"
+simple = { limit = 120, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "RL_AUTH"
+namespace_id = "2003"
+simple = { limit = 5, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "RL_PLAYGROUND"
+namespace_id = "2004"
+simple = { limit = 30, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "RL_PREVIEW"
+namespace_id = "2005"
+simple = { limit = 60, period = 60 }
+
+# ---------------------------------------------------------------- production (Paddle live)
+[env.production]
+workers_dev = false
+routes = [{ pattern = "linktocard.com", custom_domain = true }]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+APP_URL = "https://linktocard.com"
+SUPPORT_EMAIL = "support@linktocard.com"
+MAIL_FROM = "Link To Card <login@linktocard.com>"
+PADDLE_ENV = "production"
+# TODO(Ahmad): paste from the Paddle LIVE dashboard at go-live.
+PADDLE_CLIENT_TOKEN = ""
+PADDLE_PRICE_STARTER = ""
+PADDLE_PRICE_PRO = ""
+PADDLE_PRICE_TOPUP = ""
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "linktocard-production"
+# TODO(Ahmad): paste the id printed by `npx wrangler d1 create linktocard-production`.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "src/db/migrations"
+
+[[env.production.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "linktocard-production"
+
+[[env.production.ratelimits]]
+name = "RL_IP"
+namespace_id = "3001"
+simple = { limit = 300, period = 60 }
+
+[[env.production.ratelimits]]
+name = "RL_KEY"
+namespace_id = "3002"
+simple = { limit = 120, period = 60 }
+
+[[env.production.ratelimits]]
+name = "RL_AUTH"
+namespace_id = "3003"
+simple = { limit = 5, period = 60 }
+
+[[env.production.ratelimits]]
+name = "RL_PLAYGROUND"
+namespace_id = "3004"
+simple = { limit = 30, period = 60 }
+
+[[env.production.ratelimits]]
+name = "RL_PREVIEW"
+namespace_id = "3005"
+simple = { limit = 60, period = 60 }

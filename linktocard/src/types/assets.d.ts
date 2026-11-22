@@ -11,3 +11,11 @@ declare module '*.ttf' {
   const data: ArrayBuffer
   export default data
 }
+declare module '*.woff2' {
+  const data: ArrayBuffer
+  export default data
+}
+declare module '*.otf' {
+  const data: ArrayBuffer
+  export default data
+}

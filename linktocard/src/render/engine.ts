@@ -4,6 +4,9 @@
 // workerd forbids compiling WebAssembly from bytes at runtime, so every .wasm is imported as a
 // precompiled WebAssembly.Module (wrangler.toml `rules` type CompiledWasm) and instantiated
 // lazily, exactly once per isolate.
+
+// Must stay the FIRST import: it has to run before the satori module is evaluated.
+import { harfbuzzShimHits } from './satori-workerd-shim'
 import satori, { init as initSatori } from 'satori/standalone'
 import layoutWasm from 'satori/layout.wasm'
 import { Resvg, initWasm as initResvg } from '@resvg/resvg-wasm'
@@ -11,8 +14,14 @@ import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm'
 import encodeJpeg, { init as initJpegEncoder } from '@jsquash/jpeg/encode.js'
 import jpegEncWasm from '@jsquash/jpeg/codec/enc/mozjpeg_enc.wasm'
 import encodeWebp, { init as initWebpEncoder } from '@jsquash/webp/encode.js'
-import webpEncWasm from '@jsquash/webp/codec/enc/webp_enc.wasm'
-import { FONTS } from './fonts'
+// @jsquash/webp picks its SIMD build when wasm-feature-detect's simd() is true, which it is in
+// workerd, so the SIMD binary is the one that has to be supplied (same as jSquash's own
+// Cloudflare Workers example). tests/spike.test.ts fails loudly if that ever stops matching.
+import webpEncWasm from '@jsquash/webp/codec/enc/webp_enc_simd.wasm'
+import { FONTS, type RenderFont } from './fonts'
+import { assertSafeVdom, DEFAULT_LIMITS, RenderInputError, type GuardLimits } from './guard'
+
+export { RenderInputError, DEFAULT_LIMITS, type GuardLimits } from './guard'
 
 export type ImageFormat = 'png' | 'jpeg' | 'webp'
 
@@ -36,6 +45,8 @@ export interface RenderOptions {
   quality?: number
   /** Opaque colour painted behind the card. Default '#ffffff'. */
   background?: string
+  /** Extra Satori options (fonts, emoji loader, style error handler, limits...). */
+  svg?: Omit<SvgOptions, 'width' | 'height'>
 }
 
 export const CONTENT_TYPES: Record<ImageFormat, string> = {
@@ -47,46 +58,52 @@ export const CONTENT_TYPES: Record<ImageFormat, string> = {
 // ---------------------------------------------------------------------------
 // One-time wasm initialisation.
 //
-// The registry lives on globalThis rather than in module scope: under vitest the
-// module graph can be evaluated more than once inside the same isolate, while the
-// wasm libraries keep their own "already initialised" state.
+// Each library keeps its "initialised" state inside its own module instance. In production
+// every module is evaluated once per isolate, but under vitest (vi.resetModules(), or the next
+// test file) THIS module can be evaluated again while a library is not - or a library can be
+// evaluated again and need a fresh init. So the init promise is remembered per library
+// instance: a WeakMap on globalThis keyed by that library's own init function.
+//   - same library instance, our module re-evaluated  -> promise reused, no second init
+//     (resvg-wasm would throw "Already initialized", Satori would create a second engine)
+//   - library re-evaluated (new function identity)     -> initialised again, as it must be
+//     (skipping it makes satori() wait forever for a layout engine that never arrives)
 // ---------------------------------------------------------------------------
 type InitName = 'satori' | 'resvg' | 'jpeg' | 'webp'
 interface InitRegistry {
-  promises: Partial<Record<InitName, Promise<void>>>
-  /** How many times each initialiser actually ran (must stay at 1). */
+  promises: WeakMap<object, Promise<void>>
+  /** How many times each initialiser actually ran in this isolate (1 in production). */
   runs: Partial<Record<InitName, number>>
 }
 const REGISTRY_KEY = Symbol.for('linktocard.render.init')
 const globalRegistry = globalThis as unknown as Record<symbol, InitRegistry | undefined>
-const registry: InitRegistry = (globalRegistry[REGISTRY_KEY] ??= { promises: {}, runs: {} })
+const registry: InitRegistry = (globalRegistry[REGISTRY_KEY] ??= { promises: new WeakMap(), runs: {} })
 
-function once(name: InitName, run: () => Promise<unknown>): Promise<void> {
-  let promise = registry.promises[name]
+function once(name: InitName, libraryInit: object, run: () => Promise<unknown>): Promise<void> {
+  let promise = registry.promises.get(libraryInit)
   if (!promise) {
     registry.runs[name] = (registry.runs[name] ?? 0) + 1
     promise = run().then(
       () => undefined,
       (error: unknown) => {
         // Let the next request retry instead of caching the failure forever.
-        delete registry.promises[name]
+        registry.promises.delete(libraryInit)
         throw error
       },
     )
-    registry.promises[name] = promise
+    registry.promises.set(libraryInit, promise)
   }
   return promise
 }
 
 /** Number of times each wasm initialiser ran in this isolate (for tests / diagnostics). */
-export function initRuns(): Readonly<Partial<Record<InitName, number>>> {
-  return { ...registry.runs }
+export function initRuns(): Readonly<Partial<Record<InitName | 'harfbuzz', number>>> {
+  return { ...registry.runs, harfbuzz: harfbuzzShimHits() }
 }
 
-const ensureSatori = () => once('satori', async () => initSatori(layoutWasm))
+const ensureSatori = () => once('satori', initSatori, async () => initSatori(layoutWasm))
 
 const ensureResvg = () =>
-  once('resvg', async () => {
+  once('resvg', initResvg, async () => {
     try {
       await initResvg(resvgWasm)
     } catch (error) {
@@ -95,24 +112,79 @@ const ensureResvg = () =>
     }
   })
 
-const ensureJpeg = () => once('jpeg', () => initJpegEncoder(jpegEncWasm))
-const ensureWebp = () => once('webp', () => initWebpEncoder(webpEncWasm))
+const ensureJpeg = () => once('jpeg', initJpegEncoder, () => initJpegEncoder(jpegEncWasm))
+const ensureWebp = () => once('webp', initWebpEncoder, () => initWebpEncoder(webpEncWasm))
 
 // ---------------------------------------------------------------------------
 // Pipeline stages
 // ---------------------------------------------------------------------------
 
+/** Options passed straight through to Satori (see node_modules/satori/dist/standalone.d.ts). */
+export interface SvgOptions {
+  width: number
+  height: number
+  /** Defaults to the bundled FONTS. Pass a stable (module-level) array: Satori caches by identity. */
+  fonts?: RenderFont[]
+  /** grapheme -> image data URI (e.g. emoji). */
+  graphemeImages?: Record<string, string>
+  /**
+   * Called for text no loaded font covers. `languageCode` is 'emoji', 'symbol', 'math', 'unknown'
+   * or one or more locales joined with '|' (e.g. 'ja-JP|zh-CN|zh-TW|zh-HK', 'ar-AR', 'he-IL').
+   * Return an image data URI (string) or extra fonts. MUST NOT do network I/O in this product.
+   */
+  loadAdditionalAsset?: (languageCode: string, segment: string) => Promise<string | RenderFont[]>
+  /** Receives invalid / unsupported declarations instead of failing the whole render. */
+  onStyleError?: (error: Error) => void
+  /** Receives the layout box of every node. */
+  onNodeDetected?: (node: LayoutBox) => void
+  debug?: boolean
+  /** Node-count / depth limits enforced before Satori runs. */
+  limits?: Partial<GuardLimits>
+  /**
+   * Skips the "data: URIs only" guard. Satori will then fetch() http(s) images by itself.
+   * Exists for the characterisation tests only - never set it in product code.
+   */
+  unsafeAllowRemoteUrls?: boolean
+}
+
+export interface LayoutBox {
+  left: number
+  top: number
+  width: number
+  height: number
+  type: string
+  key?: string | number
+  props: Record<string, unknown>
+  textContent?: string
+}
+
 /** Satori VDOM -> SVG string (text is converted to paths, so resvg needs no fonts). */
-export async function renderSvg(
-  vdom: VNode,
-  size: { width: number; height: number },
-): Promise<string> {
+export async function renderSvg(vdom: VNode, options: SvgOptions): Promise<string> {
+  const { fonts = FONTS, limits, unsafeAllowRemoteUrls, ...rest } = options
+  if (!unsafeAllowRemoteUrls) {
+    assertSafeVdom(vdom, { ...DEFAULT_LIMITS, ...limits })
+    // Images handed to Satori through the side doors must be inline too.
+    for (const [grapheme, src] of Object.entries(rest.graphemeImages ?? {})) {
+      if (!src.startsWith('data:')) throw new RenderInputError(`graphemeImages[${grapheme}] must be a data: URI.`)
+    }
+    const load = rest.loadAdditionalAsset
+    if (load) {
+      rest.loadAdditionalAsset = async (languageCode, segment) => {
+        const asset = await load(languageCode, segment)
+        if (typeof asset === 'string' && !asset.startsWith('data:')) {
+          throw new RenderInputError('loadAdditionalAsset must return a data: URI or fonts.')
+        }
+        return asset
+      }
+    }
+  }
   await ensureSatori()
-  return satori(vdom as unknown as Parameters<typeof satori>[0], {
-    width: size.width,
-    height: size.height,
-    fonts: FONTS,
-  })
+  return satori(vdom as unknown as Parameters<typeof satori>[0], { ...rest, fonts })
+}
+
+/** Instantiates every wasm module now (otherwise each is initialised on first use). */
+export async function warmUp(): Promise<void> {
+  await Promise.all([ensureSatori(), ensureResvg(), ensureJpeg(), ensureWebp()])
 }
 
 interface Raster {
@@ -122,21 +194,28 @@ interface Raster {
   pixels: Uint8Array
 }
 
-function withResvg<T>(svg: string, width: number, background: string, use: (image: ReturnType<InstanceType<typeof Resvg>['render']>) => T): T {
+type RenderedImage = ReturnType<InstanceType<typeof Resvg>['render']>
+
+function withResvg<T>(svg: string, width: number, background: string, use: (image: RenderedImage) => T): T {
   const resvg = new Resvg(svg, {
     fitTo: { mode: 'width', value: width },
     background,
     font: { loadSystemFonts: false },
   })
+  let image: RenderedImage | undefined
   try {
-    const image = resvg.render()
-    try {
-      return use(image)
-    } finally {
-      image.free()
-    }
+    image = resvg.render()
+    return use(image)
   } finally {
-    resvg.free()
+    // If render() trapped inside wasm ("RuntimeError: unreachable", e.g. out of memory on a
+    // huge filter region), free() throws "recursive use of an object detected which would
+    // lead to unsafe aliasing in rust". Swallow that so the original error is the one reported.
+    try {
+      image?.free()
+    } catch {}
+    try {
+      resvg.free()
+    } catch {}
   }
 }
 
@@ -160,36 +239,68 @@ export async function svgToPng(svg: string, width: number, background = '#ffffff
   return withResvg(svg, width, background, (image) => image.asPng().slice())
 }
 
-function toImageData(raster: Raster): ImageData {
-  // jSquash only reads .data/.width/.height, so a plain object is enough (workerd has no ImageData).
+/**
+ * jSquash types its input as DOM `ImageData`, which workerd does not have. It only reads
+ * .data/.width/.height, so a plain object is enough.
+ */
+function toImageData<T>(raster: Raster): T {
   return {
     data: new Uint8ClampedArray(raster.pixels.buffer, raster.pixels.byteOffset, raster.pixels.byteLength),
     width: raster.width,
     height: raster.height,
-  } as unknown as ImageData
+  } as T
 }
 
 export async function encodeRasterJpeg(raster: Raster, quality = 85): Promise<Uint8Array> {
   await ensureJpeg()
-  return new Uint8Array(await encodeJpeg(toImageData(raster), { quality }))
+  return new Uint8Array(await encodeJpeg(toImageData<Parameters<typeof encodeJpeg>[0]>(raster), { quality }))
 }
 
 export async function encodeRasterWebp(raster: Raster, quality = 85): Promise<Uint8Array> {
   await ensureWebp()
-  return new Uint8Array(await encodeWebp(toImageData(raster), { quality }))
+  return new Uint8Array(await encodeWebp(toImageData<Parameters<typeof encodeWebp>[0]>(raster), { quality }))
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
+export interface RenderTimings {
+  /** VDOM -> SVG (satori), ms. Includes one-time init on the first call. */
+  svg: number
+  /** SVG -> pixels (resvg); for PNG this also includes PNG encoding. */
+  raster: number
+  /** Pixels -> JPEG / WebP (0 for PNG). */
+  encode: number
+  total: number
+}
+
+/** Like render(), and also reports how long each stage took. */
+export async function renderWithTimings(
+  vdom: VNode,
+  options: RenderOptions,
+): Promise<{ bytes: Uint8Array; timings: RenderTimings }> {
+  const { width, height, format, quality = 85, background = '#ffffff' } = options
+  const t0 = performance.now()
+  const svg = await renderSvg(vdom, { ...options.svg, width, height })
+  const t1 = performance.now()
+  let bytes: Uint8Array
+  let t2: number
+  if (format === 'png') {
+    bytes = await svgToPng(svg, width, background)
+    t2 = performance.now()
+  } else {
+    const raster = await rasterize(svg, width, background)
+    t2 = performance.now()
+    bytes = format === 'jpeg' ? await encodeRasterJpeg(raster, quality) : await encodeRasterWebp(raster, quality)
+  }
+  const t3 = performance.now()
+  return { bytes, timings: { svg: t1 - t0, raster: t2 - t1, encode: t3 - t2, total: t3 - t0 } }
+}
+
 /** Satori VDOM + {width,height,format} -> encoded image bytes. */
 export async function render(vdom: VNode, options: RenderOptions): Promise<Uint8Array> {
-  const { width, height, format, quality = 85, background = '#ffffff' } = options
-  const svg = await renderSvg(vdom, { width, height })
-  if (format === 'png') return svgToPng(svg, width, background)
-  const raster = await rasterize(svg, width, background)
-  return format === 'jpeg' ? encodeRasterJpeg(raster, quality) : encodeRasterWebp(raster, quality)
+  return (await renderWithTimings(vdom, options)).bytes
 }
 
 export const renderPng = (vdom: VNode, size: { width: number; height: number }) =>

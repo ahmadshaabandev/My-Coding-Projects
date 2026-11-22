@@ -5,16 +5,24 @@
   "type": "module",
   "description": "Link To Card - HTML/CSS templates to Open Graph images on Cloudflare Workers (Satori + resvg-wasm)",
   "scripts": {
-    "dev": "wrangler dev",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "dev": "npm run build:site && wrangler dev",
+    "build:site": "tsx scripts/build-site.ts",
+    "test": "npm run build:site && vitest run && vitest run -c vitest.node.config.ts",
+    "test:workers": "vitest run",
+    "test:node": "vitest run -c vitest.node.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "smoke": "node scripts/smoke.mjs",
+    "bench": "node scripts/smoke.mjs --bench",
+    "probes": "PROBES=1 vitest run --silent=false",
+    "build:dry": "npm run build:site && wrangler deploy --dry-run --outdir dist",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "deploy:staging": "npm run build:site && wrangler deploy --env staging",
+    "deploy:production": "npm run check:golive && npm run build:site && wrangler deploy --env production"
   },
   "dependencies": {
     "@jsquash/jpeg": "1.6.0",
     "@jsquash/webp": "1.5.0",
     "@resvg/resvg-wasm": "2.6.2",
-    "css-select": "7.0.0",
-    "css-what": "8.0.0",
     "domhandler": "6.0.1",
     "domutils": "4.0.2",
     "harfbuzzjs": "0.10.0",
@@ -23,14 +31,20 @@
     "satori": "0.63.2"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "0.23.0",
+    "@cloudflare/vitest-plugin": "1.9.0",
     "@cloudflare/workers-types": "5.20261121.1",
     "@fontsource/inter": "5.3.0",
     "@fontsource/jetbrains-mono": "5.3.0",
     "@fontsource/source-serif-4": "5.3.1",
+    "@twemoji/svg": "15.0.0",
+    "@types/node": "22.20.5",
+    "marked": "18.2.1",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
-    "vitest": "4.1.12",
+    "vitest": "5.1.1",
     "wrangler": "4.166.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

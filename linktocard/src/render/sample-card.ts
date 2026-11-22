@@ -14,6 +14,9 @@ export function sampleCard(title = 'Link To Card', subtitle = 'Satori + resvg-wa
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'space-between',
+      // satori@0.63 follows CSS: box-sizing defaults to content-box, so without this the
+      // padding is added to the 100% and the bottom row is pushed out of the image.
+      boxSizing: 'border-box',
       width: '100%',
       height: '100%',
       padding: 64,
