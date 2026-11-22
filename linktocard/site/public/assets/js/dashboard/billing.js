@@ -92,7 +92,7 @@ function usageBlock(ctx) {
     view.exhausted
       ? alertBox('danger', h('strong', {}, 'This period\'s images are used up. '), `New cards answer with an error until ${reset}. Cards that were already rendered keep working.`)
       : view.level === 'warn'
-        ? alertBox('warn', `You have used ${view.percent}% of this period's images.`)
+        ? alertBox('warn', `You have used ${view.percent}% of this period's images. When they run out, new cards answer with an error until ${reset}.${billingActions(ctx.me.user, ctx.config).length > 0 ? (ctx.me.user.plan === 'free' ? ' Upgrade below to keep them coming.' : ' A top-up below adds more.') : ''}`)
         : null,
     usage.watermark ? h('p', { class: 'hint' }, 'Cards made on the Free plan carry a small Link To Card mark in the corner. Paid plans remove it.') : null,
   );
@@ -103,7 +103,7 @@ function billingBlock(ctx, { primary }) {
   const { config } = ctx;
   const actions = billingActions(user, config);
   if (actions.length === 0) {
-    return h('p', { class: 'alert alert-info', role: 'note' }, 'Billing is not configured on this deployment yet.');
+    return h('p', { class: 'alert alert-info', role: 'note' }, `Upgrades and top-ups are not on sale yet, so there is nothing to buy here. Need more images? Email ${config.support_email}.`);
   }
   const error = errorSlot();
   const status = h('p', { class: 'alert alert-info', role: 'status', hidden: true });

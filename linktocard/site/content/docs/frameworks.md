@@ -321,7 +321,7 @@ Astro escapes the attribute value for you.
 
 ## Next.js
 
-**If your site is already a Next.js app, look at `next/og` first.** It ships with Next.js and runs in your own app: no account, no secret, nothing to sign. You write the card as JSX and return an `ImageResponse`. For many Next.js sites it is the right choice.
+**If your site is already a Next.js app, look at `next/og` first.** It is the open-source `@vercel/og` library, built into Next.js: the self-hosted alternative to [[site.name]]. It runs in your own app: no account, no secret, nothing to sign. You write the card as JSX and return an `ImageResponse`. For many Next.js sites it is the right choice. Outside Next.js, `@vercel/og` can be installed from npm in other JavaScript apps that run on Node.js or an Edge runtime.
 
 The differences, as documented by Next.js 16.4.6:
 

@@ -3,7 +3,7 @@
 import { api } from './client.js';
 import { fieldControl, sampleKey } from './builder.js';
 import { button, clear, confirmDialog, copyButton, errorSlot, field, h, memory, segmented, showError, toast, withBusy } from './dom.js';
-import { BLANK_TEMPLATE, cardData, customTemplateFields, formatDateTime, initialValues, insertIndent, sampleValue, sizeOption } from './helpers.js';
+import { BLANK_TEMPLATE, cardData, customTemplateFields, formatDateTime, initialValues, insertIndent, sampleValue, sizeOption, templateSaveProblem } from './helpers.js';
 import { createPreview, debounce } from './preview.js';
 
 const editorHash = (id) => `#templates/${id}`;
@@ -197,6 +197,12 @@ async function editorView(ctx, id) {
   save.addEventListener('click', async () => {
     error.hidden = true;
     saveNotes.hidden = true;
+    const problem = templateSaveProblem(html.value);
+    if (problem) {
+      showError(error, { message: problem });
+      html.focus();
+      return;
+    }
     try {
       const sent = { name: name.value, html: html.value, css: css.value };
       const result = await withBusy(save, () => api.put(`/api/templates/${encodeURIComponent(id)}`, sent));

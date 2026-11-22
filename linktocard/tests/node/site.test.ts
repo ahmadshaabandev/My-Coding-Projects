@@ -267,6 +267,43 @@ describe('built site', () => {
     }
   });
 
+  // Compliance review: each sentence below was proved untrue or incomplete against the code.
+  it('describes plans as monthly allowances, never as metered per-image billing', () => {
+    for (const name of ['index.html', 'pricing.html']) {
+      const text = stripTags(pageHtml(site, name));
+      expect(text, name).not.toMatch(/pay per rendered image|priced per rendered image/i);
+      expect(text, name).toContain('There is no metered billing and no overage.');
+    }
+  });
+
+  it('asks for agreement to the terms where an account is created', () => {
+    const login = pageHtml(site, 'login.html');
+    const form = /<form class="stack" id="login-form">[\s\S]*?<\/form>/.exec(login)?.[0] ?? '';
+    expect(form).toContain('you agree to the <a href="/terms">Terms of service</a>');
+    expect(form).toContain('<a href="/privacy">Privacy policy</a>');
+  });
+
+  it('names in the privacy policy every place the contact form and usage emails go', () => {
+    const privacy = unescapeHtml(stripTags(pageHtml(site, 'privacy.html')));
+    // src/routes/dashboard.ts POST /api/contact sends the visitor's address and message through Resend.
+    expect(privacy).toContain('the email address and message you enter in the contact form');
+    expect(privacy).toMatch(/Messages sent with the contact form also pass through Resend/);
+    // src/lib/quota.ts mails warnings at 90% and 100%; src/lib/cleanup.ts drops playground previews after a day.
+    expect(privacy).toContain('warnings when your monthly allowance is nearly or fully used');
+    expect(privacy).toContain('Previews from the playground on the home page: about one day.');
+  });
+
+  it('keeps the comparison pages within what our code and research notes support', () => {
+    const vercel = unescapeHtml(stripTags(pageHtml(site, 'compare/vercel-og.html')));
+    // src/lib/fonts-store.ts refuses WOFF2 uploads.
+    expect(vercel).not.toMatch(/adds WOFF2 to the font formats it can read/);
+    expect(vercel).toContain('does not accept WOFF2 uploads');
+    const bannerbear = unescapeHtml(stripTags(pageHtml(site, 'compare/bannerbear.html')));
+    // research/competitors.md tags every bannerbear.com statement [S]: search excerpts, page never opened.
+    expect(bannerbear).toContain('are based on search-engine excerpts of bannerbear.com');
+    expect(bannerbear).not.toMatch(/"according to their site" come from bannerbear\.com/);
+  });
+
   it('publishes the API description next to the pages, byte for byte', () => {
     expect(readFileSync(join(outDir, 'openapi.yaml'), 'utf8')).toBe(readFileSync(join(ROOT, 'openapi.yaml'), 'utf8'));
   });
@@ -615,6 +652,8 @@ describe('browser scripts (pure parts)', () => {
     await expect(postJson('/auth/magic-link', { email: 'a@example.com' })).resolves.toEqual({ ok: true });
     await expect(postJson('/api/contact', {})).rejects.toThrow('Too many requests. Try again in a minute.');
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    await expect(errorMessage(new Response('<h1>Bad gateway</h1>', { status: 502 }))).resolves.toBe('Request failed (HTTP 502).');
+    await expect(errorMessage(new Response('<h1>Bad gateway</h1>', { status: 502 }))).resolves.toBe(
+      'The server had a problem (HTTP 502). Wait a minute, then try again.',
+    );
   });
 });

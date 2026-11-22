@@ -59,7 +59,10 @@ paths:
             X-Request-Id:
               $ref: "#/components/headers/X-Request-Id"
             X-LTC-Cache:
-              $ref: "#/components/headers/X-LTC-Cache"
+              description: Binary responses only. miss when this request rendered (and counted) the image, hit when it was served from cache; in JSON responses see "cached".
+              schema:
+                type: string
+                enum: [hit, miss]
             X-LTC-Image-Url:
               description: Binary responses only. The public URL of the stored image.
               schema:
@@ -70,7 +73,9 @@ paths:
               schema:
                 type: string
             ETag:
-              $ref: "#/components/headers/ETag"
+              description: Binary responses only. The image id in double quotes.
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -578,6 +583,11 @@ components:
           $ref: "#/components/headers/ETag"
         X-LTC-Cache:
           $ref: "#/components/headers/X-LTC-Cache"
+        Cross-Origin-Resource-Policy:
+          description: cross-origin, so any site may embed the image.
+          schema:
+            type: string
+            enum: [cross-origin]
         X-Request-Id:
           $ref: "#/components/headers/X-Request-Id"
       content:

@@ -19,6 +19,8 @@ if (!token) {
   fail('This sign-in link is incomplete. Request a new one.');
 } else {
   button.disabled = false;
+  // The page's one action: Enter signs in, no hunting for the button with Tab.
+  button.focus();
   button.addEventListener('click', async () => {
     button.setAttribute('aria-busy', 'true');
     button.disabled = true;

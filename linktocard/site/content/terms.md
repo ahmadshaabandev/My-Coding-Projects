@@ -80,7 +80,7 @@ Unused monthly images do not carry over to the next month. We do not charge over
 
 Our order process is conducted by our online reseller Paddle.com. Paddle.com is the Merchant of Record for all our orders. Paddle provides all customer service inquiries and handles returns.
 
-This means that your purchase is made from Paddle, under [Paddle's buyer terms](https://www.paddle.com/legal/buyer-terms), and Paddle charges your payment method, collects any tax and sends your receipt. These terms cover your use of the service itself. Refunds are described in our [refund policy](/refund).
+This means that your purchase is made from Paddle, under [Paddle's buyer terms](https://www.paddle.com/legal/buyer-terms), and Paddle charges your payment method, collects any tax and sends your receipt. These terms cover your use of the service itself. Paddle answers questions about orders, payments and receipts; questions about how the service works go to us at <[[site.supportEmail]]>. Refunds are described in our [refund policy](/refund).
 
 ## 8. Renewal and cancellation
 

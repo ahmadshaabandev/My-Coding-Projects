@@ -32,7 +32,7 @@ These are different kinds of thing. `@vercel/og` is a library that you run insid
 
 Because both products use Satori, both support a **subset** of CSS, neither runs JavaScript, and neither will match a browser pixel for pixel. Satori's own README says it does not guarantee a 100% match with browser output. That applies to us as much as to `@vercel/og`.
 
-The subset differs by Satori version. The Next.js documentation for `next/og` says that only flexbox and a subset of CSS properties are supported and that `display: grid` will not work, and that fonts must be TTF, OTF or WOFF. The newer Satori release that [[site.name]] uses documents Flexbox, Grid and block layout, and adds WOFF2 to the font formats it can read. This is a difference of versions, not of engines: it will narrow or disappear when `@vercel/og` moves to a newer Satori, and you can also call Satori directly today. Our documentation lists exactly what [[site.name]] supports.
+The subset differs by Satori version. The Next.js documentation for `next/og` says that only flexbox and a subset of CSS properties are supported and that `display: grid` will not work, and that fonts must be TTF, OTF or WOFF. The newer Satori release that [[site.name]] uses documents Flexbox, Grid and block layout. (That release also lists WOFF2 among its font formats, but [[site.name]] does not accept WOFF2 uploads: custom fonts must be TTF, OTF or WOFF.) This is a difference of versions, not of engines: it will narrow or disappear when `@vercel/og` moves to a newer Satori, and you can also call Satori directly today. Our documentation lists exactly what [[site.name]] supports.
 
 ## Where @vercel/og is better
 

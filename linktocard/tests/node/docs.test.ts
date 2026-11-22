@@ -264,6 +264,11 @@ describe('signer code on the other pages', () => {
     expect(source('docs/quickstart.md')).toContain(`export ${NODE_SIGNER}`);
   });
 
+  it('names @vercel/og as the self-hosted alternative on the frameworks page', () => {
+    const nextSection = section(source('docs/frameworks.md'), '## Next.js');
+    expect(nextSection).toContain('`@vercel/og` library, built into Next.js: the self-hosted alternative');
+  });
+
   it('the WordPress plugin signs like the reference PHP signer', () => {
     const markdown = source('docs/frameworks.md');
     for (const line of coreLines(PHP_SIGNER, 'hash_hmac(')) expect(markdown, line).toContain(line);
@@ -382,6 +387,20 @@ describe('openapi.yaml', () => {
     expect(listed).toEqual(Object.keys(ERROR_STATUS));
     for (const [code, status] of Object.entries(ERROR_STATUS)) {
       expect(codes, code).toMatch(new RegExp(`\\b${escapeRegExp(code)} ${status}[,.]`));
+    }
+  });
+
+  it('marks the headers that POST /v1/images sends only with "response": "binary"', () => {
+    // A JSON response carries X-Request-Id and Cache-Control only (checked against wrangler dev in the
+    // compliance review); X-LTC-Cache and ETag come with the image bytes, like the two X-LTC-Image headers.
+    const start = openapi.indexOf('\n  /v1/images:\n');
+    const ok = openapi.indexOf('\n          headers:\n', start);
+    const headers = openapi.slice(ok, openapi.indexOf('\n          content:\n', ok));
+    const names = [...headers.matchAll(/^ {12}([\w-]+):$/gm)].map((match) => match[1]);
+    expect(names).toEqual(['X-Request-Id', 'X-LTC-Cache', 'X-LTC-Image-Url', 'X-LTC-Warnings', 'ETag']);
+    for (const name of names.slice(1)) {
+      const block = headers.slice(headers.indexOf(`            ${name}:\n`)).split('\n')[1] ?? '';
+      expect(block, name).toMatch(/^ {14}description: Binary responses only\./);
     }
   });
 

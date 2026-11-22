@@ -82,6 +82,18 @@ export function initialValues(fields, known = {}, fallback = () => '') {
   return Object.fromEntries(fields.map((field) => [field.name, typeof known[field.name] === 'string' ? known[field.name] : fallback(field.name)]));
 }
 
+/**
+ * Starting values for a starter template in the card builder. Only what the
+ * customer is sure to see and retype (the required title) and the theme switch
+ * come from the sample; the made-up author, site, tag and description stay
+ * empty, shown as grey placeholders, so a copied meta tag never carries a
+ * stranger's name onto the customer's card.
+ */
+export function starterValues(fields, sample = {}) {
+  const kept = Object.fromEntries(fields.filter((field) => field.required || field.name === 'theme').map((field) => [field.name, sample[field.name]]));
+  return initialValues(fields, kept);
+}
+
 /** The `data` object for the API: empty inputs are left out, so the template's "no-<field>" state applies. */
 export function cardData(values) {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => typeof value === 'string' && value !== ''));
@@ -96,6 +108,15 @@ export function parseWarnings(header) {
   } catch {
     return [];
   }
+}
+
+/**
+ * A sentence when a template must not be saved as it stands, else null. The
+ * server accepts an empty HTML body, but every card made from it would then
+ * fail to render, so the editor refuses it first.
+ */
+export function templateSaveProblem(html) {
+  return String(html ?? '').trim() === '' ? 'The HTML is empty, so every card made from this template would fail. Write the card\'s markup first, for example <h1>{{title}}</h1>.' : null;
 }
 
 const INDENT = '  ';

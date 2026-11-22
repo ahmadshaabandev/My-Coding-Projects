@@ -4,7 +4,7 @@
 // follows the form.
 import { api } from './client.js';
 import { button, clear, codeBlock, copyButton, errorSlot, field, h, memory, segmented, showError, withBusy } from './dom.js';
-import { cardData, customTemplateFields, fieldLabel, initialValues, sampleValue, sizeOption } from './helpers.js';
+import { cardData, customTemplateFields, fieldLabel, initialValues, sampleValue, sizeOption, starterValues } from './helpers.js';
 import { createPreview, debounce } from './preview.js';
 
 /** Where the template editor keeps the sample data typed for a custom template. */
@@ -124,7 +124,7 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
 
   async function fieldSpecs(templateId) {
     const starter = templates.starter.find((template) => template.id === templateId);
-    if (starter) return { specs: starter.fields, values: initialValues(starter.fields, starter.sample), lightValue: '' };
+    if (starter) return { specs: starter.fields, values: starterValues(starter.fields, starter.sample), lightValue: '' };
     // A custom template is read fresh: it may have been edited since the list was loaded.
     const { template } = await api.get(`/api/templates/${encodeURIComponent(templateId)}`);
     const specs = customTemplateFields(template.html, template.css);

@@ -22,6 +22,12 @@ export const CLEANUP_LIMITS = {
   r2DeletesPerRun: 6000,
   /** Pages of 500 keys listed under p/ per run while looking for old playground images. */
   playgroundListPages: 20,
+  /**
+   * Old sign-in requests deleted per run. Each row holds an email address and an
+   * IP, which the privacy page says are kept only briefly, and anyone can create
+   * them: one client at the hourly cap alone makes 480 a day.
+   */
+  loginTokenDeletesPerRun: 20_000,
 } as const;
 
 const LOGIN_TOKEN_KEEP_MS = DAY_MS;
@@ -99,13 +105,19 @@ async function deleteOldPlaygroundImages(bucket: R2Bucket, now: number): Promise
 
 export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): Promise<CleanupReport> {
   const limit = CLEANUP_LIMITS.rowsPerStatement;
-  // Sign-in tokens are kept a day, well past the hour in which they feed the per-address cap.
-  const loginTokens = await run(
-    env.DB,
-    'DELETE FROM login_tokens WHERE token_hash IN (SELECT token_hash FROM login_tokens WHERE created_at <= ?1 LIMIT ?2)',
-    now - LOGIN_TOKEN_KEEP_MS,
-    limit,
-  );
+  // Sign-in tokens are kept a day, well past the hour in which they feed the per-address
+  // and per-client caps. Several statements per run, until a short one shows the end.
+  let loginTokens = 0;
+  while (loginTokens < CLEANUP_LIMITS.loginTokenDeletesPerRun) {
+    const changes = await run(
+      env.DB,
+      'DELETE FROM login_tokens WHERE token_hash IN (SELECT token_hash FROM login_tokens WHERE created_at <= ?1 LIMIT ?2)',
+      now - LOGIN_TOKEN_KEEP_MS,
+      Math.min(limit, CLEANUP_LIMITS.loginTokenDeletesPerRun - loginTokens),
+    );
+    loginTokens += changes;
+    if (changes < limit) break;
+  }
   const sessions = await run(
     env.DB,
     'DELETE FROM sessions WHERE id_hash IN (SELECT id_hash FROM sessions WHERE expires_at <= ?1 LIMIT ?2)',

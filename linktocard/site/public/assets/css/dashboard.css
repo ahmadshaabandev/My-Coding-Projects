@@ -63,6 +63,8 @@
 .cell-action { text-align: right !important; }
 /* A visually hidden column header is absolutely positioned: without this it escapes the scrolling wrapper and widens the page. */
 .dash .table-wrap { position: relative; }
+/* Names are the customer's own text (a key called KKKK… or a pasted URL): they wrap instead of widening the page, the table or a dialog. */
+.dash :is(h2, h3, h4), .dash .table-wrap tbody th, .modal h2, .toast { overflow-wrap: anywhere; }
 
 .row-list { display: grid; gap: var(--space-4); padding: 0; list-style: none; }
 .row-card {

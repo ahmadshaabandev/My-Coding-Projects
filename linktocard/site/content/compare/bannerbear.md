@@ -75,7 +75,7 @@ Information about Bannerbear was last checked in November 2026 against the sourc
 - [Bannerbear V5 OpenAPI specification](https://raw.githubusercontent.com/yongfook/bannerbear-mcp/main/spec/openapi.json)
 - Bannerbear MCP server README (npm package `@bannerbear/mcp` 0.14.0)
 - [Bannerbear Ruby library README](https://raw.githubusercontent.com/yongfook/bannerbear-ruby/master/README.md) and [PHP library README](https://raw.githubusercontent.com/yongfook/bannerbear-php/master/README.md)
-- Statements marked "according to their site" come from [bannerbear.com](https://www.bannerbear.com/) and its [template editor page](https://www.bannerbear.com/product/template-editor/).
+- Statements marked "according to their site" are based on search-engine excerpts of [bannerbear.com](https://www.bannerbear.com/) and its [template editor page](https://www.bannerbear.com/product/template-editor/). We could not open those pages ourselves, so check them there.
 
 **Found a mistake?** Email <[[site.supportEmail]]> and we will correct it.
 

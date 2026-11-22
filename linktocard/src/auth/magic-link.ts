@@ -64,21 +64,32 @@ export interface IssuedMagicLink {
 /**
  * Stores a new token and mails the link. Returns null, sending nothing, when
  * the address already received AUTH.maxMagicLinksPerEmailPerHour links in the
- * last hour.
+ * last hour, or the client already requested MAX_MAGIC_LINKS_PER_CLIENT_PER_HOUR.
  */
 export async function issueMagicLink(env: Env, request: MagicLinkRequest): Promise<IssuedMagicLink | null> {
   const { email, next, ip, now } = request;
   const token = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
   const windowStart = now - HOUR_MS;
-  // The cap is checked inside the INSERT so concurrent requests cannot overshoot it.
+  // Both caps (per address, and per client as in clientAtMagicLinkCap) are checked
+  // inside the INSERT so concurrent requests cannot overshoot them.
   // Rows older than the window are useless (long expired) and are dropped on the way.
   const [, inserted] = await env.DB.batch([
     env.DB.prepare('DELETE FROM login_tokens WHERE email = ? AND created_at <= ?').bind(email, windowStart),
     env.DB.prepare(
       `INSERT INTO login_tokens (token_hash, email, created_at, expires_at, ip)
-       SELECT ?, ?, ?, ?, ?
-       WHERE (SELECT COUNT(*) FROM login_tokens WHERE email = ? AND created_at > ?) < ?`,
-    ).bind(await sha256Hex(token), email, now, now + AUTH.magicLinkTtlMs, ip, email, windowStart, AUTH.maxMagicLinksPerEmailPerHour),
+       SELECT ?1, ?2, ?3, ?4, ?5
+       WHERE (SELECT COUNT(*) FROM login_tokens WHERE email = ?2 AND created_at > ?6) < ?7
+         AND (?5 = 'unknown' OR (SELECT COUNT(*) FROM login_tokens WHERE ip = ?5 AND created_at > ?6) < ?8)`,
+    ).bind(
+      await sha256Hex(token),
+      email,
+      now,
+      now + AUTH.magicLinkTtlMs,
+      ip,
+      windowStart,
+      AUTH.maxMagicLinksPerEmailPerHour,
+      MAX_MAGIC_LINKS_PER_CLIENT_PER_HOUR,
+    ),
   ]);
   if (inserted?.meta.changes !== 1) return null;
 

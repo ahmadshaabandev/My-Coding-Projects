@@ -32,6 +32,8 @@ interface Helpers {
   sampleValue(name: string): string;
   initialValues(fields: Array<{ name: string }>, known?: Record<string, unknown>, fallback?: (name: string) => string): Record<string, string>;
   cardData(values: Record<string, unknown>): Record<string, string>;
+  starterValues(fields: Field[], sample?: Record<string, string>): Record<string, string>;
+  templateSaveProblem(html: string): string | null;
   parseWarnings(header: string | null): string[];
   insertIndent(value: string, start: number, end: number): { value: string; caret: number };
   formatCount(count: number): string;
@@ -122,6 +124,24 @@ describe('template fields', () => {
     const fields = [{ name: 'title' }, { name: 'author' }, { name: 'image' }];
     expect(helpers.initialValues(fields, { title: 'Known', image: 7 })).toEqual({ title: 'Known', author: '', image: '' });
     expect(helpers.initialValues(fields, { title: 'Known' }, helpers.sampleValue)).toEqual({ title: 'Known', author: 'Your name', image: '' });
+  });
+
+  it('starts a starter template with only its title and theme, never the sample persona', () => {
+    // A customer who types a title and copies the meta tags must not ship "Maya Lindqvist, fieldnotes.example" on their card.
+    for (const starter of STARTER_TEMPLATES) {
+      const values = helpers.starterValues(starter.fields as Field[], starter.sample as Record<string, string>);
+      const data = helpers.cardData(values);
+      expect(data.title, starter.id).toBe(starter.sample.title);
+      for (const name of ['author', 'site', 'tag', 'description', 'image']) expect(data[name], `${starter.id}.${name}`).toBeUndefined();
+      expect(data.theme, starter.id).toBe((starter.sample as Record<string, string>).theme);
+      expect(Object.keys(values).sort(), starter.id).toEqual(starter.fields.map((field) => field.name).sort());
+    }
+  });
+
+  it('refuses to save a template whose HTML is empty', () => {
+    expect(helpers.templateSaveProblem('')).toMatch(/HTML is empty/);
+    expect(helpers.templateSaveProblem('  \n\t ')).toMatch(/HTML is empty/);
+    expect(helpers.templateSaveProblem('<h1>{{title}}</h1>')).toBeNull();
   });
 
   it('leaves empty inputs out of the data sent to the API', () => {
@@ -340,6 +360,19 @@ describe('shared checkout helper', () => {
     expect(Paddle.Initialize.mock.calls).toEqual([[{ token: 'test_token' }]]);
     expect(Paddle.Checkout.open).toHaveBeenCalledTimes(2);
     expect(Paddle.Checkout.open).toHaveBeenLastCalledWith(action.options);
+  });
+});
+
+describe('error messages (api.js)', () => {
+  type Api = { errorMessage(response: Response): Promise<string> };
+  it('shows the API\'s own message, and says what to do when a platform error page has none', async () => {
+    const { errorMessage } = await load<Api>('api.js');
+    const json = new Response(JSON.stringify({ error: { code: 'conflict', message: 'Revoke a key first.' } }), { status: 409 });
+    expect(await errorMessage(json)).toBe('Revoke a key first.');
+    const page = (status: number) => new Response('<html><body>Error 1102</body></html>', { status, headers: { 'content-type': 'text/html' } });
+    expect(await errorMessage(page(503))).toBe('The server had a problem (HTTP 503). Wait a minute, then try again.');
+    expect(await errorMessage(page(429))).toMatch(/Wait a minute, then try again\.$/);
+    expect(await errorMessage(page(404))).toMatch(/Reload the page and try again\.$/);
   });
 });
 
