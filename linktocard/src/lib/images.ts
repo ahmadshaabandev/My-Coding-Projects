@@ -412,7 +412,7 @@ function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: Usage
     to: user.email,
     ...quotaWarningEmail({ percent, usage, appUrl: env.APP_URL }),
     // One notice per account, threshold and period even if two isolates race.
-    idempotencyKey: `quota-${percent}-${user.id}-${usage.period_start}`,
+    idempotencyKey: `quota-${percent}-${user.id}-${usage.period_start}-${usage.limit}`,
   }).then((result) => {
     if (!result.ok) console.error(`quota ${percent}% email to ${user.id} was not sent: ${result.error}`);
   });

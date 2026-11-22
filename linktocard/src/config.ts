@@ -108,10 +108,10 @@ export const LIMITS = {
  * tests/node/forbidden-deps.test.ts).
  */
 export const RATE_LIMITS = {
-  RL_IP: { limit: 300, periodSeconds: 60, scope: 'per IP address, all /v1 endpoints (edge-cache hits are not limited)' },
+  RL_IP: { limit: 300, periodSeconds: 60, scope: 'per IP address (IPv6: per /64 network), all /v1 endpoints (edge-cache hits are not limited)' },
   RL_KEY: { limit: 120, periodSeconds: 60, scope: 'per API key (POST /v1/images) and per site (uncached signed-URL renders)' },
-  RL_AUTH: { limit: 5, periodSeconds: 60, scope: 'per IP address: sign-in link requests, sign-in verification and the contact form (counted separately)' },
-  RL_PLAYGROUND: { limit: 30, periodSeconds: 60, scope: 'per IP address, homepage playground' },
+  RL_AUTH: { limit: 5, periodSeconds: 60, scope: 'per IP address (IPv6: per /64 network): sign-in link requests, sign-in verification and the contact form (counted separately); also at most 20 sign-in emails per hour' },
+  RL_PLAYGROUND: { limit: 30, periodSeconds: 60, scope: 'per IP address (IPv6: per /64 network), homepage playground' },
   RL_PREVIEW: { limit: 60, periodSeconds: 60, scope: 'per account, dashboard live preview' },
 } as const;
 
@@ -124,6 +124,12 @@ export const AUTH = {
   sessionCookie: 'ltc_session',
   /** Max sign-in emails to one address per hour (anti mail-bombing). */
   maxMagicLinksPerEmailPerHour: 5,
+  /**
+   * Max sign-in emails one client (IPv4 address or IPv6 /64) may request per hour,
+   * over all addresses together. Without it the per-minute limiter would let one
+   * visitor have 300 emails an hour sent to strangers from our domain.
+   */
+  maxMagicLinksPerClientPerHour: 20,
 } as const;
 
 /** HTTP caching of rendered images (browser + edge). The durable cache is R2. */

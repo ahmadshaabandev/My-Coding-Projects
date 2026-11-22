@@ -36,12 +36,8 @@ export function safeNextPath(input: unknown): string | null {
   return NEXT_PATH_RE.test(path) ? path : null;
 }
 
-/**
- * Sign-in emails one client (see clientIp) may request per hour, over all
- * addresses together. The per-minute limiter alone would let a single visitor
- * have 300 emails an hour sent to 300 strangers from our domain.
- */
-export const MAX_MAGIC_LINKS_PER_CLIENT_PER_HOUR = 20;
+/** Sign-in emails one client (see clientIp) may request per hour, over all addresses together. */
+export const MAX_MAGIC_LINKS_PER_CLIENT_PER_HOUR = AUTH.maxMagicLinksPerClientPerHour;
 
 /** True when this client already had the hourly maximum of sign-in emails requested. */
 export async function clientAtMagicLinkCap(db: D1Database, ip: string, now: number): Promise<boolean> {

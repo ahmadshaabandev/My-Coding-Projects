@@ -176,7 +176,8 @@ storage.
   Stored images keep being served.
 - A top-up is 1,000 images for $8, bought by hand on a paid plan, never automatically.
 - Dashboard previews and the homepage playground are not counted.
-- Emails go out once at 90% and once at 100% of the allowance in each period.
+- Emails go out once at 90% and once at 100% of the allowance in each period (once more after
+  an upgrade inside the period, for the new allowance).
 
 The numbers live in two files, `src/billing/plans.ts` and `src/config.ts`. The pricing
 page, the docs limits page and the Paddle catalog instructions are generated from or
@@ -209,12 +210,22 @@ Known gaps, accepted for the MVP:
 - **Renderer crashes.** A few inputs make resvg trap (for example clipped content far
   outside the canvas). These end as a 500 `render_failed` and are not counted. WebAssembly
   cannot be interrupted mid-render; the input limits are what bound the cost.
-- **Suspended accounts.** Copies of an image already cached at the edge or in browsers
-  stay valid for up to 24 hours.
+- **Edge copies outlive changes.** A signed URL already cached at Cloudflare's edge or in a
+  browser keeps working for up to 24 hours after the account is suspended, the site secret is
+  rotated or the site is deleted. New URLs are checked at once.
 - **Billing edge cases.** Only a full refund or a chargeback removes a top-up; partial
   refunds do not. A paid top-up whose event carries no known user id is recorded as
-  `ignored:no_user` in `webhook_events` and needs handling by hand. Changing a price id
-  orphans subscribers on the old price.
+  `ignored:no_user` in `webhook_events` and needs handling by hand. A second subscription
+  bought while one is running is recorded as `ignored:other_subscription` and must be
+  cancelled and refunded by hand in Paddle. Changing a price id orphans subscribers on the
+  old price.
+- **Account ids are not secret.** They appear in hosted image URLs, so anyone can start a
+  checkout that names someone else's account (a gift, in effect). It cannot replace or end a
+  running subscription. A subscription that ends without a scheduled date still depends on
+  Paddle's final event arriving; there is no periodic reconciliation with Paddle's API.
+- **Sign-in mail.** Each client (an IPv4 address or an IPv6 /64) can have at most 20 sign-in
+  emails sent per hour, and each address receives at most 5. Someone with many addresses
+  can still send unwanted sign-in emails; a challenge such as Turnstile is not built.
 - The `/v1` API sends no CORS headers on purpose: API keys must not be used in browsers.
 
 ## Assumptions to confirm
@@ -227,7 +238,7 @@ it if it is wrong.
 | Top-up validity | Used only after the monthly allowance, valid 365 days from purchase, paid plans only | `src/billing/plans.ts` |
 | Custom fonts | Starter: 3 files up to 2 MB. Pro: 20 files up to 5 MB. TTF, OTF, WOFF (not WOFF2) | `src/billing/plans.ts` |
 | Per-account caps | 50 templates, 10 sites, 10 API keys | `src/config.ts` |
-| Rate limits | 300/min per IP, 120/min per key or site, 30/min playground, 60/min preview, 5/min sign-in | `src/config.ts`, `wrangler.toml` |
+| Rate limits | 300/min per IP, 120/min per key or site, 30/min playground, 60/min preview, 5/min sign-in, 20 sign-in emails per hour per client | `src/config.ts`, `wrangler.toml` |
 | Output sizes | All three sizes on every plan | `src/config.ts` |
 | Plan changes | Upgrades and downgrades take effect immediately, prorated by Paddle | `src/billing/paddle.ts` |
 | Cancellation | The plan stays until the paid period ends, then the account returns to Free | `src/billing/paddle.ts` |
