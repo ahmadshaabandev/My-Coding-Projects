@@ -28,6 +28,8 @@ export const CLEANUP_LIMITS = {
    * them: one client at the hourly cap alone makes 480 a day.
    */
   loginTokenDeletesPerRun: 20_000,
+  /** Accounts whose deletion was requested, purged per run (each may need several runs if it stored many images). */
+  accountDeletionsPerRun: 5,
 } as const;
 
 const LOGIN_TOKEN_KEEP_MS = DAY_MS;
@@ -46,6 +48,54 @@ export interface CleanupReport {
   renders: number;
   playgroundImages: number;
   webhookEvents: number;
+  deletedAccounts: number;
+}
+
+/** R2 prefixes that hold one account's files: rendered images and uploaded fonts. */
+export const accountPrefixes = (userId: string): string[] => [`r/${userId}/`, `f/${userId}/`];
+
+/**
+ * Deletes one account's R2 objects, at most `budget` of them. True when nothing
+ * is left under its prefixes, so its rows may go.
+ */
+async function deleteAccountObjects(bucket: R2Bucket, userId: string, budget: { left: number }): Promise<boolean> {
+  for (const prefix of accountPrefixes(userId)) {
+    for (;;) {
+      if (budget.left <= 0) return false;
+      const listing = await bucket.list({ prefix, limit: Math.min(LIST_PAGE_SIZE, budget.left) });
+      if (listing.objects.length === 0) break;
+      await bucket.delete(listing.objects.map((object) => object.key));
+      budget.left -= listing.objects.length;
+    }
+  }
+  return true;
+}
+
+/**
+ * Accounts the operator marked for deletion (users.deletion_requested_at; the
+ * same command suspends them, so they already serve nothing). Files go first,
+ * rows last: every table that references users cascades, and sign-in requests
+ * and the webhook log, which do not, are deleted by email and id. An account
+ * with more files than this run's budget is finished by the next run.
+ */
+async function purgeDeletedAccounts(env: Pick<Env, 'DB' | 'BUCKET'>): Promise<number> {
+  const accounts = await all<{ id: string; email: string }>(
+    env.DB,
+    'SELECT id, email FROM users WHERE deletion_requested_at IS NOT NULL ORDER BY deletion_requested_at LIMIT ?1',
+    CLEANUP_LIMITS.accountDeletionsPerRun,
+  );
+  const budget = { left: CLEANUP_LIMITS.r2DeletesPerRun };
+  let purged = 0;
+  for (const account of accounts) {
+    if (!(await deleteAccountObjects(env.BUCKET, account.id, budget))) break;
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM login_tokens WHERE email = ?1').bind(account.email),
+      env.DB.prepare('DELETE FROM webhook_events WHERE user_id = ?1').bind(account.id),
+      env.DB.prepare('DELETE FROM users WHERE id = ?1 AND deletion_requested_at IS NOT NULL').bind(account.id),
+    ]);
+    purged++;
+  }
+  return purged;
 }
 
 /**
@@ -132,5 +182,6 @@ export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): 
   );
   const renders = await deleteExpiredRenders(env, now);
   const playgroundImages = await deleteOldPlaygroundImages(env.BUCKET, now);
-  return { loginTokens, sessions, renders, playgroundImages, webhookEvents };
+  const deletedAccounts = await purgeDeletedAccounts(env);
+  return { loginTokens, sessions, renders, playgroundImages, webhookEvents, deletedAccounts };
 }

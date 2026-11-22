@@ -285,6 +285,7 @@ describe('chargeRender - the Free hard stop', () => {
       // Each flag holds the allowance its notice was sent for.
       notified_90: FREE,
       notified_100: FREE,
+      allowance_adjust: 0,
     });
     // The refused image left no ledger row behind.
     expect(await ledger(user)).toHaveLength(FREE);

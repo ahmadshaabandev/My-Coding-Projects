@@ -75,11 +75,15 @@ export interface TopupCredit {
 
 interface Counters {
   used: number;
+  /** usage_periods.allowance_adjust: set by a plan change inside the period. */
+  adjust: number;
   topup_remaining: number;
 }
 
 interface AllowanceRow {
   used: number;
+  /** The period's allowance: the plan's monthly images plus the adjustment. */
+  allowance: number;
   notified_90: number;
   notified_100: number;
 }
@@ -93,6 +97,7 @@ const NEXT_TOPUP = `SELECT id FROM topups WHERE ${USABLE_TOPUP} ORDER BY expires
 
 const COUNTERS_SQL = `SELECT
   COALESCE((SELECT used FROM usage_periods WHERE user_id = ?1 AND period_start = ?3), 0) AS used,
+  COALESCE((SELECT allowance_adjust FROM usage_periods WHERE user_id = ?1 AND period_start = ?3), 0) AS adjust,
   COALESCE((SELECT SUM(remaining) FROM topups WHERE ${USABLE_TOPUP}), 0) AS topup_remaining`;
 
 // Inserts the ledger row, or takes over an expired one. Returns no row when an
@@ -113,8 +118,10 @@ const RELEASE_LEDGER_SQL = 'DELETE FROM renders WHERE cache_key = ?1 AND user_id
 const OPEN_PERIOD_SQL =
   'INSERT INTO usage_periods (user_id, period_start, period_end) VALUES (?1, ?2, ?3) ON CONFLICT (user_id, period_start) DO NOTHING';
 
-const TAKE_FROM_ALLOWANCE_SQL =
-  'UPDATE usage_periods SET used = used + 1 WHERE user_id = ?1 AND period_start = ?2 AND used < ?3 RETURNING used, notified_90, notified_100';
+// ?3 is the plan's monthly images; the period's allowance adds allowance_adjust.
+const TAKE_FROM_ALLOWANCE_SQL = `UPDATE usage_periods SET used = used + 1
+  WHERE user_id = ?1 AND period_start = ?2 AND used < MAX(0, ?3 + allowance_adjust)
+  RETURNING used, MAX(0, ?3 + allowance_adjust) AS allowance, notified_90, notified_100`;
 
 // notified_* hold the allowance (?3) the notice was sent for, 0 = not sent. A
 // plan change inside one period keeps the counter, so after an upgrade the
@@ -155,12 +162,13 @@ export function currentPeriod(user: Pick<QuotaUser, 'plan' | 'period_start' | 'p
 
 function summarize(planId: PlanId, period: Period, counters: Counters): UsageSummary {
   const plan = PLANS[planId];
-  const remaining = Math.max(0, plan.monthlyImages - counters.used);
+  const limit = Math.max(0, plan.monthlyImages + counters.adjust);
+  const remaining = Math.max(0, limit - counters.used);
   return {
     plan: plan.id,
     period_start: period.start,
     period_end: period.end,
-    limit: plan.monthlyImages,
+    limit,
     used: counters.used,
     remaining,
     topup_remaining: counters.topup_remaining,
@@ -282,10 +290,9 @@ export async function chargeRender(db: D1Database, user: QuotaUser, render: Rend
   const period = currentPeriod(user, now);
   if (!(await claimLedgerRow(db, user.id, period, render, now))) return { status: 'duplicate' };
 
-  const limit = PLANS[planId].monthlyImages;
-  const allowance = await takeFromAllowance(db, user.id, period, limit, now);
+  const allowance = await takeFromAllowance(db, user.id, period, PLANS[planId].monthlyImages, now);
   if (allowance.taken) {
-    const { used, notified_90: notified90, notified_100: notified100 } = allowance.taken;
+    const { used, allowance: limit, notified_90: notified90, notified_100: notified100 } = allowance.taken;
     const crossed90 = notified90 < limit && used * 10 >= limit * 9 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period, limit));
     const crossed100 = notified100 < limit && used >= limit && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, user.id, period, limit));
     return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, allowance.counters), crossed90, crossed100 };

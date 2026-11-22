@@ -169,3 +169,35 @@ each sale (check the current rate on Paddle's pricing page).
       customer paid and was not credited: fix it by hand and refund or credit them.
 - [ ] Changing a price id later orphans existing subscribers on the old price. Add a new
       price only together with a code change.
+
+## 8. Deleting an account on request
+
+The terms and the privacy policy promise deletion when a customer emails support. Check that the
+request comes from the account's own email address.
+
+- [ ] If the account has a paid subscription, cancel it in the Paddle dashboard first (and refund
+      it if the refund policy applies). Deleting the account does not stop Paddle from billing.
+- [ ] Mark the account. This suspends it at once (API keys, signed URLs and the dashboard stop
+      working) and queues it for the daily cleanup:
+
+```sh
+npx wrangler d1 execute DB --env production --remote --command "UPDATE users SET suspended_at = CAST(strftime('%s','now') AS INTEGER) * 1000, suspended_reason = 'deletion requested', deletion_requested_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE email = 'customer@example.com'"
+```
+
+- [ ] The next daily cleanup (03:17 UTC) deletes the account's rendered images and fonts from R2,
+      then every database row of the account: sites, keys, templates, fonts, usage, top-ups,
+      rendered-image records, sessions, sign-in requests and its webhook log entries. An account
+      with more than 6,000 stored images takes one more day per 6,000.
+- [ ] Confirm the next day that the row is gone, then reply to the customer:
+      `npx wrangler d1 execute DB --env production --remote --command "SELECT COUNT(*) FROM users WHERE email = 'customer@example.com'"`
+- [ ] Copies already cached at Cloudflare's edge or in browsers expire within 24 hours. Paddle
+      keeps its own order records as Merchant of Record; deletion there is requested from Paddle.
+
+## 9. Privacy policy upkeep
+
+- [ ] The privacy policy names the outside companies that process personal data (Cloudflare,
+      Resend, Paddle). Whoever hosts the `support@linktocard.com` mailbox also receives personal
+      data (contact-form messages and support email). Once you have chosen it, add it to
+      `site/content/privacy.md` and rebuild. If it is Cloudflare Email Routing forwarding to your
+      own mailbox, name your mailbox provider too.
+

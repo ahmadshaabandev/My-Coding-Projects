@@ -81,6 +81,8 @@ export interface UserRow {
   period_end: number | null;
   cancel_at: number | null;
   subscription_event_at: number | null;
+  /** Set by the operator on a deletion request; the daily cleanup then purges the account. */
+  deletion_requested_at: number | null;
 }
 
 export interface ApiKeyRow {

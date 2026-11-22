@@ -341,6 +341,8 @@ dashboardRouter.post('/billing/change-plan', requireSameOrigin, requireSession, 
     });
   }
   if (user.plan === target) throw new ApiError('conflict', `You are already on the ${PLANS[target].name} plan.`);
-  await changeSubscriptionPlan(c.env, user.paddle_subscription_id, target);
+  const current = PAID_PLANS.find((plan) => plan === user.plan);
+  if (!current) throw new ApiError('conflict', 'Your plan cannot be switched from here. Contact support.');
+  await changeSubscriptionPlan(c.env, user.paddle_subscription_id, current, target);
   return c.json({ ok: true });
 });

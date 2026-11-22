@@ -358,14 +358,27 @@ describe('hostile and unusual subscription payloads', () => {
     expect((await storedRow(account.userId)).plan).toBe('free');
   });
 
-  it('plan change down mid-period keeps the period and what was used; up again raises the limit', async () => {
+  it('plan change down mid-period keeps the period, what was used and the allowance paid for; up again adds the prorated part', async () => {
     const account = await subscriber('pro');
     await setUsed(account.userId, 2500, NOW);
     await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.starter], at: NOW + MINUTE }));
-    expect(await getUsage(db, await userRow(account.userId), NOW)).toMatchObject({ plan: 'starter', used: 2500, remaining: 0, period_start: PERIOD.start });
-    expect((await chargeRender(db, await userRow(account.userId), render(), NOW)).status).toBe('quota_exceeded');
-    await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.pro], at: NOW + 2 * MINUTE }));
-    expect(await getUsage(db, await userRow(account.userId), NOW)).toMatchObject({ plan: 'pro', used: 2500, remaining: 7500 });
+    // A downgrade is not credited (do_not_bill), so the Pro allowance stays until the period ends.
+    expect(await getUsage(db, await userRow(account.userId), NOW)).toMatchObject({
+      plan: 'starter',
+      used: 2500,
+      limit: PLANS.pro.monthlyImages,
+      remaining: PLANS.pro.monthlyImages - 2500,
+      period_start: PERIOD.start,
+    });
+    expect((await chargeRender(db, await userRow(account.userId), render(), NOW)).status).toBe('charged');
+    // Back to Pro: Paddle charges the prorated difference again, so the allowance grows by that share.
+    const at = NOW + 2 * MINUTE;
+    await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.pro], at }));
+    const share = (PERIOD.end - at) / (PERIOD.end - PERIOD.start);
+    const expected = PLANS.pro.monthlyImages + (PLANS.pro.monthlyImages - PLANS.starter.monthlyImages) * share;
+    const { plan, limit } = await getUsage(db, await userRow(account.userId), at);
+    expect(plan).toBe('pro');
+    expect(Math.abs(limit - expected)).toBeLessThanOrEqual(1);
   });
 });
 
@@ -414,10 +427,13 @@ describe('quota emails after a plan change inside one period', () => {
     const pro = await userRow(account.userId);
     expect(await chargeRender(db, pro, render(), NOW)).toMatchObject({ status: 'charged', crossed90: false, crossed100: false });
 
-    await setUsed(pro.id, PLANS.pro.monthlyImages * 0.9 - 1, NOW);
+    // The allowance after a mid-period upgrade is time-weighted (see the plan-change tests).
+    const { limit } = await getUsage(db, pro, NOW);
+    expect(limit).toBeGreaterThan(PLANS.starter.monthlyImages);
+    await setUsed(pro.id, Math.ceil(limit * 0.9) - 1, NOW);
     expect(await chargeRender(db, pro, render(), NOW)).toMatchObject({ crossed90: true, crossed100: false });
     expect(await chargeRender(db, pro, render(), NOW)).toMatchObject({ crossed90: false, crossed100: false });
-    await setUsed(pro.id, PLANS.pro.monthlyImages - 1, NOW);
+    await setUsed(pro.id, limit - 1, NOW);
     expect(await chargeRender(db, pro, render(), NOW)).toMatchObject({ crossed90: false, crossed100: true });
   });
 

@@ -413,6 +413,19 @@ describe('templates', () => {
     updated_at: string;
   }
 
+  it('refuses to create or save a template whose HTML is empty, so no live card can be broken that way', async () => {
+    const { cookie } = await signedIn();
+    for (const html of ['', '   \n\t']) {
+      const created = await dashboard(cookie, 'POST', '/api/templates', { name: 'Empty', html, css: '' });
+      expect(created.status).toBe(400);
+      expect((await errorOf(created)).message).toContain('The template HTML is empty');
+    }
+    const { template } = await json<{ template: TemplateJson }>(await dashboard(cookie, 'POST', '/api/templates', { name: 'Card', html: TINY_HTML, css: TINY_CSS }));
+    const emptied = await dashboard(cookie, 'PUT', `/api/templates/${template.id}`, { html: ' ' });
+    expect(emptied.status).toBe(400);
+    expect(await json(await dashboard(cookie, 'GET', `/api/templates/${template.id}`))).toEqual({ template });
+  });
+
   it('lists starters with their source and sample, and creates, reads, updates and deletes custom templates', async () => {
     const { cookie } = await signedIn();
     const created = await dashboard(cookie, 'POST', '/api/templates', { name: 'Launch card', html: TINY_HTML, css: TINY_CSS });

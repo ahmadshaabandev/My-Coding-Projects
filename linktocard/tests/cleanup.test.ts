@@ -8,7 +8,7 @@ import { DAY_MS } from '../src/config';
 import { first, run } from '../src/db/client';
 import worker from '../src/index';
 import { CLEANUP_LIMITS, runCleanup } from '../src/lib/cleanup';
-import { createUser } from './app-helpers';
+import { apiKeyFor, bearer, call, createSite, createUser, sessionCookieFor } from './app-helpers';
 
 const NOW = Date.UTC(2027, 8, 1, 3, 17);
 
@@ -148,7 +148,7 @@ describe('runCleanup', () => {
 
     const secondRun = await runCleanup(env, NOW);
     expect(secondRun).toMatchObject({ sessions: 20, renders: 50 });
-    expect(await runCleanup(env, NOW)).toEqual({ loginTokens: 0, sessions: 0, renders: 0, playgroundImages: 0, webhookEvents: 0 });
+    expect(await runCleanup(env, NOW)).toEqual({ loginTokens: 0, sessions: 0, renders: 0, playgroundImages: 0, webhookEvents: 0, deletedAccounts: 0 });
     vi.restoreAllMocks();
   });
 
@@ -194,5 +194,65 @@ describe('the scheduled handler', () => {
     await waitOnExecutionContext(failingCtx);
     expect(errors).toHaveBeenCalledWith('cleanup failed:', expect.any(Error));
     vi.restoreAllMocks();
+  });
+});
+
+describe('account deletion on request', () => {
+  // The command GO-LIVE.md gives the operator, with a fixed time instead of the clock.
+  const markForDeletion = (email: string, at: number) =>
+    run(env.DB, "UPDATE users SET suspended_at = ?1, suspended_reason = 'deletion requested', deletion_requested_at = ?1 WHERE email = ?2", at, email);
+  const rowsOf = (table: string, userId: string) => count(`SELECT COUNT(*) AS n FROM ${table} WHERE user_id = ?1`, userId);
+  const keysUnder = async (prefix: string) => (await env.BUCKET.list({ prefix })).objects.map((object) => object.key);
+
+  it('stops the account at once, then removes its files and every row that belongs to it, and nothing of anyone else', async () => {
+    const doomed = await createUser('starter', NOW - 40 * DAY_MS);
+    const other = await createUser('free', NOW - 40 * DAY_MS);
+    const cookie = await sessionCookieFor(doomed.id, NOW - DAY_MS);
+    const key = await apiKeyFor(doomed.id, NOW - DAY_MS);
+    await createSite(doomed.id, NOW - DAY_MS);
+    await addRender(doomed.id, 'ck_doomed_live', NOW + 20 * DAY_MS);
+    await env.BUCKET.put(`f/${doomed.id}/f_font.woff`, new Uint8Array([1]));
+    await run(env.DB, 'INSERT INTO usage_periods (user_id, period_start, period_end, used) VALUES (?1, 0, 1, 3)', doomed.id);
+    await run(env.DB, "INSERT INTO login_tokens (token_hash, email, created_at, expires_at, ip) VALUES ('th_doomed', ?1, ?2, ?3, '192.0.2.1')", doomed.email, NOW - 60_000, NOW + 60_000);
+    await run(env.DB, "INSERT INTO webhook_events (event_id, event_type, received_at, user_id, result) VALUES ('evt_doomed', 'subscription.created', ?1, ?2, 'ok')", NOW - DAY_MS, doomed.id);
+    const othersImage = await addRender(other.id, 'ck_other_live', NOW + 20 * DAY_MS);
+
+    await markForDeletion(doomed.email, NOW);
+    // Suspended at once: the API key and the dashboard's write routes refuse it before any purge.
+    expect((await call('/v1/usage', { headers: bearer(key.secret) })).status).toBe(403);
+    expect((await call('/api/keys', { method: 'POST', headers: { cookie, origin: new URL(env.APP_URL).origin, 'content-type': 'application/json' }, body: '{"name":"x"}' })).status).toBe(403);
+
+    const report = await runCleanup(env, NOW);
+    expect(report.deletedAccounts).toBe(1);
+    expect(await exists('users', 'id', doomed.id)).toBe(false);
+    for (const table of ['sessions', 'api_keys', 'sites', 'renders', 'usage_periods', 'webhook_events']) {
+      expect(await rowsOf(table, doomed.id), table).toBe(0);
+    }
+    expect(await exists('login_tokens', 'email', doomed.email)).toBe(false);
+    expect(await keysUnder(`r/${doomed.id}/`)).toEqual([]);
+    expect(await keysUnder(`f/${doomed.id}/`)).toEqual([]);
+
+    expect(await exists('users', 'id', other.id)).toBe(true);
+    expect(await keysUnder(`r/${other.id}/`)).toEqual([othersImage]);
+    expect((await runCleanup(env, NOW)).deletedAccounts).toBe(0);
+  });
+
+  it('an account with more files than one run may delete keeps its rows until a later run has removed every file', async () => {
+    const big = await createUser('pro', NOW - 40 * DAY_MS);
+    const files = CLEANUP_LIMITS.r2DeletesPerRun + 3;
+    for (let start = 0; start < files; start += 500) {
+      await Promise.all(
+        Array.from({ length: Math.min(500, files - start) }, (_, i) => env.BUCKET.put(`r/${big.id}/k${start + i}.png`, new Uint8Array([1]))),
+      );
+    }
+    await markForDeletion(big.email, NOW);
+
+    expect((await runCleanup(env, NOW)).deletedAccounts).toBe(0);
+    expect(await exists('users', 'id', big.id)).toBe(true);
+    expect(await keysUnder(`r/${big.id}/`)).toHaveLength(3);
+
+    expect((await runCleanup(env, NOW)).deletedAccounts).toBe(1);
+    expect(await exists('users', 'id', big.id)).toBe(false);
+    expect(await keysUnder(`r/${big.id}/`)).toEqual([]);
   });
 });

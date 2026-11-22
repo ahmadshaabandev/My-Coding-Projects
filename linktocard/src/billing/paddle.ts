@@ -371,6 +371,36 @@ interface MirroredSubscription {
  * events handled concurrently cannot leave the older one on top. They return
  * false when a newer event got there first.
  */
+/**
+ * A change between Starter and Pro inside the current billing period adjusts
+ * that period's allowance the way the money moves (see changeSubscriptionPlan):
+ *
+ *   upgrade    Paddle charges the price difference for the time left, so the
+ *              allowance grows by (new - old) x the share of the period left.
+ *   downgrade  nothing is credited, so the allowance already paid for stays
+ *              until the period ends: the adjustment is (old - new).
+ *
+ * It runs in the same batch as the grant, before it, under the same ordering
+ * guard and only while the row still holds the other paid plan in the same
+ * period, so a redelivered or late event cannot apply it twice. A new period
+ * (a renewal, or Free to paid) starts from the plan's full allowance instead.
+ * ?1 user, ?2 new plan, ?3 new plan's images, ?4 Starter images, ?5 Pro images,
+ * ?6 event time, ?7 the event's period start (null = unchanged).
+ */
+const ADJUST_ALLOWANCE_SQL = `INSERT INTO usage_periods (user_id, period_start, period_end, allowance_adjust)
+  SELECT id, period_start, period_end,
+    CASE WHEN ?3 > old_images
+      THEN -CAST((?3 - old_images) * (?6 - period_start) / (period_end - period_start) AS INTEGER)
+      ELSE old_images - ?3
+    END
+  FROM (SELECT *, CASE plan WHEN 'starter' THEN ?4 ELSE ?5 END AS old_images FROM users WHERE id = ?1)
+  WHERE plan IN ('starter', 'pro') AND plan <> ?2
+    AND period_start IS NOT NULL AND period_start <= ?6 AND period_end > ?6
+    AND period_start = COALESCE(?7, period_start)
+    AND (cancel_at IS NULL OR cancel_at > ?6)
+    AND (subscription_event_at IS NULL OR subscription_event_at <= ?6)
+  ON CONFLICT (user_id, period_start) DO UPDATE SET allowance_adjust = allowance_adjust + excluded.allowance_adjust`;
+
 async function grantPlan(
   db: D1Database,
   userId: string,
@@ -379,9 +409,12 @@ async function grantPlan(
   period: { start: number; end: number } | null,
   cancelAt: number | null,
 ): Promise<boolean> {
-  const changes = await run(
-    db,
-    `UPDATE users SET
+  const adjust = db
+    .prepare(ADJUST_ALLOWANCE_SQL)
+    .bind(userId, plan, PLANS[plan].monthlyImages, PLANS.starter.monthlyImages, PLANS.pro.monthlyImages, sub.occurredAt, period?.start ?? null);
+  const grant = db
+    .prepare(
+      `UPDATE users SET
        plan = ?1,
        paddle_customer_id = ${adoptCustomerSql('?2', '?10')},
        paddle_subscription_id = ?3,
@@ -392,18 +425,21 @@ async function grantPlan(
        cancel_at = ?8,
        subscription_event_at = ?9
      WHERE id = ?10 AND (subscription_event_at IS NULL OR subscription_event_at <= ?9)`,
-    plan,
-    sub.customerId,
-    sub.subscriptionId,
-    sub.status,
-    sub.priceId,
-    period?.start ?? null,
-    period?.end ?? null,
-    cancelAt,
-    sub.occurredAt,
-    userId,
-  );
-  return changes === 1;
+    )
+    .bind(
+      plan,
+      sub.customerId,
+      sub.subscriptionId,
+      sub.status,
+      sub.priceId,
+      period?.start ?? null,
+      period?.end ?? null,
+      cancelAt,
+      sub.occurredAt,
+      userId,
+    );
+  const results = await db.batch([adjust, grant]);
+  return results[1]?.meta.changes === 1;
 }
 
 async function revokePlan(db: D1Database, userId: string, sub: MirroredSubscription): Promise<boolean> {
@@ -599,18 +635,22 @@ const PLAN_CHANGE_CONFLICTS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Switches a subscription between Starter and Pro now and bills (or credits)
- * the prorated difference immediately. The new plan reaches `users` through
- * the subscription.updated webhook, not through this call.
+ * Switches a subscription between Starter and Pro now. An upgrade is charged
+ * the prorated difference immediately; a downgrade is not billed at all (no
+ * credit for the rest of the paid period, which keeps its allowance) and the
+ * lower price applies from the next renewal. Crediting a downgrade would let a
+ * customer upgrade, use the larger allowance in an hour and get the money back.
+ * The new plan reaches `users` through the subscription.updated webhook.
  */
-export async function changeSubscriptionPlan(env: Env, subscriptionId: string, targetPlan: PaidPlanId): Promise<void> {
+export async function changeSubscriptionPlan(env: Env, subscriptionId: string, currentPlan: PaidPlanId, targetPlan: PaidPlanId): Promise<void> {
   const priceId = configuredPriceId(env, targetPlan);
   if (!priceId) throw new ApiError('not_configured', 'Billing is not configured yet.');
+  const upgrade = PLANS[targetPlan].priceUsd > PLANS[currentPlan].priceUsd;
   await paddleRequest(
     env,
     'PATCH',
     `/subscriptions/${encodeURIComponent(subscriptionId)}`,
-    { items: [{ price_id: priceId, quantity: 1 }], proration_billing_mode: 'prorated_immediately' },
+    { items: [{ price_id: priceId, quantity: 1 }], proration_billing_mode: upgrade ? 'prorated_immediately' : 'do_not_bill' },
     PLAN_CHANGE_CONFLICTS,
   );
 }

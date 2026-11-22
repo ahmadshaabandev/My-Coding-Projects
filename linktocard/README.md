@@ -244,13 +244,13 @@ it if it is wrong.
 | Per-account caps | 50 templates, 10 sites, 10 API keys | `src/config.ts` |
 | Rate limits | 300/min per IP, 120/min per key or site, 30/min playground, 60/min preview, 5/min sign-in, 20 sign-in emails per hour per client | `src/config.ts`, `wrangler.toml` |
 | Output sizes | All three sizes on every plan | `src/config.ts` |
-| Plan changes | Upgrades and downgrades take effect immediately, prorated by Paddle | `src/billing/paddle.ts` |
+| Plan changes | Both take effect at once. An upgrade is charged prorated and adds the larger allowance only for the time left in the period. A downgrade is not credited (`do_not_bill`), keeps the period's allowance, and the lower price applies from the next renewal | `src/billing/paddle.ts`, `src/lib/quota.ts` |
 | Cancellation | The plan stays until the paid period ends, then the account returns to Free | `src/billing/paddle.ts` |
 | Refunds | Any payment is refunded on request within 30 days, no reason needed, including a top-up that was already used | `site/content/refund.md` |
 | Free month | A Free account's allowance resets at the start of each calendar month (UTC); a paid plan follows its Paddle billing period | `src/lib/quota.ts` |
 | Governing law | Lebanon | `site/site.config.json`, `/terms` |
 | Terms | Liability capped at 12 months of fees; price changes announced by email; pro-rata refund if the service is closed | `site/content/terms.md` |
-| Privacy | Deletion on request by email to support; the list of processors (Cloudflare, Resend, Paddle) | `site/content/privacy.md` |
+| Privacy | Deletion on request by email to support, done by the operator with one command and completed by the daily cleanup (GO-LIVE.md section 8); the list of processors (Cloudflare, Resend, Paddle; add the support mailbox host) | `site/content/privacy.md` |
 | Text coverage | Bundled fonts cover Latin, Latin Extended, Cyrillic and Greek. Arabic, Hebrew and CJK need an uploaded font, and right-to-left shaping is not tested | `src/render/fonts.ts` |
 
 ## Not verified
@@ -300,7 +300,10 @@ This project's own licence is not set. Until Ahmad adds one, all rights are rese
 - All dependency versions are exact. Upgrade one at a time.
 - Prices and quotas change in `src/billing/plans.ts` only, and then in the Paddle catalog.
 - The daily cron (`src/lib/cleanup.ts`) removes expired sessions, sign-in tokens and
-  stored images.
+  stored images, and purges accounts marked for deletion.
+- Database changes are numbered files in `src/db/migrations/`. Apply new ones with
+  `npx wrangler d1 migrations apply DB --env <env> --remote` before deploying the code that
+  needs them.
 
 ## Layout
 

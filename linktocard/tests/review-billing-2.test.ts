@@ -183,9 +183,87 @@ describe('the automatic return to Free cannot undo a renewal it did not see', ()
 });
 
 describe('plan changes inside one billing period', () => {
-  // Paddle prorates both directions to the minute (prorated_immediately), but
-  // the allowance switches in full. See the billing-2 review: needs a stored
-  // per-period allowance adjustment (a migration) before it can be pinned.
-  it.todo('an upgrade one hour before the period ends adds about one hour of the Pro allowance, not 8,000 images');
-  it.todo('a downgrade after using the Pro allowance leaves only the time-weighted allowance');
+  // An upgrade is charged prorated for the time left, so it adds Pro images only for
+  // that time. A downgrade is not credited (do_not_bill), so the allowance already
+  // paid for stays until the period ends. See changeSubscriptionPlan.
+  const STARTER = PLANS.starter.monthlyImages;
+  const PRO = PLANS.pro.monthlyImages;
+  const usageNow = async (account: Account, at: number) => getUsage(db, await userRow(account.userId), at);
+  const useImages = (account: Account, count: number) =>
+    run(
+      db,
+      'INSERT INTO usage_periods (user_id, period_start, period_end, used) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (user_id, period_start) DO UPDATE SET used = excluded.used',
+      account.userId,
+      PERIOD.start,
+      PERIOD.end,
+      count,
+    );
+
+  it('an upgrade one hour before the period ends adds about one hour of the Pro allowance, not 8,000 images', async () => {
+    const account = await subscriber('starter');
+    await useImages(account, STARTER);
+    const at = PERIOD.end - HOUR;
+    vi.setSystemTime(at);
+    expect((await chargeRender(db, await userRow(account.userId), render(), at)).status).toBe('quota_exceeded');
+
+    await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.pro], at }));
+    const usage = await usageNow(account, at + MINUTE);
+    const extra = Math.ceil(((PRO - STARTER) * HOUR) / (PERIOD.end - PERIOD.start));
+    expect(usage).toMatchObject({ plan: 'pro', used: STARTER });
+    expect(usage.limit).toBeGreaterThanOrEqual(STARTER + extra - 1);
+    expect(usage.limit).toBeLessThanOrEqual(STARTER + extra + 1);
+
+    // The few images that hour paid for can be used, and then it stops again.
+    for (let i = 0; i < usage.limit - STARTER; i++) {
+      expect((await chargeRender(db, await userRow(account.userId), render(), at + MINUTE)).status).toBe('charged');
+    }
+    expect((await chargeRender(db, await userRow(account.userId), render(), at + MINUTE)).status).toBe('quota_exceeded');
+  });
+
+  it('an upgrade at the start of the period gives the whole Pro allowance', async () => {
+    const account = await subscriber('starter');
+    await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.pro], at: PERIOD.start }));
+    expect((await usageNow(account, PERIOD.start + MINUTE)).limit).toBe(PRO);
+  });
+
+  it('a downgrade keeps the allowance already paid for until the period ends, then the new plan applies', async () => {
+    const account = await subscriber('pro');
+    await useImages(account, 5000);
+    const halfway = PERIOD.start + (PERIOD.end - PERIOD.start) / 2;
+    vi.setSystemTime(halfway);
+    await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.starter], at: halfway }));
+    expect(await usageNow(account, halfway + MINUTE)).toMatchObject({ plan: 'starter', limit: PRO, used: 5000, remaining: PRO - 5000 });
+
+    const renewed = { start: PERIOD.end, end: PERIOD.end + 30 * DAY_MS };
+    vi.setSystemTime(renewed.start + MINUTE);
+    await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.starter], period: renewed, at: renewed.start }));
+    expect(await usageNow(account, renewed.start + 2 * MINUTE)).toMatchObject({ plan: 'starter', limit: STARTER, used: 0 });
+  });
+
+  it('upgrade then downgrade in the same period: the downgrade keeps what the upgrade paid for, nothing more', async () => {
+    const account = await subscriber('starter');
+    const quarter = PERIOD.start + (PERIOD.end - PERIOD.start) / 4;
+    await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.pro], at: quarter }));
+    const afterUpgrade = (await usageNow(account, quarter + MINUTE)).limit;
+    expect(afterUpgrade).toBe(STARTER + ((PRO - STARTER) * 3) / 4);
+
+    await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.starter], at: quarter + HOUR }));
+    expect((await usageNow(account, quarter + 2 * HOUR)).limit).toBe(afterUpgrade);
+  });
+
+  it('a redelivered or late copy of the plan change does not adjust the allowance again', async () => {
+    const account = await subscriber('starter');
+    const at = PERIOD.start + (PERIOD.end - PERIOD.start) / 2;
+    const change = subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.pro], at });
+    await apply(change);
+    const once = (await usageNow(account, at + MINUTE)).limit;
+    expect(once).toBe(STARTER + (PRO - STARTER) / 2);
+
+    // The same change under another event id (Paddle can send several events for one change).
+    await apply({ ...structuredClone(change), event_id: nextId('evt') });
+    // An older event for the previous plan arrives late: refused by the ordering guard.
+    expect(await deliver(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.starter], at: at - HOUR }))).toMatchObject({ status: 200 });
+    expect((await usageNow(account, at + 2 * MINUTE)).limit).toBe(once);
+    expect((await storedRow(account.userId)).plan).toBe('pro');
+  });
 });

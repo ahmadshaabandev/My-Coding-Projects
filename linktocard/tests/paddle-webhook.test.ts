@@ -719,23 +719,23 @@ describe('REST client', () => {
     expect(calls[0]).toMatchObject({ url: 'https://api.paddle.com/customers/ctm_1/portal-sessions', body: {} });
   });
 
-  it('changeSubscriptionPlan patches the subscription with the target price, prorated immediately', async () => {
+  it('changeSubscriptionPlan bills an upgrade prorated now and a downgrade not at all', async () => {
     const calls = mockPaddleApi(() => Response.json({ data: { id: 'sub_1', status: 'active' }, meta: { request_id: 'req_1' } }));
-    await expect(changeSubscriptionPlan(env, 'sub_1', 'pro')).resolves.toBeUndefined();
-    await changeSubscriptionPlan(env, 'sub_1', 'starter');
+    await expect(changeSubscriptionPlan(env, 'sub_1', 'starter', 'pro')).resolves.toBeUndefined();
+    await changeSubscriptionPlan(env, 'sub_1', 'pro', 'starter');
     expect(calls[0]).toMatchObject({
       url: 'https://sandbox-api.paddle.com/subscriptions/sub_1',
       method: 'PATCH',
       body: { items: [{ price_id: PRICE.pro, quantity: 1 }], proration_billing_mode: 'prorated_immediately' },
     });
-    expect(calls[1]?.body).toEqual({ items: [{ price_id: PRICE.starter, quantity: 1 }], proration_billing_mode: 'prorated_immediately' });
+    expect(calls[1]?.body).toEqual({ items: [{ price_id: PRICE.starter, quantity: 1 }], proration_billing_mode: 'do_not_bill' });
   });
 
   it.each(['subscription_locked_renewal', 'subscription_update_when_past_due', 'subscription_payment_declined'])(
     'changeSubscriptionPlan turns %s into a conflict the dashboard can show',
     async (code) => {
       mockPaddleApi(() => paddleError(409, code));
-      const error = await rejection(changeSubscriptionPlan(env, 'sub_1', 'pro'));
+      const error = await rejection(changeSubscriptionPlan(env, 'sub_1', 'starter', 'pro'));
       expect(error.code).toBe('conflict');
       expect(error.status).toBe(409);
       expect(error.message.length).toBeGreaterThan(20);
@@ -745,7 +745,7 @@ describe('REST client', () => {
 
   it('other Paddle errors become internal_error with the Paddle code in details', async () => {
     mockPaddleApi(() => paddleError(403, 'forbidden'));
-    const planError = await rejection(changeSubscriptionPlan(env, 'sub_1', 'pro'));
+    const planError = await rejection(changeSubscriptionPlan(env, 'sub_1', 'starter', 'pro'));
     expect(planError.code).toBe('internal_error');
     expect(planError.details).toEqual({ paddle_status: 403, paddle_code: 'forbidden' });
     // The plan-change messages do not leak into other calls.
@@ -774,8 +774,8 @@ describe('REST client', () => {
   it('is not_configured without an API key or the target price id, and never calls Paddle then', async () => {
     const calls = mockPaddleApi(portalResponse);
     expect((await rejection(createPortalSession({ ...env, PADDLE_API_KEY: '' }, 'ctm_1'))).code).toBe('not_configured');
-    expect((await rejection(changeSubscriptionPlan({ ...env, PADDLE_API_KEY: undefined }, 'sub_1', 'pro'))).code).toBe('not_configured');
-    expect((await rejection(changeSubscriptionPlan({ ...env, PADDLE_PRICE_PRO: '' }, 'sub_1', 'pro'))).status).toBe(503);
+    expect((await rejection(changeSubscriptionPlan({ ...env, PADDLE_API_KEY: undefined }, 'sub_1', 'starter', 'pro'))).code).toBe('not_configured');
+    expect((await rejection(changeSubscriptionPlan({ ...env, PADDLE_PRICE_PRO: '' }, 'sub_1', 'starter', 'pro'))).status).toBe(503);
     expect(calls).toEqual([]);
   });
 

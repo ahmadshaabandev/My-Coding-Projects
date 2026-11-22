@@ -385,7 +385,7 @@ function limitsTable(): string {
     ['Visible text per card', `${formatCount(LIMITS.maxTextChars)} characters`],
     ['Data values per request', `${LIMITS.maxDataKeys} keys, ${formatCount(LIMITS.maxDataValueChars)} characters each`],
     ['Remote images per render', `${LIMITS.maxImagesPerRender}, up to ${LIMITS.maxImageBytes / MB} MB and ${LIMITS.maxImagePixels / 1_000_000} megapixels each`],
-    ['Shadow and blur radius', `${LIMITS.maxBlurRadiusPx} px`],
+    ['Blur radius', `${LIMITS.maxBlurRadiusPx} px for box-shadow and text-shadow; ${LIMITS.maxBlurRadiusPx / 2} px for filter: blur(), drop-shadow() and backdrop-filter`],
     ['Shadow and filter effects per card', String(LIMITS.maxFilterEffects)],
     ['Render time', `${LIMITS.renderTimeoutMs / 1000} seconds`],
     ['Request body', `${LIMITS.maxRequestBodyBytes / KB} KB`],

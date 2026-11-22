@@ -39,6 +39,10 @@ const templateNotFound = (): ApiError => new ApiError('not_found', 'Template not
 
 function sourceField(value: unknown, name: 'html' | 'css'): string {
   if (typeof value !== 'string') throw new ApiError('invalid_request', `"${name}" must be a string.`);
+  // Every card made from a template with no markup would fail, including live og:image URLs.
+  if (name === 'html' && value.trim() === '') {
+    throw new ApiError('invalid_request', 'The template HTML is empty. Write the card\'s markup first, for example <h1>{{title}}</h1>.');
+  }
   return value;
 }
 

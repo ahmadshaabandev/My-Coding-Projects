@@ -125,9 +125,12 @@ function billingBlock(ctx, { primary }) {
 
   async function changePlan(target, control) {
     const plan = planOf(config, target);
+    const upgrade = plan.price_usd > (planOf(config, user.plan)?.price_usd ?? 0);
     const confirmed = await confirmDialog({
       title: `Switch to ${plan.name}?`,
-      body: `Your subscription changes to ${plan.name} (${priceLine(plan)}) right away, and Paddle prorates the price for the rest of the current billing period.`,
+      body: upgrade
+        ? `Your subscription changes to ${plan.name} (${priceLine(plan)}) right away. Paddle charges the difference for the rest of this billing period now, and this period's images grow in proportion to the time that is left.`
+        : `Your subscription changes to ${plan.name} (${priceLine(plan)}) at once. Nothing is charged or refunded for the change: you keep the images of this billing period, and the ${plan.name} price applies from your next renewal.`,
       confirmLabel: `Switch to ${plan.name}`,
       danger: false,
     });
