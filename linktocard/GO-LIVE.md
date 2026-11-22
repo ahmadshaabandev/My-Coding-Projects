@@ -88,6 +88,10 @@ npx wrangler secret put PADDLE_WEBHOOK_SECRET --env staging   # sandbox notifica
 - [ ] Follow `scripts/seed-paddle-sandbox.md` to create the sandbox catalog, then paste the
       client token and the three price ids into `[env.staging.vars]`.
 - [ ] `npm run deploy:staging` again.
+- [ ] Check the live deployment: `npm run check:deploy -- https://linktocard-staging.names-on-base.workers.dev`
+      (public pages, headers and five real renders). After you can sign in, create a test API key
+      and site and run it again with `LTC_API_KEY`, `LTC_SITE_ID` and `LTC_SITE_SECRET` set for the
+      full check.
 - [ ] Sign in on staging, create a site, open a signed URL, see the image.
 - [ ] Do one sandbox checkout for Starter with a Paddle test card and confirm the dashboard
       shows the Starter plan within a minute. **This has never been run**: the test suite

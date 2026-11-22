@@ -146,6 +146,14 @@ live. The Paddle catalog to create by hand is in
 [scripts/seed-paddle-sandbox.md](scripts/seed-paddle-sandbox.md); a test keeps that file in
 step with the prices in `src/billing/plans.ts`.
 
+After each deploy, `npm run check:deploy -- <url>` checks the live site (see the script's header
+for the optional full check with a test API key and site).
+
+Deploying from a Claude cloud session: give Wrangler the Cloudflare token as the environment
+variable `CLOUDFLARE_API_TOKEN`, not as a network secret. Uploading the static site uses a
+short-lived upload key in the `Authorization` header, which a proxy-injected secret overwrites
+(the upload then fails with 401).
+
 Workers Paid ($5 a month) is required. One render takes roughly 100 to 400 ms of CPU and
 the free Workers plan allows 10 ms per request.
 
