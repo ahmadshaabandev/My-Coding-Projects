@@ -92,7 +92,7 @@ You can cancel at any time from your dashboard or from the link in your Paddle r
 - you are not charged again;
 - after that, your account returns to the Free plan. It is not deleted.
 
-**Changing plan.** You can switch between Starter and Pro from your dashboard, and the change takes effect at once. For an upgrade, Paddle charges the price difference for the rest of the current billing period, and that period's image allowance grows in proportion to the time left. A downgrade is not charged or credited: you keep the images of the current period, and the lower price applies from your next renewal.
+**Changing plan.** You can switch between Starter and Pro from your dashboard, and the change takes effect at once. For an upgrade, Paddle charges the price difference for the rest of the current billing period, and that period's image allowance grows in proportion to the time left. A downgrade is not charged or credited: you keep the images of the current period, and the lower price applies from your next renewal. Switching back up within the same period adds images only where the time left pays for more than the period already has; otherwise it is not charged.
 
 If we change the price of a plan you are subscribed to, we will tell you by email before the new price applies to you, and you can cancel before it does.
 

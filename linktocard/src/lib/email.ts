@@ -180,7 +180,8 @@ function images(count: number): string {
 function quotaBlocks(percent: 90 | 100, usage: UsageSummary): Block[] {
   const plan = PLANS[usage.plan];
   const reset = utcDate(usage.period_end);
-  const allowance = `Your ${plan.name} plan includes ${images(usage.limit)} per billing period.`;
+  // usage.limit is this period's allowance, which a plan change inside the period can adjust.
+  const allowance = `On your ${plan.name} plan, this billing period has ${images(usage.limit)}.`;
   const balance = `Your top-up balance is ${images(usage.topup_remaining)}.`;
 
   if (percent === 90) {

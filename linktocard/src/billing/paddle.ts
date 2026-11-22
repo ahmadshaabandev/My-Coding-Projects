@@ -380,6 +380,12 @@ interface MirroredSubscription {
  *   downgrade  nothing is credited, so the allowance already paid for stays
  *              until the period ends: the adjustment is (old - new).
  *
+ * An upgrade never takes the period above what the new plan pays for in the
+ * time left, nor below what the period already has: after a downgrade (which
+ * kept the larger allowance) switching back adds nothing, and the dashboard
+ * does not bill it (upgradeAddsImages). Otherwise switching down and back up
+ * would sell the Pro allowance again for the price difference, over and over.
+ *
  * It runs in the same batch as the grant, before it, under the same ordering
  * guard and only while the row still holds the other paid plan in the same
  * period, so a redelivered or late event cannot apply it twice. A new period
@@ -390,16 +396,18 @@ interface MirroredSubscription {
 const ADJUST_ALLOWANCE_SQL = `INSERT INTO usage_periods (user_id, period_start, period_end, allowance_adjust)
   SELECT id, period_start, period_end,
     CASE WHEN ?3 > old_images
-      THEN -CAST((?3 - old_images) * (?6 - period_start) / (period_end - period_start) AS INTEGER)
-      ELSE old_images - ?3
+      THEN MAX(adjust + old_images - ?3, -CAST((?3 - old_images) * (?6 - period_start) / (period_end - period_start) AS INTEGER))
+      ELSE adjust + old_images - ?3
     END
-  FROM (SELECT *, CASE plan WHEN 'starter' THEN ?4 ELSE ?5 END AS old_images FROM users WHERE id = ?1)
+  FROM (SELECT *, CASE plan WHEN 'starter' THEN ?4 ELSE ?5 END AS old_images,
+      COALESCE((SELECT allowance_adjust FROM usage_periods WHERE user_id = ?1 AND usage_periods.period_start = users.period_start), 0) AS adjust
+    FROM users WHERE id = ?1)
   WHERE plan IN ('starter', 'pro') AND plan <> ?2
     AND period_start IS NOT NULL AND period_start <= ?6 AND period_end > ?6
     AND period_start = COALESCE(?7, period_start)
     AND (cancel_at IS NULL OR cancel_at > ?6)
     AND (subscription_event_at IS NULL OR subscription_event_at <= ?6)
-  ON CONFLICT (user_id, period_start) DO UPDATE SET allowance_adjust = allowance_adjust + excluded.allowance_adjust`;
+  ON CONFLICT (user_id, period_start) DO UPDATE SET allowance_adjust = excluded.allowance_adjust`;
 
 async function grantPlan(
   db: D1Database,
@@ -635,17 +643,42 @@ const PLAN_CHANGE_CONFLICTS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Whether switching to `target` at `now` adds images to the period whose usage
+ * is given, by the rule of ADJUST_ALLOWANCE_SQL. False for a downgrade, and for
+ * an upgrade back to a plan whose allowance the period already kept.
+ */
+export function upgradeAddsImages(
+  current: PaidPlanId,
+  target: PaidPlanId,
+  usage: { limit: number; period_start: number; period_end: number },
+  now: number,
+): boolean {
+  const extra = PLANS[target].monthlyImages - PLANS[current].monthlyImages;
+  if (extra <= 0) return false;
+  const length = usage.period_end - usage.period_start;
+  if (!(length > 0) || now < usage.period_start || now >= usage.period_end) return true;
+  return PLANS[target].monthlyImages - Math.trunc((extra * (now - usage.period_start)) / length) > usage.limit;
+}
+
+/**
  * Switches a subscription between Starter and Pro now. An upgrade is charged
  * the prorated difference immediately; a downgrade is not billed at all (no
  * credit for the rest of the paid period, which keeps its allowance) and the
  * lower price applies from the next renewal. Crediting a downgrade would let a
  * customer upgrade, use the larger allowance in an hour and get the money back.
- * The new plan reaches `users` through the subscription.updated webhook.
+ * An upgrade that adds no images (`addsImages` false, see upgradeAddsImages) is
+ * not billed either. The new plan reaches `users` through the subscription.updated webhook.
  */
-export async function changeSubscriptionPlan(env: Env, subscriptionId: string, currentPlan: PaidPlanId, targetPlan: PaidPlanId): Promise<void> {
+export async function changeSubscriptionPlan(
+  env: Env,
+  subscriptionId: string,
+  currentPlan: PaidPlanId,
+  targetPlan: PaidPlanId,
+  addsImages = true,
+): Promise<void> {
   const priceId = configuredPriceId(env, targetPlan);
   if (!priceId) throw new ApiError('not_configured', 'Billing is not configured yet.');
-  const upgrade = PLANS[targetPlan].priceUsd > PLANS[currentPlan].priceUsd;
+  const upgrade = addsImages && PLANS[targetPlan].priceUsd > PLANS[currentPlan].priceUsd;
   await paddleRequest(
     env,
     'PATCH',

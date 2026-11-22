@@ -125,12 +125,26 @@ function billingBlock(ctx, { primary }) {
 
   async function changePlan(target, control) {
     const plan = planOf(config, target);
-    const upgrade = plan.price_usd > (planOf(config, user.plan)?.price_usd ?? 0);
+    const current = planOf(config, user.plan);
+    const upgrade = plan.price_usd > (current?.price_usd ?? 0);
+    // Same rule as upgradeAddsImages on the server: switching back up after a
+    // downgrade that kept this period's images adds nothing and is not billed.
+    const { usage } = ctx.me;
+    const start = Date.parse(usage.period_start);
+    const end = Date.parse(usage.period_end);
+    const now = Date.now();
+    const prorated =
+      current && end > start && now >= start && now < end
+        ? plan.monthly_images - Math.trunc(((plan.monthly_images - current.monthly_images) * (now - start)) / (end - start))
+        : Infinity;
+    const charged = upgrade && prorated > usage.limit;
     const confirmed = await confirmDialog({
       title: `Switch to ${plan.name}?`,
-      body: upgrade
+      body: charged
         ? `Your subscription changes to ${plan.name} (${priceLine(plan)}) right away. Paddle charges the difference for the rest of this billing period now, and this period's images grow in proportion to the time that is left.`
-        : `Your subscription changes to ${plan.name} (${priceLine(plan)}) at once. Nothing is charged or refunded for the change: you keep the images of this billing period, and the ${plan.name} price applies from your next renewal.`,
+        : upgrade
+          ? `Your subscription changes to ${plan.name} (${priceLine(plan)}) right away. Nothing is charged for the change: this billing period already has ${formatCount(usage.limit)} images, and the ${plan.name} price applies from your next renewal.`
+          : `Your subscription changes to ${plan.name} (${priceLine(plan)}) at once. Nothing is charged or refunded for the change: you keep the images of this billing period, and the ${plan.name} price applies from your next renewal.`,
       confirmLabel: `Switch to ${plan.name}`,
       danger: false,
     });

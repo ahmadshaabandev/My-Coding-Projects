@@ -10,7 +10,7 @@
 import { Hono, type Context } from 'hono';
 import { createApiKey, listApiKeys, revokeApiKey, type ApiKeySummary } from '../auth/api-keys';
 import { requireSameOrigin, requireSession, requireSessionAllowSuspended } from '../auth/middleware';
-import { changeSubscriptionPlan, createPortalSession, paddleClientConfig, type PaidPlanId } from '../billing/paddle';
+import { changeSubscriptionPlan, createPortalSession, paddleClientConfig, upgradeAddsImages, type PaidPlanId } from '../billing/paddle';
 import { PLANS, PLAN_ORDER, TOPUP, getPlan } from '../billing/plans';
 import { FORMATS, FORMAT_TO_EXTENSION, LIMITS, SIZES } from '../config';
 import { all, first, normalizeEmail, run } from '../db/client';
@@ -343,6 +343,8 @@ dashboardRouter.post('/billing/change-plan', requireSameOrigin, requireSession, 
   if (user.plan === target) throw new ApiError('conflict', `You are already on the ${PLANS[target].name} plan.`);
   const current = PAID_PLANS.find((plan) => plan === user.plan);
   if (!current) throw new ApiError('conflict', 'Your plan cannot be switched from here. Contact support.');
-  await changeSubscriptionPlan(c.env, user.paddle_subscription_id, current, target);
+  const now = Date.now();
+  const addsImages = upgradeAddsImages(current, target, await getUsage(c.env.DB, user, now), now);
+  await changeSubscriptionPlan(c.env, user.paddle_subscription_id, current, target, addsImages);
   return c.json({ ok: true });
 });

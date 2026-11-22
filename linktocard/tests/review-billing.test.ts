@@ -358,7 +358,7 @@ describe('hostile and unusual subscription payloads', () => {
     expect((await storedRow(account.userId)).plan).toBe('free');
   });
 
-  it('plan change down mid-period keeps the period, what was used and the allowance paid for; up again adds the prorated part', async () => {
+  it('plan change down mid-period keeps the period, what was used and the allowance paid for; up again adds nothing more', async () => {
     const account = await subscriber('pro');
     await setUsed(account.userId, 2500, NOW);
     await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.starter], at: NOW + MINUTE }));
@@ -371,14 +371,11 @@ describe('hostile and unusual subscription payloads', () => {
       period_start: PERIOD.start,
     });
     expect((await chargeRender(db, await userRow(account.userId), render(), NOW)).status).toBe('charged');
-    // Back to Pro: Paddle charges the prorated difference again, so the allowance grows by that share.
+    // Back to Pro: the period already holds the Pro allowance, so the upgrade adds nothing
+    // (the dashboard sends it as do_not_bill). Otherwise every down-and-up cycle would re-sell it.
     const at = NOW + 2 * MINUTE;
     await apply(subscriptionEvent(subscriptionUpdated, account, { priceIds: [PRICE.pro], at }));
-    const share = (PERIOD.end - at) / (PERIOD.end - PERIOD.start);
-    const expected = PLANS.pro.monthlyImages + (PLANS.pro.monthlyImages - PLANS.starter.monthlyImages) * share;
-    const { plan, limit } = await getUsage(db, await userRow(account.userId), at);
-    expect(plan).toBe('pro');
-    expect(Math.abs(limit - expected)).toBeLessThanOrEqual(1);
+    expect(await getUsage(db, await userRow(account.userId), at)).toMatchObject({ plan: 'pro', limit: PLANS.pro.monthlyImages });
   });
 });
 

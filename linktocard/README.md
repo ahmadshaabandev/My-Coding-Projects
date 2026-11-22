@@ -244,7 +244,7 @@ it if it is wrong.
 | Per-account caps | 50 templates, 10 sites, 10 API keys | `src/config.ts` |
 | Rate limits | 300/min per IP, 120/min per key or site, 30/min playground, 60/min preview, 5/min sign-in, 20 sign-in emails per hour per client | `src/config.ts`, `wrangler.toml` |
 | Output sizes | All three sizes on every plan | `src/config.ts` |
-| Plan changes | Both take effect at once. An upgrade is charged prorated and adds the larger allowance only for the time left in the period. A downgrade is not credited (`do_not_bill`), keeps the period's allowance, and the lower price applies from the next renewal | `src/billing/paddle.ts`, `src/lib/quota.ts` |
+| Plan changes | Both take effect at once. An upgrade is charged prorated and adds the larger allowance only for the time left in the period. A downgrade is not credited (`do_not_bill`), keeps the period's allowance, and the lower price applies from the next renewal. An upgrade never raises the allowance beyond what the time left pays for, so switching down and up cannot re-sell it | `src/billing/paddle.ts`, `src/lib/quota.ts` |
 | Cancellation | The plan stays until the paid period ends, then the account returns to Free | `src/billing/paddle.ts` |
 | Refunds | Any payment is refunded on request within 30 days, no reason needed, including a top-up that was already used | `site/content/refund.md` |
 | Free month | A Free account's allowance resets at the start of each calendar month (UTC); a paid plan follows its Paddle billing period | `src/lib/quota.ts` |

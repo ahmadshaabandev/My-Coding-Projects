@@ -210,7 +210,7 @@ describe('quotaWarningEmail', () => {
   it('90% on Free: says how much is used and that the stop is lifted by a reset or an upgrade', () => {
     const email = quotaWarningEmail({ percent: 90, usage: usage('free', 90), appUrl: APP_URL });
     expect(email.subject).toBe('You have used 90% of your Link To Card images for this period');
-    expect(email.text).toContain('Your Free plan includes 100 images per billing period. You have used 90 of them.');
+    expect(email.text).toContain('On your Free plan, this billing period has 100 images. You have used 90 of them.');
     expect(email.text).toContain('resets on 1 December 2026 (UTC)');
     expect(email.text).toContain('new images stop rendering until it resets or you upgrade to a paid plan');
     expect(email.text.toLowerCase()).not.toContain('top-up');
@@ -218,7 +218,7 @@ describe('quotaWarningEmail', () => {
 
   it('90% on a paid plan: explains the top-up balance and the manual top-up', () => {
     const email = quotaWarningEmail({ percent: 90, usage: usage('starter', 1800, 250), appUrl: APP_URL });
-    expect(email.text).toContain('Your Starter plan includes 2,000 images per billing period. You have used 1,800 of them.');
+    expect(email.text).toContain('On your Starter plan, this billing period has 2,000 images. You have used 1,800 of them.');
     expect(email.text).toContain('new images are taken from your top-up balance');
     expect(email.text).toContain('Your top-up balance is 250 images.');
     expect(email.text).toContain(topUpPrice);
