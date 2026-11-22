@@ -149,6 +149,10 @@ step with the prices in `src/billing/plans.ts`.
 Workers Paid ($5 a month) is required. One render takes roughly 100 to 400 ms of CPU and
 the free Workers plan allows 10 ms per request.
 
+Bundle size (measured with `wrangler deploy --dry-run --env staging` on 2026-11-22): 6.8 MB,
+2.7 MB gzipped, under the 10 MB compressed limit of Workers Paid. The static site adds about
+3,800 asset files, most of them the Twemoji SVGs the renderer loads for emoji.
+
 ## Cloudflare spending cap
 
 Cloudflare has no exact hard cap, so use three layers (details in GO-LIVE.md section 5):
