@@ -1,0 +1,19 @@
+# Local secrets for `wrangler dev`. Copy to .dev.vars (git-ignored) and fill in.
+# Production and staging secrets are set with `wrangler secret put <NAME> --env <env>`,
+# never in a file.
+
+# Required. Master key from which every site's signing secret is derived.
+# Any long random string works locally, e.g.: openssl rand -base64 48
+# Changing it invalidates every signed URL of every site.
+SIGNING_MASTER_SECRET=replace-with-a-long-random-string
+
+# Optional locally. Without it no email is sent: POST /auth/magic-link returns the
+# sign-in link as "dev_link" (development only) and prints it in the terminal.
+RESEND_API_KEY=
+
+# Optional locally; needed for the billing portal and plan changes (Paddle SANDBOX key).
+PADDLE_API_KEY=
+
+# Optional locally; needed for POST /webhooks/paddle (secret of the sandbox
+# notification destination). Several secrets may be separated by commas while rotating.
+PADDLE_WEBHOOK_SECRET=

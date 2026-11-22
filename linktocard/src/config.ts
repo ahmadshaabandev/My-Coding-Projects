@@ -132,6 +132,13 @@ export const HTTP_CACHE = {
   playgroundMaxAgeSeconds: 3_600,
 } as const;
 
+/**
+ * Paths the Worker answers; everything else is a static asset. Must mirror
+ * run_worker_first in wrangler.toml (checked by tests/node/forbidden-deps.test.ts).
+ * A trailing slash means "everything below".
+ */
+export const WORKER_PATHS: readonly string[] = ['/v1/', '/api/', '/auth/', '/webhooks/', '/i/', '/playground/', '/healthz'];
+
 export const API_KEY_PREFIX = 'ltc_';
 export const SITE_SECRET_PREFIX = 'ltcs_';
 

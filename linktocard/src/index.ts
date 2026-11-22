@@ -1,61 +1,92 @@
 /**
- * TEMPORARY dev entry. It serves one demo card through the full template path
- * (renderCard with HTML + CSS input) so `npm run smoke` can prove the renderer
- * in real workerd:
+ * The Worker: one Hono app for every dynamic path, plus the daily cleanup.
  *
- *   GET /spike.png|jpg|webp ?title= &subtitle= &size=og|square|portrait &wm=none|free|preview
+ * Static pages never reach this code: wrangler.toml lists the dynamic prefixes
+ * in run_worker_first and everything else is answered from static assets.
+ *
+ *   /webhooks/paddle        Paddle Billing notifications (raw body, own signature check)
+ *   /healthz                liveness
+ *   /auth/*                 magic-link sign-in
+ *   /playground/card.png    homepage playground
+ *   /v1/og/...              signed card URLs (public)
+ *   /v1/*                   API-key endpoints
+ *   /i/...                  stored images
+ *   /api/*                  dashboard API (session cookie)
  */
 import { Hono } from 'hono';
-import { EXTENSION_TO_FORMAT, SIZES } from './config';
+import { WORKER_PATHS } from './config';
+import { runCleanup } from './lib/cleanup';
 import { ApiError, errorResponse } from './lib/errors';
-import { renderCard } from './render';
-import { initRuns } from './render/engine';
-import { SAMPLE_CSS, SAMPLE_HTML, sampleData, sampleDeps } from './render/sample-card';
-import type { Env, WatermarkMode } from './types';
+import { apiRouter } from './routes/api';
+import { authRouter } from './routes/auth';
+import { dashboardRouter } from './routes/dashboard';
+import { imagesRouter } from './routes/images';
+import { ogRouter } from './routes/og';
+import { playgroundRouter } from './routes/playground';
+import { studioRouter } from './routes/studio';
+import { paddleWebhookRouter } from './routes/webhooks/paddle';
+import type { AppEnv, Env } from './types';
 
-const app = new Hono<{ Bindings: Env }>();
+/** Exported for the tests, which call app.request(path, init, env, ctx). */
+export const app = new Hono<AppEnv>();
 
-const WATERMARKS: readonly WatermarkMode[] = ['none', 'free', 'preview'];
+// Request id and security headers. This middleware reads nothing from the
+// request body, so the webhook below still sees the exact bytes Paddle signed.
+app.use('*', async (c, next) => {
+  const requestId = crypto.randomUUID();
+  c.set('requestId', requestId);
+  await next();
 
-app.get('/', (c) => c.text('linktocard dev entry: see /spike.png, /spike.jpg, /spike.webp'));
+  // One mutable copy: cached and R2-backed responses arrive with immutable headers.
+  const response = new Response(c.res.body, c.res);
+  const { headers } = response;
+  headers.set('X-Request-Id', requestId);
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // JSON here is account data or an error: never cached unless a route says otherwise.
+  if ((headers.get('content-type') ?? '').startsWith('application/json') && !headers.has('cache-control')) {
+    headers.set('Cache-Control', 'no-store');
+  }
+  c.res = undefined;
+  c.res = response;
+});
 
-app.get('/:file{spike\\.[a-z]+}', async (c) => {
-  const format = EXTENSION_TO_FORMAT[c.req.param('file').slice('spike.'.length)];
-  if (!format) throw new ApiError('unsupported_format', 'Use /spike.png, /spike.jpg or /spike.webp.');
-  const size = Object.values(SIZES).find((candidate) => candidate.id === (c.req.query('size') ?? 'og'));
-  if (!size) throw new ApiError('unsupported_size', 'size must be og, square or portrait.');
-  const watermark = WATERMARKS.find((mode) => mode === (c.req.query('wm') ?? 'none'));
-  if (!watermark) throw new ApiError('invalid_request', 'wm must be none, free or preview.');
+// Mounted first: nothing above or beside it may read the body or demand a session or an Origin.
+app.route('/webhooks', paddleWebhookRouter);
 
-  const output = await renderCard(
-    {
-      html: SAMPLE_HTML,
-      css: SAMPLE_CSS,
-      data: sampleData(c.req.query('title'), c.req.query('subtitle')),
-      width: size.width,
-      height: size.height,
-      format,
-      watermark,
-    },
-    sampleDeps,
-  );
-  return new Response(output.bytes, {
-    headers: {
-      'content-type': output.contentType,
-      // NB: in production workerd the clock only advances on I/O, so these read 0 there.
-      'server-timing': Object.entries(output.timings)
-        .map(([name, ms]) => `${name.replace(/Ms$/, '')};dur=${ms.toFixed(1)}`)
-        .join(', '),
-      'x-render-warnings': encodeURIComponent(JSON.stringify(output.warnings)),
-      'x-init-runs': JSON.stringify(initRuns()),
-    },
-  });
+app.get('/healthz', (c) => c.json({ ok: true }));
+app.route('/auth', authRouter);
+app.route('/playground', playgroundRouter);
+// Before the API-key routes: signed URLs share the /v1 prefix but carry no key.
+app.route('/v1/og', ogRouter);
+app.route('/v1', apiRouter);
+app.route('/i', imagesRouter);
+app.route('/api', dashboardRouter);
+app.route('/api', studioRouter);
+
+app.notFound((c) => {
+  const { pathname } = new URL(c.req.url);
+  if (WORKER_PATHS.some((prefix) => (prefix.endsWith('/') ? pathname.startsWith(prefix) : pathname === prefix))) {
+    return errorResponse(new ApiError('not_found', 'Not found. See the API reference for the available endpoints.'), c.env.APP_URL);
+  }
+  // Only reachable if routing sends a page request here: let static assets answer with the 404 page.
+  return c.env.ASSETS.fetch(c.req.raw);
 });
 
 app.onError((error, c) => {
-  if (error instanceof ApiError) return errorResponse(error, c.env.APP_URL ?? '');
-  console.error(error);
-  return errorResponse(new ApiError('internal_error', 'Unexpected error.'), c.env.APP_URL ?? '');
+  if (error instanceof ApiError) return errorResponse(error, c.env.APP_URL);
+  console.error(`request ${c.get('requestId')} failed:`, error);
+  return errorResponse(new ApiError('internal_error', 'Unexpected error. Try again; if it keeps happening, contact support.'), c.env.APP_URL);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      runCleanup(env, Date.now()).then(
+        (report) => console.log('cleanup:', JSON.stringify(report)),
+        (error: unknown) => console.error('cleanup failed:', error),
+      ),
+    );
+  },
+};

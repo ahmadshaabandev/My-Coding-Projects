@@ -1,0 +1,18 @@
+# Dev-only Worker for scripts/render-samples.mjs (gallery samples and og.png).
+# It is never deployed: no routes, no bindings. The compatibility date and the
+# module rules mirror ../wrangler.toml so the renderer runs exactly as in the product.
+
+name = "linktocard-samples"
+main = "samples-worker.ts"
+compatibility_date = "2026-11-19"
+workers_dev = false
+
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = true
+
+[[rules]]
+type = "Data"
+globs = ["**/*.woff", "**/*.woff2", "**/*.ttf", "**/*.otf"]
+fallthrough = true

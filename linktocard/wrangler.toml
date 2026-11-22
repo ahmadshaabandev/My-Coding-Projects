@@ -16,6 +16,10 @@ compatibility_date = "2026-11-19"
 [limits]
 cpu_ms = 10000
 
+# Daily housekeeping (src/lib/cleanup.ts): expired sessions, sign-in tokens, cached images.
+[triggers]
+crons = ["17 3 * * *"]
+
 # Static site. Requests that do not match run_worker_first are served straight from
 # assets, never invoke the Worker, and are not billed.
 [assets]
@@ -90,6 +94,9 @@ simple = { limit = 60, period = 60 }
 [env.staging]
 workers_dev = true
 
+[env.staging.triggers]
+crons = ["17 3 * * *"]
+
 [env.staging.vars]
 ENVIRONMENT = "staging"
 # TODO(Ahmad): replace <your-subdomain> with your workers.dev subdomain after the first deploy.
@@ -143,6 +150,9 @@ simple = { limit = 60, period = 60 }
 [env.production]
 workers_dev = false
 routes = [{ pattern = "linktocard.com", custom_domain = true }]
+
+[env.production.triggers]
+crons = ["17 3 * * *"]
 
 [env.production.vars]
 ENVIRONMENT = "production"
