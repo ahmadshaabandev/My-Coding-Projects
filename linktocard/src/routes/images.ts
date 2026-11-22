@@ -4,6 +4,7 @@
  * is nothing to sign. Never renders, never counts.
  */
 import { Hono } from 'hono';
+import { getUserById } from '../db/client';
 import { ApiError } from '../lib/errors';
 import { etagFor, matchesEtag, notModified } from '../lib/http';
 import { parseImageFile, readStoredImage, storedImageHeaders } from '../lib/images';
@@ -20,10 +21,13 @@ imagesRouter.get('/:userId/:file', async (c) => {
   const now = Date.now();
   const head = request.method === 'HEAD';
   const conditional = file !== null && matchesEtag(request, etagFor(file.cacheKey));
-  const stored =
-    file && USER_ID_RE.test(userId)
-      ? await readStoredImage(c.env.BUCKET, userId, file.cacheKey, file.format, now, !head && !conditional)
-      : null;
+
+  // Suspending an account must also take its stored images offline, so the owner is looked up first.
+  const owner = file && USER_ID_RE.test(userId) ? await getUserById(c.env.DB, userId) : null;
+  if (owner && owner.suspended_at !== null) {
+    throw new ApiError('account_suspended', `This account is suspended. Contact ${c.env.SUPPORT_EMAIL}.`);
+  }
+  const stored = owner && file ? await readStoredImage(c.env.BUCKET, owner.id, file.cacheKey, file.format, now, !head && !conditional) : null;
   if (!stored) throw new ApiError('not_found', 'Image not found. It may have expired: render it again to get a fresh URL.');
 
   const headers = storedImageHeaders(stored.image, 'hit', now);

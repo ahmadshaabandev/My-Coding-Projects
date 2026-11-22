@@ -1,8 +1,10 @@
-// Landing-page playground: renders a preview through GET /playground/card.png
-// and keeps the "Copy meta tag" snippet in step with the form.
+// Landing-page playground: a share preview that follows the form. It opens on a
+// pre-rendered sample; GET /playground/card.png is called only after the visitor
+// edits something. The "Copy" snippet stays in step with the form.
 import { errorMessage } from './api.js';
 
 const FIELDS = ['template', 'title', 'description', 'author', 'theme'];
+const TEXT_FIELDS = ['title', 'description', 'author'];
 const DEBOUNCE_MS = 500;
 
 /** Query string for the fields that are filled in, in a stable order. */
@@ -34,6 +36,11 @@ export function metaTagSnippet(origin, values) {
   ].join('\n');
 }
 
+/** The page address shown in the mock chat: the title as a URL slug. */
+export function linkSlug(title) {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, '') || 'your-page';
+}
+
 function init(root) {
   const form = root.querySelector('#pg-form');
   const frame = root.querySelector('#pg-frame');
@@ -44,13 +51,27 @@ function init(root) {
   let timer = 0;
   let request = null;
   let objectUrl = '';
+  // Until the visitor edits a field, each template shows its own pre-rendered sample.
+  let pristine = true;
 
   const values = () => Object.fromEntries(FIELDS.map((name) => [name, String(new FormData(form).get(name) ?? '').trim()]));
 
   function showText(current) {
     root.querySelector('#pg-meta-title').textContent = current.title || 'Your page title';
     root.querySelector('#pg-meta-desc').textContent = current.description;
+    for (const slug of root.querySelectorAll('[data-slug]')) slug.textContent = linkSlug(current.title);
     if (snippet) snippet.textContent = metaTagSnippet(root.dataset.origin, current);
+  }
+
+  function showImage(src) {
+    image.src = src;
+    image.hidden = false;
+    status.hidden = true;
+    error.hidden = true;
+    // Restart the pop-in animation: the class has to leave and come back across a reflow.
+    image.classList.remove('is-fresh');
+    void image.offsetWidth;
+    image.classList.add('is-fresh');
   }
 
   async function render() {
@@ -61,10 +82,7 @@ function init(root) {
       const response = await fetch(playgroundUrl(values()), { signal: request.signal });
       if (!response.ok) throw new Error(await errorMessage(response));
       const next = URL.createObjectURL(await response.blob());
-      image.src = next;
-      image.hidden = false;
-      status.hidden = true;
-      error.hidden = true;
+      showImage(next);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = next;
     } catch (failure) {
@@ -77,16 +95,33 @@ function init(root) {
     frame.setAttribute('aria-busy', 'false');
   }
 
-  form.addEventListener('input', () => {
+  /** Fills the form with a template's sample text and shows its pre-rendered image. False when it has none. */
+  function showSample(option) {
+    const thumbnail = option.parentElement.querySelector('img');
+    if (!thumbnail) return false;
+    for (const name of TEXT_FIELDS) form.elements[name].value = option.dataset[name] ?? '';
+    form.elements.theme.value = option.dataset.theme || 'light';
+    showImage(thumbnail.getAttribute('src'));
+    return true;
+  }
+
+  form.addEventListener('input', (event) => {
+    const picked = event.target.name === 'template';
+    if (!picked) pristine = false;
+    const sampled = picked && pristine && showSample(event.target);
     showText(values());
+    if (sampled) return;
     frame.setAttribute('aria-busy', 'true');
     clearTimeout(timer);
     timer = setTimeout(render, DEBOUNCE_MS);
   });
   form.addEventListener('submit', (event) => event.preventDefault());
 
-  showText(values());
-  render();
+  // No pre-rendered sample in this build: the first image comes from the API.
+  if (image.hidden) {
+    status.hidden = false;
+    render();
+  }
 }
 
 if (typeof document !== 'undefined') {

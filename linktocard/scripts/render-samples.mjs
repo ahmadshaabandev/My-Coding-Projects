@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Renders the starter-template gallery samples and the site's own og.png with the real
 // renderer in real workerd. It starts `wrangler dev` for the dev-only samples worker
-// (scripts/samples-worker.ts, scripts/samples.wrangler.toml), fetches the cards over HTTP,
+// (scripts/samples-worker.mts, scripts/samples.wrangler.toml), fetches the cards over HTTP,
 // writes the files and stops the process it started.
 //
 //   node scripts/render-samples.mjs                  site/public/assets/img/samples/<id>.png + og.png
@@ -13,7 +13,6 @@
 //   --base <url>     use a samples worker that is already running instead of starting one
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -27,7 +26,7 @@ const base = externalBase || `http://127.0.0.1:${port}`
 const reviewDir = option('--review', '')
 const imgDir = path.join(root, 'site/public/assets/img')
 
-// Must match DEMO_IMAGE_URL in scripts/samples-worker.ts (the only image that worker resolves;
+// Must match DEMO_IMAGE_URL in scripts/samples-worker.mts (the only image that worker resolves;
 // a Worker module may only export handlers, so the constant cannot be shared).
 const DEMO_IMAGE_URL = 'https://samples.linktocard.test/avatar.svg'
 
@@ -40,13 +39,11 @@ const OG_CARD = {
   },
 }
 
-const LONG_TITLE =
-  'How we moved forty thousand Open Graph images from a headless browser fleet to plain HTML and CSS templates without breaking one link'
-const LONG_DESCRIPTION =
-  'A field report with every number we measured along the way: cold starts, cache hit rates, the cost per thousand images, and the three template mistakes that made our first week harder than it had to be.'
+// Exactly 140 and 200 characters: the longest title the starter templates promise to fit, and an overlong description.
 const LONG_DATA = {
-  title: LONG_TITLE.padEnd(140, '.').slice(0, 140),
-  description: LONG_DESCRIPTION.padEnd(200, '.').slice(0, 200),
+  title: 'How we moved forty thousand Open Graph images from a headless browser fleet to plain HTML and CSS templates without breaking one single link',
+  description:
+    'A field report with every number we measured on the way: cold starts, cache hit rates, the cost per thousand images, and the three template mistakes that made our first week tougher than it had to be.',
   author: 'Alexandra Konstantinopoulou-Whitfield',
   site: 'engineering.longcompanyname.example',
   tag: 'Infrastructure field notes',
@@ -82,7 +79,7 @@ function reviewVariants(sample) {
 async function startServer() {
   const wrangler = path.join(root, 'node_modules/wrangler/bin/wrangler.js')
   const config = path.join(root, 'scripts/samples.wrangler.toml')
-  const state = path.join(tmpdir(), `linktocard-samples-${port}`)
+  const state = path.join(root, '.wrangler', `samples-${port}`) // git-ignored; the samples worker stores nothing
   const child = spawn(process.execPath, [wrangler, 'dev', '--config', config, '--port', String(port), '--persist-to', state], {
     cwd: root,
     detached: true, // own process group, so workerd is stopped together with wrangler

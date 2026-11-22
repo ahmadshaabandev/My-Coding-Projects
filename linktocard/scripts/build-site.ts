@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Marked, Renderer, type Tokens } from 'marked';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd, type Plan } from '../src/billing/plans';
 import { AUTH, DAY_MS, FORMATS, LIMITS, RATE_LIMITS, SIZES } from '../src/config';
+import { STARTER_TEMPLATES as RENDER_TEMPLATES } from '../src/render/templates';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const KB = 1024;
@@ -210,6 +211,14 @@ function buildTokens(config: SiteConfig, now: Date): Record<string, string> {
     tokens[`size.${size.id}.width`] = String(size.width);
     tokens[`size.${size.id}.height`] = String(size.height);
   }
+  const start = playgroundStart();
+  Object.assign(tokens, {
+    'playground.title': start.values.title,
+    'playground.description': start.values.description,
+    'playground.author': start.values.author,
+    'playground.slug': linkSlug(start.values.title),
+    'playground.snippet': metaTagSnippet(config.url, start.template, start.values),
+  });
   return tokens;
 }
 
@@ -256,14 +265,49 @@ function expand(source: string, ctx: TokenContext, file: string, mode: 'html' | 
 
 // ------------------------------------------------------------------ generated partials
 
-/** The five starter templates: one list feeds the playground picker and the gallery. */
-const STARTER_TEMPLATES: ReadonlyArray<{ id: string; label: string }> = [
-  { id: 'blog', label: 'Blog posts' },
-  { id: 'dark', label: 'Dark' },
-  { id: 'quote', label: 'Quotes' },
-  { id: 'launch', label: 'Launches' },
-  { id: 'docs', label: 'Documentation' },
-];
+/** Form fields of the landing-page playground, in the order playground.js puts them in a URL. */
+const PLAYGROUND_FIELDS = ['title', 'description', 'author', 'theme'] as const;
+type PlaygroundValues = Record<(typeof PLAYGROUND_FIELDS)[number], string>;
+
+/** A starter template's own sample, cut down to what the playground form can send. */
+function playgroundValues(sample: Readonly<Record<string, string>>): PlaygroundValues {
+  return {
+    title: sample.title ?? '',
+    description: sample.description ?? '',
+    author: sample.author ?? '',
+    theme: sample.theme === 'dark' ? 'dark' : 'light',
+  };
+}
+
+/** The playground opens on the first starter template with its sample text, so the pre-rendered image matches the form. */
+function playgroundStart(): { template: string; values: PlaygroundValues } {
+  const first = RENDER_TEMPLATES[0];
+  if (!first) throw new Error('src/render/templates exports no starter template');
+  return { template: first.id, values: playgroundValues(first.sample) };
+}
+
+/** Same output as linkSlug() in site/public/assets/js/playground.js (tests/node/site.test.ts compares them). */
+function linkSlug(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, '') || 'your-page';
+}
+
+/** Same output as metaTagSnippet() in playground.js for the form's starting values (compared by the same test). */
+function metaTagSnippet(origin: string, template: string, values: PlaygroundValues): string {
+  const params = new URLSearchParams();
+  for (const name of PLAYGROUND_FIELDS) {
+    if (values[name]) params.set(name, values[name]);
+  }
+  params.set('sig', 'YOUR_SIGNATURE');
+  const content = `${origin}/v1/og/YOUR_SITE_ID/${template}.png?${params}`.replace(/&/g, '&amp;');
+  return [
+    `<meta property="og:image" content="${content}">`,
+    '<meta name="twitter:card" content="summary_large_image">',
+    `<meta name="twitter:image" content="${content}">`,
+  ].join('\n');
+}
+
+const samplePath = (id: string): string => `assets/img/samples/${id}.png`;
+const hasSample = (siteDir: string, id: string): boolean => existsSync(join(siteDir, 'public', samplePath(id)));
 
 const plural = (n: number, word: string): string => `${formatCount(n)} ${word}${n === 1 ? '' : 's'}`;
 
@@ -275,6 +319,7 @@ const fontAllowance = (plan: Plan): string =>
 const topUpAllowance = (plan: Plan): string =>
   plan.topUps ? `${formatUsd(TOPUP.priceUsd)} per ${formatCount(TOPUP.images)} images` : 'Not available';
 
+/** "Start free" is the one primary action on the site, so the paid plans get the quieter button. */
 function planCard(plan: Plan): string {
   const paid = plan.paddleProductName !== null;
   const features = [
@@ -285,8 +330,8 @@ function planCard(plan: Plan): string {
     plan.support,
   ];
   const action = paid
-    ? `<a class="btn btn-primary btn-block" href="/pricing?checkout=${plan.id}" data-checkout="${plan.id}">Choose ${escapeHtml(plan.name)}</a>`
-    : '<a class="btn btn-secondary btn-block" href="/login">Start free</a>';
+    ? `<a class="btn btn-secondary btn-block" href="/pricing?checkout=${plan.id}" data-checkout="${plan.id}">Choose ${escapeHtml(plan.name)}</a>`
+    : '<a class="btn btn-primary btn-block" href="/login">Start free</a>';
   const smallPrint = paid
     ? `Billed by Paddle as &ldquo;${escapeHtml(plan.paddleProductName ?? '')}&rdquo;.`
     : 'No card required.';
@@ -363,26 +408,42 @@ function rateLimitsTable(): string {
   return htmlTable(['Applies to', 'Limit'], rows);
 }
 
-function templatePicker(): string {
-  const options = STARTER_TEMPLATES.map(
-    ({ id }, i) => `<label><input type="radio" name="template" value="${id}"${i === 0 ? ' checked' : ''}><span>${id}</span></label>`,
-  );
-  return `<div class="segmented" role="radiogroup" aria-label="Template">\n${options.join('\n')}\n</div>`;
+/**
+ * The playground's template choice: five thumbnails. Each radio carries its
+ * template's sample text, so browsing templates swaps in a pre-rendered image
+ * and its matching text without calling the API.
+ */
+function templatePicker(siteDir: string): string {
+  const options = RENDER_TEMPLATES.map(({ id, sample }, i) => {
+    const values = playgroundValues(sample);
+    const data = PLAYGROUND_FIELDS.map((name) => ` data-${name}="${escapeHtml(values[name])}"`).join('');
+    const picture = hasSample(siteDir, id)
+      ? `<img src="/${samplePath(id)}" alt="" width="1200" height="630">`
+      : '<span class="thumb-blank" aria-hidden="true"></span>';
+    return `<label class="thumb"><input type="radio" name="template" value="${id}"${i === 0 ? ' checked' : ''}${data}>${picture}<span>${id}</span></label>`;
+  });
+  return `<div class="thumbs" role="radiogroup" aria-label="Template">\n${options.join('\n')}\n</div>`;
 }
 
-/** Sample PNGs are generated by the renderer later; until one exists its slot is a neutral box. */
+/** First paint of the playground: the pre-rendered sample. Without one, playground.js renders through the API on load. */
+function playgroundImage(siteDir: string): string {
+  const { template } = playgroundStart();
+  const source = hasSample(siteDir, template) ? ` src="/${samplePath(template)}"` : ' hidden';
+  return `<img id="pg-image"${source} alt="Live preview of the share card" width="1200" height="630">`;
+}
+
+/** The starter templates as printed cards. A sample PNG that does not exist yet renders as a neutral box. */
 function templateGallery(siteDir: string): string {
-  const figures = STARTER_TEMPLATES.map(({ id, label }) => {
-    const file = `assets/img/samples/${id}.png`;
-    const frame = existsSync(join(siteDir, 'public', file))
-      ? `<img src="/${file}" alt="Sample card made with the ${id} template" width="1200" height="630" loading="lazy">`
+  const figures = RENDER_TEMPLATES.map(({ id, name }) => {
+    const frame = hasSample(siteDir, id)
+      ? `<img src="/${samplePath(id)}" alt="Sample card made with the ${id} template" width="1200" height="630" loading="lazy">`
       : `<div class="sample-missing" role="img" aria-label="Sample for the ${id} template is not available yet">${id}</div>`;
     return `<figure class="sample">
 <div class="sample-frame">${frame}</div>
-<figcaption><code>${id}</code> <span>${escapeHtml(label)}</span></figcaption>
+<figcaption><code>${id}</code> <span>${escapeHtml(name)}</span></figcaption>
 </figure>`;
   });
-  return `<div class="gallery">\n${figures.join('\n')}\n</div>`;
+  return `<div class="gallery">\n${figures.join('\n')}\n</div>\n`;
 }
 
 // ------------------------------------------------------------------ sources
@@ -403,7 +464,8 @@ function loadPartials(paths: Paths): Record<string, string> {
     'pricing-table': pricingTable(),
     'limits-table': limitsTable(),
     'rate-limits-table': rateLimitsTable(),
-    'template-picker': templatePicker(),
+    'template-picker': templatePicker(paths.siteDir),
+    'playground-image': playgroundImage(paths.siteDir),
     'template-gallery': templateGallery(paths.siteDir),
   };
   const dir = join(paths.siteDir, 'partials');
@@ -624,6 +686,11 @@ const VENDOR_FILES: ReadonlyArray<{ from: string; to: string }> = [
   { from: '@fontsource/inter/LICENSE', to: 'assets/fonts/inter-LICENSE.txt' },
   { from: '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2', to: 'assets/fonts/jetbrains-mono-latin-400-normal.woff2' },
   { from: '@fontsource/jetbrains-mono/LICENSE', to: 'assets/fonts/jetbrains-mono-LICENSE.txt' },
+  ...['normal', 'italic'].map((style) => ({
+    from: `@fontsource/source-serif-4/files/source-serif-4-latin-900-${style}.woff2`,
+    to: `assets/fonts/source-serif-4-latin-900-${style}.woff2`,
+  })),
+  { from: '@fontsource/source-serif-4/LICENSE', to: 'assets/fonts/source-serif-4-LICENSE.txt' },
   { from: '@twemoji/svg/license', to: '_emoji/LICENSE.txt' },
 ];
 

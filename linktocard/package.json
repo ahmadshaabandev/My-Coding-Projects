@@ -12,7 +12,6 @@
     "test:node": "vitest run -c vitest.node.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "smoke": "node scripts/smoke.mjs",
-    "bench": "node scripts/smoke.mjs --bench",
     "probes": "PROBES=1 vitest run --silent=false",
     "build:dry": "npm run build:site && wrangler deploy --dry-run --outdir dist",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",

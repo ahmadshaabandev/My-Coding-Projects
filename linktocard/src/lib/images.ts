@@ -296,10 +296,8 @@ export async function readStoredImage(
   const meta = object.customMetadata ?? {};
   const expiresAt = Number(meta.expiresAt);
   const body = 'body' in object ? (object as R2ObjectBody).body : null;
-  if (!Number.isFinite(expiresAt) || expiresAt <= now) {
-    await body?.cancel();
-    return null;
-  }
+  // An expired object's body is simply left unread (cancelling an R2 stream logs a runtime error).
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) return null;
   return {
     image: {
       cacheKey,

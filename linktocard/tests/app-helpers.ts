@@ -8,7 +8,7 @@ import { createSession } from '../src/auth/session';
 import type { PlanId } from '../src/billing/plans';
 import { AUTH } from '../src/config';
 import { first, getUserById, run } from '../src/db/client';
-import { app } from '../src/index';
+import worker from '../src/index';
 import { hmacSha256Hex, randomId } from '../src/lib/crypto';
 import { getUsage } from '../src/lib/quota';
 import { buildSignedUrl, deriveSiteSecret, type OgExtension } from '../src/lib/signed-url';
@@ -16,10 +16,13 @@ import type { Env, SiteRow, UsageSummary, UserRow } from '../src/types';
 
 export const ORIGIN = new URL(env.APP_URL).origin;
 
-/** One request through the real app with an ExecutionContext; background work is finished on return. */
+/**
+ * One request through the Worker's own fetch handler with an ExecutionContext;
+ * background work (emails, edge-cache writes) is finished on return.
+ */
 export async function call(path: string, init: RequestInit = {}, bindings: Env = env): Promise<Response> {
   const ctx = createExecutionContext();
-  const response = await app.request(path, init, bindings, ctx);
+  const response = await worker.fetch(new Request(new URL(path, 'http://localhost'), init), bindings, ctx);
   await waitOnExecutionContext(ctx);
   return response;
 }
@@ -119,12 +122,48 @@ export function dashboard(cookie: string | null, method: string, path: string, b
   return call(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }, bindings);
 }
 
+/** The same signed card under a different URL: the query parameters in reverse order. */
+export function reversedQuery(path: string): string {
+  const [pathname, query = ''] = path.split('?');
+  return `${pathname}?${query.split('&').reverse().join('&')}`;
+}
+
+/** A small card that renders quickly; {{title}} and {{n}} make each one unique. */
+export const TINY_HTML = '<div class="card"><div class="title">{{title}}</div><div class="n">{{n}}</div></div>';
+export const TINY_CSS =
+  '.card { display: flex; flex-direction: column; width: 100%; height: 100%; padding: 60px; background: #ffffff; } .title { font-size: 64px; }';
+
+/** Saves a custom template through the dashboard API and returns its id. */
+export async function createTemplate(cookie: string, html: string = TINY_HTML, css: string = TINY_CSS): Promise<string> {
+  const response = await dashboard(cookie, 'POST', '/api/templates', { name: 'Test template', html, css });
+  if (response.status !== 201) throw new Error(`template was not created: ${response.status} ${await response.text()}`);
+  return ((await response.json()) as { template: { id: string } }).template.id;
+}
+
+/** URL of an outbound request as the code under test passed it to fetch(). */
+export function requestUrl(input: RequestInfo | URL): URL {
+  return new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+}
+
+/** Answer of Cloudflare's DNS-over-HTTPS JSON API for a public host (one A record, no AAAA). */
+export function dohAnswer(url: URL): Response {
+  const isA = url.searchParams.get('type') === 'A';
+  return Response.json({ Status: 0, Answer: isA ? [{ name: url.searchParams.get('name'), type: 1, TTL: 60, data: '93.184.216.34' }] : [] });
+}
+
 export function postImage(secret: string, body: unknown): Promise<Response> {
   return call('/v1/images', {
     method: 'POST',
     headers: { ...bearer(secret), 'content-type': 'application/json' },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
+}
+
+/** Delivers a raw webhook body to the real app the way Paddle does. */
+export function postWebhook(rawBody: string, signature: string | null): Promise<Response> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (signature !== null) headers['paddle-signature'] = signature;
+  return call('/webhooks/paddle', { method: 'POST', headers, body: rawBody });
 }
 
 /** Paddle-Signature header for a raw webhook body, signed with the test secret. */

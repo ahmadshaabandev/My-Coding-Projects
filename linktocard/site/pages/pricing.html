@@ -5,7 +5,7 @@ scripts: pricing
 ---
 <main>
 
-<section class="section">
+<section class="section page-top">
 <div class="container">
 <div class="section-head">
 <p class="eyebrow">Pricing</p>
@@ -14,7 +14,7 @@ scripts: pricing
 </div>
 <p class="alert alert-warn" id="checkout-notice" role="alert" hidden></p>
 [[> pricing-table]]
-<div class="card topup" id="top-up">
+<div class="topup" id="top-up">
 <div>
 <h3>[[topup.price]] top-up: [[topup.images]] extra images</h3>
 <p>For [[plan.starter.name]] and [[plan.pro.name]] accounts. Top-up images are used only after the month's allowance is used up and stay valid for [[topup.validDays]] days from purchase. A top-up is a one-time payment that you start yourself. It is never bought or billed automatically.</p>
@@ -29,7 +29,8 @@ scripts: pricing
 <section class="section section-alt" id="counting">
 <div class="container">
 <div class="section-head">
-<h2>What counts as an image.</h2>
+<p class="eyebrow">Fair counting</p>
+<h2>What counts as an image?</h2>
 <p>The rules are short, and they are the same ones the billing code enforces.</p>
 </div>
 [[> counting-rules]]
@@ -39,11 +40,24 @@ scripts: pricing
 <section class="section" id="limits">
 <div class="container">
 <div class="section-head">
+<p class="eyebrow">Limits</p>
 <h2>Plans and limits, side by side.</h2>
 <p>These tables are generated from the limits the service enforces.</p>
 </div>
 [[> limits-table]]
 <p class="section-foot">Questions about a plan? <a href="/contact">Get in touch</a> or read the <a href="/refund">refund policy</a>.</p>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Try it before you pay.</h2>
+<p>The [[plan.free.name]] plan gives you [[plan.free.images]] images a month. No card required.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+</div>
 </div>
 </section>
 

@@ -6,6 +6,10 @@
  *
  *   GET /templates                       the starter ids, names and sample data
  *   GET /render/<id>.png?size=&wm=&...   every other query parameter is template data
+ *
+ * The .mts extension keeps this Worker module out of tsconfig.node.json, which takes every
+ * .ts file under scripts/ and has no Workers types. tests/starter-templates.test.ts imports
+ * it, so it is type-checked with the Worker project instead.
  */
 import { SIZES, type SizeId } from '../src/config';
 import { ApiError, errorResponse } from '../src/lib/errors';
@@ -37,8 +41,9 @@ function templateList(): Response {
 async function renderSample(id: string, query: URLSearchParams): Promise<Response> {
   const template = getStarterTemplate(id);
   if (!template) throw new ApiError('not_found', `Unknown starter template "${id}".`);
-  const size = SIZES[(query.get('size') ?? 'og') as SizeId];
-  if (!size) throw new ApiError('unsupported_size', `Unknown size "${query.get('size')}".`);
+  const sizeId = query.get('size') ?? 'og';
+  if (!Object.hasOwn(SIZES, sizeId)) throw new ApiError('unsupported_size', `Unknown size "${sizeId}".`);
+  const size = SIZES[sizeId as SizeId];
   const watermark = (query.get('wm') ?? 'none') as WatermarkMode;
   if (!WATERMARKS.includes(watermark)) throw new ApiError('invalid_request', `Unknown watermark mode "${watermark}".`);
 

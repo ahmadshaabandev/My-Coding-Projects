@@ -9,140 +9,195 @@ scripts: playground
 <div class="container hero-grid">
 <div class="hero-copy">
 <p class="eyebrow">Open Graph images from HTML and CSS</p>
-<h1>Turn every link into a beautiful share card.</h1>
+<h1>Turn every link into a <em>beautiful</em> share card.</h1>
 <p class="lead">The signed og:image URL for sites that are not on Vercel.</p>
-<p>Write a card template in HTML and CSS, put one signed URL in your meta tags, and every page gets its own preview image wherever its link is shared. It runs on Cloudflare's edge network.</p>
+<p>Write a card in HTML and CSS, put one signed URL in your meta tags, and every page gets its own preview image wherever its link is shared.</p>
 <div class="cluster hero-actions">
 <a class="btn btn-primary" href="/login">Start free</a>
-<a class="btn btn-secondary" href="/docs">Read the docs</a>
+<a class="link-arrow" href="/docs">Read the docs</a>
 </div>
 <p class="hint">[[plan.free.name]] plan: [[plan.free.images]] images a month, no card required.</p>
 </div>
 
 <div class="playground" id="playground" data-origin="[[site.url]]">
 <h2 class="visually-hidden">Live playground</h2>
+<div class="chat">
+<div class="chat-bar" aria-hidden="true">
+<span class="chat-dots"><i></i><i></i><i></i></span>
+<span class="chat-title">share preview</span>
+<span class="chat-live">live</span>
+</div>
+<div class="chat-thread">
+<div class="msg msg-plain">
+<p class="msg-label">Without a card</p>
+<div class="msg-row">
+<p class="msg-bubble"><span class="msg-link">your-site.com/<span data-slug>[[playground.slug]]</span></span></p>
+<svg class="msg-arrow" viewBox="0 0 44 52" width="44" height="52" aria-hidden="true" focusable="false"><path d="M3 10c20-6 34 6 30 34"/><path d="M24 35l9 11 8-11"/></svg>
+</div>
+</div>
+<div class="msg msg-rich">
+<p class="msg-label">With [[site.name]]</p>
+<div class="msg-bubble">
+<span class="msg-link">your-site.com/<span data-slug>[[playground.slug]]</span></span>
 <div class="unfurl">
 <div class="unfurl-frame" id="pg-frame" aria-busy="false">
-<img id="pg-image" alt="Live preview of the share card" width="1200" height="630" hidden>
-<p class="unfurl-status" id="pg-status" role="status">Rendering preview&hellip;</p>
+[[> playground-image]]
+<p class="unfurl-status" id="pg-status" role="status" hidden>Rendering preview&hellip;</p>
 <p class="alert alert-danger unfurl-error" id="pg-error" role="alert" hidden></p>
-<noscript><img src="/playground/card.png?template=blog&amp;title=Turn+every+link+into+a+beautiful+share+card&amp;description=One+signed+URL+in+your+meta+tags.&amp;author=Link+To+Card&amp;theme=light" alt="Sample share card" width="1200" height="630"></noscript>
 </div>
 <div class="unfurl-meta" aria-hidden="true">
 <span class="unfurl-host">your-site.com</span>
-<strong id="pg-meta-title">Turn every link into a beautiful share card</strong>
-<span class="unfurl-desc" id="pg-meta-desc">One signed URL in your meta tags.</span>
+<strong id="pg-meta-title">[[playground.title]]</strong>
+<span class="unfurl-desc" id="pg-meta-desc">[[playground.description]]</span>
 </div>
 </div>
-<form class="playground-form" id="pg-form">
-<fieldset class="field-wide">
-<legend class="label">Template</legend>
+</div>
+</div>
+</div>
+<form class="composer" id="pg-form">
+<label class="field composer-title">
+<span class="label">Type your page title <span class="composer-cue" aria-hidden="true">the card follows</span></span>
+<input class="input" name="title" maxlength="120" value="[[playground.title]]" autocomplete="off" enterkeyhint="done">
+</label>
+<fieldset class="field">
+<legend class="label">Pick a template</legend>
 [[> template-picker]]
 </fieldset>
-<label class="field field-wide">
-<span class="label">Title</span>
-<input class="input" name="title" maxlength="120" value="Turn every link into a beautiful share card" autocomplete="off">
-</label>
+<details class="more">
+<summary>More options</summary>
+<div class="more-grid">
 <label class="field field-wide">
 <span class="label">Description</span>
-<input class="input" name="description" maxlength="200" value="One signed URL in your meta tags." autocomplete="off">
+<input class="input" name="description" maxlength="200" value="[[playground.description]]" autocomplete="off">
 </label>
 <label class="field">
 <span class="label">Author</span>
-<input class="input" name="author" maxlength="60" value="Link To Card" autocomplete="off">
+<input class="input" name="author" maxlength="60" value="[[playground.author]]" autocomplete="off">
 </label>
-<fieldset>
+<fieldset class="field">
 <legend class="label">Theme</legend>
 <div class="segmented" role="radiogroup" aria-label="Theme">
 <label><input type="radio" name="theme" value="light" checked><span>light</span></label>
 <label><input type="radio" name="theme" value="dark"><span>dark</span></label>
 </div>
 </fieldset>
+</div>
+</details>
+<noscript><p class="hint">The live preview needs JavaScript.</p></noscript>
 </form>
+</div>
 </div>
 </div>
 
 <div class="container">
-<div class="card snippet" id="meta-tag">
-<div class="snippet-head">
-<h2>Copy meta tag</h2>
-<button class="btn btn-secondary btn-sm" type="button" data-copy-target="#pg-snippet">Copy</button>
+<div class="snippet" id="meta-tag">
+<div class="snippet-text">
+<h2>This is the tag for that card.</h2>
+<p>Paste it into your page's <code>&lt;head&gt;</code>. <code>YOUR_SITE_ID</code> and <code>YOUR_SIGNATURE</code> are placeholders: a free account gives you the real ones.</p>
+<a class="btn btn-primary btn-sm" href="/login">Start free</a>
 </div>
-<pre><code id="pg-snippet" class="language-html">&lt;meta property="og:image" content="[[site.url]]/v1/og/YOUR_SITE_ID/blog.png?title=Turn+every+link+into+a+beautiful+share+card&amp;amp;sig=YOUR_SIGNATURE"&gt;
-&lt;meta name="twitter:card" content="summary_large_image"&gt;
-&lt;meta name="twitter:image" content="[[site.url]]/v1/og/YOUR_SITE_ID/blog.png?title=Turn+every+link+into+a+beautiful+share+card&amp;amp;sig=YOUR_SIGNATURE"&gt;</code></pre>
-<p><code>YOUR_SITE_ID</code> and <code>YOUR_SIGNATURE</code> are placeholders. A free account gives you a site id and a signing secret; the signature is an HMAC of the URL made with that secret, so the playground cannot hand out working signed URLs.</p>
+<div class="code-block snippet-code" data-lang="html">
+<button class="copy-btn" type="button" data-copy-target="#pg-snippet">Copy</button>
+<pre><code id="pg-snippet" class="language-html">[[playground.snippet]]</code></pre>
+</div>
 </div>
 </div>
 </section>
 
-<section class="section" id="how-it-works">
+<section class="section band" id="how-it-works">
 <div class="container">
 <div class="section-head">
 <p class="eyebrow">How it works</p>
-<h2>Three steps, no browser to run.</h2>
-<p>Cards are rendered from HTML and CSS directly. There is no headless browser to host, patch or wait for.</p>
+<h2>How does it work?</h2>
+<p>Three steps. There is no headless browser to host, patch or wait for.</p>
 </div>
 <ol class="steps">
 <li>
+<div class="step-text">
 <h3>Pick or write a template</h3>
 <p>Start from a starter template or write your own in HTML and CSS, with <code>{{placeholders}}</code> for the parts that change from page to page.</p>
+</div>
+<div class="code-block" data-lang="html"><pre><code class="language-html">&lt;div class="card"&gt;
+  &lt;h1&gt;{{title}}&lt;/h1&gt;
+  &lt;p&gt;{{author}}&lt;/p&gt;
+&lt;/div&gt;</code></pre></div>
 </li>
 <li>
+<div class="step-text">
 <h3>Sign the URL</h3>
-<p>Create a site to get its id and secret. Your server or build script signs each image URL with HMAC-SHA256, a few lines in any language.</p>
+<p>Create a site to get its id and secret. Your server or build script signs each image URL with HMAC-SHA256. This is all of it in Node.js:</p>
+</div>
+<div class="code-block" data-lang="js"><button class="copy-btn" type="button" data-copy>Copy</button><pre><code class="language-js">import { createHmac } from 'node:crypto';
+
+const path = `/v1/og/${SITE_ID}/blog.png`;
+const params = { title: 'Hello world' };
+const names = Object.keys(params).sort();
+const lines = [
+  path,
+  names.join(','),
+  ...names.map((name) =&gt; `${name}=${params[name]}`),
+];
+const sig = createHmac('sha256', SITE_SECRET)
+  .update(lines.join('\n'))
+  .digest('hex');
+
+const query = new URLSearchParams({ ...params, sig });
+const url = `[[site.url]]${path}?${query}`;</code></pre></div>
 </li>
 <li>
+<div class="step-text">
 <h3>Paste it into your meta tags</h3>
 <p>The first request renders the image and stores it. Later requests for the same URL are served from cache and do not count again while it is stored.</p>
+</div>
+<div class="code-block" data-lang="html"><pre><code class="language-html">&lt;meta property="og:image" content="${url}"&gt;</code></pre></div>
 </li>
 </ol>
 <p class="section-foot">Prefer to render ahead of time? <code>POST /v1/images</code> with an API key returns the image URL. <a href="/docs">The docs cover both.</a></p>
 </div>
 </section>
 
-<section class="section section-alt" id="templates">
+<section class="section" id="templates">
 <div class="container">
 <div class="section-head">
 <p class="eyebrow">Starter templates</p>
-<h2>Five templates to start from.</h2>
-<p>Use one as it is, or as the starting point for your own design.</p>
+<h2>What do the templates look like?</h2>
+<p>Five to start from. Use one as it is, or as the starting point for your own design.</p>
 </div>
 [[> template-gallery]]
 </div>
 </section>
 
-<section class="section" id="pricing">
+<section class="section section-alt" id="pricing">
 <div class="container">
 <div class="section-head">
 <p class="eyebrow">Pricing</p>
-<h2>Priced per rendered image.</h2>
-<p>Prices are in USD and exclude tax. Paddle, our reseller and Merchant of Record, adds any applicable sales tax or VAT at checkout.</p>
+<h2>What does it cost?</h2>
+<p>You pay per rendered image. Prices are in USD and exclude tax. Paddle, our reseller and Merchant of Record, adds any applicable sales tax or VAT at checkout.</p>
 </div>
 [[> pricing-table]]
-<p class="section-foot"><a href="/pricing">Full pricing, top-ups and limits</a></p>
+<p class="section-foot">Busy month? On [[plan.starter.name]] and [[plan.pro.name]], a [[topup.price]] top-up adds [[topup.images]] images. You buy it yourself; nothing is ever billed automatically. <a href="/pricing">Full pricing, top-ups and limits</a></p>
 </div>
 </section>
 
-<section class="section section-alt" id="counting">
+<section class="section" id="counting">
 <div class="container">
 <div class="section-head">
 <p class="eyebrow">Fair counting</p>
-<h2>What counts as an image.</h2>
+<h2>What counts as an image?</h2>
 <p>The rules are short, and they are the same ones the billing code enforces.</p>
 </div>
 [[> counting-rules]]
 </div>
 </section>
 
-<section class="section" id="faq">
+<section class="section section-alt" id="faq">
 <div class="container faq-grid">
 <div class="section-head">
 <p class="eyebrow">FAQ</p>
 <h2>Honest answers.</h2>
 <p>Including the things this product does not do.</p>
 </div>
-<div>
+<div class="faq">
 <details class="faq-item">
 <summary>What is [[site.name]], and what is it not?</summary>
 <div>
@@ -199,11 +254,11 @@ scripts: playground
 </div>
 </section>
 
-<section class="section section-alt" id="contact">
+<section class="section cta-band" id="contact">
 <div class="container cta">
 <div>
 <h2>Questions before you start?</h2>
-<p>Email <a href="mailto:[[site.supportEmail]]">[[site.supportEmail]]</a> or use the <a href="/contact">contact page</a>.</p>
+<p>Email <a href="mailto:[[site.supportEmail]]">[[site.supportEmail]]</a> or use the <a href="/contact">contact page</a>. The person who built the product answers.</p>
 </div>
 <div class="cluster">
 <a class="btn btn-primary" href="/login">Start free</a>

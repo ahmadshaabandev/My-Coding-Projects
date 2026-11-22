@@ -1,4 +1,4 @@
-// Loaded on every page: copy buttons, the Compare menu, and the current nav link.
+// Loaded on every page: copy buttons, the current nav link, and the docs menu.
 
 async function copyFrom(button) {
   const source = button.dataset.copyTarget
@@ -25,20 +25,21 @@ async function copyFrom(button) {
 document.addEventListener('click', (event) => {
   const button = event.target.closest('[data-copy], [data-copy-target]');
   if (button) copyFrom(button);
-  for (const menu of document.querySelectorAll('.nav-dropdown[open]')) {
-    if (!menu.contains(event.target)) menu.open = false;
-  }
 });
 
-document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') return;
-  for (const menu of document.querySelectorAll('.nav-dropdown[open]')) {
-    menu.open = false;
-    menu.querySelector('summary').focus();
-  }
-});
-
-for (const link of document.querySelectorAll('.site-nav > a[href]')) {
+for (const link of document.querySelectorAll('.site-nav > a[href]:not(.btn)')) {
   const path = new URL(link.href).pathname;
   if (location.pathname === path || location.pathname.startsWith(`${path}/`)) link.setAttribute('aria-current', 'page');
+}
+
+// The docs sidebar is a <details> that ships open, so it works without JavaScript.
+// Here it becomes a menu: closed on small screens, always open beside the text on wide ones.
+const docsMenu = document.querySelector('.docs-menu');
+if (docsMenu) {
+  const wide = window.matchMedia('(min-width: 60.01rem)');
+  const sync = () => {
+    docsMenu.open = wide.matches;
+  };
+  wide.addEventListener('change', sync);
+  sync();
 }

@@ -27,7 +27,7 @@ import { studioRouter } from './routes/studio';
 import { paddleWebhookRouter } from './routes/webhooks/paddle';
 import type { AppEnv, Env } from './types';
 
-/** Exported for the tests, which call app.request(path, init, env, ctx). */
+/** The router. Requests enter through the default export below, which the tests call too. */
 export const app = new Hono<AppEnv>();
 
 // Request id and security headers. This middleware reads nothing from the
@@ -79,8 +79,18 @@ app.onError((error, c) => {
   return errorResponse(new ApiError('internal_error', 'Unexpected error. Try again; if it keeps happening, contact support.'), c.env.APP_URL);
 });
 
+/**
+ * workerd turns a request that declares "Content-Length: 0" (what browsers send for a
+ * bodyless POST, and what `wrangler dev` adds to a bodyless DELETE) into an empty body
+ * stream. To the app that is simply "no body": the same-origin guard asks for a JSON
+ * content type only on requests that carry one.
+ */
+function withoutEmptyBody(request: Request): Request {
+  return request.body !== null && request.headers.get('content-length') === '0' ? new Request(request, { body: null }) : request;
+}
+
 export default {
-  fetch: app.fetch,
+  fetch: (request: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> => app.fetch(withoutEmptyBody(request), env, ctx),
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       runCleanup(env, Date.now()).then(

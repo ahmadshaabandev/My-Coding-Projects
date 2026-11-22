@@ -17,11 +17,19 @@ const temp = mkdtempSync(join(tmpdir(), 'ltc-site-'));
 afterAll(() => rmSync(temp, { recursive: true, force: true }));
 
 const HAND_BUILT = ['index.html', 'pricing.html', 'contact.html', 'login.html', 'login/verify.html', 'dashboard.html', '404.html'];
-const FOOTER_LINKS = ['/terms', '/privacy', '/refund', '/pricing', '/docs', '/contact'];
+const HEADER_LINKS = ['/', '/docs', '/pricing', '/login'];
+// The comparison pages are linked from the footer only: the header carries nothing but the way in.
+const FOOTER_LINKS = ['/terms', '/privacy', '/refund', '/pricing', '/docs', '/contact', '/compare/bannerbear', '/compare/vercel-og'];
 /** Pages other engineers write as Markdown; a link to one that is not written yet is reported, not failed. */
 const CONTENT_ROUTES = /^\/(terms|privacy|refund|docs(\/[\w-]+)?|compare\/[\w-]+)$/;
 /** Paths answered by the Worker, not by a file. */
 const WORKER_ROUTES = /^\/(v1|api|auth|playground|webhooks|i)\//;
+
+const stripTags = (html: string): string => html.replace(/<[^>]+>/g, '');
+const unescapeHtml = (html: string): string =>
+  html.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+const loadScript = async <T>(name: string): Promise<T> =>
+  (await import(pathToFileURL(join(ROOT, 'site/public/assets/js', name)).href)) as T;
 
 function walk(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
@@ -65,6 +73,10 @@ describe('built site', () => {
       'assets/fonts/inter-latin-400-normal.woff2',
       'assets/fonts/inter-latin-700-normal.woff2',
       'assets/fonts/jetbrains-mono-latin-400-normal.woff2',
+      'assets/fonts/source-serif-4-latin-900-normal.woff2',
+      'assets/fonts/source-serif-4-latin-900-italic.woff2',
+      'assets/fonts/source-serif-4-LICENSE.txt',
+      'assets/img/favicon.svg',
       '_emoji/LICENSE.txt',
       '_emoji/1f600.svg',
     ]) {
@@ -92,14 +104,24 @@ describe('built site', () => {
       expect(page.html, where).toMatch(/<title>[^<]+<\/title>/);
       expect(page.html, where).toMatch(/<meta name="description" content="[^"]+">/);
       const header = page.html.slice(page.html.indexOf('<header class="site-header"'), page.html.indexOf('</header>'));
-      for (const href of ['/', '/docs', '/pricing', '/compare/bannerbear', '/compare/vercel-og', '/login']) {
-        expect(header, `${where} header ${href}`).toContain(`href="${href}"`);
-      }
+      // Logo, Docs, Pricing, Sign in and the one primary action: nothing else competes with "Start free".
+      expect([...header.matchAll(/<a [^>]*href="([^"]+)"/g)].map((match) => match[1]), `${where} header`).toEqual([...HEADER_LINKS, '/login']);
+      expect(header, where).toContain('<a class="btn btn-primary btn-sm" href="/login">Start free</a>');
+      expect(header.match(/class="btn/g), `${where} header buttons`).toHaveLength(1);
       const footer = page.html.slice(page.html.indexOf('<footer'), page.html.indexOf('</footer>'));
       for (const href of FOOTER_LINKS) expect(footer, `${where} footer ${href}`).toContain(`href="${href}"`);
       expect(footer, where).toContain('Payments secured by Paddle');
       expect(footer, where).toContain('&copy; 2026 <mark class="placeholder">LEGAL_NAME</mark>');
       expect(footer, where).toMatch(/AI tools were used to help build this product\. A human reviews every release\./);
+      expect(stripTags(footer), where).toContain('Emoji graphics by Twemoji (CC-BY 4.0).');
+    }
+  });
+
+  it('keeps every page free of inline scripts, inline handlers and inline styles (CSP: script-src self)', () => {
+    for (const page of site.pages) {
+      expect(page.html.match(/<script\b(?![^>]*\ssrc=)[^>]*>/g), page.outPath).toBeNull();
+      expect(page.html.match(/<[a-z][^>]*\son[a-z]+\s*=/g), page.outPath).toBeNull();
+      expect(page.html.match(/<[a-z][^>]*\sstyle\s*=/g), page.outPath).toBeNull();
     }
   });
 
@@ -164,10 +186,15 @@ describe('built site', () => {
 
   it('builds the landing page around the promise, the playground and honest copy', () => {
     const html = pageHtml(site, 'index.html');
-    expect(html).toContain('<h1>Turn every link into a beautiful share card.</h1>');
+    const h1 = /<h1>(.*?)<\/h1>/.exec(html)?.[1] ?? '';
+    expect(stripTags(h1)).toBe('Turn every link into a beautiful share card.');
     expect(html).toContain('The signed og:image URL for sites that are not on Vercel.');
     expect(html).toContain('<a class="btn btn-primary" href="/login">Start free</a>');
     expect(html).toContain('href="/docs">Read the docs</a>');
+    // "Start free" is the only primary action: every primary button on the page is that link.
+    const primary = [...html.matchAll(/<a class="btn btn-primary[^"]*" href="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map((match) => `${match[1]} ${match[2]}`);
+    expect(primary.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(primary)).toEqual(new Set(['/login Start free']));
     for (const id of ['blog', 'dark', 'quote', 'launch', 'docs']) {
       expect(html).toContain(`<input type="radio" name="template" value="${id}"`);
       // The sample PNG is optional: a missing one renders as a neutral box, never a broken image.
@@ -182,6 +209,48 @@ describe('built site', () => {
     expect(html).toContain('{{placeholders}}');
     expect(html).toContain('<script type="module" src="/assets/js/playground.js"></script>');
     expect(html).not.toMatch(/trusted by|testimonial|uptime|\d+\s?ms\b/i);
+  });
+
+  it('opens the playground on a pre-rendered sample: one visible input, five thumbnails, the rest behind "More options"', async () => {
+    const html = pageHtml(site, 'index.html');
+    const { STARTER_TEMPLATES } = await import('../../src/render/templates');
+    const first = STARTER_TEMPLATES[0];
+    if (!first) throw new Error('no starter template');
+    const form = html.slice(html.indexOf('<form class="composer" id="pg-form">'), html.indexOf('</form>'));
+    const more = form.slice(form.indexOf('<details class="more">'));
+    expect(more).toContain('<summary>More options</summary>');
+    // Before "More options" there is the title and the template picker, nothing else.
+    const upFront = form.slice(0, form.indexOf('<details class="more">'));
+    expect([...upFront.matchAll(/<input [^>]*name="(\w+)"/g)].map((match) => match[1])).toEqual(['title', ...STARTER_TEMPLATES.map(() => 'template')]);
+    expect([...more.matchAll(/<input [^>]*name="(\w+)"/g)].map((match) => match[1])).toEqual(['description', 'author', 'theme', 'theme']);
+    expect(upFront).toContain(`name="title" maxlength="120" value="${first.sample.title}"`);
+    // Each thumbnail carries its template's sample text, so browsing templates needs no API call.
+    for (const template of STARTER_TEMPLATES) {
+      const radio = new RegExp(`<input type="radio" name="template" value="${template.id}"[^>]*>`).exec(upFront)?.[0] ?? '';
+      expect(unescapeHtml(radio), template.id).toContain(`data-title="${template.sample.title}"`);
+      expect(radio, template.id).toContain(`data-theme="${template.sample.theme === 'dark' ? 'dark' : 'light'}"`);
+      expect(radio.includes(' checked'), template.id).toBe(template === first);
+    }
+    // First paint is a file, not an API call (when the sample has been rendered).
+    const hasSample = existsSync(join(ROOT, 'site/public/assets/img/samples', `${first.id}.png`));
+    expect(html.includes(`<img id="pg-image" src="/assets/img/samples/${first.id}.png"`)).toBe(hasSample);
+    expect(html.includes('<img id="pg-image" hidden')).toBe(!hasSample);
+    expect(html).not.toContain('src="/playground/');
+
+    // The static snippet and link are what playground.js would print for the same form values.
+    type Playground = { metaTagSnippet(origin: string, values: Record<string, string>): string; linkSlug(title: string): string };
+    const { metaTagSnippet, linkSlug } = await loadScript<Playground>('playground.js');
+    const values = {
+      template: first.id,
+      title: first.sample.title ?? '',
+      description: first.sample.description ?? '',
+      author: first.sample.author ?? '',
+      theme: first.sample.theme === 'dark' ? 'dark' : 'light',
+    };
+    const snippet = /<code id="pg-snippet"[^>]*>([\s\S]*?)<\/code>/.exec(html)?.[1] ?? '';
+    expect(unescapeHtml(snippet)).toBe(metaTagSnippet(site.config.url, values));
+    expect(html).toContain(`your-site.com/<span data-slug>${linkSlug(values.title)}</span>`);
+    expect(html).toContain('<code>YOUR_SITE_ID</code> and <code>YOUR_SIGNATURE</code> are placeholders');
   });
 
   it('ships the dashboard shell, sign-in pages and contact form the scripts expect', () => {
@@ -449,8 +518,7 @@ describe('go-live placeholder check', () => {
 });
 
 describe('browser scripts (pure parts)', () => {
-  const load = async <T>(name: string): Promise<T> =>
-    (await import(pathToFileURL(join(ROOT, 'site/public/assets/js', name)).href)) as T;
+  const load = loadScript;
   afterEach(() => vi.restoreAllMocks());
 
   type Action = { type: string; url?: string; message?: string; token?: string; environment?: string; options?: unknown };
@@ -513,6 +581,18 @@ describe('browser scripts (pure parts)', () => {
       `<meta name="twitter:image" content="${url}">`,
     ]);
     expect(metaTagSnippet(origin, { template: 'blog' })).toContain('/v1/og/YOUR_SITE_ID/blog.png?sig=YOUR_SIGNATURE"');
+  });
+
+  it('turns a title into the page address shown in the mock chat', async () => {
+    const { linkSlug } = await load<{ linkSlug(title: string): string }>('playground.js');
+    expect(linkSlug('Design for the first glance')).toBe('design-for-the-first-glance');
+    expect(linkSlug('  Hello, World & more!  ')).toBe('hello-world-more');
+    expect(linkSlug('Zoë: 100% naïve')).toBe('zo-100-na-ve');
+    expect(linkSlug('')).toBe('your-page');
+    expect(linkSlug('!!!')).toBe('your-page');
+    const long = linkSlug('a'.repeat(47) + ' bcdef');
+    expect(long).toBe('a'.repeat(47));
+    expect(long.length).toBeLessThanOrEqual(48);
   });
 
   it('posts JSON and surfaces the API error message', async () => {

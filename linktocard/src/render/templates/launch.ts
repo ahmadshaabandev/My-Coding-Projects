@@ -1,86 +1,118 @@
 import type { StarterTemplate } from './index';
 
 const html = `<div class="card">
-  <div class="rings"><span class="ring ring-1"></span><span class="ring ring-2"></span><span class="ring ring-3"></span></div>
-  <div class="main">
-    <span class="tag">{{tag}}</span>
-    <h1 class="title">{{title}}</h1>
-    <p class="description">{{description}}</p>
-  </div>
-  <div class="brand">
-    <img class="logo" src="{{image}}" alt="">
-    <span class="author">{{author}}</span>
-    <span class="dot"></span>
-    <span class="site">{{site}}</span>
+  <div class="ticket">
+    <div class="body">
+      <span class="tag">{{tag}}</span>
+      <div class="main">
+        <h1 class="title">{{title}}</h1>
+        <p class="description">{{description}}</p>
+      </div>
+      <span class="author">{{author}}</span>
+    </div>
+    <div class="stub">
+      <img class="logo" src="{{image}}" alt="">
+      <svg class="spark" viewBox="0 0 96 96"><path d="M48 0c3 28 20 45 48 48-28 3-45 20-48 48-3-28-20-45-48-48 28-3 45-20 48-48z" fill="currentColor"/></svg>
+      <div class="code">
+        <div class="bars"></div>
+        <span class="site">{{site}}</span>
+      </div>
+    </div>
+    <span class="notch notch-a"></span>
+    <span class="notch notch-b"></span>
   </div>
 </div>`;
 
-const css = `/* Announcement: centred, bold, on a colour field with rings rising from the bottom edge. */
-body { background: linear-gradient(180deg, #4338ca 0%, #6d28d9 100%); color: #ffffff; }
-.card { position: relative; display: flex; flex-direction: column; align-items: center; height: 100%; padding: 64px 80px; text-align: center; }
+const css = `/* Launch ticket: the announcement is a pass with a tear-off stub, a bar code and a spark. */
+body { --outer: #5a31f4; --paper: #fffcf4; --ink: #17122e; --soft: #5f5a78; --accent: #5a31f4; --on-accent: #ffffff; --perf: #cfc8e6; background: var(--outer); color: var(--ink); }
+.theme-dark { --outer: #0f0a24; --paper: #1d1546; --ink: #ffffff; --soft: #b9b1de; --accent: #b9a5ff; --on-accent: #150f33; --perf: #4a3f86; }
 
-.rings { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: hidden; }
-.ring { position: absolute; left: 50%; top: 100%; border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 50%; transform: translate(-50%, -50%); }
-.ring-1 { width: 520px; height: 520px; }
-.ring-2 { width: 920px; height: 920px; }
-.ring-3 { width: 1320px; height: 1320px; }
+.card { display: flex; height: 100%; padding: 48px 52px; }
+.ticket { position: relative; display: flex; flex: 1; border-radius: 30px; background: var(--paper); }
 
-.main { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; }
-.tag { margin-bottom: 28px; padding: 8px 20px; border: 2px solid rgba(255, 255, 255, 0.45); border-radius: 999px; max-width: 720px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 21px; font-weight: 600; letter-spacing: 0.1em; line-height: 1.3; text-transform: uppercase; }
+.body { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 42px 48px 38px 56px; }
+.tag { align-self: flex-start; max-width: 100%; padding: 7px 18px; border-radius: 999px; background: var(--accent); color: var(--on-accent); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 20px; font-weight: 700; letter-spacing: 0.1em; line-height: 1.3; text-transform: uppercase; }
 .no-tag .tag { display: none; }
-.title { margin: 0; max-width: 980px; font-size: 88px; font-weight: 800; line-height: 1.04; letter-spacing: -0.035em; text-wrap: balance; }
-.len-title-m .title { font-size: 72px; }
-.len-title-l .title { font-size: 56px; line-height: 1.08; letter-spacing: -0.03em; }
-.len-title-xl .title { font-size: 46px; line-height: 1.12; letter-spacing: -0.025em; text-wrap: wrap; line-clamp: 4; }
-.description { margin: 26px 0 0; max-width: 820px; font-size: 31px; line-height: 1.4; color: #ddd6fe; text-wrap: balance; }
+
+/* If the announcement needs the whole text area, the description wraps into a second flex
+   column, and the column gap puts that off the canvas: the announcement wins. */
+.main { display: flex; flex-direction: column; flex-wrap: wrap; column-gap: 500px; flex: 1; justify-content: center; padding: 16px 0; }
+.title { width: 100%; margin: 0; padding-right: 6px; font-size: 80px; font-weight: 800; line-height: 1; letter-spacing: -0.045em; text-wrap: balance; word-break: break-word; }
+.len-title-m .title { font-size: 62px; line-height: 1.03; letter-spacing: -0.04em; }
+.len-title-l .title { font-size: 50px; line-height: 1.07; letter-spacing: -0.035em; }
+.len-title-xl .title { font-size: 41px; line-height: 1.12; letter-spacing: -0.03em; text-wrap: wrap; line-clamp: 5; }
+.description { margin: 22px 0 0; font-size: 28px; line-height: 1.38; color: var(--soft); text-wrap: balance; }
 .len-description-xl .description { text-wrap: wrap; line-clamp: 2; }
-.len-title-l .description, .len-title-xl .description { margin-top: 20px; font-size: 27px; }
+.len-title-m .description { margin-top: 18px; font-size: 26px; }
+.len-title-l .description, .len-title-xl .description { margin-top: 14px; font-size: 24px; }
 .no-description .description { display: none; }
 
-.brand { position: relative; display: flex; align-items: center; gap: 14px; margin-top: 24px; font-size: 26px; line-height: 1.3; }
-.logo { flex: none; width: 44px; height: 44px; border-radius: 10px; object-fit: cover; }
-.author, .site { max-width: 460px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.author { font-weight: 600; }
-.dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.55); }
-.site { color: #ddd6fe; }
-.no-author .dot, .no-site .dot { display: none; }
-.no-author.no-site .brand { display: none; }
+.author { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 25px; font-weight: 700; line-height: 1.3; }
+.no-author .author { display: none; }
 
-.size-square .card, .size-portrait .card { padding: 88px 80px; }
-.size-square .ring-1, .size-portrait .ring-1 { width: 640px; height: 640px; }
-.size-square .ring-2, .size-portrait .ring-2 { width: 1120px; height: 1120px; }
-.size-square .ring-3, .size-portrait .ring-3 { width: 1600px; height: 1600px; }
-.size-square .tag, .size-portrait .tag { margin-bottom: 36px; font-size: 24px; }
-.size-square .title, .size-portrait .title { font-size: 108px; }
-.size-square.len-title-m .title, .size-portrait.len-title-m .title { font-size: 88px; }
-.size-square.len-title-l .title, .size-portrait.len-title-l .title { font-size: 70px; }
-.size-square.len-title-xl .title, .size-portrait.len-title-xl .title { font-size: 58px; line-clamp: 6; }
-.size-square .description, .size-portrait .description { margin-top: 34px; font-size: 35px; }
-.size-square.len-description-xl .description, .size-portrait.len-description-xl .description { line-clamp: 4; }
-.size-square .brand, .size-portrait .brand { font-size: 30px; }
+/* The stub: a dashed tear line, with a notch punched out of the ticket at each end. */
+.stub { display: flex; flex: none; flex-direction: column; align-items: center; justify-content: space-between; width: 252px; padding: 46px 0 38px; border-left: 4px dashed var(--perf); }
+.logo { width: 92px; height: 92px; border-radius: 22px; object-fit: cover; }
+.spark { width: 92px; height: 92px; color: var(--accent); }
+.has-image .spark { display: none; }
+.code { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.bars {
+  width: 172px; height: 62px; color: var(--ink);
+  background-image:
+    repeating-linear-gradient(90deg, currentColor 0px, currentColor 3px, transparent 3px, transparent 8px),
+    repeating-linear-gradient(90deg, currentColor 0px, currentColor 2px, transparent 2px, transparent 13px),
+    repeating-linear-gradient(90deg, currentColor 0px, currentColor 6px, transparent 6px, transparent 29px);
+}
+.site { max-width: 196px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: "JetBrains Mono", monospace; font-size: 17px; line-height: 1.3; color: var(--soft); }
+.no-site .site { display: none; }
+.notch { position: absolute; right: 228px; width: 52px; height: 52px; border-radius: 50%; background: var(--outer); }
+.notch-a { top: -26px; }
+.notch-b { bottom: -26px; }
 
-.theme-dark { background: linear-gradient(180deg, #0d0a1f 0%, #1c1440 100%); }
-.theme-dark .ring { border-color: rgba(167, 139, 250, 0.22); }
-.theme-dark .tag { border-color: rgba(167, 139, 250, 0.6); color: #c4b5fd; }
-.theme-dark .description, .theme-dark .site { color: #b8b2d6; }`;
+/* Square and portrait: the ticket stands upright and the stub tears off at the bottom. */
+.size-square .card, .size-portrait .card { padding: 56px; }
+.size-square .ticket, .size-portrait .ticket { flex-direction: column; border-radius: 36px; }
+.size-square .body, .size-portrait .body { padding: 56px 64px 40px; }
+.size-square .tag, .size-portrait .tag { padding: 9px 22px; font-size: 24px; }
+.size-square .title { font-size: 100px; }
+.size-square.len-title-m .title { font-size: 76px; }
+.size-square.len-title-l .title { font-size: 64px; }
+.size-square.len-title-xl .title { font-size: 54px; line-clamp: 6; }
+.size-portrait .title { font-size: 112px; }
+.size-portrait.len-title-m .title { font-size: 88px; }
+.size-portrait.len-title-l .title { font-size: 72px; }
+.size-portrait.len-title-xl .title { font-size: 58px; line-clamp: 7; }
+.size-square .description, .size-portrait .description, .size-square.len-title-m .description, .size-portrait.len-title-m .description { margin-top: 30px; font-size: 35px; }
+.size-square.len-title-l .description, .size-square.len-title-xl .description, .size-portrait.len-title-l .description, .size-portrait.len-title-xl .description { margin-top: 24px; font-size: 31px; }
+.size-square.len-description-xl .description { line-clamp: 3; }
+.size-portrait.len-description-xl .description { line-clamp: 5; }
+.size-square .author, .size-portrait .author { font-size: 30px; }
+.size-square .stub, .size-portrait .stub { flex-direction: row; width: auto; height: 180px; padding: 0 64px; border-left: 0; border-top: 4px dashed var(--perf); }
+.size-square .logo, .size-portrait .logo, .size-square .spark, .size-portrait .spark { width: 96px; height: 96px; }
+.size-square .code, .size-portrait .code { align-items: flex-end; }
+.size-square .bars, .size-portrait .bars { width: 260px; height: 68px; }
+.size-square .site, .size-portrait .site { max-width: 420px; font-size: 21px; }
+.size-square .notch, .size-portrait .notch { top: auto; bottom: 156px; }
+.size-square .notch-a, .size-portrait .notch-a { left: -26px; right: auto; }
+.size-square .notch-b, .size-portrait .notch-b { right: -26px; }`;
 
 export const launch: StarterTemplate = {
   id: 'launch',
   name: 'Launch',
-  description: 'Centred announcement card for a product launch, a release or a new feature.',
+  description: 'Announcement card for a launch, a release or a new feature, drawn as a ticket with a tear-off stub.',
   html,
   css,
   fields: [
     { name: 'title', description: 'The announcement.', example: 'Scheduled reports are here', required: true },
     { name: 'description', description: 'One or two lines under the announcement.', example: 'Send any dashboard to your team every Monday morning.' },
-    { name: 'author', description: 'Product or company name, shown at the bottom.', example: 'Northwind' },
-    { name: 'image', description: 'Absolute URL of the product logo (square); drawn small before the name.', example: 'https://example.com/logo.png' },
-    { name: 'site', description: 'Domain, shown after the name.', example: 'northwind.example' },
-    { name: 'tag', description: 'Short label in a pill above the announcement.', example: 'New' },
-    { name: 'theme', description: 'light (default, a violet colour field) or dark (near black).', example: 'light' },
+    { name: 'author', description: 'Product, company or team name, shown in bold at the bottom of the ticket.', example: 'Northwind' },
+    { name: 'image', description: 'Absolute URL of the product logo (square works best); replaces the spark on the stub.', example: 'https://example.com/logo.png' },
+    { name: 'site', description: 'Domain or site name, printed under the bar code on the stub.', example: 'northwind.example' },
+    { name: 'tag', description: 'Short label in the pill above the announcement, for example New or a version number.', example: 'New in 3.0' },
+    { name: 'theme', description: 'light (default) or dark.', example: 'light' },
   ],
   sample: {
-    tag: 'New',
+    tag: 'New in 3.0',
     title: 'Scheduled reports are here',
     description: 'Send any dashboard to your team every Monday morning.',
     author: 'Northwind',

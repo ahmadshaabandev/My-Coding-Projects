@@ -3,7 +3,7 @@
 # module rules mirror ../wrangler.toml so the renderer runs exactly as in the product.
 
 name = "linktocard-samples"
-main = "samples-worker.ts"
+main = "samples-worker.mts"
 compatibility_date = "2026-11-19"
 workers_dev = false
 

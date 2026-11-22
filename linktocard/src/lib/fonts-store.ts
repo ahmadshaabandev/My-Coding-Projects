@@ -8,7 +8,7 @@
 import { getPlan } from '../billing/plans';
 import { all, first, run } from '../db/client';
 import { renderCard } from '../render';
-import { bundledFamily } from '../render/fonts';
+import { FONTS, bundledFamily } from '../render/fonts';
 import type { Env, FontRow, LoadedFont, RenderDeps, UserRow } from '../types';
 import { randomId, sha256Hex } from './crypto';
 import { ApiError } from './errors';
@@ -111,7 +111,9 @@ export function parseFontDescriptor(input: { family?: string; weight?: string; s
       'Pass ?family= with the name you will use in CSS font-family: 1 to 64 letters, digits, spaces, "-" or "_", starting with a letter or digit.',
     );
   }
-  if (bundledFamily(family)) {
+  // Generic keywords and bundled names (including the per-script subsets the renderer registers) stay ours.
+  const reserved = bundledFamily(family) !== undefined || FONTS.some((font) => font.name.toLowerCase() === family.toLowerCase());
+  if (reserved) {
     throw new ApiError('invalid_request', `"${family}" is a built-in font family. Choose another family name for your upload.`);
   }
   const weight = Number(input.weight ?? '400');

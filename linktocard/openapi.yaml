@@ -1,0 +1,669 @@
+openapi: 3.1.0
+info:
+  title: Link To Card API
+  version: "1.0.0"
+  summary: Social-card images from HTML and CSS templates.
+  description: |
+    Renders Open Graph / social-card images from HTML and CSS templates.
+
+    Two ways to get an image:
+    - a signed URL (GET /v1/og/...) that you put in <meta property="og:image">;
+    - POST /v1/images with an API key.
+
+    One image is one rendered size. Cache hits and failed renders are never counted.
+    Human documentation: https://linktocard.com/docs/api
+servers:
+  - url: https://linktocard.com
+tags:
+  - name: Images
+  - name: Account
+paths:
+  /v1/images:
+    post:
+      tags: [Images]
+      operationId: createImage
+      summary: Render one card, or return it from cache.
+      description: |
+        Renders the card and stores it for the plan's cache period, or returns the stored
+        image when the same card (account, template, data, size, format) was rendered before.
+        A cached response is not counted against the monthly allowance.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageRequest"
+            examples:
+              starter:
+                summary: A starter template
+                value:
+                  template: blog
+                  data:
+                    title: How we cut our build time in half
+                    author: Maya Chen
+              inline:
+                summary: Inline HTML and CSS
+                value:
+                  html: '<div class="card"><h1>{{title}}</h1></div>'
+                  css: ".card { display: flex; width: 100%; height: 100%; padding: 80px } h1 { font-size: 80px }"
+                  data:
+                    title: Hello from my own template
+                  format: jpeg
+      responses:
+        "200":
+          description: |
+            The image. JSON by default; the image bytes when the request has "response": "binary".
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+            X-LTC-Cache:
+              $ref: "#/components/headers/X-LTC-Cache"
+            X-LTC-Image-Url:
+              description: Binary responses only. The public URL of the stored image.
+              schema:
+                type: string
+                format: uri
+            X-LTC-Warnings:
+              description: Binary responses only. The render warnings as a URI-encoded JSON array of strings.
+              schema:
+                type: string
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Image"
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "504":
+          $ref: "#/components/responses/RenderTimeout"
+  /v1/usage:
+    get:
+      tags: [Account]
+      operationId: getUsage
+      summary: The allowance for the current period.
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: Usage for the current period.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usage"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/templates:
+    get:
+      tags: [Account]
+      operationId: listTemplates
+      summary: The starter templates and the account's own templates.
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: Templates that can be used as "template".
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateList"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/og/{site_id}/{template}.{ext}:
+    get:
+      tags: [Images]
+      operationId: getSignedCard
+      summary: A signed card URL, for og:image.
+      description: |
+        Public. Authenticated by the "sig" query parameter: the lowercase hexadecimal
+        HMAC-SHA256, keyed with the site secret, of these lines joined with "\n":
+
+          1. the path, e.g. /v1/og/s_4k2j9x0q1m7c8d5e/blog.png
+          2. the parameter names (without "sig"), sorted, joined with ","
+          3. one "name=value" line per parameter in that order, with decoded values
+
+        Every other query parameter is template data. Names match ^[a-z][a-z0-9_]{0,31}$,
+        each may appear once, at most 24 of them (plus "size"), values at most 1000 characters
+        and without control characters. Path and query together are at most 4096 characters.
+
+        The first request renders, stores and counts the image; later requests are served
+        from cache and are not counted. HEAD never renders and never counts.
+      security: []
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          description: Site id from the dashboard.
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9_-]{1,64}$"
+          example: s_4k2j9x0q1m7c8d5e
+        - name: template
+          in: path
+          required: true
+          description: A starter template id (blog, dark, quote, launch, docs) or the id of a template owned by the site's account.
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9_-]{1,64}$"
+          example: blog
+        - name: ext
+          in: path
+          required: true
+          description: File extension; chooses the output format. jpg and jpeg both give JPEG.
+          schema:
+            type: string
+            enum: [png, jpg, jpeg, webp]
+        - name: sig
+          in: query
+          required: true
+          description: The signature, 64 hexadecimal characters.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: size
+          in: query
+          required: false
+          description: Output size. Signed like any other parameter.
+          schema:
+            $ref: "#/components/schemas/Size"
+        - name: data
+          in: query
+          required: false
+          description: Template data, one query parameter per key (for example title=Hello&author=Zo%C3%AB).
+          style: form
+          explode: true
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+              maxLength: 1000
+            example:
+              title: Hello world
+              author: Zoë Müller
+        - name: If-None-Match
+          in: header
+          required: false
+          description: An ETag from an earlier response; a match answers 304.
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/ImageFile"
+        "304":
+          description: Not modified (If-None-Match matched).
+        "400":
+          description: unsupported_size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          description: |
+            invalid_signature (details.reason is one of missing_sig, malformed_sig, bad_param_name,
+            duplicate_param, bad_value, too_many_params, url_too_long, signature_mismatch),
+            or account_suspended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "504":
+          $ref: "#/components/responses/RenderTimeout"
+  /i/{account_id}/{id}.{ext}:
+    get:
+      tags: [Images]
+      operationId: getStoredImage
+      summary: A stored image, as returned in "url" by POST /v1/images.
+      description: Public. Serves the stored image until its cache period ends. Never renders.
+      security: []
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: u_hkr8wty4jftnyum3
+        - name: id
+          in: path
+          required: true
+          description: The image id.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: ext
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [png, jpg, jpeg, webp]
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/ImageFile"
+        "304":
+          description: Not modified (If-None-Match matched).
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      description: 'An API key from the dashboard, sent as "Authorization: Bearer ltc_...".'
+  headers:
+    X-Request-Id:
+      description: Identifier of this request. Quote it in support requests.
+      schema:
+        type: string
+    X-LTC-Cache:
+      description: miss when this request rendered (and counted) the image, hit when it was served from cache.
+      schema:
+        type: string
+        enum: [hit, miss]
+    ETag:
+      description: The image id in double quotes.
+      schema:
+        type: string
+    Retry-After:
+      description: Seconds to wait before the next request.
+      schema:
+        type: integer
+  schemas:
+    Size:
+      type: string
+      description: og is 1200x630, square is 1080x1080, portrait is 1080x1350.
+      enum: [og, square, portrait]
+      default: og
+    Format:
+      type: string
+      enum: [png, jpeg, webp]
+      default: png
+    Data:
+      type: object
+      description: |
+        Values for the template's placeholders. At most 24 keys; keys match
+        ^[a-z][a-z0-9_]{0,31}$; values are strings of at most 1000 characters.
+      maxProperties: 24
+      propertyNames:
+        pattern: "^[a-z][a-z0-9_]{0,31}$"
+      additionalProperties:
+        type: string
+        maxLength: 1000
+    ImageRequest:
+      type: object
+      description: Send exactly one of "template" and "html". Unknown fields are refused.
+      additionalProperties: false
+      properties:
+        template:
+          type: string
+          description: A starter template id (blog, dark, quote, launch, docs) or the id of one of your own templates (t_...).
+        html:
+          type: string
+          description: Inline template HTML, at most 32 KB.
+        css:
+          type: string
+          description: Inline template CSS, at most 32 KB. Only together with "html".
+        data:
+          $ref: "#/components/schemas/Data"
+        size:
+          $ref: "#/components/schemas/Size"
+        width:
+          type: integer
+          description: Instead of "size", together with "height". Must equal one of the three sizes.
+          enum: [1200, 1080]
+        height:
+          type: integer
+          enum: [630, 1080, 1350]
+        format:
+          type: string
+          description: jpg is accepted for jpeg.
+          enum: [png, jpeg, jpg, webp]
+          default: png
+        response:
+          type: string
+          enum: [json, binary]
+          default: json
+      oneOf:
+        - required: [template]
+        - required: [html]
+    Image:
+      type: object
+      required: [id, url, width, height, format, bytes, cached, template, created_at, expires_at, warnings, usage]
+      properties:
+        id:
+          type: string
+          description: 64 hexadecimal characters. The same card on the same account always has the same id.
+        url:
+          type: string
+          format: uri
+          description: Public URL of the image. Works until expires_at.
+        width:
+          type: integer
+        height:
+          type: integer
+        format:
+          $ref: "#/components/schemas/Format"
+        bytes:
+          type: integer
+        cached:
+          type: boolean
+          description: false when this request rendered and counted the image, true when it was already stored.
+        template:
+          type: string
+          description: The template id, or "inline" for an html request.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        warnings:
+          type: array
+          description: Things in the template that were removed or ignored. Empty when cached is true.
+          items:
+            type: string
+        usage:
+          $ref: "#/components/schemas/Usage"
+    Usage:
+      type: object
+      required: [plan, period_start, period_end, limit, used, remaining, topup_remaining, total_remaining, cache_days, watermark]
+      properties:
+        plan:
+          type: string
+          enum: [free, starter, pro]
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+          description: When "used" starts again at 0.
+        limit:
+          type: integer
+          description: Images included per period.
+        used:
+          type: integer
+        remaining:
+          type: integer
+        topup_remaining:
+          type: integer
+          description: Images left from purchased top-ups.
+        total_remaining:
+          type: integer
+          description: remaining plus topup_remaining. New renders stop at 0.
+        cache_days:
+          type: integer
+        watermark:
+          type: boolean
+    TemplateField:
+      type: object
+      required: [name, description, example, required]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        example:
+          type: string
+        required:
+          type: boolean
+          description: Marks the field the design is built around. The API does not reject a request without it.
+    StarterTemplate:
+      type: object
+      required: [id, name, description, fields]
+      properties:
+        id:
+          type: string
+          enum: [blog, dark, quote, launch, docs]
+        name:
+          type: string
+        description:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/TemplateField"
+    CustomTemplate:
+      type: object
+      required: [id, name, version, updated_at]
+      properties:
+        id:
+          type: string
+          example: t_mnd7x9sk3v8bwbmc
+        name:
+          type: string
+        version:
+          type: integer
+          description: Goes up each time the template's HTML or CSS changes.
+        updated_at:
+          type: string
+          format: date-time
+    TemplateList:
+      type: object
+      required: [starter, custom]
+      properties:
+        starter:
+          type: array
+          items:
+            $ref: "#/components/schemas/StarterTemplate"
+        custom:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomTemplate"
+    ErrorCode:
+      type: string
+      description: |
+        Stable error code. HTTP status per code:
+        invalid_request 400, unsupported_size 400, unsupported_format 400,
+        unauthorized 401, invalid_api_key 401, quota_exceeded 402,
+        invalid_signature 403, account_suspended 403, plan_required 403, forbidden 403,
+        not_found 404, conflict 409, gone 410, payload_too_large 413,
+        unsupported_media_type 415, template_error 422, image_fetch_failed 422,
+        rate_limited 429, render_failed 500, internal_error 500,
+        not_configured 503, render_timeout 504.
+        unauthorized, plan_required, forbidden, conflict and unsupported_media_type are
+        returned only by the dashboard's own endpoints; gone is reserved.
+      enum:
+        - invalid_request
+        - unsupported_size
+        - unsupported_format
+        - unauthorized
+        - invalid_api_key
+        - quota_exceeded
+        - invalid_signature
+        - account_suspended
+        - plan_required
+        - forbidden
+        - not_found
+        - conflict
+        - gone
+        - payload_too_large
+        - unsupported_media_type
+        - template_error
+        - image_fetch_failed
+        - rate_limited
+        - render_failed
+        - internal_error
+        - not_configured
+        - render_timeout
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, docs]
+          properties:
+            code:
+              $ref: "#/components/schemas/ErrorCode"
+            message:
+              type: string
+              description: Written for a developer; says what to change. The wording may change.
+            docs:
+              type: string
+              format: uri
+              example: https://linktocard.com/docs/api#errors
+            details:
+              type: object
+              description: Present for some errors, for example reason, usage, unknown_fields, limit.
+              additionalProperties: true
+  responses:
+    ImageFile:
+      description: The image.
+      headers:
+        Cache-Control:
+          description: public, max-age=86400, or fewer seconds when the stored image expires sooner.
+          schema:
+            type: string
+        ETag:
+          $ref: "#/components/headers/ETag"
+        X-LTC-Cache:
+          $ref: "#/components/headers/X-LTC-Cache"
+        X-Request-Id:
+          $ref: "#/components/headers/X-Request-Id"
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+        image/jpeg:
+          schema:
+            type: string
+            format: binary
+        image/webp:
+          schema:
+            type: string
+            format: binary
+    BadRequest:
+      description: invalid_request, unsupported_size or unsupported_format.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: invalid_request
+              message: 'Unknown field "tempalte". Allowed fields: template, html, css, data, size, width, height, format, response.'
+              docs: https://linktocard.com/docs/api#errors
+              details:
+                unknown_fields: [tempalte]
+    InvalidApiKey:
+      description: invalid_api_key. The Authorization header is missing, or the key is wrong or revoked.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    QuotaExceeded:
+      description: quota_exceeded. The allowance is used up and the card is not cached. details.usage is the Usage object.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    AccountSuspended:
+      description: account_suspended.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: not_found. Unknown path, site, template or image, or an image whose cache period has ended.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: payload_too_large. The body is over 96 KB, or the template HTML or CSS is over 32 KB.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unprocessable:
+      description: template_error or image_fetch_failed. Nothing is stored or counted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: rate_limited.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/Retry-After"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServerError:
+      description: render_failed or internal_error. Nothing is counted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RenderTimeout:
+      description: render_timeout. The render took longer than 10 seconds. Nothing is counted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

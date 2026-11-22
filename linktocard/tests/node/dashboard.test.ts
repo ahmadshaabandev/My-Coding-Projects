@@ -1,0 +1,342 @@
+// The dashboard's pure rules (site/public/assets/js/dashboard/helpers.js) and the
+// checkout helper it shares with the pricing page. The screens themselves are
+// exercised in a real browser against `wrangler dev`, not here.
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PLANS, TOPUP } from '../../src/billing/plans';
+import { FORMATS, LIMITS, SIZES } from '../../src/config';
+import { STARTER_TEMPLATES } from '../../src/render/templates/index';
+
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+const load = async <T>(name: string): Promise<T> => (await import(pathToFileURL(join(ROOT, 'site/public/assets/js', name)).href)) as T;
+
+type Field = { name: string; description: string; example: string; required: boolean };
+type Usage = { limit: number; used: number; remaining: number; topup_remaining: number; total_remaining: number };
+type User = { id: string; email: string; plan: string; has_billing: boolean; subscription: { status: string } | null };
+type Me = { user: { plan: string }; usage: { topup_remaining: number } };
+type Snapshot = { item: string; plan: string; topup_remaining: number };
+type BillingAction = { type: string; item?: string; plan?: string };
+type Render = { template: string; source: string; width: number; height: number; format: string; bytes: number; charged_to: string };
+
+interface Helpers {
+  TABS: Array<{ id: string; label: string }>;
+  KEY_PLACEHOLDER: string;
+  BLANK_TEMPLATE: { name: string; html: string; css: string };
+  routeFromHash(hash: string): { tab: string; param: string };
+  detectPlaceholders(html: string): string[];
+  customTemplateFields(html: string, css: string): Field[];
+  fieldLabel(name: string): string;
+  sampleValue(name: string): string;
+  initialValues(fields: Array<{ name: string }>, known?: Record<string, unknown>, fallback?: (name: string) => string): Record<string, string>;
+  cardData(values: Record<string, unknown>): Record<string, string>;
+  parseWarnings(header: string | null): string[];
+  insertIndent(value: string, start: number, end: number): { value: string; caret: number };
+  formatCount(count: number): string;
+  formatBytes(bytes: number): string;
+  formatDate(iso: string, timeZone?: string): string;
+  formatDateTime(iso: string, timeZone?: string): string;
+  sizeOption(size: { id: string; width: number; height: number }): { value: string; label: string; detail: string };
+  renderSummary(render: Render, names?: Record<string, string>): Record<'template' | 'via' | 'size' | 'format' | 'bytes' | 'counted', string>;
+  usageView(usage: Usage): { percent: number; level: string; exhausted: boolean };
+  billingActions(user: User, config: { paddle: unknown } | null): BillingAction[];
+  checkoutSnapshot(item: string, me: Me): Snapshot;
+  checkoutSettled(before: Snapshot, me: Me): boolean;
+  pollUntil<T>(
+    loadValue: () => Promise<T>,
+    done: (value: T) => boolean,
+    options?: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> },
+  ): Promise<{ value: T; settled: boolean }>;
+  guideStage(input: { siteCount: number; finished: boolean }): string;
+  curlExample(origin: string, secret?: string): string;
+  fontCssExample(family: string, weight?: number, style?: string): string;
+  fontUploadUrl(descriptor: { family: string; weight: number; style: string }): string;
+  fontSizeProblem(fileBytes: number, maxBytes: number): string | null;
+}
+
+type CheckoutResult = { type: string; url?: string; message?: string; environment?: string; token?: string; options?: Record<string, unknown> };
+interface Checkout {
+  checkoutAction(input: { item: string; user: unknown; config: unknown; origin: string }): CheckoutResult;
+  openCheckout(action: CheckoutResult): Promise<void>;
+}
+
+const helpers = await load<Helpers>('dashboard/helpers.js');
+const usage = (used: number, limit: number, topup = 0): Usage => {
+  const remaining = Math.max(0, limit - used);
+  return { limit, used, remaining, topup_remaining: topup, total_remaining: remaining + topup };
+};
+
+describe('dashboard routing', () => {
+  it('has one tab per screen, in the order the brief lists them', () => {
+    expect(helpers.TABS.map((tab) => tab.id)).toEqual(['overview', 'sites', 'templates', 'keys', 'fonts', 'renders']);
+    for (const tab of helpers.TABS) expect(tab.label.length).toBeGreaterThan(0);
+  });
+
+  it('reads the tab and its parameter from the hash', () => {
+    expect(helpers.routeFromHash('#sites')).toEqual({ tab: 'sites', param: '' });
+    expect(helpers.routeFromHash('#templates/t_abc123')).toEqual({ tab: 'templates', param: 't_abc123' });
+    expect(helpers.routeFromHash('#/keys')).toEqual({ tab: 'keys', param: '' });
+  });
+
+  it('opens the overview for an empty or unknown hash, and for #billing (where /pricing sends paid accounts)', () => {
+    expect(helpers.routeFromHash('')).toEqual({ tab: 'overview', param: '' });
+    expect(helpers.routeFromHash('#nonsense/x')).toEqual({ tab: 'overview', param: '' });
+    expect(helpers.routeFromHash('#billing')).toEqual({ tab: 'overview', param: 'billing' });
+  });
+});
+
+describe('template fields', () => {
+  it('finds placeholders in order of first use, once each, with the renderer syntax', () => {
+    expect(helpers.detectPlaceholders('<h1>{{title}}</h1><p>{{ description }}</p><img src="{{image}}"><b>{{title}}</b>')).toEqual(['title', 'description', 'image']);
+    // Not placeholders for the renderer either: upper case, a leading digit, a dash, single braces.
+    expect(helpers.detectPlaceholders('{{Title}} {{1st}} {{my-key}} {title} {{}}')).toEqual([]);
+    expect(helpers.detectPlaceholders(`{{${'a'.repeat(32)}}} {{${'b'.repeat(33)}}}`)).toEqual(['a'.repeat(32)]);
+  });
+
+  it('agrees with the fields every starter template declares', () => {
+    for (const starter of STARTER_TEMPLATES) {
+      const detected = helpers.customTemplateFields(starter.html, starter.css).map((field) => field.name);
+      expect([...detected].sort(), starter.id).toEqual(starter.fields.map((field) => field.name).sort());
+    }
+  });
+
+  it('puts title and description first and adds theme only when the template styles it', () => {
+    const fields = helpers.customTemplateFields('<i>{{tag}}</i><p>{{description}}</p><h1>{{title}}</h1>', '.theme-dark { color: #fff; }');
+    expect(fields.map((field) => field.name)).toEqual(['title', 'description', 'tag', 'theme']);
+    expect(fields[0]).toEqual({ name: 'title', description: '', example: '', required: false });
+    expect(helpers.customTemplateFields('<h1>{{title}}</h1>', '.card { color: red; }').map((field) => field.name)).toEqual(['title']);
+    expect(helpers.customTemplateFields('<h1 class="t">{{theme}}</h1>', '.theme-dark .t { color: #fff; }').map((field) => field.name)).toEqual(['theme']);
+  });
+
+  it('labels fields in words and invents believable sample text, but never an image URL', () => {
+    expect(helpers.fieldLabel('author_name')).toBe('Author name');
+    expect(helpers.sampleValue('title')).toBe('Your title goes here');
+    expect(helpers.sampleValue('theme')).toBe('light');
+    expect(helpers.sampleValue('price')).toBe('Price');
+    for (const name of ['image', 'logo', 'avatar_url', 'photo']) expect(helpers.sampleValue(name), name).toBe('');
+  });
+
+  it('starts a form from known values and fills the rest from the fallback', () => {
+    const fields = [{ name: 'title' }, { name: 'author' }, { name: 'image' }];
+    expect(helpers.initialValues(fields, { title: 'Known', image: 7 })).toEqual({ title: 'Known', author: '', image: '' });
+    expect(helpers.initialValues(fields, { title: 'Known' }, helpers.sampleValue)).toEqual({ title: 'Known', author: 'Your name', image: '' });
+  });
+
+  it('leaves empty inputs out of the data sent to the API', () => {
+    expect(helpers.cardData({ title: 'Hello', description: '', image: undefined, tag: ' ' })).toEqual({ title: 'Hello', tag: ' ' });
+  });
+
+  it('decodes X-LTC-Warnings and treats anything malformed as no warnings', () => {
+    const header = encodeURIComponent(JSON.stringify(['<script> was removed.', 'Unknown property "float".']));
+    expect(helpers.parseWarnings(header)).toEqual(['<script> was removed.', 'Unknown property "float".']);
+    expect(helpers.parseWarnings(null)).toEqual([]);
+    expect(helpers.parseWarnings('')).toEqual([]);
+    expect(helpers.parseWarnings('%E0%A4%A')).toEqual([]);
+    expect(helpers.parseWarnings(encodeURIComponent('{"not":"a list"}'))).toEqual([]);
+    expect(helpers.parseWarnings(encodeURIComponent('["kept", 3, null]'))).toEqual(['kept']);
+  });
+
+  it('indents with two spaces at the caret and replaces a selection', () => {
+    expect(helpers.insertIndent('ab', 1, 1)).toEqual({ value: 'a  b', caret: 3 });
+    expect(helpers.insertIndent('hello world', 0, 5)).toEqual({ value: '   world', caret: 2 });
+  });
+
+  it('ships a blank template that fits the limits and has a title to fill in', () => {
+    const { name, html, css } = helpers.BLANK_TEMPLATE;
+    expect(name.length).toBeLessThanOrEqual(LIMITS.maxNameChars);
+    expect(Buffer.byteLength(html)).toBeLessThan(LIMITS.maxHtmlBytes);
+    expect(Buffer.byteLength(css)).toBeLessThan(LIMITS.maxCssBytes);
+    expect(helpers.detectPlaceholders(html)).toEqual(['title', 'description']);
+  });
+});
+
+describe('formatting', () => {
+  it('formats counts, bytes and dates', () => {
+    expect(helpers.formatCount(10000)).toBe('10,000');
+    expect(helpers.formatBytes(512)).toBe('512 B');
+    expect(helpers.formatBytes(1536)).toBe('1.5 KB');
+    expect(helpers.formatBytes(48211)).toBe('47 KB');
+    expect(helpers.formatBytes(PLANS.starter.fonts.maxBytesPerFile)).toBe('2 MB');
+    expect(helpers.formatBytes(3.25 * 1024 * 1024)).toBe('3.3 MB');
+    expect(helpers.formatDate('2026-12-01T00:00:00.000Z', 'UTC')).toBe('Dec 1, 2026');
+    expect(helpers.formatDate('2026-12-01T00:00:00.000Z', 'America/Los_Angeles')).toBe('Nov 30, 2026');
+    expect(helpers.formatDateTime('2026-11-22T09:14:00.000Z', 'UTC')).toMatch(/^Nov 22, 2026, 9:14\sAM$/);
+  });
+
+  it('names every size the API offers', () => {
+    const options = Object.values(SIZES).map(({ id, width, height }) => helpers.sizeOption({ id, width, height }));
+    expect(options).toEqual([
+      { value: 'og', label: 'Link preview', detail: '1200 × 630' },
+      { value: 'square', label: 'Square', detail: '1080 × 1080' },
+      { value: 'portrait', label: 'Portrait', detail: '1080 × 1350' },
+    ]);
+    expect(helpers.sizeOption({ id: 'banner', width: 1500, height: 500 }).label).toBe('banner');
+  });
+
+  it('describes a render row in words', () => {
+    const render: Render = { template: 'blog', source: 'og', width: 1200, height: 630, format: 'jpeg', bytes: 48211, charged_to: 'plan' };
+    expect(helpers.renderSummary(render, { blog: 'Blog post' })).toEqual({
+      template: 'Blog post',
+      via: 'Signed URL',
+      size: '1200 × 630',
+      format: 'JPG',
+      bytes: '47 KB',
+      counted: 'Plan',
+    });
+    const inline = helpers.renderSummary({ ...render, template: 'inline', source: 'api', format: 'webp', charged_to: 'topup' });
+    expect(inline).toMatchObject({ template: 'Inline HTML', via: 'API', format: 'WEBP', counted: 'Top-up' });
+    // A template that was deleted since has no name left: its id is shown.
+    expect(helpers.renderSummary({ ...render, template: 't_gone' }, {}).template).toBe('t_gone');
+  });
+});
+
+describe('usage and billing', () => {
+  it('turns the meter up at 90% and to danger only when nothing at all is left', () => {
+    expect(helpers.usageView(usage(0, 100))).toEqual({ percent: 0, level: 'ok', exhausted: false });
+    expect(helpers.usageView(usage(89, 100))).toMatchObject({ percent: 89, level: 'ok' });
+    expect(helpers.usageView(usage(90, 100))).toMatchObject({ percent: 90, level: 'warn', exhausted: false });
+    expect(helpers.usageView(usage(100, 100))).toEqual({ percent: 100, level: 'danger', exhausted: true });
+    // The monthly allowance is gone but a top-up still pays: a warning, not an outage.
+    expect(helpers.usageView(usage(2000, 2000, 400))).toEqual({ percent: 100, level: 'warn', exhausted: false });
+    expect(helpers.usageView(usage(2500, 2000))).toMatchObject({ percent: 100, exhausted: true });
+  });
+
+  const configured = { paddle: { environment: 'sandbox', client_token: 'test_token', prices: { starter: 'pri_s', pro: 'pri_p', topup: 'pri_t' } } };
+  const free: User = { id: 'u_1', email: 'a@example.com', plan: 'free', has_billing: false, subscription: null };
+  const starter: User = { ...free, plan: 'starter', has_billing: true, subscription: { status: 'active' } };
+
+  it('offers no billing buttons at all when Paddle is not configured', () => {
+    expect(helpers.billingActions(free, { paddle: null })).toEqual([]);
+    expect(helpers.billingActions(starter, null)).toEqual([]);
+  });
+
+  it('offers a Free account the two upgrades, and the portal only if it ever paid', () => {
+    expect(helpers.billingActions(free, configured)).toEqual([
+      { type: 'checkout', item: 'starter' },
+      { type: 'checkout', item: 'pro' },
+    ]);
+    expect(helpers.billingActions({ ...free, has_billing: true }, configured).at(-1)).toEqual({ type: 'portal' });
+  });
+
+  it('offers a paid account a top-up, the other plan and the portal', () => {
+    expect(helpers.billingActions(starter, configured)).toEqual([{ type: 'checkout', item: 'topup' }, { type: 'change-plan', plan: 'pro' }, { type: 'portal' }]);
+    expect(helpers.billingActions({ ...starter, plan: 'pro' }, configured)[1]).toEqual({ type: 'change-plan', plan: 'starter' });
+    for (const status of ['trialing', 'past_due']) {
+      expect(helpers.billingActions({ ...starter, subscription: { status } }, configured).map((action) => action.type)).toContain('change-plan');
+    }
+    // The API refuses a plan change without a live subscription, so the button is not offered.
+    for (const subscription of [null, { status: 'canceled' }, { status: 'paused' }]) {
+      expect(helpers.billingActions({ ...starter, subscription }, configured).map((action) => action.type)).toEqual(['checkout', 'portal']);
+    }
+  });
+
+  it('knows when a checkout has reached the account', () => {
+    const before = helpers.checkoutSnapshot('pro', { user: { plan: 'free' }, usage: { topup_remaining: 0 } });
+    expect(before).toEqual({ item: 'pro', plan: 'free', topup_remaining: 0 });
+    expect(helpers.checkoutSettled(before, { user: { plan: 'free' }, usage: { topup_remaining: 0 } })).toBe(false);
+    expect(helpers.checkoutSettled(before, { user: { plan: 'pro' }, usage: { topup_remaining: 0 } })).toBe(true);
+
+    const topup = helpers.checkoutSnapshot('topup', { user: { plan: 'starter' }, usage: { topup_remaining: 250 } });
+    expect(helpers.checkoutSettled(topup, { user: { plan: 'starter' }, usage: { topup_remaining: 250 } })).toBe(false);
+    expect(helpers.checkoutSettled(topup, { user: { plan: 'starter' }, usage: { topup_remaining: 250 + TOPUP.images } })).toBe(true);
+  });
+
+  it('polls until done, waits between attempts and gives up after about 30 seconds', async () => {
+    const sleeps: number[] = [];
+    const sleep = async (ms: number): Promise<void> => {
+      sleeps.push(ms);
+    };
+    let calls = 0;
+    const counter = async (): Promise<number> => ++calls;
+
+    expect(await helpers.pollUntil(counter, (value) => value === 3, { sleep })).toEqual({ value: 3, settled: true });
+    expect(sleeps).toEqual([2000, 2000]);
+
+    calls = 0;
+    sleeps.length = 0;
+    expect(await helpers.pollUntil(counter, () => false, { sleep })).toEqual({ value: 15, settled: false });
+    expect(sleeps.reduce((sum, ms) => sum + ms, 0)).toBe(28_000);
+
+    calls = 0;
+    sleeps.length = 0;
+    expect(await helpers.pollUntil(counter, () => true, { sleep })).toEqual({ value: 1, settled: true });
+    expect(sleeps).toEqual([]);
+    await expect(helpers.pollUntil(() => Promise.reject(new Error('offline')), () => true, { sleep })).rejects.toThrow('offline');
+  });
+
+  it('walks the first-run guide from site to card to done', () => {
+    expect(helpers.guideStage({ siteCount: 0, finished: false })).toBe('site');
+    expect(helpers.guideStage({ siteCount: 2, finished: false })).toBe('card');
+    expect(helpers.guideStage({ siteCount: 0, finished: true })).toBe('done');
+  });
+});
+
+describe('copyable examples', () => {
+  it('writes a curl call whose body is valid for POST /v1/images', () => {
+    const curl = helpers.curlExample('https://linktocard.com');
+    expect(curl).toContain('curl -X POST https://linktocard.com/v1/images');
+    expect(curl).toContain(`-H "Authorization: Bearer ${helpers.KEY_PLACEHOLDER}"`);
+    expect(helpers.KEY_PLACEHOLDER.startsWith('ltc_')).toBe(true);
+    const body = JSON.parse(/-d '(.*)'$/.exec(curl)?.[1] ?? '') as { template: string; data: Record<string, string>; size: string; format: string };
+    expect(STARTER_TEMPLATES.map((template) => template.id)).toContain(body.template);
+    expect(Object.keys(SIZES)).toContain(body.size);
+    expect(FORMATS).toContain(body.format);
+    expect(body.data.title).toBeTruthy();
+    expect(helpers.curlExample('http://localhost:8787', 'ltc_secret')).toContain('Bearer ltc_secret');
+  });
+
+  it('shows how to use an uploaded font and where to upload it', () => {
+    expect(helpers.fontCssExample('Acme Sans', 700)).toBe('.title {\n  font-family: "Acme Sans", sans-serif;\n  font-weight: 700;\n}');
+    expect(helpers.fontCssExample('Acme Sans', 400, 'italic')).toContain('  font-style: italic;');
+    expect(helpers.fontCssExample('Acme Sans')).toContain('font-weight: 400;');
+    const url = new URL(helpers.fontUploadUrl({ family: 'Acme Sans & Co', weight: 700, style: 'italic' }), 'https://linktocard.com');
+    expect(url.pathname).toBe('/api/fonts');
+    expect(Object.fromEntries(url.searchParams)).toEqual({ family: 'Acme Sans & Co', weight: '700', style: 'italic' });
+  });
+
+  it('refuses an oversized font file in a sentence, before any upload', () => {
+    const cap = PLANS.starter.fonts.maxBytesPerFile;
+    expect(helpers.fontSizeProblem(cap, cap)).toBeNull();
+    expect(helpers.fontSizeProblem(cap + 1024 * 1024, cap)).toBe('This file is 3 MB. Your plan allows 2 MB per font file.');
+  });
+});
+
+describe('shared checkout helper', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const config = { paddle: { environment: 'sandbox', client_token: 'test_token', prices: { starter: 'pri_s', pro: 'pri_p', topup: 'pri_t' } } };
+  const origin = 'https://linktocard.com';
+
+  it('is the same function on the pricing page and in the dashboard', async () => {
+    const pricing = await load<Pick<Checkout, 'checkoutAction'>>('pricing.js');
+    const checkout = await load<Checkout>('checkout.js');
+    expect(pricing.checkoutAction).toBe(checkout.checkoutAction);
+  });
+
+  it('builds the checkout the webhook needs: price, user id as custom data, email, return address', async () => {
+    const { checkoutAction } = await load<Checkout>('checkout.js');
+    const upgrade = checkoutAction({ item: 'starter', user: { id: 'u_7', email: 'me@example.com', plan: 'free' }, config, origin });
+    expect(upgrade.options).toEqual({
+      items: [{ priceId: 'pri_s', quantity: 1 }],
+      customer: { email: 'me@example.com' },
+      customData: { user_id: 'u_7' },
+      settings: { displayMode: 'overlay', successUrl: 'https://linktocard.com/dashboard?checkout=success' },
+    });
+    const topup = checkoutAction({ item: 'topup', user: { id: 'u_7', email: 'me@example.com', plan: 'pro' }, config, origin });
+    expect(topup.options).toMatchObject({ items: [{ priceId: 'pri_t', quantity: 1 }], customData: { user_id: 'u_7' } });
+  });
+
+  it('initializes Paddle once, in the sandbox when configured so, and opens every checkout', async () => {
+    const { checkoutAction, openCheckout } = await load<Checkout>('checkout.js');
+    const Paddle = { Environment: { set: vi.fn() }, Initialize: vi.fn(), Checkout: { open: vi.fn() } };
+    vi.stubGlobal('window', { Paddle });
+    const action = checkoutAction({ item: 'pro', user: { id: 'u_7', email: 'me@example.com', plan: 'free' }, config, origin });
+
+    await openCheckout(action);
+    await openCheckout(action);
+    expect(Paddle.Environment.set.mock.calls).toEqual([['sandbox']]);
+    expect(Paddle.Initialize.mock.calls).toEqual([[{ token: 'test_token' }]]);
+    expect(Paddle.Checkout.open).toHaveBeenCalledTimes(2);
+    expect(Paddle.Checkout.open).toHaveBeenLastCalledWith(action.options);
+  });
+});

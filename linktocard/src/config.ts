@@ -105,7 +105,7 @@ export const LIMITS = {
  * Rate limits. The numbers here are documentation + the fallback in-memory
  * limiter; the production limiter is the Cloudflare Rate Limiting binding of
  * the same name declared in wrangler.toml (keep the two in sync - checked by
- * tests/config.test.ts).
+ * tests/node/forbidden-deps.test.ts).
  */
 export const RATE_LIMITS = {
   RL_IP: { limit: 300, periodSeconds: 60, scope: 'per IP address, all /v1 endpoints (edge-cache hits are not limited)' },

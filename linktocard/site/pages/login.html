@@ -5,13 +5,13 @@ noindex: true
 scripts: login
 ---
 <main class="container auth">
-<div class="card auth-card">
-<h1>Sign in</h1>
-<p class="muted" id="login-intro">Enter your email address and we will send you a sign-in link. No password. If you are new, this also creates your free account.</p>
+<div class="card card-pop auth-card">
+<h1>Start free or sign in.</h1>
+<p class="muted" id="login-intro">Same step for both: enter your email address and we send you a sign-in link. No password. If you are new, this also creates your free account.</p>
 <form class="stack" id="login-form">
 <label class="field">
 <span class="label">Email address</span>
-<input class="input" type="email" name="email" required autocomplete="email" maxlength="254" autofocus>
+<input class="input" type="email" name="email" required autocomplete="email" maxlength="254" placeholder="you@your-site.com" autofocus>
 </label>
 <p class="alert alert-danger" id="login-error" role="alert" hidden></p>
 <button class="btn btn-primary btn-block" type="submit">Email me a sign-in link</button>

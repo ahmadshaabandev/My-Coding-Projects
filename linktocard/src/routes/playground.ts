@@ -65,14 +65,12 @@ playgroundRouter.get('/card.png', async (c) => {
     imageHeaders({ format: 'png', etag, cacheControl, cache });
 
   const object = head || conditional ? await c.env.BUCKET.head(r2Key) : await c.env.BUCKET.get(r2Key);
-  const body = object && 'body' in object ? (object as R2ObjectBody).body : null;
   if (object && Number(object.customMetadata?.createdAt) > now - KEEP_MS) {
     if (conditional) return notModified(headers('hit'));
     const hit = headers('hit');
     if (head) hit.set('content-length', String(object.size));
-    return new Response(body, { headers: hit });
+    return new Response('body' in object ? (object as R2ObjectBody).body : null, { headers: hit });
   }
-  await body?.cancel();
   // HEAD never renders: it reports the type a GET would return and is not cacheable.
   if (head) return new Response(null, { headers: headers('miss', 'no-store') });
 
