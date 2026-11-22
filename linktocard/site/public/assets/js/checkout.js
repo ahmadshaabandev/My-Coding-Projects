@@ -16,7 +16,7 @@ export function checkoutAction({ item, user, config, origin }) {
   if (!user) return { type: 'redirect', url: `/login?next=/pricing${encodeURIComponent(`?checkout=${item}`)}` };
   const paid = Boolean(user.plan) && user.plan !== 'free';
   if (item !== 'topup' && paid) return { type: 'redirect', url: '/dashboard#billing' };
-  if (item === 'topup' && !paid) return { type: 'message', message: 'Top-ups are available on the Starter and Pro plans.' };
+  if (item === 'topup' && !paid) return { type: 'message', message: `Top-ups are available on the ${topUpPlanNames(config)} plans.` };
   const paddle = config?.paddle;
   const priceId = paddle?.prices?.[item];
   if (!paddle?.client_token || !priceId) return { type: 'message', message: 'Checkout is not configured yet.' };
@@ -33,6 +33,12 @@ export function checkoutAction({ item, user, config, origin }) {
   };
 }
 
+/** Names of the plans that can buy a top-up, from /api/config (which reads src/billing/plans.ts). */
+function topUpPlanNames(config) {
+  const names = (config?.plans ?? []).filter((plan) => plan.top_ups).map((plan) => plan.name);
+  return names.length > 0 ? names.join(' and ') : 'Starter and Pro';
+}
+
 function loadPaddle() {
   if (window.Paddle) return Promise.resolve(window.Paddle);
   return new Promise((resolve, reject) => {
@@ -46,13 +52,19 @@ function loadPaddle() {
 
 let initialized = false;
 
-/** Opens the overlay for a `checkout` action from checkoutAction(). Rejects when Paddle.js cannot be loaded. */
-export async function openCheckout(action) {
+/** Loads Paddle.js and initializes it once. Rejects when Paddle.js cannot be loaded. */
+export async function readyPaddle({ environment, token }) {
   const Paddle = await loadPaddle();
   if (!initialized) {
-    if (action.environment === 'sandbox') Paddle.Environment.set('sandbox');
-    Paddle.Initialize({ token: action.token });
+    if (environment === 'sandbox') Paddle.Environment.set('sandbox');
+    Paddle.Initialize({ token });
     initialized = true;
   }
+  return Paddle;
+}
+
+/** Opens the overlay for a `checkout` action from checkoutAction(). Rejects when Paddle.js cannot be loaded. */
+export async function openCheckout(action) {
+  const Paddle = await readyPaddle(action);
   Paddle.Checkout.open(action.options);
 }

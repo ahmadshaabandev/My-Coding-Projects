@@ -13,6 +13,7 @@
 import { Hono, type Context } from 'hono';
 import {
   DEFAULT_REDIRECT,
+  clientAtMagicLinkCap,
   consumeMagicLink,
   issueMagicLink,
   safeNextPath,
@@ -28,18 +29,17 @@ import {
 import { findOrCreateUserByEmail, normalizeEmail } from '../db/client';
 import { isLocalEnvironment } from '../lib/email';
 import { ApiError } from '../lib/errors';
+import { readBodyBytes } from '../lib/http';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
 import type { AppEnv } from '../types';
 
 /** These bodies hold an email address or a token; anything bigger is not a sign-in request. */
-const MAX_BODY_CHARS = 4096;
+const MAX_BODY_BYTES = 4096;
 
 async function readJsonObject(c: Context<AppEnv>): Promise<Record<string, unknown>> {
-  if (Number(c.req.header('content-length') ?? 0) > MAX_BODY_CHARS) {
-    throw new ApiError('payload_too_large', 'The request body is too large.');
-  }
-  const raw = await c.req.text();
-  if (raw.length > MAX_BODY_CHARS) throw new ApiError('payload_too_large', 'The request body is too large.');
+  // Capped while reading: these routes are public, and a body without Content-Length
+  // must not be buffered whole before it is refused.
+  const raw = new TextDecoder().decode(await readBodyBytes(c.req.raw, MAX_BODY_BYTES));
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -68,10 +68,17 @@ authRouter.post('/magic-link', async (c) => {
   const body = await readJsonObject(c);
   const email = normalizeEmail(body.email);
   if (!email) throw new ApiError('invalid_request', 'Enter a valid email address.');
+  const now = Date.now();
+  // Depends only on the client, never on the address, so it reveals nothing about an account.
+  if (await clientAtMagicLinkCap(c.env.DB, ip, now)) {
+    throw new ApiError('rate_limited', 'Too many sign-in emails were requested from your network in the last hour. Try again later.', {
+      headers: { 'retry-after': '3600' },
+    });
+  }
 
   // The answer is the same whether or not an account exists, a link was sent or
   // the hourly cap was hit: it must not reveal anything about the address.
-  const issued = await issueMagicLink(c.env, { email, next: safeNextPath(body.next), ip, now: Date.now() });
+  const issued = await issueMagicLink(c.env, { email, next: safeNextPath(body.next), ip, now });
   // Local development works without a mail provider: the link that could not be mailed is handed back.
   const unsent = issued !== null && !issued.delivery.ok && issued.delivery.error === 'not_configured';
   const devLink = unsent && isLocalEnvironment(c.env) ? issued.link : null;

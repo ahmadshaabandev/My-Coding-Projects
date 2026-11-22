@@ -13,10 +13,15 @@ import type { Env } from '../types';
 export const CLEANUP_LIMITS = {
   /** Rows touched by any single statement. */
   rowsPerStatement: 500,
-  /** R2 objects deleted per run, per kind (expired renders, old playground images). */
-  r2DeletesPerRun: 300,
+  /**
+   * R2 objects deleted per run, per kind (expired renders, old playground images).
+   * It has to stay above what can expire in a day: one Pro account alone renders
+   * about 330 images a day, and the privacy page promises that images are kept
+   * for the plan's cache period, not longer.
+   */
+  r2DeletesPerRun: 6000,
   /** Pages of 500 keys listed under p/ per run while looking for old playground images. */
-  playgroundListPages: 4,
+  playgroundListPages: 20,
 } as const;
 
 const LOGIN_TOKEN_KEEP_MS = DAY_MS;
@@ -26,6 +31,8 @@ const PLAYGROUND_PREFIX = 'p/';
 const LIST_PAGE_SIZE = 500;
 /** D1 allows 100 bound parameters per statement. */
 const KEYS_PER_DELETE = 90;
+/** Keys per R2 delete call (R2 takes at most 1000) and expired renders handled per pass. */
+const R2_DELETE_BATCH = 500;
 
 export interface CleanupReport {
   loginTokens: number;
@@ -41,23 +48,32 @@ export interface CleanupReport {
  * is ever left behind without the row that points at it.
  */
 async function deleteExpiredRenders(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): Promise<number> {
-  const expired = await all<{ cache_key: string; r2_key: string }>(
-    env.DB,
-    'SELECT cache_key, r2_key FROM renders WHERE expires_at <= ?1 ORDER BY expires_at LIMIT ?2',
-    now,
-    CLEANUP_LIMITS.r2DeletesPerRun,
-  );
-  if (expired.length === 0) return 0;
-  await env.BUCKET.delete(expired.map((row) => row.r2_key));
-  const statements: D1PreparedStatement[] = [];
-  for (let start = 0; start < expired.length; start += KEYS_PER_DELETE) {
-    const keys = expired.slice(start, start + KEYS_PER_DELETE).map((row) => row.cache_key);
-    const placeholders = keys.map((_, index) => `?${index + 2}`).join(', ');
-    // "expires_at <= now" again: a row that was re-charged since the SELECT is live and must stay.
-    statements.push(env.DB.prepare(`DELETE FROM renders WHERE expires_at <= ?1 AND cache_key IN (${placeholders})`).bind(now, ...keys));
+  let deleted = 0;
+  // Several passes per run, oldest first. `seen` bounds the loop even if a pass deletes nothing.
+  for (let seen = 0; seen < CLEANUP_LIMITS.r2DeletesPerRun; ) {
+    const expired = await all<{ cache_key: string; r2_key: string }>(
+      env.DB,
+      'SELECT cache_key, r2_key FROM renders WHERE expires_at <= ?1 ORDER BY expires_at LIMIT ?2',
+      now,
+      Math.min(R2_DELETE_BATCH, CLEANUP_LIMITS.r2DeletesPerRun - seen),
+    );
+    if (expired.length === 0) break;
+    seen += expired.length;
+    await env.BUCKET.delete(expired.map((row) => row.r2_key));
+    const statements: D1PreparedStatement[] = [];
+    for (let start = 0; start < expired.length; start += KEYS_PER_DELETE) {
+      const keys = expired.slice(start, start + KEYS_PER_DELETE).map((row) => row.cache_key);
+      const placeholders = keys.map((_, index) => `?${index + 2}`).join(', ');
+      // "expires_at <= now" again: a row that was re-charged since the SELECT is live and must stay.
+      statements.push(env.DB.prepare(`DELETE FROM renders WHERE expires_at <= ?1 AND cache_key IN (${placeholders})`).bind(now, ...keys));
+    }
+    const results = await env.DB.batch(statements);
+    const changed = results.reduce((total, result) => total + (result.meta.changes ?? 0), 0);
+    deleted += changed;
+    // Rows that could not be deleted would be selected again: stop and leave them to the next run.
+    if (changed < expired.length) break;
   }
-  const results = await env.DB.batch(statements);
-  return results.reduce((total, result) => total + (result.meta.changes ?? 0), 0);
+  return deleted;
 }
 
 function createdAt(object: R2Object): number {
@@ -77,7 +93,7 @@ async function deleteOldPlaygroundImages(bucket: R2Bucket, now: number): Promise
     if (!listing.truncated) break;
     cursor = listing.cursor;
   }
-  if (old.length > 0) await bucket.delete(old);
+  for (let start = 0; start < old.length; start += R2_DELETE_BATCH) await bucket.delete(old.slice(start, start + R2_DELETE_BATCH));
   return old.length;
 }
 

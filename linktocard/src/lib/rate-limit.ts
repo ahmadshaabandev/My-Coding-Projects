@@ -77,7 +77,35 @@ export async function enforceRateLimit(env: Env, name: RateLimitName, key: strin
   });
 }
 
-/** Best client IP we can know. Cloudflare sets CF-Connecting-IP on every request. */
+/**
+ * The first four groups of an IPv6 address as "a:b:c:d::/64", or null when the
+ * text is not one. An IPv4-mapped address (::ffff:a.b.c.d) is its IPv4 address.
+ */
+function ipv6Network(ip: string): string | null {
+  const halves = ip.split('::');
+  if (halves.length > 2) return null;
+  const groupsOf = (part: string): string[] => (part === '' ? [] : part.split(':'));
+  const head = groupsOf(halves[0]!);
+  const tail = halves.length === 2 ? groupsOf(halves[1]!) : [];
+  const last = tail.length > 0 ? tail : head;
+  const dotted = last[last.length - 1]?.includes('.') ? last.pop()! : null;
+  const explicit = head.length + tail.length + (dotted ? 2 : 0);
+  if (halves.length === 1 ? explicit !== 8 : explicit > 7) return null;
+  const groups = [...head, ...new Array<string>(8 - explicit).fill('0'), ...tail];
+  if (!groups.every((group) => /^[0-9a-f]{1,4}$/.test(group))) return null;
+  const values = groups.map((group) => Number.parseInt(group, 16));
+  if (dotted && values.slice(0, 5).every((value) => value === 0) && values[5] === 0xffff) return dotted;
+  return `${values.slice(0, 4).map((value) => value.toString(16)).join(':')}::/64`;
+}
+
+/**
+ * Who a per-IP limit counts as one client. Cloudflare sets CF-Connecting-IP on
+ * every request. An IPv4 address is itself. An IPv6 address is its /64: one
+ * home line or server is handed at least that much, so limiting single
+ * addresses would let it pick a fresh one for every request.
+ */
 export function clientIp(request: Request): string {
-  return request.headers.get('cf-connecting-ip') ?? 'unknown';
+  const ip = (request.headers.get('cf-connecting-ip') ?? '').trim().toLowerCase();
+  if (ip === '') return 'unknown';
+  return ip.includes(':') ? (ipv6Network(ip) ?? ip) : ip;
 }

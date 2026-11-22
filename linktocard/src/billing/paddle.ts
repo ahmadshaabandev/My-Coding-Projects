@@ -224,7 +224,7 @@ export const HANDLED_EVENT_TYPES: readonly string[] = [...SUBSCRIPTION_EVENTS, T
 const ENTITLED_STATUSES: readonly string[] = ['active', 'trialing', 'past_due'];
 const ENDED_STATUSES: readonly string[] = ['canceled', 'paused'];
 
-type BillingUser = Pick<UserRow, 'id' | 'paddle_subscription_id' | 'subscription_event_at'>;
+type BillingUser = Pick<UserRow, 'id' | 'paddle_subscription_id' | 'subscription_status' | 'cancel_at' | 'subscription_event_at'>;
 type UserKey = 'id' | 'paddle_subscription_id' | 'paddle_customer_id';
 
 /** First user matched by the given keys, tried in order. */
@@ -233,7 +233,8 @@ async function findUser(db: D1Database, keys: ReadonlyArray<[UserKey, string | n
     if (!value) continue;
     const user = await first<BillingUser>(
       db,
-      `SELECT id, paddle_subscription_id, subscription_event_at FROM users WHERE ${column} = ?1 ORDER BY created_at LIMIT 1`,
+      `SELECT id, paddle_subscription_id, subscription_status, cancel_at, subscription_event_at
+       FROM users WHERE ${column} = ?1 ORDER BY created_at LIMIT 1`,
       value,
     );
     if (user) return user;
@@ -276,13 +277,26 @@ interface PlanPrice {
   priceId: string;
 }
 
+/** The plan a subscription pays for. With several plan items the highest one counts, whatever their order. */
 function subscriptionPlan(env: Env, priceIds: readonly string[]): PlanPrice | null {
-  for (const priceId of priceIds) {
-    const product = planForPriceId(env, priceId);
-    if (product === 'starter' || product === 'pro') return { plan: product, priceId };
+  for (const plan of ['pro', 'starter'] as const) {
+    const priceId = priceIds.find((id) => planForPriceId(env, id) === plan);
+    if (priceId) return { plan, priceId };
   }
   return null;
 }
+
+/**
+ * A Paddle customer belongs to one account. The customer id on an event is
+ * chosen by whoever paid (Paddle attaches a checkout to the existing customer
+ * with the email typed into it), and "Manage billing" mints a signed-in portal
+ * session for the stored id. So an id that another account already holds is
+ * never copied onto this one. ?N placeholders: customer id, user id.
+ */
+const adoptCustomerSql = (customer: string, user: string): string =>
+  `CASE WHEN ${customer} IS NULL
+          OR EXISTS (SELECT 1 FROM users AS other WHERE other.paddle_customer_id = ${customer} AND other.id <> ${user})
+        THEN paddle_customer_id ELSE ${customer} END`;
 
 /**
  * One handler for every subscription.* event: the payload always carries the
@@ -290,7 +304,7 @@ function subscriptionPlan(env: Env, priceIds: readonly string[]): PlanPrice | nu
  * name. (A recovered payment, for example, has no event of its own - it is a
  * subscription.updated whose status is back to active.)
  */
-async function applySubscription(env: Env, db: D1Database, event: PaddleEvent): Promise<ApplyResult> {
+async function applySubscription(env: Env, db: D1Database, event: PaddleEvent, now: number): Promise<ApplyResult> {
   const sub = readSubscription(event.data);
   const occurredAt = parseTimestamp(event.occurred_at);
   if (!sub || occurredAt === null) return { result: 'ignored:malformed' };
@@ -327,6 +341,18 @@ async function applySubscription(env: Env, db: D1Database, event: PaddleEvent): 
     return (await revokePlan(db, user.id, mirrored)) ? { result: 'ok', userId: user.id } : ignored('stale');
   }
   if (!ENTITLED_STATUSES.includes(sub.status)) return ignored('unknown_status');
+  // custom_data.user_id is set by the browser that opened the checkout, and
+  // account ids are public (they are in image URLs). Without this, anyone could
+  // buy a subscription "for" a paying customer, have it replace the mirrored
+  // one, and cancel it again - leaving that customer on Free while their own
+  // subscription keeps billing. While the mirrored subscription is in force no
+  // other subscription can take its place; once it has ended, any can.
+  const currentInForce =
+    user.paddle_subscription_id !== null &&
+    user.subscription_status !== null &&
+    ENTITLED_STATUSES.includes(user.subscription_status) &&
+    (user.cancel_at === null || now < user.cancel_at);
+  if (!isCurrent && currentInForce) return ignored('other_subscription');
   if (!matched) return ignored('unknown_price');
   const granted = await grantPlan(db, user.id, mirrored, matched.plan, sub.period, sub.cancelAt);
   return granted ? { result: 'ok', userId: user.id } : ignored('stale');
@@ -357,7 +383,7 @@ async function grantPlan(
     db,
     `UPDATE users SET
        plan = ?1,
-       paddle_customer_id = COALESCE(?2, paddle_customer_id),
+       paddle_customer_id = ${adoptCustomerSql('?2', '?10')},
        paddle_subscription_id = ?3,
        subscription_status = ?4,
        subscription_price_id = ?5,
@@ -385,7 +411,7 @@ async function revokePlan(db: D1Database, userId: string, sub: MirroredSubscript
     db,
     `UPDATE users SET
        plan = 'free',
-       paddle_customer_id = COALESCE(?1, paddle_customer_id),
+       paddle_customer_id = ${adoptCustomerSql('?1', '?6')},
        paddle_subscription_id = ?2,
        subscription_status = ?3,
        subscription_price_id = ?4,
@@ -429,7 +455,13 @@ async function applyCompletedTransaction(env: Env, db: D1Database, event: Paddle
 
   const credited = await creditTopup(db, { userId: user.id, transactionId, images: units * TOPUP.images, now });
   if (customerId) {
-    await run(db, 'UPDATE users SET paddle_customer_id = ?1 WHERE id = ?2 AND paddle_customer_id IS NULL', customerId, user.id);
+    await run(
+      db,
+      `UPDATE users SET paddle_customer_id = ?1 WHERE id = ?2 AND paddle_customer_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM users AS other WHERE other.paddle_customer_id = ?1 AND other.id <> ?2)`,
+      customerId,
+      user.id,
+    );
   }
   return { result: credited ? 'ok' : 'ignored:already_credited', userId: user.id };
 }
@@ -461,7 +493,7 @@ async function applyAdjustment(db: D1Database, event: PaddleEvent, now: number):
  * subscription writes are plain mirrors and top-ups are unique per transaction.
  */
 export async function applyPaddleEvent(env: Env, db: D1Database, event: PaddleEvent, now: number): Promise<ApplyResult> {
-  if (SUBSCRIPTION_EVENTS.includes(event.event_type)) return applySubscription(env, db, event);
+  if (SUBSCRIPTION_EVENTS.includes(event.event_type)) return applySubscription(env, db, event, now);
   if (event.event_type === TOPUP_EVENT) return applyCompletedTransaction(env, db, event, now);
   if (ADJUSTMENT_EVENTS.includes(event.event_type)) return applyAdjustment(db, event, now);
   return { result: 'ignored:unhandled' };

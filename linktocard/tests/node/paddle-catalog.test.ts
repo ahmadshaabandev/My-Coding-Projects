@@ -43,6 +43,17 @@ describe('scripts/seed-paddle-sandbox.md', () => {
     expect(doc).toContain('{APP_URL}/webhooks/paddle');
   });
 
+  it('sets the default payment link to the pricing page, which starts Paddle.js for ?_ptxn', () => {
+    expect(doc).toContain('{APP_URL}/pricing\n');
+    expect(doc).toContain('https://linktocard.com/pricing');
+    const script = (name: string): string =>
+      readFileSync(fileURLToPath(new URL(`../../site/public/assets/js/${name}`, import.meta.url)), 'utf8');
+    // Paddle appends ?_ptxn=<transaction id> to that link; the page must initialize Paddle.js when it sees it.
+    expect(script('pricing.js')).toMatch(/query\.has\('_ptxn'\)\) resumeTransaction\(\)/);
+    expect(script('pricing.js')).toMatch(/await readyPaddle\(/);
+    expect(script('checkout.js')).toMatch(/export async function readyPaddle/);
+  });
+
   it('names both secrets and how to store them, and contains no secret itself', () => {
     for (const environment of ['staging', 'production']) {
       expect(doc).toContain(`npx wrangler secret put PADDLE_API_KEY --env ${environment}`);

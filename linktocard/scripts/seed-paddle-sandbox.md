@@ -57,7 +57,9 @@ Field by field:
   example `Starter monthly USD`. Customers do not see it.
 - Quantity limits (API fields `quantity.minimum` / `quantity.maximum`; the
   form field could not be confirmed): for Starter and Pro set both to 1 if the
-  form offers it. For the top-up keep a maximum above 1 only if you want
+  form offers it: the app grants the plan once however many units are paid
+  for, so a quantity of 2 would charge the customer twice for one plan. For
+  the top-up keep a maximum above 1 only if you want
   customers to buy several at once: each unit credits 1,000 images, valid
   for 365 days.
 
@@ -88,11 +90,19 @@ every file; it goes straight into `wrangler secret put` in section 7.
 ## 5. Default payment link
 
 **Checkout > Checkout configuration > Default payment link** *(label may
-differ)*. Paddle requires one: without it checkout does not open. Set it to an
-`https` page of the staging app that loads Paddle.js (the page with the
-checkout buttons). The sandbox accepts any `https` URL; do not use
-`localhost`. Paddle sends customers to this page from its emails and appends
-`?_ptxn=<transaction id>`.
+differ)*. Paddle requires one: without it checkout does not open. Set it to
+the pricing page of the staging app, exactly:
+
+```
+{APP_URL}/pricing
+```
+
+where `{APP_URL}` is the `APP_URL` of `[env.staging.vars]` in `wrangler.toml`.
+It has to be this page and no other: Paddle sends customers here from its own
+emails (pay an invoice, update the card after a failed renewal) and appends
+`?_ptxn=<transaction id>`, and the pricing page is the one that starts
+Paddle.js when it sees that parameter. The sandbox accepts any `https` URL; do
+not use `localhost`.
 
 ## 6. Notification destination (webhook)
 
@@ -181,7 +191,9 @@ store the new one alone.
    and Paddle must deliver it as `custom_data.user_id`. That hand-over could
    not be tested without an account, so this is the first thing to confirm.
    If it is `ignored:unknown_price`, a price id in `wrangler.toml` does not
-   match the catalog.
+   match the catalog. `ignored:other_subscription` means the account already
+   has a subscription that is still running: a second one is never applied
+   on top of it (cancel and refund the extra one in Paddle).
 
 5. Then try, in this order, and re-run the query after each:
    - **Upgrade to Pro** from the app: the plan becomes Pro (10,000 images)
@@ -190,10 +202,18 @@ store the new one alone.
      and 1,000 extra images on the account.
    - **Cancel** through the billing portal. Paddle's default is to cancel at
      the end of the paid period: the plan stays, `cancel_at` in the `users`
-     table holds the end date, and `subscription.canceled` returns the
-     account to Free on that date. A cancellation that takes effect
-     immediately returns it to Free at once. Which of the two the portal
-     offers could not be verified; note what you see.
+     table holds the end date, and on that date the account returns to Free
+     by itself, whether or not `subscription.canceled` has arrived by then.
+     A cancellation that takes effect immediately returns it to Free at
+     once. Which of the two the portal offers could not be verified; note
+     what you see.
+   - **Default payment link**: in the Paddle dashboard open the top-up
+     transaction you just paid, or create a draft transaction, and copy its
+     checkout link. It must read `{APP_URL}/pricing?_ptxn=txn_...`. Open it
+     in a private window (not signed in): Paddle's checkout should open on
+     top of the pricing page. This could not be tested without an account;
+     if nothing opens, links in Paddle's payment emails will not work, so
+     report it before going live.
    - **Failed renewal**: subscribe with card `4000 0027 6000 3184` (first
      payment succeeds, renewals are declined). After the renewal fails the
      subscription becomes `past_due` and the account keeps its plan. The
@@ -204,6 +224,12 @@ store the new one alone.
      arrives with result `ok`, the top-up images are gone. Only a full refund
      (or a chargeback) removes them; a partial refund is recorded as
      `ignored:partial_refund` and changes nothing.
+   - **Refunding a subscription payment** does not end the subscription in
+     Paddle, and the app does not act on it (`ignored:not_topup`): the plan
+     stays and the next renewal is charged. When you refund a subscriber,
+     also cancel the subscription in the Paddle dashboard, effective
+     immediately; the account then returns to Free through
+     `subscription.canceled`.
 
 ## 9. Webhook simulator
 
@@ -238,8 +264,8 @@ Nothing carries over from sandbox.
    are different from the sandbox ones.
 3. **Client-side token** (starts with `live_`) and **API key** (starts with
    `pdl_live_apikey_`), as in sections 3 and 4.
-4. **Default payment link**: a page on the approved domain that loads
-   Paddle.js.
+4. **Default payment link**: `https://linktocard.com/pricing` (the approved
+   domain; see section 5 for why it must be the pricing page).
 5. **Notification destination**: URL `https://linktocard.com/webhooks/paddle`,
    usage type Platform *(label may differ)*, the same eleven events.
 6. Fill `[env.production.vars]` in `wrangler.toml` (the same four values;

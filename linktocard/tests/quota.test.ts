@@ -282,8 +282,9 @@ describe('chargeRender - the Free hard stop', () => {
       period_end: NOV.end,
       used: FREE,
       topup_used: 0,
-      notified_90: 1,
-      notified_100: 1,
+      // Each flag holds the allowance its notice was sent for.
+      notified_90: FREE,
+      notified_100: FREE,
     });
     // The refused image left no ledger row behind.
     expect(await ledger(user)).toHaveLength(FREE);
@@ -683,7 +684,7 @@ describe('thresholds', () => {
 
     await setUsed(user, PADDLE, STARTER - 1);
     expect(expectCharged(await chargeRender(db, user, render(), NOW))).toMatchObject({ crossed90: false, crossed100: true });
-    expect(await periodRow(user, PADDLE)).toMatchObject({ used: STARTER, notified_90: 1, notified_100: 1 });
+    expect(await periodRow(user, PADDLE)).toMatchObject({ used: STARTER, notified_90: STARTER, notified_100: STARTER });
   });
 
   it('a top-up image never reports a threshold', async () => {

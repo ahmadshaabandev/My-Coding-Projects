@@ -387,9 +387,11 @@ describe('subscriptions', () => {
   it('a canceled event for an old subscription does not downgrade a user on a newer one', async () => {
     const account = await makeAccount();
     const old = { ...account, subscriptionId: nextId('sub') };
-    await apply(subscriptionEvent(subscriptionCreated, old, { userId: account.userId, at: NOW - DAY_MS }));
+    // The old subscription was set to cancel and its paid period is over; Paddle's final event for it is late.
+    await apply(subscriptionEvent(subscriptionCreated, old, { userId: account.userId, at: NOW - 2 * DAY_MS }));
+    await apply(subscriptionEvent(subscriptionUpdated, old, { at: NOW - DAY_MS, scheduledCancelAt: NOW - MINUTE }));
     await apply(subscriptionEvent(subscriptionCreated, account, { userId: account.userId, priceId: PRICE.pro, at: NOW }));
-    expect(await userRow(account.userId)).toMatchObject({ plan: 'pro', paddle_subscription_id: account.subscriptionId });
+    expect(await userRow(account.userId)).toMatchObject({ plan: 'pro', paddle_subscription_id: account.subscriptionId, cancel_at: null });
 
     const oldCanceled = subscriptionEvent(subscriptionCanceled, old, { userId: account.userId, at: NOW + MINUTE });
     expect((await deliver(oldCanceled)).body.result).toBe('ignored:other_subscription');
@@ -403,6 +405,21 @@ describe('subscriptions', () => {
       subscription_status: 'active',
       subscription_event_at: NOW,
     });
+  });
+
+  it('while the mirrored subscription is in force, another subscription cannot take its place', async () => {
+    const account = await makeAccount();
+    await apply(subscriptionEvent(subscriptionCreated, account, { userId: account.userId, priceId: PRICE.pro, at: NOW - DAY_MS }));
+    const second = { ...account, customerId: nextId('ctm'), subscriptionId: nextId('sub') };
+    const created = subscriptionEvent(subscriptionCreated, second, { userId: account.userId, at: NOW });
+    expect((await deliver(created)).body.result).toBe('ignored:other_subscription');
+    expect(await userRow(account.userId)).toMatchObject({
+      plan: 'pro',
+      paddle_subscription_id: account.subscriptionId,
+      paddle_customer_id: account.customerId,
+      subscription_event_at: NOW - DAY_MS,
+    });
+    expect((await audit(created.event_id))?.user_id).toBe(account.userId);
   });
 
   it('the end of the current subscription applies even after its price id left the configuration', async () => {

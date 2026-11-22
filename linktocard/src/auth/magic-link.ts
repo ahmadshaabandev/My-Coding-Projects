@@ -29,7 +29,26 @@ export function safeNextPath(input: unknown): string | null {
   if (!NEXT_PATH_RE.test(input) || input.includes('\\')) return null;
   const url = new URL(input, PARSE_BASE);
   if (url.origin !== PARSE_BASE) return null;
-  return `${url.pathname}${url.search}${url.hash}`;
+  // Parsing removes "." and ".." segments, so "/.//evil.example" comes out as
+  // "//evil.example" - another site to a browser. The rule is applied again to
+  // what is actually returned.
+  const path = `${url.pathname}${url.search}${url.hash}`;
+  return NEXT_PATH_RE.test(path) ? path : null;
+}
+
+/**
+ * Sign-in emails one client (see clientIp) may request per hour, over all
+ * addresses together. The per-minute limiter alone would let a single visitor
+ * have 300 emails an hour sent to 300 strangers from our domain.
+ */
+export const MAX_MAGIC_LINKS_PER_CLIENT_PER_HOUR = 20;
+
+/** True when this client already had the hourly maximum of sign-in emails requested. */
+export async function clientAtMagicLinkCap(db: D1Database, ip: string, now: number): Promise<boolean> {
+  // No CF-Connecting-IP means local development: every request would share one bucket.
+  if (ip === 'unknown') return false;
+  const row = await first<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM login_tokens WHERE ip = ? AND created_at > ?', ip, now - HOUR_MS);
+  return (row?.n ?? 0) >= MAX_MAGIC_LINKS_PER_CLIENT_PER_HOUR;
 }
 
 export interface MagicLinkRequest {

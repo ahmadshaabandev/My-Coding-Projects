@@ -1,6 +1,6 @@
 // Pricing page: Starter / Pro / top-up buttons open Paddle's overlay checkout.
 import { errorMessage } from './api.js';
-import { checkoutAction, openCheckout } from './checkout.js';
+import { checkoutAction, openCheckout, readyPaddle } from './checkout.js';
 
 export { checkoutAction };
 
@@ -35,6 +35,21 @@ function init() {
     }
   }
 
+  // /pricing?_ptxn=txn_...: this page is Paddle's "default payment link". The
+  // links in Paddle's own emails (pay an invoice, update the card after a failed
+  // renewal) lead here, and Paddle.js opens the checkout for that transaction
+  // once it is initialized on the page. No sign-in: the transaction already
+  // belongs to a customer, who may be reading the email on another device.
+  async function resumeTransaction() {
+    try {
+      const paddle = (await getJson('/api/config'))?.paddle;
+      if (!paddle?.client_token) return show('Checkout is not configured yet.');
+      await readyPaddle({ environment: paddle.environment, token: paddle.client_token });
+    } catch (failure) {
+      show(failure.message || 'Checkout could not be started.');
+    }
+  }
+
   document.addEventListener('click', (event) => {
     const button = event.target.closest('[data-checkout]');
     if (!button) return;
@@ -43,8 +58,10 @@ function init() {
   });
 
   // /pricing?checkout=starter: where sign-in sends a visitor back to.
-  const requested = new URLSearchParams(location.search).get('checkout');
-  if (ITEMS.includes(requested)) start(requested);
+  const query = new URLSearchParams(location.search);
+  const requested = query.get('checkout');
+  if (query.has('_ptxn')) resumeTransaction();
+  else if (ITEMS.includes(requested)) start(requested);
 }
 
 if (typeof document !== 'undefined') init();

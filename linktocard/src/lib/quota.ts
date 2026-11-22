@@ -20,7 +20,7 @@
  * deliberate direction of failure - this module can under-count in rare
  * failures but can never over-count.
  */
-import { getPlan, TOPUP } from '../billing/plans';
+import { effectivePlanId, getPlan, PLANS, TOPUP, type PlanId } from '../billing/plans';
 import { DAY_MS, type ImageFormat } from '../config';
 import { all, first, run } from '../db/client';
 import type { RenderRow, UsageSummary, UserRow } from '../types';
@@ -31,8 +31,12 @@ export interface Period {
   end: number;
 }
 
-/** The columns of a user row that quota depends on (a full UserRow fits). */
-export type QuotaUser = Pick<UserRow, 'id' | 'plan' | 'period_start' | 'period_end'>;
+/**
+ * The columns of a user row that quota depends on (a full UserRow fits).
+ * `cancel_at` is optional only so that a hand-built row still type-checks;
+ * every row read from the database carries it.
+ */
+export type QuotaUser = Pick<UserRow, 'id' | 'plan' | 'period_start' | 'period_end'> & { cancel_at?: number | null };
 
 /** A successful render about to be cached; cacheKey must already be scoped to the account. */
 export interface RenderCharge {
@@ -54,7 +58,7 @@ export type ChargeResult =
       status: 'charged';
       chargedTo: 'plan' | 'topup';
       usage: UsageSummary;
-      /** Thresholds of the monthly allowance crossed by THIS image; each fires once per period. */
+      /** Thresholds of the monthly allowance crossed by THIS image; each fires once per period and allowance. */
       crossed90: boolean;
       crossed100: boolean;
     }
@@ -112,10 +116,20 @@ const OPEN_PERIOD_SQL =
 const TAKE_FROM_ALLOWANCE_SQL =
   'UPDATE usage_periods SET used = used + 1 WHERE user_id = ?1 AND period_start = ?2 AND used < ?3 RETURNING used, notified_90, notified_100';
 
+// notified_* hold the allowance (?3) the notice was sent for, 0 = not sent. A
+// plan change inside one period keeps the counter, so after an upgrade the
+// customer must be warned again at 90% and 100% of the larger allowance.
 const CLAIM_NOTIFIED_90_SQL =
-  'UPDATE usage_periods SET notified_90 = 1 WHERE user_id = ?1 AND period_start = ?2 AND notified_90 = 0';
+  'UPDATE usage_periods SET notified_90 = ?3 WHERE user_id = ?1 AND period_start = ?2 AND notified_90 < ?3';
 const CLAIM_NOTIFIED_100_SQL =
-  'UPDATE usage_periods SET notified_100 = 1 WHERE user_id = ?1 AND period_start = ?2 AND notified_100 = 0';
+  'UPDATE usage_periods SET notified_100 = ?3 WHERE user_id = ?1 AND period_start = ?2 AND notified_100 < ?3';
+
+// A scheduled cancellation has taken effect: the row returns to Free without
+// waiting for Paddle's final event. subscription_event_at is left alone so a
+// later event (a renewal after an un-cancel we never heard of) still applies.
+const SETTLE_ENDED_PLAN_SQL = `UPDATE users SET
+    plan = 'free', subscription_status = 'canceled', period_start = NULL, period_end = NULL, cancel_at = NULL
+  WHERE id = ?1 AND plan <> 'free' AND cancel_at IS NOT NULL AND cancel_at <= ?2`;
 
 // The three top-up statements run in one batch. The first two are guarded by the
 // same "a usable top-up exists" test that the third acts on, and run before it
@@ -126,20 +140,21 @@ const TAKE_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - 1 WHERE i
 
 /**
  * A paid account inside its Paddle billing period uses that period. Everyone
- * else - Free, or a paid row whose period is stale because a renewal webhook
- * has not arrived yet - uses the UTC calendar month containing `now`.
+ * else - Free (including a paid row whose scheduled cancellation has taken
+ * effect), or a paid row whose period is stale because a renewal webhook has
+ * not arrived yet - uses the UTC calendar month containing `now`.
  */
-export function currentPeriod(user: Pick<UserRow, 'plan' | 'period_start' | 'period_end'>, now: number): Period {
+export function currentPeriod(user: Pick<QuotaUser, 'plan' | 'period_start' | 'period_end' | 'cancel_at'>, now: number): Period {
   const { period_start: start, period_end: end } = user;
-  if (user.plan !== 'free' && start !== null && end !== null && start <= now && now < end) return { start, end };
+  if (effectivePlanId(user, now) !== 'free' && start !== null && end !== null && start <= now && now < end) return { start, end };
   const date = new Date(now);
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth();
   return { start: Date.UTC(year, month, 1), end: Date.UTC(year, month + 1, 1) };
 }
 
-function summarize(user: QuotaUser, period: Period, counters: Counters): UsageSummary {
-  const plan = getPlan(user.plan);
+function summarize(planId: PlanId, period: Period, counters: Counters): UsageSummary {
+  const plan = PLANS[planId];
   const remaining = Math.max(0, plan.monthlyImages - counters.used);
   return {
     plan: plan.id,
@@ -170,10 +185,23 @@ function countersFrom(results: D1Result[], index: number): Counters {
   return row;
 }
 
+/**
+ * The plan to count against at `now`. When a scheduled cancellation has taken
+ * effect and Paddle's final event has not arrived, this also writes the return
+ * to Free into the row, so that everything else that reads users.plan
+ * (watermark, cache period, fonts, dashboard) agrees from the next request on.
+ */
+async function planInForce(db: D1Database, user: QuotaUser, now: number): Promise<PlanId> {
+  const planId = effectivePlanId(user, now);
+  if (planId === 'free' && getPlan(user.plan).id !== 'free') await run(db, SETTLE_ENDED_PLAN_SQL, user.id, now);
+  return planId;
+}
+
 export async function getUsage(db: D1Database, user: QuotaUser, now: number): Promise<UsageSummary> {
+  const planId = await planInForce(db, user, now);
   const period = currentPeriod(user, now);
   const result = await countersStatement(db, user.id, period, now).all<Counters>();
-  return summarize(user, period, countersFrom([result], 0));
+  return summarize(planId, period, countersFrom([result], 0));
 }
 
 /** Cheap pre-check before spending CPU on a render. chargeRender remains the authority. */
@@ -233,9 +261,9 @@ async function takeFromTopup(
   return { taken: results[2]?.meta.changes === 1, counters: countersFrom(results, 3) };
 }
 
-/** Sets a notified_* flag if it is still unset; true for exactly one caller per period. */
-async function claimFlag(db: D1Database, sql: string, userId: string, period: Period): Promise<boolean> {
-  return (await run(db, sql, userId, period.start)) === 1;
+/** Records that a notice was sent for this allowance; true for exactly one caller per period and allowance. */
+async function claimFlag(db: D1Database, sql: string, userId: string, period: Period, limit: number): Promise<boolean> {
+  return (await run(db, sql, userId, period.start, limit)) === 1;
 }
 
 /**
@@ -250,20 +278,21 @@ async function claimFlag(db: D1Database, sql: string, userId: string, period: Pe
  * and removing the row could charge the customer twice for one image.
  */
 export async function chargeRender(db: D1Database, user: QuotaUser, render: RenderCharge, now: number): Promise<ChargeResult> {
+  const planId = await planInForce(db, user, now);
   const period = currentPeriod(user, now);
   if (!(await claimLedgerRow(db, user.id, period, render, now))) return { status: 'duplicate' };
 
-  const limit = getPlan(user.plan).monthlyImages;
+  const limit = PLANS[planId].monthlyImages;
   const allowance = await takeFromAllowance(db, user.id, period, limit, now);
   if (allowance.taken) {
     const { used, notified_90: notified90, notified_100: notified100 } = allowance.taken;
-    const crossed90 = notified90 === 0 && used * 10 >= limit * 9 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period));
-    const crossed100 = notified100 === 0 && used >= limit && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, user.id, period));
-    return { status: 'charged', chargedTo: 'plan', usage: summarize(user, period, allowance.counters), crossed90, crossed100 };
+    const crossed90 = notified90 < limit && used * 10 >= limit * 9 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period, limit));
+    const crossed100 = notified100 < limit && used >= limit && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, user.id, period, limit));
+    return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, allowance.counters), crossed90, crossed100 };
   }
 
   const topup = await takeFromTopup(db, user.id, period, render.cacheKey, now);
-  const usage = summarize(user, period, topup.counters);
+  const usage = summarize(planId, period, topup.counters);
   if (topup.taken) return { status: 'charged', chargedTo: 'topup', usage, crossed90: false, crossed100: false };
 
   await run(db, RELEASE_LEDGER_SQL, render.cacheKey, user.id, now);

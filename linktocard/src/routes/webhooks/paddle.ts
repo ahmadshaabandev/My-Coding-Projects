@@ -6,6 +6,7 @@
  *   200  applied, a duplicate, or understood and deliberately ignored
  *   400  signed by Paddle but not an event envelope
  *   401  missing or wrong signature
+ *   413  larger than any Paddle event: refused before it is read or hashed
  *   500  processing failed - Paddle retries and the event is applied then
  *   503  the signing secret is not configured - Paddle retries until it is
  *
@@ -23,11 +24,18 @@ import {
 } from '../../billing/paddle';
 import { first, run } from '../../db/client';
 import { ApiError, errorResponse, type ErrorCode } from '../../lib/errors';
+import { readBodyBytes } from '../../lib/http';
 import type { AppEnv } from '../../types';
 
 export const paddleWebhookRouter = new Hono<AppEnv>();
 
 const RESULT_MAX_CHARS = 300;
+/**
+ * Paddle's events are a few kilobytes. The endpoint is public and the body is
+ * read and hashed before the sender is known, so anything far beyond that is
+ * cut off unread.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
 
 /**
  * Claims the event id. Returns false only when the event was already applied:
@@ -61,7 +69,13 @@ paddleWebhookRouter.post('/paddle', async (c) => {
   if (secrets.length === 0) return fail('not_configured', 'Paddle webhooks are not configured.');
 
   // The signature covers the exact bytes Paddle sent, so verify the raw text before parsing it.
-  const rawBody = await c.req.text();
+  let rawBody: string;
+  try {
+    rawBody = new TextDecoder().decode(await readBodyBytes(c.req.raw, MAX_BODY_BYTES));
+  } catch (error) {
+    if (error instanceof ApiError) return errorResponse(error, c.env.APP_URL);
+    throw error;
+  }
   const now = Date.now();
   const verdict = await verifyPaddleSignature(rawBody, c.req.header('paddle-signature'), secrets, now);
   if (verdict !== 'valid') return fail('unauthorized', 'Invalid Paddle signature.');

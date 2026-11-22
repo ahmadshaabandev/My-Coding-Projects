@@ -113,6 +113,17 @@ export function getPlan(id: string | null | undefined): Plan {
   return isPlanId(id) ? PLANS[id] : PLANS.free;
 }
 
+/**
+ * The plan in force at `now`. A subscription with a scheduled cancellation
+ * (users.cancel_at) stops granting its plan at that moment: Paddle changes the
+ * status to canceled then, and the account must return to Free even if that
+ * final webhook is late or never arrives.
+ */
+export function effectivePlanId(user: { plan: string | null | undefined; cancel_at?: number | null }, now: number): PlanId {
+  const plan = getPlan(user.plan).id;
+  return plan !== 'free' && user.cancel_at !== null && user.cancel_at !== undefined && now >= user.cancel_at ? 'free' : plan;
+}
+
 /** "$9" / "$0" - whole dollars only, which is all the catalog uses. */
 export function formatUsd(amount: number): string {
   return `$${amount.toLocaleString('en-US')}`;
