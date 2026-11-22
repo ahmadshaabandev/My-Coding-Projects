@@ -105,11 +105,11 @@ APP_URL = "https://linktocard-staging.names-on-base.workers.dev"
 SUPPORT_EMAIL = "support@linktocard.com"
 MAIL_FROM = "Link To Card <login@linktocard.com>"
 PADDLE_ENV = "sandbox"
-# TODO(Ahmad): paste from the Paddle SANDBOX dashboard (see scripts/seed-paddle-sandbox.md).
-PADDLE_CLIENT_TOKEN = ""
-PADDLE_PRICE_STARTER = ""
-PADDLE_PRICE_PRO = ""
-PADDLE_PRICE_TOPUP = ""
+# Paddle SANDBOX (created through the API on 2026-11-22; see scripts/seed-paddle-sandbox.md).
+PADDLE_CLIENT_TOKEN = "test_ac634185fbf78142dae68f30158"
+PADDLE_PRICE_STARTER = "pri_01m82bzchs8tna3fz949myr8fm"
+PADDLE_PRICE_PRO = "pri_01m82bzcsrnsf4143bxmahcqpx"
+PADDLE_PRICE_TOPUP = "pri_01m82bzd1t7wfsswxz18b9e81z"
 
 [[env.staging.d1_databases]]
 binding = "DB"
