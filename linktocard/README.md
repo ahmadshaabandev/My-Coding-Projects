@@ -12,10 +12,13 @@ It runs on Cloudflare Workers with Satori and resvg. There is no headless browse
   304s, a forged signature refused, and exactly one image counted per unique render.
   Measured by Cloudflare over those 22 requests: CPU time median 4 ms, 90th percentile
   376 ms, maximum 636 ms, no errors. Production on linktocard.com is **not** deployed.
-- **No real Paddle checkout has ever been run.** The billing tests replay correctly signed
-  copies of Paddle's published example events against the webhook handler.
-- No real email has been sent through Resend. The integration follows Resend's published
-  API and is tested against a mocked HTTP endpoint.
+- **Paddle sandbox works end to end on staging** (2026-11-22): a checkout with Paddle's test
+  card switched a dashboard account to Starter within 7 seconds; switching to Pro (prorated)
+  and back (not billed), a top-up (1,000 images credited), the billing portal link and a
+  period-end cancellation all worked, with every webhook verified and logged. The site's
+  Content-Security-Policy let the checkout load. **Live Paddle has not been used**.
+- Sign-in email works on staging: a magic link sent through Resend from `login@linktocard.com`
+  arrived in a Gmail inbox (not spam) within a second and signed in.
 - The legal pages are drafts with two placeholders, `LEGAL_NAME` and `LEGAL_ADDRESS`.
   `npm run deploy:production` refuses to run while either is still on a page.
 - Whether Paddle can pay out to an individual in Lebanon is unverified. Read
@@ -273,8 +276,9 @@ it if it is wrong.
   seen on linktocard.com), the rate-limiting bindings under load, the daily cron (first run
   03:17 UTC after the deploy), DNS-over-HTTPS and remote image fetches from the edge, and
   sign-in email (staging has no Resend key yet).
-- A Paddle sandbox or live checkout, the customer portal, a real webhook delivery, and
-  whether the Content-Security-Policy in `site/public/_headers` lets Paddle's overlay load.
+- Live Paddle: checkout, payouts, refunds and chargebacks (the sandbox flows are verified),
+  and the return to Free when a cancelled period actually ends (covered by tests, not yet
+  observed on staging).
 - Real email delivery through Resend.
 - Statements about Paddle, Bannerbear and Vercel on the site and in `research/` come from
   search-engine excerpts and published API specifications; the vendors' own websites could

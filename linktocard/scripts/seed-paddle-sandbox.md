@@ -19,6 +19,13 @@ The numbers and names in section 2 are the ones in `src/billing/plans.ts`.
 `tests/node/paddle-catalog.test.ts` fails if the two drift apart, so change
 `plans.ts` first and this file second.
 
+**Staging status (2026-11-22):** sections 2 to 7 were done for the staging sandbox through the
+Paddle API (same names, amounts, tax mode, quantity limits, events and payment link as below)
+with a sandbox key that also had `product.write`, `price.write`, `client_token.write`,
+`checkout_settings.write`, `notification_setting.write` and the matching `.read` permissions.
+For live, either click through this file or use a temporary setup key and delete it afterwards;
+the production Worker's key needs only the two permissions in section 4.
+
 ## 1. Sandbox account
 
 1. Sign up for a sandbox account at `https://sandbox-login.paddle.com/signup`.

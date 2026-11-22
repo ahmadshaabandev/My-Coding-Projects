@@ -70,8 +70,11 @@ https://linktocard-staging.names-on-base.workers.dev, and `SIGNING_MASTER_SECRET
 random value that nobody has seen. That is fine: the dashboard shows each site's own secret,
 and the master key is only ever needed by the Worker. Never change it while staging URLs
 should keep working. A throwaway test account used for the live check is purged by the daily
-cleanup. Still to do on staging: `RESEND_API_KEY` (after linktocard.com is verified in Resend),
-the Paddle sandbox values, and the checks below. The commands are kept for reference:
+cleanup. Also done on 2026-11-22: `RESEND_API_KEY` (sign-in mail verified in a real inbox), and
+the Paddle sandbox catalog, client token, default payment link and webhook destination, created
+through the Paddle API exactly as `scripts/seed-paddle-sandbox.md` describes, with both Paddle
+secrets set. A sandbox checkout, plan switches, a top-up, the portal link and a period-end
+cancellation were run on staging and worked. The commands are kept for reference:
 
 ```sh
 npm install
