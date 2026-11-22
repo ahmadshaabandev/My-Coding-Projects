@@ -371,4 +371,4 @@ The same rules apply to signed URLs and to `POST /v1/images`. [Limits](/docs/lim
 
 ## OpenAPI
 
-An OpenAPI 3.1 description of these five endpoints is kept in the service's source repository as `openapi.yaml`. It is not published on this site yet.
+An OpenAPI 3.1 description of these five endpoints is published at [/openapi.yaml](/openapi.yaml).

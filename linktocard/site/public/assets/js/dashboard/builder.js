@@ -88,7 +88,7 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
             { class: 'stack more-body' },
             h('p', { class: 'hint' }, 'To make a card for every page, sign URLs on your server with the site\'s signing secret. This is the exact string that was signed for the URL above (HMAC-SHA256, hex), so you can compare it with your own signer\'s. '),
             canonical.block,
-            h('p', { class: 'hint' }, h('a', { href: '/docs' }, 'Read the signing guide in the docs')),
+            h('p', { class: 'hint' }, h('a', { href: '/docs/signed-urls' }, 'Read the signing guide, with code for JavaScript, PHP and Python')),
           ),
         ),
   );
@@ -190,7 +190,7 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
           h('input', { type: 'radio', name: `${uid}-template`, value: template.id, checked: template.id === state.templateId, onchange: () => selectTemplate(template.id) }),
           templates.starter.includes(template)
             ? h('img', { src: `/assets/img/samples/${template.id}.png`, alt: '', width: 1200, height: 630 })
-            : h('span', { class: 'thumb-blank' }),
+            : h('span', { class: 'thumb-blank thumb-own', 'aria-hidden': 'true' }, '{{ }}'),
           h('span', {}, template.name),
         ),
       ),

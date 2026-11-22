@@ -69,6 +69,34 @@ export function segmented(name, legend, options, selected, onchange) {
   );
 }
 
+/**
+ * A data table. `columns`: [{ label, class? }] (an empty label is the actions
+ * column); `rows`: arrays of cell content in column order, the first cell being
+ * the row header. Each cell carries its column label, which dashboard.css shows
+ * on a phone, where rows restack as short labelled lists. The explicit roles
+ * keep the table a table for screen readers once its display is no longer `table`.
+ */
+export function dataTable(columns, rows) {
+  const head = columns.map(({ label }) => h('th', { scope: 'col', role: 'columnheader' }, label || h('span', { class: 'visually-hidden' }, 'Actions')));
+  const body = rows.map((cells) =>
+    h(
+      'tr',
+      { role: 'row' },
+      cells.map((content, index) => {
+        const { label, class: className } = columns[index];
+        return index === 0
+          ? h('th', { scope: 'row', role: 'rowheader', class: className }, content)
+          : h('td', { role: 'cell', class: className, 'data-label': label || undefined }, content);
+      }),
+    ),
+  );
+  return h(
+    'div',
+    { class: 'table-wrap' },
+    h('table', { role: 'table' }, h('thead', { role: 'rowgroup' }, h('tr', { role: 'row' }, head)), h('tbody', { role: 'rowgroup' }, body)),
+  );
+}
+
 /** An inline notice. Errors interrupt (role=alert); everything else is announced politely. */
 export function alertBox(kind, ...content) {
   return h('div', { class: `alert alert-${kind}`, role: kind === 'danger' ? 'alert' : 'status' }, ...content);

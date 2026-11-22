@@ -267,6 +267,10 @@ describe('built site', () => {
     }
   });
 
+  it('publishes the API description next to the pages, byte for byte', () => {
+    expect(readFileSync(join(outDir, 'openapi.yaml'), 'utf8')).toBe(readFileSync(join(ROOT, 'openapi.yaml'), 'utf8'));
+  });
+
   it('lists only public pages in sitemap.xml and points robots.txt at it', () => {
     const sitemap = readFileSync(join(outDir, 'sitemap.xml'), 'utf8');
     for (const path of ['/', '/pricing', '/contact']) expect(sitemap).toContain(`<loc>${site.config.url}${path}</loc>`);

@@ -13,7 +13,7 @@
  *   5  Builder    .builder .builder-fields .builder-shape .preview .preview-frame
  *   6  Templates  .starter-grid .starter .editor .editor-bar
  *   7  Keys/fonts .secret-once .secret-line .font-form
- *   8  Small screens
+ *   8  Small screens (one column; tables restack as labelled rows)
  */
 
 /* ---------------------------------------------------------------- 1 Shell */
@@ -167,6 +167,8 @@
 .builder > * { min-width: 0; }
 .builder-templates > .label { display: block; margin-bottom: var(--space-2); }
 .builder .thumbs { grid-template-columns: repeat(auto-fill, minmax(5rem, 1fr)); }
+/* A template of the customer's own has no sample image: its thumbnail shows the placeholder braces instead. */
+.thumb-own { display: grid; place-items: center; font: 700 var(--text-sm)/1 var(--font-mono); color: var(--text-muted); }
 .builder-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
 .builder-fields > .hint { grid-column: 1 / -1; }
 .builder-shape { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-5); }
@@ -188,6 +190,7 @@
   color: var(--text-muted);
   border-top: 2px solid var(--line);
 }
+.preview-error:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
 .preview-warnings ul { margin-top: var(--space-1); padding-left: 1.2em; }
 
 /* ---------------------------------------------------------------- 6 Templates */
@@ -235,6 +238,8 @@
 @media (max-width: 62rem) {
   .builder, .editor { grid-template-columns: minmax(0, 1fr); }
   .preview, .editor-side { position: static; }
+  /* One column: the card comes first, so picking a template changes something the eye is already on. */
+  .builder .preview { order: -1; }
   .preview-card { max-width: 34rem; }
 }
 @media (max-width: 40rem) {
@@ -252,4 +257,25 @@
   .more-body { padding-left: 0; }
   .seg-field .segmented span { padding-inline: 0.45rem; font-size: 0.8125rem; }
   .editor-save .btn { flex: 1 1 100%; }
+
+  /* Tables: each row becomes a short labelled list, so no column (or Revoke button) hides behind a sideways scroll. */
+  .dash .table-wrap { overflow: visible; }
+  .dash .table-wrap :is(table, tbody, tr, th, td) { display: block; }
+  .dash .table-wrap thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .dash .table-wrap tbody tr { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
+  .dash .table-wrap tbody tr:last-child { border-bottom: 0; }
+  .dash .table-wrap tbody :is(th, td) { padding: 0; border: 0; }
+  .dash .table-wrap tbody th { margin-bottom: var(--space-2); font-size: var(--text-md); overflow-wrap: anywhere; }
+  .dash .table-wrap td { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: var(--space-3); align-items: baseline; padding-block: 0.2rem; white-space: normal; }
+  .dash .table-wrap td::before {
+    content: attr(data-label);
+    font: 400 var(--text-xs)/1.4 var(--font-mono);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  /* A badge or a code chip keeps its own width instead of stretching across the value column. */
+  .dash .table-wrap td > * { justify-self: start; }
+  .dash .table-wrap td.cell-action { display: block; margin-top: var(--space-3); text-align: left !important; }
+  .dash .table-wrap td.cell-action::before { content: none; }
 }

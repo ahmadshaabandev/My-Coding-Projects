@@ -23,12 +23,12 @@ async function signOut(control) {
   }
 }
 
-/** The marketing header offers "Sign in" and "Start free"; signed in, it offers the way out instead. */
-function adaptHeader() {
-  const nav = document.querySelector('.site-nav');
-  if (!nav) return;
-  for (const link of nav.querySelectorAll('a[href="/login"]')) link.remove();
-  nav.append(button('Sign out', { small: true, onclick: (event) => signOut(event.currentTarget) }));
+/** The site's header and footer offer "Sign in" and "Start free"; signed in, the header offers the way out instead. */
+function adaptChrome() {
+  for (const link of document.querySelectorAll('.site-header a[href="/login"], .site-footer a[href="/login"]')) {
+    (link.closest('li') ?? link).remove();
+  }
+  document.querySelector('.site-nav')?.append(button('Sign out', { small: true, onclick: (event) => signOut(event.currentTarget) }));
 }
 
 function start(app, me, config) {
@@ -136,7 +136,7 @@ function start(app, me, config) {
   });
 
   syncAccount();
-  adaptHeader();
+  adaptChrome();
   app.replaceChildren(
     h(
       'header',

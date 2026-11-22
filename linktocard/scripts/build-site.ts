@@ -730,6 +730,8 @@ export function buildSite(options: BuildOptions = {}): RenderedSite & { outDir: 
 
   const modules = join(ROOT, 'node_modules');
   for (const { from, to } of VENDOR_FILES) emit(to, readFileSync(join(modules, from)));
+  // The API description the docs link to; kept at the repository root so tools find it there too.
+  emit('openapi.yaml', readFileSync(join(ROOT, 'openapi.yaml')));
   const emojiDir = join(modules, '@twemoji/svg');
   for (const file of readdirSync(emojiDir).filter((name) => name.endsWith('.svg'))) {
     emit(`_emoji/${file}`, readFileSync(join(emojiDir, file)));

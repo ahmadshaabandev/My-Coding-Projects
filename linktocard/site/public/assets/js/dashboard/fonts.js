@@ -1,6 +1,6 @@
 // Fonts: upload, list and delete custom fonts (paid plans), and how to use one.
 import { api } from './client.js';
-import { button, codeBlock, confirmDialog, errorSlot, field, h, segmented, showError, toast, withBusy } from './dom.js';
+import { button, codeBlock, confirmDialog, dataTable, errorSlot, field, h, segmented, showError, toast, withBusy } from './dom.js';
 import { fontCssExample, fontSizeProblem, formatBytes, formatDate } from './helpers.js';
 
 const WEIGHTS = [
@@ -55,37 +55,38 @@ function fontTable(ctx, fonts, error) {
       showError(error, failure);
     }
   }
+  return dataTable(
+    [{ label: 'Family' }, { label: 'Weight' }, { label: 'Style' }, { label: 'File', class: 'nowrap' }, { label: 'Added', class: 'nowrap' }, { label: '', class: 'cell-action' }],
+    fonts.map((font) => [
+      font.family,
+      String(font.weight),
+      font.style,
+      `${font.format.toUpperCase()}, ${formatBytes(font.bytes)}`,
+      formatDate(font.created_at),
+      button('Delete', { small: true, 'aria-label': `Delete ${font.family} ${font.weight} ${font.style}`, onclick: () => remove(font) }),
+    ]),
+  );
+}
+
+// A Free account that used to be on a paid plan may still have font files stored: it can see and delete them.
+function leftoverFonts(ctx, fonts) {
+  const error = errorSlot();
   return h(
-    'div',
-    { class: 'table-wrap' },
-    h(
-      'table',
-      {},
-      h('thead', {}, h('tr', {}, ['Family', 'Weight', 'Style', 'File', 'Added', ''].map((label) => h('th', { scope: 'col' }, label || h('span', { class: 'visually-hidden' }, 'Actions'))))),
-      h(
-        'tbody',
-        {},
-        fonts.map((font) =>
-          h(
-            'tr',
-            {},
-            h('th', { scope: 'row' }, font.family),
-            h('td', {}, String(font.weight)),
-            h('td', {}, font.style),
-            h('td', { class: 'nowrap' }, `${font.format.toUpperCase()}, ${formatBytes(font.bytes)}`),
-            h('td', { class: 'nowrap' }, formatDate(font.created_at)),
-            h('td', { class: 'cell-action' }, button('Delete', { small: true, 'aria-label': `Delete ${font.family} ${font.weight} ${font.style}`, onclick: () => remove(font) })),
-          ),
-        ),
-      ),
-    ),
+    'section',
+    { class: 'stack', 'aria-labelledby': 'fonts-title' },
+    h('h3', { id: 'fonts-title', class: 'kicker' }, `Fonts from your earlier plan (${fonts.length})`),
+    h('p', { class: 'muted' }, 'These files are still stored but are not used on the Free plan. Upgrade to use them again, or delete them.'),
+    fontTable(ctx, fonts, error),
+    error,
   );
 }
 
 export async function mount(ctx) {
-  if (ctx.me.limits.fonts.max_files === 0) return { node: h('div', { class: 'panel-stack' }, head(), upgradeNote(ctx)) };
-
   const { fonts, limits } = await api.get('/api/fonts');
+  if (ctx.me.limits.fonts.max_files === 0) {
+    return { node: h('div', { class: 'panel-stack' }, head(), upgradeNote(ctx), fonts.length === 0 ? null : leftoverFonts(ctx, fonts)) };
+  }
+
   const error = errorSlot();
   const state = { style: 'normal' };
   const family = h('input', { class: 'input', type: 'text', required: true, maxlength: 64, autocomplete: 'off', placeholder: 'For example: Acme Sans' });
@@ -152,6 +153,7 @@ export async function mount(ctx) {
       h('h3', { id: 'font-css-title', class: 'kicker' }, 'Use it in a template'),
       h('p', { class: 'muted' }, 'Write the family name in your template\'s CSS. Uploaded fonts are used in renders while the account is on a paid plan.'),
       codeBlock(fontCssExample(example.family, example.weight, example.style), 'css').block,
+      h('p', { class: 'hint' }, h('a', { href: '/docs/html-css-templates#your-own-fonts' }, 'More about fonts in templates')),
     ),
   );
   return { node };

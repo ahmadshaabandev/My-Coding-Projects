@@ -178,6 +178,10 @@ const fontJson = (font: FontRow): Record<string, unknown> => ({
   created_at: iso(font.created_at),
 });
 
+/**
+ * Only uploading needs a paid plan. Listing and deleting stay open on Free, so an
+ * account that downgraded can still see and remove the files it stored with us.
+ */
 const requireFontPlan: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (!fontsEnabled(c.var.user)) {
     throw new ApiError('plan_required', 'Custom fonts are available on the Starter and Pro plans.');
@@ -197,7 +201,7 @@ const requireOwnOrigin: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
 };
 
-studioRouter.get('/fonts', requireSession, requireFontPlan, async (c) => {
+studioRouter.get('/fonts', requireSession, async (c) => {
   const { maxFiles, maxBytesPerFile } = getPlan(c.var.user.plan).fonts;
   return c.json({
     fonts: (await listFonts(c.env.DB, c.var.user.id)).map(fontJson),
@@ -218,7 +222,7 @@ studioRouter.post('/fonts', requireOwnOrigin, requireSession, requireFontPlan, a
   return c.json({ font: fontJson(font) }, 201);
 });
 
-studioRouter.delete('/fonts/:id', requireSameOrigin, requireSession, requireFontPlan, async (c) => {
+studioRouter.delete('/fonts/:id', requireSameOrigin, requireSession, async (c) => {
   if (!(await deleteFont(c.env, c.var.user.id, c.req.param('id'), Date.now()))) {
     throw new ApiError('not_found', 'Font not found.');
   }

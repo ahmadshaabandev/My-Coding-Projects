@@ -597,18 +597,34 @@ describe('fonts', () => {
   }
   const missingFont = (warnings: string[]): boolean => warnings.some((warning) => warning.includes('Font families not available'));
 
-  it('is a paid feature: Free accounts get 403 plan_required', async () => {
+  it('uploading is a paid feature: a Free account gets 403 plan_required and nothing is stored', async () => {
     const { user, cookie } = await signedIn();
-    const responses = [
-      await dashboard(cookie, 'GET', '/api/fonts'),
-      await upload(cookie, 'family=Brand%20Sans', WOFF),
-      await dashboard(cookie, 'DELETE', '/api/fonts/f_x'),
-    ];
-    for (const response of responses) {
-      expect(response.status).toBe(403);
-      expect((await errorOf(response)).code).toBe('plan_required');
-    }
+    const response = await upload(cookie, 'family=Brand%20Sans', WOFF);
+    expect(response.status).toBe(403);
+    expect((await errorOf(response)).code).toBe('plan_required');
     expect(await fontRows(user.id)).toEqual([]);
+
+    const list = await dashboard(cookie, 'GET', '/api/fonts');
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({ fonts: [], limits: { max_files: 0, max_bytes_per_file: 0 } });
+    expect((await dashboard(cookie, 'DELETE', '/api/fonts/f_x')).status).toBe(404);
+  });
+
+  it('an account that went back to Free can still list and delete the fonts it uploaded', async () => {
+    const { user, cookie } = await signedIn('starter');
+    const uploaded = await upload(cookie, 'family=Leftover%20Sans', WOFF);
+    expect(uploaded.status).toBe(201);
+    const { font } = (await uploaded.json()) as { font: { id: string } };
+    await run(env.DB, "UPDATE users SET plan = 'free' WHERE id = ?1", user.id);
+
+    const list = (await (await dashboard(cookie, 'GET', '/api/fonts')).json()) as { fonts: { id: string }[]; limits: { max_files: number } };
+    expect(list.fonts.map((entry) => entry.id)).toEqual([font.id]);
+    expect(list.limits.max_files).toBe(0);
+    expect((await upload(cookie, 'family=Another%20Sans', WOFF)).status).toBe(403);
+
+    expect((await dashboard(cookie, 'DELETE', `/api/fonts/${font.id}`)).status).toBe(200);
+    expect(await fontObjects(user.id)).toEqual([]);
+    expect((await dashboard(cookie, 'GET', '/api/fonts').then((r) => r.json())) as { fonts: unknown[] }).toMatchObject({ fonts: [] });
   });
 
   it('accepts a font that renders, uses it in the account\'s cards, lists it and deletes it', async () => {

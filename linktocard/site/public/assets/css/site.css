@@ -606,6 +606,8 @@ mark.placeholder {
 }
 .table-wrap tbody th { font-weight: 600; }
 .table-wrap tbody tr:last-child > * { border-bottom: 0; }
+/* An identifier such as invalid_request must not break mid-word; the wrapper scrolls instead. */
+.table-wrap td:first-child code, .table-wrap td:nth-child(2) code { white-space: nowrap; }
 .table-caption { margin: var(--space-6) 0 var(--space-3); font-weight: 600; }
 
 .badge {

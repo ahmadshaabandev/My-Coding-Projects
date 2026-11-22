@@ -164,11 +164,13 @@ Check the result: open a post, view the page source and look for `og:image`. The
 
 - If an SEO plugin is active and you also use the `wp_head` block, the page gets two `og:image` tags. Use the plugin's filters instead.
 - The filters change an image that the SEO plugin is already printing. If a post without a featured image shows no `og:image` at all, set a default social image in the plugin's settings so that there is something to replace.
+- An SEO plugin may print `og:image:width` and `og:image:height` for the image it had chosen itself. If the page source shows other numbers than 1200 and 630 next to your URL, look in the plugin's documentation for the filters of those two tags.
 - Posts cached by a page-cache plugin keep their old tags until that cache is cleared.
+- The plugin code on this page was run with stand-ins for the WordPress functions it calls, not inside a WordPress installation. Check the page source on your own site.
 
 ## Ghost
 
-A Ghost theme cannot sign a URL: themes are Handlebars templates and have no HMAC helper. Hosted Ghost does not let you add server code. Two routes work.
+A Ghost theme cannot sign a URL: themes are Handlebars templates, and we know of no theme helper that computes an HMAC. Hosted Ghost does not run server code of yours. Two routes work.
 
 **By hand, per post.** Make the card in the dashboard builder (**Sites & URLs**), or with one API call, and download the image:
 
@@ -182,7 +184,7 @@ curl [[site.url]]/v1/images \
 
 Then, in the Ghost editor, open the post settings and upload `card.png` in the **Facebook card** and **X card** (formerly Twitter card) sections. Ghost hosts the uploaded file and prints it as `og:image` and `twitter:image`. An uploaded file does not change when you edit the title; make a new one.
 
-**With a script.** Ghost's Admin API lists `og_image` and `twitter_image` among a post's fields. A script that runs after you publish can sign a URL for each post and write it to those two fields. We have not run this against a Ghost site: check the Admin API documentation for updating a post (it requires the post's current `updated_at`) before you rely on it.
+**With a script.** Ghost's Admin API lists `og_image` and `twitter_image` among a post's fields. A script that runs after you publish can sign a URL for each post and write it to those two fields. We have not run this against a Ghost site: read the Admin API documentation for updating a post before you rely on it.
 
 In both routes, do not store the `url` that `POST /v1/images` returns in JSON mode. It stops working when the image's cache period ends. A signed URL does not: it is rendered again on demand.
 
@@ -211,7 +213,7 @@ To fill many items, generate the signed URLs with a script (the signers on [Sign
 
 Hugo can sign at build time: it has an `hmac` template function that returns a hexadecimal digest. Tested with Hugo 0.170.1.
 
-By default, Hugo templates can only read environment variables whose names start with `HUGO_`, so name the secret accordingly:
+By default, Hugo's security policy lets templates read only environment variables whose names start with `HUGO_` (and the variable `CI`), so name the secret accordingly:
 
 ```bash
 export HUGO_LTC_SITE_SECRET="ltcs_..."
@@ -230,6 +232,9 @@ Save this as `layouts/partials/card-image.html`:
 ```go-html-template
 {{- /* Signed Link To Card URL for the current page. */ -}}
 {{- $secret := getenv "HUGO_LTC_SITE_SECRET" -}}
+{{- if not $secret -}}
+  {{- errorf "HUGO_LTC_SITE_SECRET is not set: card image URLs cannot be signed." -}}
+{{- end -}}
 {{- $path := printf "/v1/og/%s/blog.png" site.Params.cardSiteId -}}
 {{- $params := dict "title" .Title "author" (.Params.author | default "") -}}
 
@@ -262,7 +267,7 @@ Call it inside `<head>` in your base or single-page template:
 {{ partial "card-image.html" . }}
 ```
 
-The partial takes `author` from the page's front matter and leaves empty values out. To send more fields, add them to the `dict`. If your theme already prints an `og:image` tag, remove that one so the page has exactly one.
+The partial takes `author` from the page's front matter and leaves empty values out. If the secret is not set, the build stops with an error instead of publishing URLs that answer 403. To send more fields, add them to the `dict`. If your theme already prints an `og:image` tag, remove that one so the page has exactly one.
 
 ## Astro
 
@@ -316,7 +321,7 @@ Astro escapes the attribute value for you.
 
 ## Next.js
 
-**If your site is already a Next.js app, look at `next/og` first.** It is built into Next.js, it is free, and it runs in your own app with nothing to sign. You write the card as JSX and return an `ImageResponse`. For many Next.js sites it is the right choice.
+**If your site is already a Next.js app, look at `next/og` first.** It ships with Next.js and runs in your own app: no account, no secret, nothing to sign. You write the card as JSX and return an `ImageResponse`. For many Next.js sites it is the right choice.
 
 The differences, as documented by Next.js 16.4.6:
 

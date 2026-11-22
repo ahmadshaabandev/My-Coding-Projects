@@ -1,6 +1,6 @@
 // API keys: create (the secret is shown once), list, revoke, and a curl example.
 import { api } from './client.js';
-import { alertBox, button, codeBlock, confirmDialog, copyButton, errorSlot, field, h, showError, toast, withBusy } from './dom.js';
+import { alertBox, button, codeBlock, confirmDialog, copyButton, dataTable, errorSlot, field, h, showError, toast, withBusy } from './dom.js';
 import { KEY_PLACEHOLDER, curlExample, formatDate, formatDateTime } from './helpers.js';
 
 function keyTable(ctx, keys, error) {
@@ -19,29 +19,15 @@ function keyTable(ctx, keys, error) {
       showError(error, failure);
     }
   }
-  return h(
-    'div',
-    { class: 'table-wrap' },
-    h(
-      'table',
-      {},
-      h('thead', {}, h('tr', {}, ['Name', 'Key starts with', 'Created', 'Last used', ''].map((label) => h('th', { scope: 'col' }, label || h('span', { class: 'visually-hidden' }, 'Actions'))))),
-      h(
-        'tbody',
-        {},
-        keys.map((key) =>
-          h(
-            'tr',
-            {},
-            h('th', { scope: 'row' }, key.name),
-            h('td', {}, h('code', {}, `${key.prefix}…`)),
-            h('td', { class: 'nowrap' }, formatDate(key.created_at)),
-            h('td', { class: 'nowrap' }, key.last_used_at ? formatDateTime(key.last_used_at) : 'Never'),
-            h('td', { class: 'cell-action' }, button('Revoke', { small: true, 'aria-label': `Revoke ${key.name}`, onclick: () => revoke(key) })),
-          ),
-        ),
-      ),
-    ),
+  return dataTable(
+    [{ label: 'Name' }, { label: 'Key starts with' }, { label: 'Created', class: 'nowrap' }, { label: 'Last used', class: 'nowrap' }, { label: '', class: 'cell-action' }],
+    keys.map((key) => [
+      key.name,
+      h('code', {}, `${key.prefix}…`),
+      formatDate(key.created_at),
+      key.last_used_at ? formatDateTime(key.last_used_at) : 'Never',
+      button('Revoke', { small: true, 'aria-label': `Revoke ${key.name}`, onclick: () => revoke(key) }),
+    ]),
   );
 }
 
@@ -101,6 +87,7 @@ export async function mount(ctx, param, { created } = {}) {
       h('h3', { id: 'curl-title', class: 'kicker' }, 'Try it from a terminal'),
       h('p', { class: 'muted' }, created ? 'This example already contains your new key. It renders one card and counts one image.' : `Replace ${KEY_PLACEHOLDER} with your key. The call renders one card and counts one image.`),
       curl.block,
+      h('p', { class: 'hint' }, h('a', { href: '/docs/api' }, 'Every option of the API is in the docs')),
     ),
   );
   return { node };

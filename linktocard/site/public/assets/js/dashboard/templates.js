@@ -255,6 +255,8 @@ async function editorView(ctx, id) {
         field('Name', name),
         field('HTML', html, 'Write {{title}} where the title should go. Tab indents; press Esc, then Tab, to move to the next field.'),
         field('CSS', css),
+        // Opens in a new tab, so unsaved edits stay where they are.
+        h('p', { class: 'hint' }, h('a', { href: '/docs/html-css-templates', target: '_blank', rel: 'noopener' }, 'What HTML and CSS the renderer supports')),
         h('p', { class: 'hint id-line' }, 'Template ID ', h('code', {}, id), copyButton('Copy', () => id), ' Use it as the template in signed URLs and API calls.'),
         h('details', { class: 'more' }, h('summary', {}, 'Delete this template'), h('div', { class: 'more-body' }, button('Delete template', { variant: 'danger', small: true, onclick: remove }))),
       ),

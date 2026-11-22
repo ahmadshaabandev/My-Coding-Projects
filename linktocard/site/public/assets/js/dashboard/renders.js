@@ -1,9 +1,18 @@
 // Recent renders: the latest images that were rendered and counted.
 import { api } from './client.js';
-import { h } from './dom.js';
+import { dataTable, h } from './dom.js';
 import { formatDateTime, renderSummary } from './helpers.js';
 
-const COLUMNS = ['Template', 'Made with', 'Size', 'Format', 'File size', 'Rendered', 'Counted against', 'Image'];
+const COLUMNS = [
+  { label: 'Template' },
+  { label: 'Made with' },
+  { label: 'Size', class: 'nowrap' },
+  { label: 'Format' },
+  { label: 'File size', class: 'nowrap' },
+  { label: 'Rendered', class: 'nowrap' },
+  { label: 'Counted against' },
+  { label: 'Image' },
+];
 
 export async function mount() {
   const [{ renders }, templates] = await Promise.all([api.get('/api/renders'), api.get('/api/templates')]);
@@ -36,18 +45,16 @@ export async function mount() {
   const rows = renders.map((render) => {
     const row = renderSummary(render, names);
     const expired = Date.parse(render.expires_at) <= now;
-    return h(
-      'tr',
-      {},
-      h('th', { scope: 'row' }, row.template),
-      h('td', {}, row.via),
-      h('td', { class: 'nowrap' }, row.size),
-      h('td', {}, row.format),
-      h('td', { class: 'nowrap' }, row.bytes),
-      h('td', { class: 'nowrap' }, formatDateTime(render.created_at)),
-      h('td', {}, h('span', { class: `badge${render.charged_to === 'topup' ? ' badge-accent' : ''}` }, row.counted)),
-      h('td', {}, expired ? h('span', { class: 'muted' }, 'Expired') : h('a', { href: render.url, target: '_blank', rel: 'noopener', 'aria-label': `Open the ${row.template} image rendered ${formatDateTime(render.created_at)}` }, 'Open')),
-    );
+    return [
+      row.template,
+      row.via,
+      row.size,
+      row.format,
+      row.bytes,
+      formatDateTime(render.created_at),
+      h('span', { class: `badge${render.charged_to === 'topup' ? ' badge-accent' : ''}` }, row.counted),
+      expired ? h('span', { class: 'muted' }, 'Expired') : h('a', { href: render.url, target: '_blank', rel: 'noopener', 'aria-label': `Open the ${row.template} image rendered ${formatDateTime(render.created_at)}` }, 'Open'),
+    ];
   });
 
   return {
@@ -55,7 +62,7 @@ export async function mount() {
       'div',
       { class: 'panel-stack' },
       head,
-      h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, COLUMNS.map((label) => h('th', { scope: 'col' }, label)))), h('tbody', {}, rows))),
+      dataTable(COLUMNS, rows),
       h('p', { class: 'hint' }, 'Opening a stored image here is free: it is served from the cache.'),
     ),
   };

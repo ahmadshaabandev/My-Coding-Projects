@@ -240,7 +240,7 @@ Large blurs are expensive to draw, so they have hard limits:
 - `box-shadow` and `text-shadow`: a blur radius of at most [[limit.maxBlurPx]]px.
 - `filter: blur()`, `filter: drop-shadow()` and `backdrop-filter: blur()`: at most 12px.
 
-The limit is checked on the finished drawing, so a value hidden in a custom property or in `calc()` is measured like any other.
+The limit is checked on the finished drawing, so a value that comes from a custom property is measured like any other. A shadow whose blur is written with `calc()` is not drawn at all.
 
 A card may use at most [[limit.maxFilters]] effects. They are counted like this:
 
@@ -450,7 +450,7 @@ Warnings are reported by the request that renders the image. A response served f
 
 ## Known limitations
 
-- **Scripts outside the bundled fonts.** Arabic, Hebrew, Chinese, Japanese, Korean, Thai, Devanagari and other scripts that the three bundled families do not cover are drawn as empty boxes, with a warning such as `No bundled font covers Arabic characters`. To use them, upload a font that covers the script (paid plans) and name it in `font-family`. Fonts for Chinese, Japanese and Korean are often larger than the per-file upload limit; a 6.2 MB Japanese font was refused in our test. Subset such a font first.
+- **Scripts outside the bundled fonts.** Arabic, Hebrew, Chinese, Japanese, Korean, Thai, Devanagari and other scripts that the three bundled families do not cover are drawn as empty boxes, with a warning such as `No bundled font covers Arabic characters`. To use them, upload a font that covers the script (paid plans) and name it in `font-family`. A complete font for Chinese, Japanese or Korean can be larger than the per-file upload limit ([[plan.starter.fontMb]] MB on [[plan.starter.name]], [[plan.pro.fontMb]] MB on [[plan.pro.name]]); a larger file is refused. Subset such a font first.
 - **Some symbols.** A few symbols are not in the bundled fonts either. The arrow `→` is one. Use an inline SVG or an emoji.
 - **Right-to-left text.** With an uploaded font, Arabic and Hebrew text is shaped and ordered correctly, and `dir="rtl"` or `direction: rtl` aligns text to the right, orders mixed text and flex rows from right to left and wraps lines correctly. List markers stay on the left. This was tested with one font (DejaVu Sans) and short texts; check your own design in the dashboard preview. Without `dir="rtl"` the base direction is left to right.
 - **Lists.** `<ul>` and `<ol>` render correctly, but each render that contains one reports a warning that begins `Ignored style:` and mentions `fontFamily`. It does not affect the image.

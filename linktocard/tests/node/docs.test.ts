@@ -1,6 +1,7 @@
 // The documentation: every page builds and is reachable, and every statement
 // that repeats something from the code (signature vector, signer code, base
 // stylesheet, error codes, starter templates, limits) is checked against it.
+import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,6 +54,10 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/
 
 const source = (file: string): string => read(`site/content/${file}`);
 
+/** Bodies of the fenced code blocks of one language, in document order. */
+const codeBlocks = (markdown: string, lang: string): string[] =>
+  [...markdown.matchAll(/^```([\w-]*)\n([\s\S]*?)^```$/gm)].filter((match) => match[1] === lang).map((match) => match[2] ?? '');
+
 /**
  * BASE_CSS as the renderer declares it. It is read from the source text because
  * importing src/render/template.ts would pull the Worker-only wasm and font
@@ -63,6 +68,13 @@ function baseCss(): string {
   if (!literal) throw new Error('src/render/template.ts no longer declares BASE_CSS as a template literal');
   if (/\$\{|\\/.test(literal)) throw new Error('BASE_CSS contains an interpolation or an escape; evaluate it instead of reading it');
   return literal;
+}
+
+/** The ImageFetchFailure union, read from the source text for the same reason as BASE_CSS. */
+function imageFailures(): string[] {
+  const union = /export type ImageFetchFailure =([^;]+);/.exec(read('src/render/proxy.ts'))?.[1];
+  if (!union) throw new Error('src/render/proxy.ts no longer declares the ImageFetchFailure union');
+  return [...union.matchAll(/'([a-z_]+)'/g)].map((match) => match[1] ?? '');
 }
 
 let site: RenderedSite;
@@ -141,7 +153,8 @@ describe('docs pages', () => {
   });
 
   it('links only to pages and anchors that exist', () => {
-    const urls = new Set(site.pages.map((page) => page.url));
+    // /openapi.yaml is a file the build copies next to the pages, not a rendered page.
+    const urls = new Set([...site.pages.map((page) => page.url), '/openapi.yaml']);
     for (const doc of DOCS) {
       for (const [, href] of article(doc.url).matchAll(/<a [^>]*href="([^"]+)"/g)) {
         if (!href || /^(https?:|mailto:)/.test(href)) continue;
@@ -161,6 +174,8 @@ describe('docs pages', () => {
       for (const text of [source(doc.file), html]) {
         expect(text, doc.url).not.toMatch(/\bTODO\b/i);
         expect(text, doc.url).not.toMatch(/\bFIXME\b/i);
+        // Snippets were run against a local instance; the published text must name the real site.
+        expect(text, doc.url).not.toMatch(/localhost|127\.0\.0\.1/);
       }
     }
   });
@@ -191,7 +206,11 @@ describe('signed URLs page', () => {
   const markdown = source('docs/signed-urls.md');
   const vector = JSON.parse(read('examples/signing/vector.json')) as {
     secret: string;
+    base_url: string;
     site_id: string;
+    template: string;
+    ext: string;
+    params: Record<string, string>;
     canonical: string;
     signature: string;
     url: string;
@@ -213,6 +232,21 @@ describe('signed URLs page', () => {
     expect(PHP_SIGNER).toContain("hash_hmac('sha256'");
     expect(PYTHON_SIGNER).toContain('hmac.new(');
     for (const signer of [NODE_SIGNER, PHP_SIGNER, PYTHON_SIGNER]) expect(markdown).toContain(signer);
+  });
+
+  it('prints a Node.js signer that produces the vector URL when it is run', () => {
+    type Signer = (input: { secret: string; baseUrl: string; siteId: string; template: string; ext: string; params: Record<string, string> }) => string;
+    const block = codeBlocks(markdown, 'js').find((code) => code.includes('function signedCardUrl('));
+    if (!block) throw new Error('signed-urls.md has no Node.js signer');
+    const importLine = "import { createHmac } from 'node:crypto';\n";
+    expect(block.startsWith(importLine)).toBe(true);
+    // The block as published, with its one import handed in as an argument.
+    const signer = new Function('createHmac', `${block.slice(importLine.length)}\nreturn signedCardUrl;`)(createHmac) as Signer;
+    const url = signer({ secret: vector.secret, baseUrl: vector.base_url, siteId: vector.site_id, template: vector.template, ext: vector.ext, params: vector.params });
+    expect(url).toBe(vector.url);
+    // A line break in a value must not become a second parameter line.
+    const hostile = signer({ secret: vector.secret, baseUrl: vector.base_url, siteId: vector.site_id, template: 'blog', ext: 'png', params: { title: 'a\nsize=square' } });
+    expect(new URL(hostile).searchParams.get('title')).toBe('a size=square');
   });
 
   it('explains every reason for a 403', () => {
@@ -255,6 +289,13 @@ describe('templates page', () => {
     }
     const documented = [...section(markdown, '## Starter templates').matchAll(/^### (.+)$/gm)].map((match) => match[1]);
     expect(documented).toEqual([...STARTER_TEMPLATE_IDS]);
+  });
+
+  it('lists every reason an image download can fail with', () => {
+    const line = markdown.split('\n').find((candidate) => candidate.startsWith('`details.reason` is one of'));
+    const listed = [...(line ?? '').matchAll(/`([a-z_]+)`/g)].map((match) => match[1]);
+    expect(imageFailures().length).toBeGreaterThan(0);
+    expect(listed).toEqual(imageFailures());
   });
 
   it('states the enforced shadow, filter and image limits', () => {
@@ -319,6 +360,19 @@ describe('openapi.yaml', () => {
   it('describes the five public paths', () => {
     const paths = [...openapi.matchAll(/^ {2}(\/\S+):$/gm)].map((match) => match[1]);
     expect(paths).toEqual(['/v1/images', '/v1/usage', '/v1/templates', '/v1/og/{site_id}/{template}.{ext}', '/i/{account_id}/{id}.{ext}']);
+  });
+
+  it('names the real site and refers only to components it defines', () => {
+    expect(openapi).not.toMatch(/localhost|127\.0\.0\.1/);
+    const refs = [...openapi.matchAll(/\$ref: "#\/components\/([a-zA-Z]+)\/([\w-]+)"/g)];
+    expect(refs.length).toBeGreaterThan(0);
+    for (const [ref, kind, name] of refs) {
+      const start = openapi.indexOf(`\n  ${kind}:\n`);
+      expect(start, ref).toBeGreaterThan(-1);
+      const next = /\n {2}\S/.exec(openapi.slice(start + 1));
+      const sectionText = openapi.slice(start, next ? start + 1 + next.index : undefined);
+      expect(sectionText, ref).toContain(`\n    ${name}:\n`);
+    }
   });
 
   it('lists every error code with its status', () => {

@@ -260,8 +260,8 @@ Change any parameter. The usual way is a version parameter that the template ign
 
 Rotate the secret in the dashboard (**Sites & URLs**) if it may have leaked. Then:
 
-- URLs signed with the old secret stop verifying and answer 403 `invalid_signature`.
-- A copy that a browser or an edge cache already holds can still be shown until its `max-age` runs out, at most one day.
+- URLs signed with the old secret stop verifying. A request for one that reaches the service answers 403 `invalid_signature`.
+- An old URL that was already served can still be answered from a cache (a browser's, or the service's own edge cache) until its `max-age` runs out, at most one day.
 - Sign your URLs again with the new secret. A re-signed URL for a card that is still stored is served from storage and is not counted again.
 
 Each site has its own secret, so rotating one site does not affect your other sites.

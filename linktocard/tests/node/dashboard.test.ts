@@ -1,7 +1,9 @@
 // The dashboard's pure rules (site/public/assets/js/dashboard/helpers.js) and the
 // checkout helper it shares with the pricing page. The screens themselves are
-// exercised in a real browser against `wrangler dev`, not here.
-import { join } from 'node:path';
+// exercised in a real browser against `wrangler dev`, not here; what can be
+// checked about them statically (no HTML strings, imports that resolve) is at the end.
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PLANS, TOPUP } from '../../src/billing/plans';
@@ -338,5 +340,35 @@ describe('shared checkout helper', () => {
     expect(Paddle.Initialize.mock.calls).toEqual([[{ token: 'test_token' }]]);
     expect(Paddle.Checkout.open).toHaveBeenCalledTimes(2);
     expect(Paddle.Checkout.open).toHaveBeenLastCalledWith(action.options);
+  });
+});
+
+describe('dashboard source rules', () => {
+  const jsDir = join(ROOT, 'site/public/assets/js');
+  const modules = ['dashboard.js', ...readdirSync(join(jsDir, 'dashboard')).map((name) => `dashboard/${name}`)];
+  const read = (name: string): string => readFileSync(join(jsDir, name), 'utf8');
+  // Comments may name what is banned; only code counts.
+  const code = (name: string): string => read(name).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
+
+  it('builds the page from DOM nodes: no HTML strings, no eval, no inline handlers', () => {
+    const banned = /innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\('on/;
+    for (const name of modules) expect(code(name), name).not.toMatch(banned);
+  });
+
+  it('every relative import points at a file that exists, and every tab has its module', () => {
+    for (const name of modules) {
+      for (const match of read(name).matchAll(/from '(\.[^']+)'/g)) {
+        expect(existsSync(join(jsDir, dirname(name), match[1]!)), `${name} imports ${match[1]}`).toBe(true);
+      }
+    }
+    for (const tab of helpers.TABS) expect(modules).toContain(`dashboard/${tab.id}.js`);
+  });
+
+  it('the page carries no script, inline style or inline handler of its own (CSP: script-src \'self\')', () => {
+    const page = readFileSync(join(ROOT, 'site/pages/dashboard.html'), 'utf8');
+    expect(page).not.toMatch(/<script|\son[a-z]+=|\sstyle=/i);
+    expect(page).toMatch(/^scripts: dashboard$/m);
+    expect(page).toContain('href="/assets/css/dashboard.css"');
+    expect(existsSync(join(ROOT, 'site/public/assets/css/dashboard.css'))).toBe(true);
   });
 });

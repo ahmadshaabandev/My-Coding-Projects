@@ -1,13 +1,16 @@
 // The live preview frame, shared by the card builder and the template editor.
 // It renders through POST /api/preview: watermarked, never stored, never counted.
 import { api } from './client.js';
-import { errorSlot, h, showError } from './dom.js';
+import { button, h, showError } from './dom.js';
 
 export function createPreview() {
   const image = h('img', { alt: 'Preview of the card', hidden: true });
   const status = h('p', { class: 'unfurl-status' }, 'Rendering the first preview…');
   const frame = h('div', { class: 'unfurl-frame preview-frame', 'data-size': 'og', 'aria-busy': 'true' }, image, status);
-  const error = errorSlot();
+  const errorText = h('span', {});
+  // Offered only when asking again can help (too many requests, no connection, a server fault), never for a template error.
+  const retry = button('Try again', { small: true, onclick: () => show(lastPayload) });
+  const error = h('div', { class: 'alert alert-danger preview-error', role: 'alert', hidden: true }, errorText, retry);
   const warnings = h('div', { class: 'alert alert-warn preview-warnings', role: 'status', hidden: true });
   const node = h(
     'div',
@@ -19,6 +22,7 @@ export function createPreview() {
 
   let controller = null;
   let objectUrl = null;
+  let lastPayload = null;
 
   function showWarnings(list) {
     warnings.replaceChildren(
@@ -33,6 +37,7 @@ export function createPreview() {
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
+    lastPayload = payload;
     frame.setAttribute('aria-busy', 'true');
     try {
       const result = await api.preview(payload, mine.signal);
@@ -49,7 +54,9 @@ export function createPreview() {
     } catch (failure) {
       if (failure?.name === 'AbortError' || mine !== controller) return;
       // The last good image stays (dimmed by nothing): the message says why the new one did not arrive.
-      showError(error, failure);
+      showError(errorText, failure);
+      retry.hidden = !(failure.status === 429 || failure.status === 0 || failure.status >= 500);
+      error.hidden = false;
       status.textContent = 'No preview: see the message below.';
       warnings.hidden = true;
     }
