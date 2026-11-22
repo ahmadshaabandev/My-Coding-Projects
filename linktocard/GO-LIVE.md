@@ -64,6 +64,15 @@ Paddle's domain review checks that the seller named in the terms matches the Pad
 
 ## 3. Staging deploy (Paddle sandbox)
 
+**Done on 2026-11-22** in the Cloudflare account Names On Base: D1 `linktocard-staging`
+(migrations 0001-0004 applied), R2 bucket `linktocard-staging`, the Worker at
+https://linktocard-staging.names-on-base.workers.dev, and `SIGNING_MASTER_SECRET` set to a
+random value that nobody has seen. That is fine: the dashboard shows each site's own secret,
+and the master key is only ever needed by the Worker. Never change it while staging URLs
+should keep working. A throwaway test account used for the live check is purged by the daily
+cleanup. Still to do on staging: `RESEND_API_KEY` (after linktocard.com is verified in Resend),
+the Paddle sandbox values, and the checks below. The commands are kept for reference:
+
 ```sh
 npm install
 npx wrangler login

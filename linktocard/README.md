@@ -6,8 +6,12 @@ It runs on Cloudflare Workers with Satori and resvg. There is no headless browse
 
 ## Status, stated plainly
 
-- Built and tested locally (the Workers runtime `workerd`, local D1 and R2). **It has never
-  been deployed to Cloudflare.** Nothing in this repository has been measured in production.
+- **Staging runs on Cloudflare** at https://linktocard-staging.names-on-base.workers.dev
+  (deployed 2026-11-22). `npm run check:deploy` passed there with a test account: every
+  public page, the five templates, API renders in PNG, JPEG and WebP, signed URLs, caching,
+  304s, a forged signature refused, and exactly one image counted per unique render.
+  Measured by Cloudflare over those 22 requests: CPU time median 4 ms, 90th percentile
+  376 ms, maximum 636 ms, no errors. Production on linktocard.com is **not** deployed.
 - **No real Paddle checkout has ever been run.** The billing tests replay correctly signed
   copies of Paddle's published example events against the webhook handler.
 - No real email has been sent through Resend. The integration follows Resend's published
@@ -154,8 +158,10 @@ variable `CLOUDFLARE_API_TOKEN`, not as a network secret. Uploading the static s
 short-lived upload key in the `Authorization` header, which a proxy-injected secret overwrites
 (the upload then fails with 401).
 
-Workers Paid ($5 a month) is required. One render takes roughly 100 to 400 ms of CPU and
-the free Workers plan allows 10 ms per request.
+Workers Paid ($5 a month) is required. On staging a render took up to about 400 ms of CPU
+(636 ms for the first render in a fresh instance), and the free Workers plan allows 10 ms per
+request. Workers Paid includes 30 million CPU milliseconds a month, about 75,000 renders at
+400 ms, then $0.02 per million CPU milliseconds (research/cloudflare.md).
 
 Bundle size (measured with `wrangler deploy --dry-run --env staging` on 2026-11-22): 6.8 MB,
 2.7 MB gzipped, under the 10 MB compressed limit of Workers Paid. The static site adds about
@@ -263,8 +269,10 @@ it if it is wrong.
 
 ## Not verified
 
-- Anything on Cloudflare itself: edge caching, the rate-limiting bindings, real CPU times,
-  cron, DNS-over-HTTPS and outbound image fetches from the edge.
+- On Cloudflare: the edge cache (the Cache API does nothing on workers.dev, so it can only be
+  seen on linktocard.com), the rate-limiting bindings under load, the daily cron (first run
+  03:17 UTC after the deploy), DNS-over-HTTPS and remote image fetches from the edge, and
+  sign-in email (staging has no Resend key yet).
 - A Paddle sandbox or live checkout, the customer portal, a real webhook delivery, and
   whether the Content-Security-Policy in `site/public/_headers` lets Paddle's overlay load.
 - Real email delivery through Resend.

@@ -93,6 +93,8 @@ simple = { limit = 60, period = 60 }
 # ---------------------------------------------------------------- staging (Paddle sandbox)
 [env.staging]
 workers_dev = true
+# No extra public URL per deployed version.
+preview_urls = false
 
 [env.staging.triggers]
 crons = ["17 3 * * *"]
@@ -147,6 +149,7 @@ simple = { limit = 60, period = 60 }
 # ---------------------------------------------------------------- production (Paddle live)
 [env.production]
 workers_dev = false
+preview_urls = false
 routes = [{ pattern = "linktocard.com", custom_domain = true }]
 
 [env.production.triggers]
