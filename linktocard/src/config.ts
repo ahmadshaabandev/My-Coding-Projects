@@ -73,8 +73,18 @@ export const LIMITS = {
    * calc() cannot hide a value). One 60px-blur shadow costs ~2 s of CPU in resvg and
    * 200px crashes it, so these are hard limits, not style advice.
    */
+  /**
+   * Enforced on the SVG as stdDeviation <= maxBlurRadiusPx / 2. In CSS terms:
+   * box-shadow and text-shadow blur up to 24px; filter: blur(), drop-shadow() and
+   * backdrop-filter blur up to 12px.
+   */
   maxBlurRadiusPx: 24,
-  maxFilterEffects: 4,
+  /**
+   * Blur/filter effects per image. Counting rule: every text run with a text-shadow
+   * is one effect (a headline containing one <b> is three runs), every box-shadow
+   * layer is one, every filter/backdrop-filter is one.
+   */
+  maxFilterEffects: 8,
   /** Intermediate SVG size cap (bytes) before rasterising. */
   maxSvgBytes: 3 * 1024 * 1024,
   /** Wall-clock budget for one render including remote image fetches. */
@@ -100,7 +110,7 @@ export const LIMITS = {
 export const RATE_LIMITS = {
   RL_IP: { limit: 300, periodSeconds: 60, scope: 'per IP address, all /v1 endpoints (edge-cache hits are not limited)' },
   RL_KEY: { limit: 120, periodSeconds: 60, scope: 'per API key (POST /v1/images) and per site (uncached signed-URL renders)' },
-  RL_AUTH: { limit: 5, periodSeconds: 60, scope: 'per IP address, sign-in link requests and the contact form' },
+  RL_AUTH: { limit: 5, periodSeconds: 60, scope: 'per IP address: sign-in link requests, sign-in verification and the contact form (counted separately)' },
   RL_PLAYGROUND: { limit: 30, periodSeconds: 60, scope: 'per IP address, homepage playground' },
   RL_PREVIEW: { limit: 60, periodSeconds: 60, scope: 'per account, dashboard live preview' },
 } as const;

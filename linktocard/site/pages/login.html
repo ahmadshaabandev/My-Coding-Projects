@@ -1,0 +1,26 @@
+---
+title: Sign in
+description: Sign in to [[site.name]] with a link sent to your email address. No password.
+noindex: true
+scripts: login
+---
+<main class="container auth">
+<div class="card auth-card">
+<h1>Sign in</h1>
+<p class="muted" id="login-intro">Enter your email address and we will send you a sign-in link. No password. If you are new, this also creates your free account.</p>
+<form class="stack" id="login-form">
+<label class="field">
+<span class="label">Email address</span>
+<input class="input" type="email" name="email" required autocomplete="email" maxlength="254" autofocus>
+</label>
+<p class="alert alert-danger" id="login-error" role="alert" hidden></p>
+<button class="btn btn-primary btn-block" type="submit">Email me a sign-in link</button>
+</form>
+<div class="stack" id="login-sent" role="status" tabindex="-1" hidden>
+<p class="alert alert-ok"><strong>Check your inbox.</strong> We sent a sign-in link to <span data-email></span>. It works once and expires after [[auth.magicLinkMinutes]] minutes.</p>
+<p class="alert alert-info" hidden>Local development: <a id="login-dev-link" href="/login">open the sign-in link</a></p>
+<p class="hint">Nothing arrived? Check the spam folder, or <a href="/login">try again</a>.</p>
+</div>
+<noscript><p class="alert alert-warn">Signing in needs JavaScript.</p></noscript>
+</div>
+</main>

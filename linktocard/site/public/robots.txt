@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /login
+Disallow: /api/
+Disallow: /auth/
+Disallow: /playground/
+
+Sitemap: [[site.url]]/sitemap.xml

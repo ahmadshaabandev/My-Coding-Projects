@@ -1,0 +1,26 @@
+<dl class="rules">
+<div>
+<dt>One image is one rendered size</dt>
+<dd>The same card rendered in two sizes is two images.</dd>
+</div>
+<div>
+<dt>Failed renders never count</dt>
+<dd>If a render ends in an error, nothing is taken from your quota.</dd>
+</div>
+<div>
+<dt>Cache hits never count</dt>
+<dd>A rendered image is kept for [[plan.free.cacheDays]] days on [[plan.free.name]], [[plan.starter.cacheDays]] on [[plan.starter.name]] and [[plan.pro.cacheDays]] on [[plan.pro.name]]. Requests for it in that time are served from cache and are not counted again.</dd>
+</div>
+<div>
+<dt>Unused quota does not roll over</dt>
+<dd>The monthly allowance resets at the start of each billing period.</dd>
+</div>
+<div>
+<dt>The limit is a hard stop</dt>
+<dd>When the allowance is used up, new renders answer HTTP 402 until the next period. On [[plan.free.name]] that is the end of it. There is no overage billing on any plan.</dd>
+</div>
+<div>
+<dt>Top-ups are manual</dt>
+<dd>On paid plans you can buy [[topup.images]] extra images for [[topup.price]] whenever you choose. A top-up is never bought or billed automatically.</dd>
+</div>
+</dl>

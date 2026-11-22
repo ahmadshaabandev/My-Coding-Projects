@@ -47,6 +47,7 @@ export interface Env extends Partial<Record<RateLimitName, RateLimitBinding>> {
   SIGNING_MASTER_SECRET: string;
   RESEND_API_KEY?: string;
   PADDLE_API_KEY?: string;
+  /** One secret, or several separated by commas while rotating. */
   PADDLE_WEBHOOK_SECRET?: string;
 
   /** Test-only switch, honoured only when ENVIRONMENT === 'test'. */
@@ -199,11 +200,18 @@ export interface RenderInput {
  * itself never calls fetch().
  */
 export interface RenderDeps {
-  /** Fetch a remote image through the SSRF-guarded proxy; resolve to a data: URI. */
+  /**
+   * Fetch a remote image through the SSRF-guarded proxy; resolve to a data: URI.
+   * The URI must be base64 PNG, JPEG or GIF, or SVG with a viewBox or width + height.
+   * WebP must be transcoded (src/render/proxy.ts does) or rejected by the fetcher.
+   */
   fetchImage: (url: string) => Promise<{ dataUri: string }>;
   /** Resolve an emoji grapheme to an SVG data: URI, or undefined to drop it. */
   loadEmoji?: (emoji: string) => Promise<string | undefined>;
-  /** Load customer fonts for the given CSS font-family names (paid plans). */
+  /**
+   * Load customer fonts for the given CSS font-family names (paid plans). Return the
+   * same ArrayBuffer instances across calls so the font list is not re-parsed.
+   */
   loadFonts?: (families: string[]) => Promise<LoadedFont[]>;
 }
 
@@ -248,14 +256,3 @@ export interface UsageSummary {
   watermark: boolean;
 }
 
-export type ConsumeResult =
-  | {
-      ok: true;
-      chargedTo: 'plan' | 'topup';
-      periodStart: number;
-      usage: UsageSummary;
-      /** Thresholds crossed by THIS image (each fires once per period). */
-      crossed90: boolean;
-      crossed100: boolean;
-    }
-  | { ok: false; usage: UsageSummary };

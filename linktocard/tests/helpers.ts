@@ -67,6 +67,31 @@ export function inkBox(raster: Raster): { x0: number; y0: number; x1: number; y1
   return x1 < 0 ? null : { x0, y0, x1, y1 }
 }
 
+/** Width and height from a PNG's IHDR chunk. */
+export function pngSize(png: Uint8Array): { width: number; height: number } {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength)
+  return { width: view.getUint32(16), height: view.getUint32(20) }
+}
+
+/** Decodes a PNG to RGBA pixels with resvg (the project has no other PNG decoder). */
+export async function decodePng(png: Uint8Array): Promise<Raster> {
+  const { width, height } = pngSize(png)
+  const href = `data:image/png;base64,${toBase64(png)}`
+  return rasterize(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><image width="${width}" height="${height}" href="${href}"/></svg>`, width)
+}
+
+/** Number of pixels inside the box whose colour differs between two rasters of the same size. */
+export function diffPixels(a: Raster, b: Raster, box: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: a.width, h: a.height }): number {
+  let count = 0
+  for (let y = box.y; y < box.y + box.h; y++) {
+    for (let x = box.x; x < box.x + box.w; x++) {
+      const i = (y * a.width + x) * 4
+      if (Math.abs(a.pixels[i]! - b.pixels[i]!) + Math.abs(a.pixels[i + 1]! - b.pixels[i + 1]!) + Math.abs(a.pixels[i + 2]! - b.pixels[i + 2]!) > 24) count++
+    }
+  }
+  return count
+}
+
 export function toBase64(bytes: Uint8Array): string {
   let binary = ''
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
@@ -82,8 +107,8 @@ export async function redImages(size = 16) {
   const raster = await rasterize(svg, size)
   return {
     png: `data:image/png;base64,${toBase64(await svgToPng(svg, size))}`,
-    jpeg: `data:image/jpeg;base64,${toBase64(await encodeRasterJpeg(raster, 90))}`,
-    webp: `data:image/webp;base64,${toBase64(await encodeRasterWebp(raster, 90))}`,
+    jpeg: `data:image/jpeg;base64,${toBase64(await encodeRasterJpeg(raster))}`,
+    webp: `data:image/webp;base64,${toBase64(await encodeRasterWebp(raster))}`,
     // 1x1 GIF89a, palette [ff0000, ffffff], single pixel = index 0.
     gif: 'data:image/gif;base64,R0lGODlhAQABAIABAP8AAP///ywAAAAAAQABAAACAkQBADs=',
     svg: `data:image/svg+xml;base64,${btoa(svg)}`,

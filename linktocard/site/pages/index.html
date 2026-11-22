@@ -1,0 +1,215 @@
+---
+title: Link To Card - Turn every link into a beautiful share card
+description: Open Graph and social card images rendered from your own HTML and CSS templates, served from one signed og:image URL. For sites that are not on Vercel.
+scripts: playground
+---
+<main>
+
+<section class="hero">
+<div class="container hero-grid">
+<div class="hero-copy">
+<p class="eyebrow">Open Graph images from HTML and CSS</p>
+<h1>Turn every link into a beautiful share card.</h1>
+<p class="lead">The signed og:image URL for sites that are not on Vercel.</p>
+<p>Write a card template in HTML and CSS, put one signed URL in your meta tags, and every page gets its own preview image wherever its link is shared. It runs on Cloudflare's edge network.</p>
+<div class="cluster hero-actions">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs">Read the docs</a>
+</div>
+<p class="hint">[[plan.free.name]] plan: [[plan.free.images]] images a month, no card required.</p>
+</div>
+
+<div class="playground" id="playground" data-origin="[[site.url]]">
+<h2 class="visually-hidden">Live playground</h2>
+<div class="unfurl">
+<div class="unfurl-frame" id="pg-frame" aria-busy="false">
+<img id="pg-image" alt="Live preview of the share card" width="1200" height="630" hidden>
+<p class="unfurl-status" id="pg-status" role="status">Rendering preview&hellip;</p>
+<p class="alert alert-danger unfurl-error" id="pg-error" role="alert" hidden></p>
+<noscript><img src="/playground/card.png?template=blog&amp;title=Turn+every+link+into+a+beautiful+share+card&amp;description=One+signed+URL+in+your+meta+tags.&amp;author=Link+To+Card&amp;theme=light" alt="Sample share card" width="1200" height="630"></noscript>
+</div>
+<div class="unfurl-meta" aria-hidden="true">
+<span class="unfurl-host">your-site.com</span>
+<strong id="pg-meta-title">Turn every link into a beautiful share card</strong>
+<span class="unfurl-desc" id="pg-meta-desc">One signed URL in your meta tags.</span>
+</div>
+</div>
+<form class="playground-form" id="pg-form">
+<fieldset class="field-wide">
+<legend class="label">Template</legend>
+[[> template-picker]]
+</fieldset>
+<label class="field field-wide">
+<span class="label">Title</span>
+<input class="input" name="title" maxlength="120" value="Turn every link into a beautiful share card" autocomplete="off">
+</label>
+<label class="field field-wide">
+<span class="label">Description</span>
+<input class="input" name="description" maxlength="200" value="One signed URL in your meta tags." autocomplete="off">
+</label>
+<label class="field">
+<span class="label">Author</span>
+<input class="input" name="author" maxlength="60" value="Link To Card" autocomplete="off">
+</label>
+<fieldset>
+<legend class="label">Theme</legend>
+<div class="segmented" role="radiogroup" aria-label="Theme">
+<label><input type="radio" name="theme" value="light" checked><span>light</span></label>
+<label><input type="radio" name="theme" value="dark"><span>dark</span></label>
+</div>
+</fieldset>
+</form>
+</div>
+</div>
+
+<div class="container">
+<div class="card snippet" id="meta-tag">
+<div class="snippet-head">
+<h2>Copy meta tag</h2>
+<button class="btn btn-secondary btn-sm" type="button" data-copy-target="#pg-snippet">Copy</button>
+</div>
+<pre><code id="pg-snippet" class="language-html">&lt;meta property="og:image" content="[[site.url]]/v1/og/YOUR_SITE_ID/blog.png?title=Turn+every+link+into+a+beautiful+share+card&amp;amp;sig=YOUR_SIGNATURE"&gt;
+&lt;meta name="twitter:card" content="summary_large_image"&gt;
+&lt;meta name="twitter:image" content="[[site.url]]/v1/og/YOUR_SITE_ID/blog.png?title=Turn+every+link+into+a+beautiful+share+card&amp;amp;sig=YOUR_SIGNATURE"&gt;</code></pre>
+<p><code>YOUR_SITE_ID</code> and <code>YOUR_SIGNATURE</code> are placeholders. A free account gives you a site id and a signing secret; the signature is an HMAC of the URL made with that secret, so the playground cannot hand out working signed URLs.</p>
+</div>
+</div>
+</section>
+
+<section class="section" id="how-it-works">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">How it works</p>
+<h2>Three steps, no browser to run.</h2>
+<p>Cards are rendered from HTML and CSS directly. There is no headless browser to host, patch or wait for.</p>
+</div>
+<ol class="steps">
+<li>
+<h3>Pick or write a template</h3>
+<p>Start from a starter template or write your own in HTML and CSS, with <code>{{placeholders}}</code> for the parts that change from page to page.</p>
+</li>
+<li>
+<h3>Sign the URL</h3>
+<p>Create a site to get its id and secret. Your server or build script signs each image URL with HMAC-SHA256, a few lines in any language.</p>
+</li>
+<li>
+<h3>Paste it into your meta tags</h3>
+<p>The first request renders the image and stores it. Later requests for the same URL are served from cache and do not count again while it is stored.</p>
+</li>
+</ol>
+<p class="section-foot">Prefer to render ahead of time? <code>POST /v1/images</code> with an API key returns the image URL. <a href="/docs">The docs cover both.</a></p>
+</div>
+</section>
+
+<section class="section section-alt" id="templates">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Starter templates</p>
+<h2>Five templates to start from.</h2>
+<p>Use one as it is, or as the starting point for your own design.</p>
+</div>
+[[> template-gallery]]
+</div>
+</section>
+
+<section class="section" id="pricing">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Pricing</p>
+<h2>Priced per rendered image.</h2>
+<p>Prices are in USD and exclude tax. Paddle, our reseller and Merchant of Record, adds any applicable sales tax or VAT at checkout.</p>
+</div>
+[[> pricing-table]]
+<p class="section-foot"><a href="/pricing">Full pricing, top-ups and limits</a></p>
+</div>
+</section>
+
+<section class="section section-alt" id="counting">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Fair counting</p>
+<h2>What counts as an image.</h2>
+<p>The rules are short, and they are the same ones the billing code enforces.</p>
+</div>
+[[> counting-rules]]
+</div>
+</section>
+
+<section class="section" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Honest answers.</h2>
+<p>Including the things this product does not do.</p>
+</div>
+<div>
+<details class="faq-item">
+<summary>What is [[site.name]], and what is it not?</summary>
+<div>
+<p>It renders Open Graph and social card images from HTML and CSS templates, either through a signed URL you put in your meta tags or through an API call.</p>
+<p>It is not a visual editor: templates are code. It does not take screenshots of web pages, it does not make video or GIFs, and it does not generate images with AI.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>How do signed URLs stop other people from using my quota?</summary>
+<div>
+<p>Every image URL carries a signature, an HMAC-SHA256 of its path and parameters made with your site's secret. Someone who changes the text in the URL, or invents a new one, cannot produce a valid signature without that secret. The request is rejected with HTTP 403 before anything is rendered, so it never counts.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>What happens when I reach my limit?</summary>
+<div>
+<p>New renders stop and the API answers HTTP 402 until your next billing period. Images that are already rendered and still cached keep being served.</p>
+<p>On [[plan.free.name]] that is a hard stop. On [[plan.starter.name]] and [[plan.pro.name]] you can buy a top-up of [[topup.images]] images for [[topup.price]], or change plan. Nothing is ever charged automatically beyond your subscription.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>How does the cache work, and when is an image counted again?</summary>
+<div>
+<p>A rendered image is stored for [[plan.free.cacheDays]] days on [[plan.free.name]], [[plan.starter.cacheDays]] days on [[plan.starter.name]] and [[plan.pro.cacheDays]] days on [[plan.pro.name]]. While it is stored, requests for the same URL are served from cache and are not counted.</p>
+<p>After that, the next request renders the image again and counts as one image. A different URL, for example a new title or another size, is a different image.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Which fonts, emoji and languages work?</summary>
+<div>
+<p>The bundled fonts cover Latin, Cyrillic, Greek and Vietnamese. Other scripts need a font that you upload, which requires a paid plan. Emoji are drawn with the open-source Twemoji graphics.</p>
+<p>Right-to-left and complex scripts, such as Arabic or Hebrew, have limited support in the rendering engine. Test your own text before you rely on it.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Can I get a refund?</summary>
+<div>
+<p>Yes. Payments are handled by Paddle, and you can ask for a refund within 30 days of a payment. The <a href="/refund">refund policy</a> has the details.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Who runs this?</summary>
+<div>
+<p>A solo developer. There is no sales team and no support desk in between: when you write, the person who built the product answers.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Where do I get help?</summary>
+<div>
+<p>Start with the <a href="/docs">docs</a>. If you are stuck, email <a href="mailto:[[site.supportEmail]]">[[site.supportEmail]]</a> or use the <a href="/contact">contact form</a>.</p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="contact">
+<div class="container cta">
+<div>
+<h2>Questions before you start?</h2>
+<p>Email <a href="mailto:[[site.supportEmail]]">[[site.supportEmail]]</a> or use the <a href="/contact">contact page</a>.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/contact">Contact</a>
+</div>
+</div>
+</section>
+
+</main>

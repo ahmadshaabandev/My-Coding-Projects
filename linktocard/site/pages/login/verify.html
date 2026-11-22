@@ -1,0 +1,22 @@
+---
+title: Confirm sign-in
+description: Confirm your sign-in to [[site.name]].
+noindex: true
+scripts: verify
+---
+<main class="container auth">
+<div class="card auth-card">
+<div class="stack" id="verify-ready">
+<h1>Confirm sign-in</h1>
+<p class="muted">Press the button to finish signing in on this device.</p>
+<button class="btn btn-primary btn-block" id="verify-button" type="button" disabled>Sign in</button>
+</div>
+<div class="stack" id="verify-failed" hidden>
+<h1>This link did not work</h1>
+<p class="alert alert-danger" role="alert" data-message></p>
+<p class="muted">Sign-in links work once and expire after [[auth.magicLinkMinutes]] minutes.</p>
+<a class="btn btn-primary btn-block" href="/login">Request a new link</a>
+</div>
+<noscript><p class="alert alert-warn">Signing in needs JavaScript.</p></noscript>
+</div>
+</main>

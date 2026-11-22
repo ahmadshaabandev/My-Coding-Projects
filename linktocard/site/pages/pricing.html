@@ -1,0 +1,50 @@
+---
+title: Pricing
+description: "[[site.name]] pricing: [[plan.free.name]] ([[plan.free.images]] images a month), [[plan.starter.name]] at [[plan.starter.price]] and [[plan.pro.name]] at [[plan.pro.price]] a month, plus manual top-ups. Billed by Paddle."
+scripts: pricing
+---
+<main>
+
+<section class="section">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Pricing</p>
+<h1>Priced per rendered image.</h1>
+<p>Three plans and one optional top-up. Prices are in USD and exclude tax; Paddle, our reseller and Merchant of Record, adds any applicable sales tax or VAT at checkout.</p>
+</div>
+<p class="alert alert-warn" id="checkout-notice" role="alert" hidden></p>
+[[> pricing-table]]
+<div class="card topup" id="top-up">
+<div>
+<h3>[[topup.price]] top-up: [[topup.images]] extra images</h3>
+<p>For [[plan.starter.name]] and [[plan.pro.name]] accounts. Top-up images are used only after the month's allowance is used up and stay valid for [[topup.validDays]] days from purchase. A top-up is a one-time payment that you start yourself. It is never bought or billed automatically.</p>
+<p class="plan-billing">Billed by Paddle as &ldquo;[[topup.paddleName]]&rdquo;.</p>
+</div>
+<a class="btn btn-secondary" href="/pricing?checkout=topup" data-checkout="topup">Buy a top-up</a>
+</div>
+<p class="section-foot">Subscriptions renew monthly until cancelled. You can ask for a refund within 30 days of a payment: see the <a href="/refund">refund policy</a>.</p>
+</div>
+</section>
+
+<section class="section section-alt" id="counting">
+<div class="container">
+<div class="section-head">
+<h2>What counts as an image.</h2>
+<p>The rules are short, and they are the same ones the billing code enforces.</p>
+</div>
+[[> counting-rules]]
+</div>
+</section>
+
+<section class="section" id="limits">
+<div class="container">
+<div class="section-head">
+<h2>Plans and limits, side by side.</h2>
+<p>These tables are generated from the limits the service enforces.</p>
+</div>
+[[> limits-table]]
+<p class="section-foot">Questions about a plan? <a href="/contact">Get in touch</a> or read the <a href="/refund">refund policy</a>.</p>
+</div>
+</section>
+
+</main>

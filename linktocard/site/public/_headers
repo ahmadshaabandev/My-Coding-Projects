@@ -1,0 +1,17 @@
+# Response headers for static assets (Workers Static Assets reads this file).
+# Responses produced by the Worker (/v1, /api, /auth, ...) set their own headers.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  # PADDLE: every https://cdn.paddle.com and https://*.paddle.com entry in the next line, plus 'unsafe-inline' in style-src, exists only for the Paddle.js overlay checkout (pricing page, dashboard). Paddle's exact CSP requirements were NOT verified: test a sandbox checkout with the browser console open before go-live and adjust this one line.
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.paddle.com; style-src 'self' 'unsafe-inline' https://*.paddle.com; img-src 'self' data: blob: https://*.paddle.com; font-src 'self'; connect-src 'self' https://*.paddle.com; frame-src https://*.paddle.com; form-action 'self' mailto:; base-uri 'self'; object-src 'none'; frame-ancestors 'none'
+
+# CSS, JS, images and fonts have no content hash in their names, so they must not be cached as immutable.
+/assets/*
+  Cache-Control: public, max-age=3600
+
+# Twemoji SVGs, loaded by the image renderer.
+/_emoji/*
+  Cache-Control: public, max-age=86400

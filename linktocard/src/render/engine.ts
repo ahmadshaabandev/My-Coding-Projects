@@ -1,5 +1,6 @@
 // Render engine: Satori VDOM -> SVG (satori) -> RGBA / PNG (resvg-wasm) -> JPEG / WebP (jSquash).
 // Everything here runs inside workerd. No headless browser, no network access.
+// The template pipeline on top of these stages is src/render/index.ts.
 //
 // workerd forbids compiling WebAssembly from bytes at runtime, so every .wasm is imported as a
 // precompiled WebAssembly.Module (wrangler.toml `rules` type CompiledWasm) and instantiated
@@ -18,12 +19,11 @@ import encodeWebp, { init as initWebpEncoder } from '@jsquash/webp/encode.js'
 // workerd, so the SIMD binary is the one that has to be supplied (same as jSquash's own
 // Cloudflare Workers example). tests/spike.test.ts fails loudly if that ever stops matching.
 import webpEncWasm from '@jsquash/webp/codec/enc/webp_enc_simd.wasm'
+import type { ImageFormat } from '../config'
 import { FONTS, type RenderFont } from './fonts'
 import { assertSafeVdom, DEFAULT_LIMITS, RenderInputError, type GuardLimits } from './guard'
 
 export { RenderInputError, DEFAULT_LIMITS, type GuardLimits } from './guard'
-
-export type ImageFormat = 'png' | 'jpeg' | 'webp'
 
 /** React-element-like object accepted by Satori ("Use without JSX" in its README). */
 export interface VNode {
@@ -37,23 +37,17 @@ export interface VNode {
 }
 export type VChild = VNode | string | number | null | undefined | false
 
-export interface RenderOptions {
-  width: number
-  height: number
-  format: ImageFormat
-  /** JPEG / WebP quality 1-100. Default 85. */
-  quality?: number
-  /** Opaque colour painted behind the card. Default '#ffffff'. */
-  background?: string
-  /** Extra Satori options (fonts, emoji loader, style error handler, limits...). */
-  svg?: Omit<SvgOptions, 'width' | 'height'>
-}
+/** Opaque colour painted behind every card, so the output never has transparency. */
+const BACKGROUND = '#ffffff'
 
-export const CONTENT_TYPES: Record<ImageFormat, string> = {
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-}
+/**
+ * Encoder settings, chosen from the timings in research/spike-render.md section 5:
+ *  - JPEG q85 non-progressive: 50 ms / 32.7 kB against 99 ms / 28.4 kB progressive.
+ *  - WebP q85 method 2: 39 ms / 18.7 kB against 64 ms / 18.4 kB for the default method 4
+ *    (method 0 is faster still but 17% larger).
+ */
+const JPEG_OPTIONS = { quality: 85, progressive: false } as const
+const WEBP_OPTIONS = { quality: 85, method: 2 } as const
 
 // ---------------------------------------------------------------------------
 // One-time wasm initialisation.
@@ -224,7 +218,7 @@ function withResvg<T>(svg: string, width: number, background: string, use: (imag
  * `background` is always painted first, every pixel has alpha 255 and premultiplied equals
  * straight alpha, so the buffer can be handed to the JPEG / WebP encoders unchanged.
  */
-export async function rasterize(svg: string, width: number, background = '#ffffff'): Promise<Raster> {
+export async function rasterize(svg: string, width: number, background = BACKGROUND): Promise<Raster> {
   await ensureResvg()
   // Copy out of wasm memory before the image is freed.
   return withResvg(svg, width, background, (image) => ({
@@ -234,7 +228,7 @@ export async function rasterize(svg: string, width: number, background = '#fffff
   }))
 }
 
-export async function svgToPng(svg: string, width: number, background = '#ffffff'): Promise<Uint8Array> {
+export async function svgToPng(svg: string, width: number, background = BACKGROUND): Promise<Uint8Array> {
   await ensureResvg()
   return withResvg(svg, width, background, (image) => image.asPng().slice())
 }
@@ -251,61 +245,33 @@ function toImageData<T>(raster: Raster): T {
   } as T
 }
 
-export async function encodeRasterJpeg(raster: Raster, quality = 85): Promise<Uint8Array> {
+export async function encodeRasterJpeg(raster: Raster): Promise<Uint8Array> {
   await ensureJpeg()
-  return new Uint8Array(await encodeJpeg(toImageData<Parameters<typeof encodeJpeg>[0]>(raster), { quality }))
+  return new Uint8Array(await encodeJpeg(toImageData<Parameters<typeof encodeJpeg>[0]>(raster), JPEG_OPTIONS))
 }
 
-export async function encodeRasterWebp(raster: Raster, quality = 85): Promise<Uint8Array> {
+export async function encodeRasterWebp(raster: Raster): Promise<Uint8Array> {
   await ensureWebp()
-  return new Uint8Array(await encodeWebp(toImageData<Parameters<typeof encodeWebp>[0]>(raster), { quality }))
+  return new Uint8Array(await encodeWebp(toImageData<Parameters<typeof encodeWebp>[0]>(raster), WEBP_OPTIONS))
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-export interface RenderTimings {
-  /** VDOM -> SVG (satori), ms. Includes one-time init on the first call. */
-  svg: number
-  /** SVG -> pixels (resvg); for PNG this also includes PNG encoding. */
-  raster: number
-  /** Pixels -> JPEG / WebP (0 for PNG). */
-  encode: number
-  total: number
+export interface EncodedImage {
+  bytes: Uint8Array
+  /** SVG -> pixels (resvg), ms; for PNG this includes the PNG encoding. */
+  rasterMs: number
+  /** Pixels -> JPEG / WebP, ms (0 for PNG). */
+  encodeMs: number
 }
 
-/** Like render(), and also reports how long each stage took. */
-export async function renderWithTimings(
-  vdom: VNode,
-  options: RenderOptions,
-): Promise<{ bytes: Uint8Array; timings: RenderTimings }> {
-  const { width, height, format, quality = 85, background = '#ffffff' } = options
-  const t0 = performance.now()
-  const svg = await renderSvg(vdom, { ...options.svg, width, height })
-  const t1 = performance.now()
-  let bytes: Uint8Array
-  let t2: number
+/** SVG -> encoded image on an opaque white background. */
+export async function encodeSvg(svg: string, width: number, format: ImageFormat): Promise<EncodedImage> {
+  const started = performance.now()
   if (format === 'png') {
-    bytes = await svgToPng(svg, width, background)
-    t2 = performance.now()
-  } else {
-    const raster = await rasterize(svg, width, background)
-    t2 = performance.now()
-    bytes = format === 'jpeg' ? await encodeRasterJpeg(raster, quality) : await encodeRasterWebp(raster, quality)
+    const bytes = await svgToPng(svg, width)
+    return { bytes, rasterMs: performance.now() - started, encodeMs: 0 }
   }
-  const t3 = performance.now()
-  return { bytes, timings: { svg: t1 - t0, raster: t2 - t1, encode: t3 - t2, total: t3 - t0 } }
+  const raster = await rasterize(svg, width)
+  const rastered = performance.now()
+  const bytes = format === 'jpeg' ? await encodeRasterJpeg(raster) : await encodeRasterWebp(raster)
+  return { bytes, rasterMs: rastered - started, encodeMs: performance.now() - rastered }
 }
-
-/** Satori VDOM + {width,height,format} -> encoded image bytes. */
-export async function render(vdom: VNode, options: RenderOptions): Promise<Uint8Array> {
-  return (await renderWithTimings(vdom, options)).bytes
-}
-
-export const renderPng = (vdom: VNode, size: { width: number; height: number }) =>
-  render(vdom, { ...size, format: 'png' })
-export const renderJpeg = (vdom: VNode, size: { width: number; height: number }, quality?: number) =>
-  render(vdom, { ...size, format: 'jpeg', quality })
-export const renderWebp = (vdom: VNode, size: { width: number; height: number }, quality?: number) =>
-  render(vdom, { ...size, format: 'webp', quality })

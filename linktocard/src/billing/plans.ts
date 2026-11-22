@@ -4,7 +4,7 @@
  * Everything that states a number about a plan reads it from here: the quota
  * enforcer, the pricing page and docs (via scripts/build-site.ts), the Paddle
  * catalog instructions (scripts/seed-paddle-sandbox.md is checked against this
- * file by tests/plans.test.ts) and the tests. Change a number here and nowhere
+ * file by tests/node/paddle-catalog.test.ts) and the tests. Change a number here and nowhere
  * else, then update the Paddle catalog to match.
  */
 

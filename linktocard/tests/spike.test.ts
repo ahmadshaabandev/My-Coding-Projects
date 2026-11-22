@@ -1,6 +1,45 @@
+// Engine-level checks (VDOM in, bytes out): wasm initialisation, output formats, pixel format.
+// The template path on top of it is covered by tests/render.test.ts and tests/template.test.ts.
 import { describe, expect, it, vi } from 'vitest'
-import { initRuns, rasterize, render, renderSvg } from '../src/render/engine'
-import { sampleCard } from '../src/render/sample-card'
+import type { ImageFormat } from '../src/config'
+import { encodeSvg, initRuns, rasterize, renderSvg, type VNode } from '../src/render/engine'
+import { fontStack } from '../src/render/fonts'
+import { el } from './helpers'
+
+/** Gradient card with the three bundled families, built directly as a Satori VDOM. */
+function sampleCard(title = 'Link To Card'): VNode {
+  return el(
+    'div',
+    {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        boxSizing: 'border-box',
+        width: '100%',
+        height: '100%',
+        padding: 64,
+        backgroundImage: 'linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%)',
+        color: '#f8fafc',
+        fontFamily: fontStack('Inter'),
+      },
+    },
+    el('div', { style: { fontSize: 84, fontWeight: 800, lineHeight: 1.05 } }, title),
+    el(
+      'div',
+      { style: { display: 'flex', justifyContent: 'space-between', fontSize: 28 } },
+      el('div', { style: { fontFamily: fontStack('Source Serif 4'), fontStyle: 'italic' } }, 'Żółć, Привет, Γειά σου, Tiếng Việt'),
+      el('div', { style: { fontFamily: fontStack('JetBrains Mono'), fontWeight: 700 } }, 'workerd'),
+    ),
+  )
+}
+
+type Render = (vdom: VNode, options: { width: number; height: number; format: ImageFormat }) => Promise<Uint8Array>
+const renderWith =
+  (engine: { renderSvg: typeof renderSvg; encodeSvg: typeof encodeSvg }): Render =>
+  async (vdom, { width, height, format }) =>
+    (await engine.encodeSvg(await engine.renderSvg(vdom, { width, height }), width, format)).bytes
+const render = renderWith({ renderSvg, encodeSvg })
 
 const SIZE = { width: 1200, height: 630 }
 
@@ -68,9 +107,10 @@ describe('render engine inside workerd', () => {
     const before = initRuns()
     vi.resetModules()
     const again = await import('../src/render/engine')
-    expect(again.render).not.toBe(render)
+    expect(again.renderSvg).not.toBe(renderSvg)
+    const renderAgain = renderWith(again)
     for (const format of ['png', 'jpeg', 'webp'] as const) {
-      const bytes = await again.render(sampleCard('Re-evaluated'), { ...SIZE, format })
+      const bytes = await renderAgain(sampleCard('Re-evaluated'), { ...SIZE, format })
       expect(bytes.byteLength).toBeGreaterThan(5_000)
     }
     // The old module instance still works as well.

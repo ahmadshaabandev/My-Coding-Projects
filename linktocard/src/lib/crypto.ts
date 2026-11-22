@@ -7,9 +7,14 @@ const encoder = new TextEncoder();
 
 type Bytes = Uint8Array | ArrayBuffer;
 
-function toBytes(input: string | Bytes): Uint8Array {
-  if (typeof input === 'string') return encoder.encode(input);
-  return input instanceof Uint8Array ? input : new Uint8Array(input);
+// Returns a view over a plain ArrayBuffer: that is what Web Crypto's BufferSource
+// requires under both the Workers and the DOM/Node type libraries.
+function toBytes(input: string | Bytes): Uint8Array<ArrayBuffer> {
+  if (typeof input === 'string') return encoder.encode(input) as Uint8Array<ArrayBuffer>;
+  if (input instanceof Uint8Array) {
+    return input.buffer instanceof ArrayBuffer ? (input as Uint8Array<ArrayBuffer>) : new Uint8Array(input);
+  }
+  return new Uint8Array(input);
 }
 
 export function toHex(input: Bytes): string {

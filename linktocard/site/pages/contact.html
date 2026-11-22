@@ -1,0 +1,35 @@
+---
+title: Contact
+description: Contact [[site.name]] support by email or with the contact form.
+scripts: contact
+---
+<main class="section">
+<div class="container contact-grid">
+<div class="section-head">
+<p class="eyebrow">Contact</p>
+<h1>Get in touch.</h1>
+<p>Email <a href="mailto:[[site.supportEmail]]">[[site.supportEmail]]</a>, or use the form. A solo developer reads and answers every message.</p>
+<p class="hint">For billing questions, include the email address of your account.</p>
+</div>
+<div class="card">
+<form class="stack" id="contact-form" action="mailto:[[site.supportEmail]]" method="post" enctype="text/plain">
+<label class="field">
+<span class="label">Your email</span>
+<input class="input" type="email" name="email" required autocomplete="email" maxlength="254">
+</label>
+<label class="field">
+<span class="label">Message</span>
+<textarea class="textarea" name="message" required minlength="10" maxlength="5000"></textarea>
+</label>
+<div class="hp-field" aria-hidden="true">
+<label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+</div>
+<p class="alert alert-danger" id="contact-error" role="alert" hidden></p>
+<button class="btn btn-primary" type="submit">Send message</button>
+</form>
+<div class="alert alert-ok" id="contact-done" role="status" tabindex="-1" hidden>
+<strong>Message sent.</strong> Thank you. You will get a reply by email.
+</div>
+</div>
+</div>
+</main>
