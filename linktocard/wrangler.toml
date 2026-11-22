@@ -64,7 +64,7 @@ binding = "BUCKET"
 bucket_name = "linktocard-dev"
 
 # Rate limiters. Keep limit/period in sync with RATE_LIMITS in src/config.ts
-# (tests/node/config.test.ts fails if they drift). period must be 10 or 60.
+# (tests/node/forbidden-deps.test.ts fails if they drift). period must be 10 or 60.
 [[ratelimits]]
 name = "RL_IP"
 namespace_id = "1001"

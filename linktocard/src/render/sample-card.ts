@@ -1,9 +1,8 @@
 /**
- * The demo card behind the temporary /spike.* endpoints and `npm run smoke`.
- * It goes through the whole template path on purpose: placeholders, state
- * classes, the three font families, an inline <svg>, a remote <img> and a
- * remote CSS url() (both served from memory by sampleDeps, so the smoke test
- * needs no network).
+ * A test fixture (used by tests/render.test.ts and tests/probes), not part of the
+ * service. It goes through the whole template path on purpose: placeholders, state
+ * classes, the three font families, an inline <svg>, a remote <img> and a remote
+ * CSS url() (both served from memory by sampleDeps, so no network is needed).
  */
 import { ApiError } from '../lib/errors';
 import type { RenderDeps, TemplateData } from '../types';

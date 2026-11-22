@@ -7,8 +7,8 @@ import { defineConfig } from 'vitest/config'
 // uses) with local D1, R2, rate limiters and the static-assets binding from wrangler.toml.
 //
 // The pool is close to, but not identical to, production workerd (it force-enables
-// nodejs_compat, allows eval and has extra globals). `npm run smoke` and `npm run e2e`
-// exercise the plain runtime through `wrangler dev`.
+// nodejs_compat, allows eval and has extra globals). `npm run smoke` exercises
+// the plain runtime through `wrangler dev`.
 //
 // Storage (D1, R2, rate-limit counters) is isolated per test FILE, not per test.
 //

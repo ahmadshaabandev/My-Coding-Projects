@@ -75,7 +75,9 @@ export const requireSameOrigin: MiddlewareHandler<AppEnv> = async (c, next) => {
       throw new ApiError('forbidden', 'Cross-site requests are not allowed.');
     }
     const contentType = (request.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
-    if (request.body !== null && contentType !== 'application/json') {
+    // "Content-Length: 0" is how real workerd delivers a bodyless POST or DELETE.
+    const hasBody = request.body !== null && request.headers.get('content-length') !== '0';
+    if (hasBody && contentType !== 'application/json') {
       throw new ApiError('forbidden', 'Send the request body as application/json.');
     }
   }
