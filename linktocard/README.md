@@ -231,6 +231,8 @@ it if it is wrong.
 | Output sizes | All three sizes on every plan | `src/config.ts` |
 | Plan changes | Upgrades and downgrades take effect immediately, prorated by Paddle | `src/billing/paddle.ts` |
 | Cancellation | The plan stays until the paid period ends, then the account returns to Free | `src/billing/paddle.ts` |
+| Refunds | Any payment is refunded on request within 30 days, no reason needed, including a top-up that was already used | `site/content/refund.md` |
+| Free month | A Free account's allowance resets at the start of each calendar month (UTC); a paid plan follows its Paddle billing period | `src/lib/quota.ts` |
 | Governing law | Lebanon | `site/site.config.json`, `/terms` |
 | Terms | Liability capped at 12 months of fees; price changes announced by email; pro-rata refund if the service is closed | `site/content/terms.md` |
 | Privacy | Deletion on request by email to support; the list of processors (Cloudflare, Resend, Paddle) | `site/content/privacy.md` |
