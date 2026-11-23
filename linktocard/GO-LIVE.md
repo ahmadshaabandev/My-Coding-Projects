@@ -205,30 +205,41 @@ each sale (check the current rate on Paddle's pricing page).
 
 ## 6. Paddle live
 
-**State on 2026-11-23.** The code is ready for live; the live Paddle account is not yet set up.
+**State on 2026-11-23: live account and code ready; checkout closed until Paddle approves the domain.**
 
-- Done in code and deployed: production uses `api.paddle.com` and Paddle.js's live default (no
-  `Environment.set('sandbox')`); `CHECKOUT_ENABLED = "false"` keeps "Coming soon" on
-  linktocard.com even after the live values below are filled in; webhooks outside local
-  development are accepted only from Paddle's addresses (fetched from `GET /ips`, never
-  hard-coded); `Paddle.Initialize` gets `pwCustomer` with the customer's own `ctm_...` id. The
-  sandbox address check was confirmed on staging (a non-Paddle sender gets 403); a real live
-  delivery has not been seen yet.
-- To do with a live API key (none exists in this environment; create it yourself): products
-  and prices identical to the sandbox (Starter $9/month, Pro $29/month, Top-up $8 one-time, tax
-  added on top, quantity 1), a `live_` client-side token, and one notification destination
-  `https://linktocard.com/webhooks/paddle` with the 11 events in `scripts/seed-paddle-sandbox.md`
-  (reuse it if one exists; never recreate it). Its secret goes straight into
-  `wrangler secret put PADDLE_WEBHOOK_SECRET --env production`.
-- Permissions for that one-time setup key: `product.read/write`, `price.read/write`,
-  `client_token.read/write`, `notification_setting.read/write`, `checkout_settings.read/write`,
-  `discount.read`, `tax_settings.read`, the checkout-domain read permission, and the balance
-  currency read permission. Delete the key when the setup is done.
-- The production Worker's own key (`PADDLE_API_KEY --env production`): only
-  `customer_portal_session.write` and `subscription.write`.
-- Paddle Retain: `pwCustomer` is passed, but Retain's script (`public.profitwell.com`) is
-  blocked by the Content-Security-Policy and is not named in the privacy policy. Decide
-  before enabling Retain; both need changing if you do.
+Done through the Paddle API with a temporary setup key (additive only, nothing edited or deleted):
+
+| | Sandbox | Live |
+| --- | --- | --- |
+| Starter, $9/month | `pri_01m82bzchs8tna3fz949myr8fm` | `pri_01m84q5rxc7p4wemzgrmca6fg8` (product `pro_01m84q5rd785vnyj56k43d9dzb`) |
+| Pro, $29/month | `pri_01m82bzcsrnsf4143bxmahcqpx` | `pri_01m84q5s5x5bwwdkj1rca0dc5d` (product `pro_01m84q5s1nzx5t7p3fzcmyrgkz`) |
+| Top-up, $8 one-time | `pri_01m82bzd1t7wfsswxz18b9e81z` | `pri_01m84q5se0b8mmt14heam77enr` (product `pro_01m84q5s9m8n35sxnkv06bvcbk`) |
+
+All prices: USD, tax added on top (`tax_mode: external`), quantity exactly 1. No discounts exist in
+live. Client-side token `live_af7ed7091e4363c559f5abbf6fc` ("Link To Card production"). Notification
+destination `ntfset_01m84q5ss0c74z9e6es9g2bpdx` -> `https://linktocard.com/webhooks/paddle`, the 11
+events, traffic source "all"; its secret is the production `PADDLE_WEBHOOK_SECRET` (never recreate the
+destination: that would rotate the secret). Payment methods: card, PayPal, Apple Pay (Bancontact
+turned off). Live tax mode `location` and balance currency USD were read and left unchanged; every
+price carries its own `external` tax mode, so the account default does not change what customers pay.
+
+Production Worker: live token and price ids in `wrangler.toml`, `PADDLE_ENV = "production"`,
+`PADDLE_API_KEY` (a live key with only `customer_portal_session.write` and `subscription.write`;
+checked with a request that creates nothing) and `PADDLE_WEBHOOK_SECRET` as secrets,
+`CHECKOUT_ENABLED = "false"`. Webhooks are accepted only from Paddle's live addresses (`GET
+https://api.paddle.com/ips`, fetched by the Worker); a non-Paddle sender gets 403. Paddle Retain is
+not used: Paddle.js tries to load Retain's script on live accounts and the CSP blocks it.
+
+Left to do, in order:
+
+- [ ] Wait for website approval of `linktocard.com` (submitted; `pending_review` on 2026-11-23). Then
+      check Apple Pay's status for the domain on the same page (it read `unverified` while in review).
+- [ ] After approval: set the default payment link to `https://linktocard.com/pricing`
+      (`PATCH /settings/checkout-url`, or Checkout > Checkout settings).
+- [ ] After approval: set `CHECKOUT_ENABLED = "true"` in `[env.production.vars]` and
+      `npm run deploy:production`. The buttons stop saying "Coming soon".
+- [ ] Bank details: Business account > Payouts > Payout settings.
+- [ ] Delete the temporary setup key once nothing more is needed from it.
 
 
 - [ ] Recreate the catalog in the **live** Paddle account with exactly the names and prices

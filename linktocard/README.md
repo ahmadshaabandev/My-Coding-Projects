@@ -12,6 +12,9 @@ It runs on Cloudflare Workers with Satori and resvg. There is no headless browse
   image; a sign-in email to a real address was accepted by Resend with no error, and a
   browser sign-in worked. Zone settings still to change by hand are in
   GO-LIVE.md section 4a.
+- **Live Paddle is configured** (2026-11-23): the same three products and prices as the sandbox, a
+  live client token and webhook destination, live keys stored as Worker secrets. Checkout stays
+  closed (`CHECKOUT_ENABLED = "false"`) until Paddle approves linktocard.com. GO-LIVE.md section 6.
 - **Staging runs on Cloudflare** at https://linktocard-staging.names-on-base.workers.dev with
   the Paddle sandbox. Measured there: CPU time median 4 ms, 90th percentile 376 ms, maximum
   636 ms per request.
