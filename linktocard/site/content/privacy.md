@@ -10,7 +10,7 @@ This page explains what data [[site.name]] collects and what happens to it. The 
 
 ## 1. Who is responsible
 
-[[site.name]] ([[site.url]]) is operated by [[legal.name]], [[legal.address]], a sole developer based in Lebanon. [[legal.name]] is responsible for the personal data described here.
+[[site.name]] ([[site.url]]) is operated by [[legal.name]], trading as [[site.name]], a sole proprietor based in Lebanon. Address: [[legal.address]]. [[legal.name]] is responsible for the personal data described here.
 
 Contact for anything on this page: <[[site.supportEmail]]>
 

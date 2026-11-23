@@ -55,9 +55,15 @@ request rules out every other processor).
 
 Paddle's domain review checks that the seller named in the terms matches the Paddle account.
 
-- [ ] Edit `site/site.config.json`: replace `LEGAL_NAME` with your full legal name exactly as
-      on the Paddle account, and `LEGAL_ADDRESS` with your postal address.
-- [ ] Run `npm run check:golive`. It fails while any placeholder is still on any page.
+- [x] **Done 2026-11-23.** `site/site.config.json` names the seller as Ahmad Shaaban, trading
+      as Link To Card, Nahr Street, Shehim, Chouf, Lebanon, contact support@linktocard.com. The
+      terms, privacy policy and refund policy show all three; every page's footer reads
+      "© 2026 Link To Card · Ahmad Shaaban · Shehim, Chouf, Lebanon · support@linktocard.com" with
+      links to Terms, Privacy, Refunds and Pricing. Pricing, terms and refund policy state that
+      Paddle is the Merchant of Record and handles payments and taxes. Verified live on staging.
+- [ ] Check that the name matches your Paddle account exactly (Paddle compares them). If Paddle
+      shows it differently, change `legalName` and redeploy.
+- [x] `npm run check:golive` passes: no placeholder is left on any page.
 - [ ] Read `/terms`, `/privacy` and `/refund` in full. They are drafts written with AI
       assistance. The choices that are yours to confirm are listed in README.md under
       "Assumptions to confirm". Have a lawyer read them if you can.
@@ -101,6 +107,8 @@ npx wrangler secret put PADDLE_WEBHOOK_SECRET --env staging   # sandbox notifica
       client token and the three price ids into `[env.staging.vars]`.
 - [ ] `npm run deploy:staging` again.
 - [ ] Check the live deployment: `npm run check:deploy -- https://linktocard-staging.names-on-base.workers.dev`
+      (for a minute or two after a deploy, Cloudflare may still serve some pages from its cache;
+      re-run before reading a failure as real)
       (public pages, headers and five real renders). After you can sign in, create a test API key
       and site and run it again with `LTC_API_KEY`, `LTC_SITE_ID` and `LTC_SITE_SECRET` set for the
       full check.

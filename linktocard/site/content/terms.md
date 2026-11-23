@@ -10,13 +10,13 @@ These terms are the agreement between you and the seller of [[site.name]]. They 
 
 ## 1. Who we are
 
-[[site.name]] ([[site.url]]) is operated by [[legal.name]], a sole developer based in Lebanon.
+[[site.name]] ([[site.url]]) is operated by [[legal.name]], trading as [[site.name]], a sole proprietor based in Lebanon.
 
-- Seller: [[legal.name]]
+- Seller: [[legal.name]], trading as [[site.name]]
 - Address: [[legal.address]]
 - Contact: <[[site.supportEmail]]>
 
-In these terms "we" and "us" mean [[legal.name]], and "the service" means the [[site.name]] website, dashboard and API.
+In these terms "we" and "us" mean [[legal.name]], trading as [[site.name]], and "the service" means the [[site.name]] website, dashboard and API.
 
 ## 2. What the service is
 
@@ -80,7 +80,7 @@ Unused monthly images do not carry over to the next month. We do not charge over
 
 Our order process is conducted by our online reseller Paddle.com. Paddle.com is the Merchant of Record for all our orders. Paddle provides all customer service inquiries and handles returns.
 
-This means that your purchase is made from Paddle, under [Paddle's buyer terms](https://www.paddle.com/legal/buyer-terms), and Paddle charges your payment method, collects any tax and sends your receipt. These terms cover your use of the service itself. Paddle answers questions about orders, payments and receipts; questions about how the service works go to us at <[[site.supportEmail]]>. Refunds are described in our [refund policy](/refund).
+Paddle handles payments and taxes. Your purchase is made from Paddle, under [Paddle's buyer terms](https://www.paddle.com/legal/buyer-terms): Paddle charges your payment method, calculates, collects and remits any sales tax or VAT, and sends your receipt. These terms cover your use of the service itself. Paddle answers questions about orders, payments and receipts; questions about how the service works go to us at <[[site.supportEmail]]>. Refunds are described in our [refund policy](/refund).
 
 ## 8. Renewal and cancellation
 

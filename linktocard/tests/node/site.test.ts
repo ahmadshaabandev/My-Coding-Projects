@@ -111,7 +111,16 @@ describe('built site', () => {
       const footer = page.html.slice(page.html.indexOf('<footer'), page.html.indexOf('</footer>'));
       for (const href of FOOTER_LINKS) expect(footer, `${where} footer ${href}`).toContain(`href="${href}"`);
       expect(footer, where).toContain('Payments secured by Paddle');
-      expect(footer, where).toContain('&copy; 2026 <mark class="placeholder">LEGAL_NAME</mark>');
+      expect(footer, where).toContain(
+        '&copy; 2026 Link To Card &middot; Ahmad Shaaban &middot; Shehim, Chouf, Lebanon &middot; <a href="mailto:support@linktocard.com">support@linktocard.com</a>',
+      );
+      const legalLinks = footer.slice(footer.indexOf('footer-legal-links'), footer.indexOf('</p>', footer.indexOf('footer-legal-links')));
+      expect([...legalLinks.matchAll(/<a href="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2]]), where).toEqual([
+        ['/terms', 'Terms'],
+        ['/privacy', 'Privacy'],
+        ['/refund', 'Refunds'],
+        ['/pricing', 'Pricing'],
+      ]);
       expect(footer, where).toMatch(/AI tools were used to help build this product\. A human reviews every release\./);
       expect(stripTags(footer), where).toContain('Emoji graphics by Twemoji (CC-BY 4.0).');
     }
@@ -433,8 +442,10 @@ describe('content pipeline', () => {
   it('renders legal pages in a narrow column with "Last updated" and highlighted placeholders', () => {
     const html = pageHtml(render(), 'notice.html');
     expect(html).toContain('<main class="container page page-legal">');
-    expect(html).toContain('<p class="eyebrow">Last updated <time datetime="2026-11-22">22 November 2026</time></p>');
-    expect(html).toContain('Sold by <mark class="placeholder">LEGAL_NAME</mark>, <mark class="placeholder">LEGAL_ADDRESS</mark>.');
+    expect(html).toContain('<p class="eyebrow">Last updated <time datetime="2026-11-23">23 November 2026</time></p>');
+    expect(html).toContain('Sold by Ahmad Shaaban, Nahr Street, Shehim, Chouf, Lebanon.');
+    const unfilled = pageHtml(renderSite({ contentDir, env: { SITE_LEGAL_NAME: 'LEGAL_NAME', SITE_LEGAL_ADDRESS: 'LEGAL_ADDRESS' }, now: NOW }), 'notice.html');
+    expect(unfilled).toContain('Sold by <mark class="placeholder">LEGAL_NAME</mark>, <mark class="placeholder">LEGAL_ADDRESS</mark>.');
     expect(pageHtml(render(), 'about.html')).toContain('<main class="container page">');
   });
 
@@ -465,9 +476,10 @@ describe('tokens', () => {
       'site.host': 'linktocard.com',
       'site.supportEmail': 'support@linktocard.com',
       'site.year': '2026',
-      'legal.name': 'LEGAL_NAME',
-      'legal.address': 'LEGAL_ADDRESS',
-      'legal.updated': '22 November 2026',
+      'legal.name': 'Ahmad Shaaban',
+      'legal.address': 'Nahr Street, Shehim, Chouf, Lebanon',
+      'legal.locality': 'Shehim, Chouf, Lebanon',
+      'legal.updated': '23 November 2026',
       'legal.governingLaw': 'Lebanon',
       'plan.free.paddleName': '(no Paddle product)',
       'plan.starter.price': formatUsd(PLANS.starter.priceUsd),
@@ -497,7 +509,7 @@ describe('tokens', () => {
     ];
     const required = [
       ...['name', 'url', 'host', 'supportEmail'].map((name) => `site.${name}`),
-      ...['name', 'address', 'updated', 'governingLaw'].map((name) => `legal.${name}`),
+      ...['name', 'address', 'locality', 'updated', 'governingLaw'].map((name) => `legal.${name}`),
       ...PLAN_ORDER.flatMap((id) => planFields.map((field) => `plan.${id}.${field}`)),
       ...['price', 'images', 'validDays', 'paddleName'].map((name) => `topup.${name}`),
       ...limits.map((name) => `limit.${name}`),
@@ -517,35 +529,61 @@ describe('tokens', () => {
   });
 });
 
+describe('seller identity and Merchant of Record (Paddle website review)', () => {
+  const MOR = 'Our order process is conducted by our online reseller Paddle.com. Paddle.com is the Merchant of Record for all our orders.';
+  const SELLER = 'Ahmad Shaaban, trading as Link To Card';
+  const site = renderSite({ env: {}, now: NOW });
+  const text = (file: string): string => stripTags(pageHtml(site, file)).replace(/\s+/g, ' ');
+
+  it.each(['terms.html', 'privacy.html', 'refund.html'])('%s names the seller with address and contact email', (file) => {
+    const page = text(file);
+    expect(page).toContain(SELLER);
+    expect(page).toContain('Nahr Street, Shehim, Chouf, Lebanon');
+    expect(page).toContain('support@linktocard.com');
+  });
+
+  it.each(['pricing.html', 'terms.html', 'refund.html'])('%s says Paddle is the Merchant of Record and handles payments and taxes', (file) => {
+    const page = text(file);
+    expect(page).toContain(MOR);
+    expect(page).toContain('Paddle handles payments and taxes');
+  });
+});
+
 describe('go-live placeholder check', () => {
   const cli = (args: string[], env: Record<string, string>): { status: number | null; output: string } => {
     const result = spawnSync(process.execPath, [join(ROOT, 'node_modules/tsx/dist/cli.mjs'), 'scripts/build-site.ts', ...args], {
       cwd: ROOT,
       encoding: 'utf8',
-      env: { ...process.env, SITE_LEGAL_NAME: '', SITE_LEGAL_ADDRESS: '', SITE_URL: '', ...env },
+      env: { ...process.env, SITE_LEGAL_NAME: '', SITE_LEGAL_ADDRESS: '', SITE_LEGAL_LOCALITY: '', SITE_URL: '', ...env },
     });
     return { status: result.status, output: `${result.stdout}${result.stderr}` };
   };
 
-  it('finds the unfilled legal name and address and the pages that show them', () => {
-    const found = findPlaceholders(renderSite({ env: {}, now: NOW }));
+  const UNFILLED = { SITE_LEGAL_NAME: 'LEGAL_NAME', SITE_LEGAL_ADDRESS: 'LEGAL_ADDRESS' };
+
+  it('finds an unfilled legal name and address and the pages that show them', () => {
+    const found = findPlaceholders(renderSite({ env: UNFILLED, now: NOW }));
     expect(found.map(({ value }) => value)).toEqual(expect.arrayContaining(['LEGAL_NAME', 'LEGAL_ADDRESS']));
     expect(found.find(({ value }) => value === 'LEGAL_NAME')?.pages).toEqual(expect.arrayContaining(HAND_BUILT));
   });
 
-  it('finds nothing once the real values are supplied', () => {
-    const env = { SITE_LEGAL_NAME: 'Example Trading', SITE_LEGAL_ADDRESS: '1 Example Street, Beirut' };
-    const site = renderSite({ env, now: NOW });
+  it('finds nothing in the shipped configuration: the seller is named on every page', () => {
+    const site = renderSite({ env: {}, now: NOW });
     expect(findPlaceholders(site)).toEqual([]);
-    expect(pageHtml(site, 'index.html')).toContain('&copy; 2026 Example Trading. Payments secured by Paddle.');
+    expect(pageHtml(site, 'index.html')).toContain('&copy; 2026 Link To Card &middot; Ahmad Shaaban &middot; Shehim, Chouf, Lebanon');
+  });
+
+  it('applies the SITE_LEGAL_* overrides to the footer', () => {
+    const env = { SITE_LEGAL_NAME: 'Example Trading', SITE_LEGAL_ADDRESS: '1 Example Street, Beirut', SITE_LEGAL_LOCALITY: 'Beirut, Lebanon' };
+    expect(pageHtml(renderSite({ env, now: NOW }), 'index.html')).toContain('&copy; 2026 Link To Card &middot; Example Trading &middot; Beirut, Lebanon');
   });
 
   it('exits non-zero from the command line while placeholders remain, and zero once they are filled', () => {
-    const failing = cli(['--check-golive'], {});
+    const failing = cli(['--check-golive'], UNFILLED);
     expect(failing.status).toBe(1);
     expect(failing.output).toContain('LEGAL_NAME');
     expect(failing.output).toContain('LEGAL_ADDRESS');
-    const passing = cli(['--check-golive'], { SITE_LEGAL_NAME: 'Example Trading', SITE_LEGAL_ADDRESS: '1 Example Street, Beirut' });
+    const passing = cli(['--check-golive'], {});
     expect(passing.output).toContain('Go-live check passed');
     expect(passing.status).toBe(0);
   });

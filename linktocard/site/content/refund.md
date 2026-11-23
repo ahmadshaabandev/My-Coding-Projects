@@ -24,7 +24,7 @@ Use whichever is easier:
 - **Through Paddle.** Open the "View receipt" or manage link in your Paddle receipt email, or go to [paddle.net](https://paddle.net) and look up your order.
 - **By email.** Write to <[[site.supportEmail]]> from the address on your account and say which payment you would like refunded.
 
-Our orders are processed by Paddle, which is the Merchant of Record. Paddle issues the refund to the original payment method. How quickly the money shows up depends on Paddle and on your bank or card provider.
+Our order process is conducted by our online reseller Paddle.com. Paddle.com is the Merchant of Record for all our orders. Paddle handles payments and taxes, and Paddle issues the refund to the original payment method. How quickly the money shows up depends on Paddle and on your bank or card provider.
 
 ## Cancelling is separate
 
@@ -36,6 +36,8 @@ Requests made more than 30 days after purchase are decided case by case, and we 
 
 Nothing on this page limits any right to a refund or to withdraw from a purchase that the law of your country gives you.
 
-## Questions
+## Seller and questions
 
-<[[site.supportEmail]]>
+[[site.name]] is sold by [[legal.name]], trading as [[site.name]], [[legal.address]].
+
+Questions about refunds: <[[site.supportEmail]]>

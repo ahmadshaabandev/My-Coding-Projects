@@ -19,8 +19,10 @@ It runs on Cloudflare Workers with Satori and resvg. There is no headless browse
   Content-Security-Policy let the checkout load. **Live Paddle has not been used**.
 - Sign-in email works on staging: a magic link sent through Resend from `login@linktocard.com`
   arrived in a Gmail inbox (not spam) within a second and signed in.
-- The legal pages are drafts with two placeholders, `LEGAL_NAME` and `LEGAL_ADDRESS`.
-  `npm run deploy:production` refuses to run while either is still on a page.
+- The seller is named on the site: Ahmad Shaaban, trading as Link To Card, Nahr Street, Shehim,
+  Chouf, Lebanon (terms, privacy, refund policy, and a one-line notice in every page's footer).
+  The legal pages are still drafts written with AI assistance; see "Assumptions to confirm".
+  `npm run deploy:production` refuses to run if a placeholder ever returns to a page.
 - Whether Paddle can pay out to an individual in Lebanon is unverified. Read
   [GO-LIVE.md](GO-LIVE.md) step 0 before spending money on anything.
 
@@ -138,9 +140,10 @@ staging, your workers.dev subdomain in `APP_URL`. Each is marked `TODO(Ahmad)`.
 ### Build-time settings for the site
 
 `site/site.config.json` holds the site name, URL, support email, **legal name**, **legal
-address**, the legal pages' "last updated" date and the governing law. The environment
-variables `SITE_URL`, `SITE_LEGAL_NAME` and `SITE_LEGAL_ADDRESS` override the file for one
-build.
+address**, the short **locality** shown in the footer, the legal pages' "last updated" date and
+the governing law. The environment variables `SITE_URL`, `SITE_LEGAL_NAME`,
+`SITE_LEGAL_ADDRESS` and `SITE_LEGAL_LOCALITY` override the file for one build. Change
+`legalUpdated` whenever the wording of the terms, privacy policy or refund policy changes.
 
 `RATE_LIMITS_DISABLED` exists only for the test suite and is ignored unless `ENVIRONMENT`
 is `test`.

@@ -40,6 +40,8 @@ export interface SiteConfig {
   supportEmail: string;
   legalName: string;
   legalAddress: string;
+  /** Town, district and country, for the one-line seller notice in the footer. */
+  legalLocality: string;
   legalUpdated: string;
   governingLaw: string;
 }
@@ -105,12 +107,13 @@ interface PageSource {
 
 // ------------------------------------------------------------------ config
 
-const CONFIG_KEYS = ['name', 'url', 'supportEmail', 'legalName', 'legalAddress', 'legalUpdated', 'governingLaw'] as const;
+const CONFIG_KEYS = ['name', 'url', 'supportEmail', 'legalName', 'legalAddress', 'legalLocality', 'legalUpdated', 'governingLaw'] as const;
 
 const ENV_OVERRIDES: Partial<Record<keyof SiteConfig, string>> = {
   url: 'SITE_URL',
   legalName: 'SITE_LEGAL_NAME',
   legalAddress: 'SITE_LEGAL_ADDRESS',
+  legalLocality: 'SITE_LEGAL_LOCALITY',
 };
 
 /** LEGAL_NAME, LEGAL_ADDRESS, ...: an ALL_CAPS_WITH_UNDERSCORES value has not been filled in. */
@@ -178,6 +181,7 @@ function buildTokens(config: SiteConfig, now: Date): Record<string, string> {
     'site.year': String(now.getUTCFullYear()),
     'legal.name': config.legalName,
     'legal.address': config.legalAddress,
+    'legal.locality': config.legalLocality,
     'legal.updated': longDate(config.legalUpdated),
     'legal.updatedIso': config.legalUpdated,
     'legal.governingLaw': config.governingLaw,
@@ -229,6 +233,7 @@ function placeholderTokens(config: SiteConfig): Set<string> {
     'site.supportEmail': config.supportEmail,
     'legal.name': config.legalName,
     'legal.address': config.legalAddress,
+    'legal.locality': config.legalLocality,
     'legal.governingLaw': config.governingLaw,
   };
   return new Set(Object.keys(byToken).filter((name) => isPlaceholder(byToken[name] ?? '')));
