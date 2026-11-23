@@ -24,7 +24,6 @@ export function checkoutAction({ item, user, config, origin }) {
     type: 'checkout',
     environment: paddle.environment,
     token: paddle.client_token,
-    pwCustomer: retainCustomer(user),
     options: {
       items: [{ priceId, quantity: 1 }],
       customer: { email: user.email },
@@ -32,16 +31,6 @@ export function checkoutAction({ item, user, config, origin }) {
       settings: { displayMode: 'overlay', successUrl: `${origin}/dashboard?checkout=success` },
     },
   };
-}
-
-/**
- * Paddle Retain identifies a signed-in customer by their Paddle customer id (ctm_...),
- * never our own account id or email. Paddle asks for an empty object when there is none
- * (a first purchase), and Retain only runs on live accounts.
- */
-export function retainCustomer(user) {
-  const id = user?.paddle_customer_id;
-  return typeof id === 'string' && id.startsWith('ctm_') ? { id } : {};
 }
 
 /** Names of the plans that can buy a top-up, from /api/config (which reads src/billing/plans.ts). */
@@ -62,23 +51,21 @@ function loadPaddle() {
 }
 
 let initialized = false;
-let retainId;
 
 /**
  * Loads Paddle.js and initializes it once (live is Paddle.js's default; only the
- * sandbox is switched on explicitly). A customer id learned later is passed on
- * with Paddle.Update. Rejects when Paddle.js cannot be loaded.
+ * sandbox is switched on explicitly). Rejects when Paddle.js cannot be loaded.
+ *
+ * No pwCustomer: Paddle Retain is not used. On live accounts Paddle.js still tries
+ * to load Retain's script (public.profitwell.com); the site's Content-Security-Policy
+ * blocks it, so nothing about visitors is sent there.
  */
-export async function readyPaddle({ environment, token, pwCustomer = {} }) {
+export async function readyPaddle({ environment, token }) {
   const Paddle = await loadPaddle();
   if (!initialized) {
     if (environment === 'sandbox') Paddle.Environment.set('sandbox');
-    Paddle.Initialize({ token, pwCustomer });
+    Paddle.Initialize({ token });
     initialized = true;
-    retainId = pwCustomer.id;
-  } else if (pwCustomer.id && pwCustomer.id !== retainId) {
-    Paddle.Update({ pwCustomer });
-    retainId = pwCustomer.id;
   }
   return Paddle;
 }

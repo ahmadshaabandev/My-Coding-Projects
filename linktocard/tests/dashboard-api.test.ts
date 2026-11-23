@@ -220,7 +220,6 @@ describe('GET /api/config and /api/me', () => {
         suspended: false,
         subscription: { status: 'active', period_end: new Date(periodEnd).toISOString(), cancel_at: new Date(periodEnd).toISOString() },
         has_billing: true,
-        paddle_customer_id: 'ctm_me',
       },
       usage: expect.objectContaining({ plan: 'starter', limit: 2000, used: 0, topup_remaining: 640, period_end: new Date(periodEnd).toISOString() }),
       topups: [{ id: 'tu_me_live', images: 1000, remaining: 640, expires_at: new Date(now + 100 * DAY_MS).toISOString() }],
@@ -234,7 +233,7 @@ describe('GET /api/config and /api/me', () => {
 
     const free = await signedIn();
     const freeMe = await json<{ user: Record<string, unknown>; topups: unknown[] }>(await dashboard(free.cookie, 'GET', '/api/me'));
-    expect(freeMe.user).toMatchObject({ plan: 'free', subscription: null, has_billing: false, paddle_customer_id: null });
+    expect(freeMe.user).toMatchObject({ plan: 'free', subscription: null, has_billing: false });
     expect(freeMe.topups).toEqual([]);
   });
 });
