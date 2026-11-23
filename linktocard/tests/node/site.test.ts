@@ -620,6 +620,7 @@ describe('browser scripts (pure parts)', () => {
       type: 'checkout',
       environment: 'sandbox',
       token: 'test_token',
+      pwCustomer: {},
       options: {
         items: [{ priceId: 'pri_p', quantity: 1 }],
         customer: { email: 'a@example.com' },

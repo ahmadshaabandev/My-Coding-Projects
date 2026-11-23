@@ -11,9 +11,20 @@ SIGNING_MASTER_SECRET=replace-with-a-long-random-string
 # sign-in link as "dev_link" (development only) and prints it in the terminal.
 RESEND_API_KEY=
 
-# Optional locally; needed for the billing portal and plan changes (Paddle SANDBOX key).
+# Optional locally; needed for the billing portal and plan changes. Locally and on staging
+# this is a SANDBOX key (pdl_sdbx_apikey_...). Production uses a LIVE key (pdl_live_apikey_...)
+# with only customer_portal_session.write and subscription.write, set with
+#   npx wrangler secret put PADDLE_API_KEY --env production
+# Never put a live key in this file or any committed file.
 PADDLE_API_KEY=
 
 # Optional locally; needed for POST /webhooks/paddle (secret of the sandbox
 # notification destination). Several secrets may be separated by commas while rotating.
 PADDLE_WEBHOOK_SECRET=
+
+# Not secrets, so they live in wrangler.toml per environment (not in this file):
+#   PADDLE_ENV            sandbox (local, staging) | production (live)
+#   PADDLE_CLIENT_TOKEN   test_... (sandbox) | live_... (live); public by design
+#   PADDLE_PRICE_*        pri_... ids of the same environment as the token
+#   CHECKOUT_ENABLED      "true" opens checkout; production stays "false" until Paddle
+#                         approves linktocard.com, so the pricing page shows "Coming soon"

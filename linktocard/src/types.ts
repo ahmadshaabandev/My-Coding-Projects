@@ -36,6 +36,8 @@ export interface Env extends Partial<Record<RateLimitName, RateLimitBinding>> {
   MAIL_FROM: string;
   /** 'sandbox' | 'production' */
   PADDLE_ENV: string;
+  /** "true" opens checkout when the Paddle values are set; anything else shows "Coming soon". */
+  CHECKOUT_ENABLED?: string;
   /** Client-side token for Paddle.js (test_... / live_...). Public by design. */
   PADDLE_CLIENT_TOKEN?: string;
   PADDLE_PRICE_STARTER?: string;

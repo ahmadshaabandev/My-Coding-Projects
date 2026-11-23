@@ -118,6 +118,8 @@ dashboardRouter.get('/me', requireSessionAllowSuspended, async (c) => {
           ? null
           : { status: user.subscription_status, period_end: isoOrNull(user.period_end), cancel_at: isoOrNull(user.cancel_at) },
       has_billing: user.paddle_customer_id !== null,
+      // The account's own Paddle customer id (ctm_...), for Paddle Retain's pwCustomer.
+      paddle_customer_id: user.paddle_customer_id,
     },
     usage: usageJson(await getUsage(c.env.DB, user, now)),
     topups: topups.map((topup) => ({ ...topup, expires_at: iso(topup.expires_at) })),

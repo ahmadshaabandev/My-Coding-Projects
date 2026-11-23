@@ -357,9 +357,32 @@ describe('shared checkout helper', () => {
     await openCheckout(action);
     await openCheckout(action);
     expect(Paddle.Environment.set.mock.calls).toEqual([['sandbox']]);
-    expect(Paddle.Initialize.mock.calls).toEqual([[{ token: 'test_token' }]]);
+    expect(Paddle.Initialize.mock.calls).toEqual([[{ token: 'test_token', pwCustomer: {} }]]);
     expect(Paddle.Checkout.open).toHaveBeenCalledTimes(2);
     expect(Paddle.Checkout.open).toHaveBeenLastCalledWith(action.options);
+  });
+});
+
+describe('Paddle Retain customer (pwCustomer)', () => {
+  type Retain = Checkout & { retainCustomer(user: unknown): unknown };
+  const config = { paddle: { environment: 'production', client_token: 'live_token', prices: { starter: 'pri_s', pro: 'pri_p', topup: 'pri_t' } } };
+  const origin = 'https://linktocard.com';
+  it('passes the signed-in customer\'s Paddle customer id, never our own id or email, and {} without one', async () => {
+    const { checkoutAction, openCheckout, retainCustomer } = await load<Retain>('checkout.js');
+    expect(retainCustomer({ id: 'u_7', email: 'me@example.com', paddle_customer_id: 'ctm_01abc' })).toEqual({ id: 'ctm_01abc' });
+    expect(retainCustomer({ id: 'u_7', email: 'me@example.com', paddle_customer_id: null })).toEqual({});
+    expect(retainCustomer({ id: 'u_7', paddle_customer_id: 'u_7' })).toEqual({});
+    expect(retainCustomer(null)).toEqual({});
+
+    const user = { id: 'u_8', email: 'pay@example.com', plan: 'free', paddle_customer_id: 'ctm_01xyz' };
+    const action = checkoutAction({ item: 'starter', user, config, origin }) as CheckoutResult & { pwCustomer?: unknown };
+    expect(action.pwCustomer).toEqual({ id: 'ctm_01xyz' });
+    const Paddle = { Environment: { set: vi.fn() }, Initialize: vi.fn(), Update: vi.fn(), Checkout: { open: vi.fn() } };
+    vi.stubGlobal('window', { Paddle });
+    await openCheckout(action);
+    // Paddle.js was already initialised by an earlier test in this file, so the id arrives through Update.
+    const initialised = Paddle.Initialize.mock.calls.length === 1 ? Paddle.Initialize.mock.calls[0]![0] : Paddle.Update.mock.calls[0]![0];
+    expect(initialised).toMatchObject({ pwCustomer: { id: 'ctm_01xyz' } });
   });
 });
 

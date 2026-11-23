@@ -6,9 +6,11 @@
  *   200  applied, a duplicate, or understood and deliberately ignored
  *   400  signed by Paddle but not an event envelope
  *   401  missing or wrong signature
+ *   403  not sent from one of Paddle's addresses (GET {api}/ips); not checked locally
  *   413  larger than any Paddle event: refused before it is read or hashed
  *   500  processing failed - Paddle retries and the event is applied then
- *   503  the signing secret is not configured - Paddle retries until it is
+ *   503  the signing secret is not configured, or Paddle's address list could
+ *        not be fetched yet - Paddle retries
  *
  * Responses are built here instead of thrown so the router answers the same
  * way no matter what error handler the app it is mounted on has.
@@ -16,13 +18,16 @@
 import { Hono } from 'hono';
 import {
   applyPaddleEvent,
+  paddleApiBase,
   parsePaddleEvent,
   parseTimestamp,
   verifyPaddleSignature,
   webhookSecrets,
   type PaddleEvent,
 } from '../../billing/paddle';
+import { isPaddleSender, paddleSenderCidrs } from '../../billing/paddle-ips';
 import { first, run } from '../../db/client';
+import { isLocalEnvironment } from '../../lib/email';
 import { ApiError, errorResponse, type ErrorCode } from '../../lib/errors';
 import { readBodyBytes } from '../../lib/http';
 import type { AppEnv } from '../../types';
@@ -67,6 +72,16 @@ paddleWebhookRouter.post('/paddle', async (c) => {
 
   const secrets = webhookSecrets(c.env);
   if (secrets.length === 0) return fail('not_configured', 'Paddle webhooks are not configured.');
+
+  // Defence in depth in front of the signature check. Local development and tests
+  // have no real client address, and the simulator cannot reach them anyway.
+  if (!isLocalEnvironment(c.env)) {
+    const cidrs = await paddleSenderCidrs(paddleApiBase(c.env), Date.now());
+    if (!cidrs) return fail('not_configured', "Paddle's sender addresses could not be fetched. Paddle will retry.");
+    if (!isPaddleSender(c.req.header('cf-connecting-ip'), cidrs)) {
+      return fail('forbidden', 'Webhooks are accepted only from Paddle.');
+    }
+  }
 
   // The signature covers the exact bytes Paddle sent, so verify the raw text before parsing it.
   let rawBody: string;

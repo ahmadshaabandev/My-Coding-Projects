@@ -44,6 +44,7 @@ fallthrough = true
 # ---------------------------------------------------------------- local development
 [vars]
 ENVIRONMENT = "development"
+CHECKOUT_ENABLED = "true"
 APP_URL = "http://localhost:8787"
 SUPPORT_EMAIL = "support@linktocard.com"
 MAIL_FROM = "Link To Card <login@linktocard.com>"
@@ -101,6 +102,7 @@ crons = ["17 3 * * *"]
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
+CHECKOUT_ENABLED = "true"
 APP_URL = "https://linktocard-staging.names-on-base.workers.dev"
 SUPPORT_EMAIL = "support@linktocard.com"
 MAIL_FROM = "Link To Card <login@linktocard.com>"
@@ -157,6 +159,9 @@ crons = ["17 3 * * *"]
 
 [env.production.vars]
 ENVIRONMENT = "production"
+# Checkout stays closed ("Coming soon") until Paddle approves linktocard.com, even once the live
+# values below are filled in. Set "true" and redeploy after approval.
+CHECKOUT_ENABLED = "false"
 APP_URL = "https://linktocard.com"
 SUPPORT_EMAIL = "support@linktocard.com"
 MAIL_FROM = "Link To Card <login@linktocard.com>"

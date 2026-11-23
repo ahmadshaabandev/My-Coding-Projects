@@ -50,6 +50,9 @@ function paddleEnvironment(env: Env): 'sandbox' | 'production' {
 
 /** What Paddle.js needs in the browser. Client-side tokens and price ids are public by design. */
 export function paddleClientConfig(env: Env): PaddleClientConfig | null {
+  // Explicit switch, so live values can be in place while checkout stays closed (for
+  // example until Paddle approves the domain): the site then shows "Coming soon".
+  if (env.CHECKOUT_ENABLED !== 'true') return null;
   const clientToken = nonEmpty(env.PADDLE_CLIENT_TOKEN);
   const starter = configuredPriceId(env, 'starter');
   const pro = configuredPriceId(env, 'pro');
@@ -551,6 +554,11 @@ const API_BASE = {
   sandbox: 'https://sandbox-api.paddle.com',
   production: 'https://api.paddle.com',
 } as const;
+
+/** The Paddle API of this deployment's environment (sandbox or live). */
+export function paddleApiBase(env: Env): string {
+  return API_BASE[paddleEnvironment(env)];
+}
 
 const API_TIMEOUT_MS = 10_000;
 

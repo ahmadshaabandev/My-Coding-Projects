@@ -36,6 +36,7 @@ export default defineConfig({
             SIGNING_MASTER_SECRET: 'test-master-secret-not-a-real-secret',
             RESEND_API_KEY: 're_test_not_a_real_key',
             PADDLE_ENV: 'sandbox',
+            CHECKOUT_ENABLED: 'true',
             PADDLE_CLIENT_TOKEN: 'test_clienttoken0000000000000',
             PADDLE_API_KEY: 'pdl_sdbx_apikey_test_not_a_real_key',
             PADDLE_WEBHOOK_SECRET: 'pdl_ntfset_test_not_a_real_secret',
