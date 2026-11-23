@@ -205,6 +205,32 @@ each sale (check the current rate on Paddle's pricing page).
 
 ## 6. Paddle live
 
+**State on 2026-11-23.** The code is ready for live; the live Paddle account is not yet set up.
+
+- Done in code and deployed: production uses `api.paddle.com` and Paddle.js's live default (no
+  `Environment.set('sandbox')`); `CHECKOUT_ENABLED = "false"` keeps "Coming soon" on
+  linktocard.com even after the live values below are filled in; webhooks outside local
+  development are accepted only from Paddle's addresses (fetched from `GET /ips`, never
+  hard-coded); `Paddle.Initialize` gets `pwCustomer` with the customer's own `ctm_...` id. The
+  sandbox address check was confirmed on staging (a non-Paddle sender gets 403); a real live
+  delivery has not been seen yet.
+- To do with a live API key (none exists in this environment; create it yourself): products
+  and prices identical to the sandbox (Starter $9/month, Pro $29/month, Top-up $8 one-time, tax
+  added on top, quantity 1), a `live_` client-side token, and one notification destination
+  `https://linktocard.com/webhooks/paddle` with the 11 events in `scripts/seed-paddle-sandbox.md`
+  (reuse it if one exists; never recreate it). Its secret goes straight into
+  `wrangler secret put PADDLE_WEBHOOK_SECRET --env production`.
+- Permissions for that one-time setup key: `product.read/write`, `price.read/write`,
+  `client_token.read/write`, `notification_setting.read/write`, `checkout_settings.read/write`,
+  `discount.read`, `tax_settings.read`, the checkout-domain read permission, and the balance
+  currency read permission. Delete the key when the setup is done.
+- The production Worker's own key (`PADDLE_API_KEY --env production`): only
+  `customer_portal_session.write` and `subscription.write`.
+- Paddle Retain: `pwCustomer` is passed, but Retain's script (`public.profitwell.com`) is
+  blocked by the Content-Security-Policy and is not named in the privacy policy. Decide
+  before enabling Retain; both need changing if you do.
+
+
 - [ ] Recreate the catalog in the **live** Paddle account with exactly the names and prices
       in `scripts/seed-paddle-sandbox.md` (the pricing page must match the catalog).
 - [ ] Create the live notification destination pointing at
