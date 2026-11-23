@@ -130,6 +130,28 @@ domain.
 
 ## 4. Production deploy
 
+**Done on 2026-11-23**, with checkout off until live Paddle is approved:
+
+- D1 `linktocard-production` (migrations 0001-0004), R2 bucket `linktocard-production` with
+  the two expiry rules below, the Worker on https://linktocard.com, and a separate Worker
+  `linktocard-www-redirect` (`redirect/`, `npm run deploy:www`) that answers every
+  `www.linktocard.com` request with a 301 to the same path on `linktocard.com`.
+- Secrets: `SIGNING_MASTER_SECRET` (a random value nobody has seen, different from staging;
+  see the note in section 3) and `RESEND_API_KEY`. **No Paddle secret and no Paddle value is
+  set**, so `/api/config` reports no Paddle configuration and the pricing buttons say
+  "Coming soon". The Free plan and sign-in work normally.
+- DNS: Cloudflare added one proxied `AAAA 100::` record each for `linktocard.com` and
+  `www.linktocard.com` (Worker custom domains). The email records (Resend, Email Routing,
+  DMARC) were not touched.
+- Verified live: every page loads with the seller details and the Paddle wording;
+  `npm run check:deploy` passed with a throwaway account (all templates, the API in three
+  formats, a signed image, caching, counting); a sign-in email to a real address was
+  accepted by Resend with no error; a browser sign-in, the dashboard and sign-out worked;
+  `www` redirects. The throwaway account
+  is removed by the next daily cleanup.
+
+The commands, for reference or a rebuild:
+
 ```sh
 npx wrangler d1 create linktocard-production      # paste the id into wrangler.toml, [env.production]
 npx wrangler r2 bucket create linktocard-production
@@ -137,11 +159,10 @@ npx wrangler d1 migrations apply DB --env production --remote
 npm run deploy:production                          # runs the placeholder check first
 ```
 
-- [ ] Set the same four secrets with `--env production`. Use a **different**
-      `SIGNING_MASTER_SECRET` from staging, and the **live** Paddle key and webhook secret
-      (step 6).
-- [ ] Optional backstop for storage: expired images are deleted by a daily job; these rules
-      remove anything it misses.
+- [x] Secrets `SIGNING_MASTER_SECRET` and `RESEND_API_KEY` with `--env production`. The live
+      Paddle key and webhook secret come in section 6.
+- [x] Backstop for storage: expired images are deleted by a daily job; these rules remove
+      anything it misses.
 
 ```sh
 npx wrangler r2 bucket lifecycle add linktocard-production expire-renders r/ --expire-days 100
@@ -149,6 +170,20 @@ npx wrangler r2 bucket lifecycle add linktocard-production expire-playground p/ 
 ```
 
 - [ ] Optional: a Cloudflare redirect rule from `link2card.com` to `https://linktocard.com`.
+
+### 4a. Zone settings to change by hand (the deploy token cannot change zone settings)
+
+- [ ] **Always Use HTTPS: on.** SSL/TLS > Edge Certificates. It was off at deploy time, so
+      `http://linktocard.com` served pages without redirecting to HTTPS.
+- [ ] **Minimum TLS version: 1.2.** Same page. It was 1.0.
+- [ ] **Web Analytics: off** for linktocard.com (Analytics & Logs > Web Analytics). Cloudflare
+      injects its beacon script into the pages; the site's Content-Security-Policy blocks it,
+      and the privacy policy says no analytics are used. Turning it off removes the console
+      error and keeps the policy literally true.
+- [ ] Check the certificate: open https://linktocard.com and https://www.linktocard.com in a
+      browser and look at the padlock. (The deploy session could not see the real certificate:
+      its network proxy re-terminates TLS, and the token has no SSL read permission.)
+- [ ] Optional later: HSTS (same page), once you are sure the site will stay on HTTPS.
 
 ## 5. Spending cap (do this on the day you deploy)
 

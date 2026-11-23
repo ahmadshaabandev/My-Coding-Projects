@@ -6,12 +6,15 @@ It runs on Cloudflare Workers with Satori and resvg. There is no headless browse
 
 ## Status, stated plainly
 
-- **Staging runs on Cloudflare** at https://linktocard-staging.names-on-base.workers.dev
-  (deployed 2026-11-22). `npm run check:deploy` passed there with a test account: every
-  public page, the five templates, API renders in PNG, JPEG and WebP, signed URLs, caching,
-  304s, a forged signature refused, and exactly one image counted per unique render.
-  Measured by Cloudflare over those 22 requests: CPU time median 4 ms, 90th percentile
-  376 ms, maximum 636 ms, no errors. Production on linktocard.com is **not** deployed.
+- **Production runs on https://linktocard.com** (deployed 2026-11-23; `www` redirects there),
+  with checkout off until live Paddle approves the domain: the paid plans say "Coming soon",
+  the Free plan and sign-in work. `npm run check:deploy` passed there, including a signed
+  image; a sign-in email to a real address was accepted by Resend with no error, and a
+  browser sign-in worked. Zone settings still to change by hand are in
+  GO-LIVE.md section 4a.
+- **Staging runs on Cloudflare** at https://linktocard-staging.names-on-base.workers.dev with
+  the Paddle sandbox. Measured there: CPU time median 4 ms, 90th percentile 376 ms, maximum
+  636 ms per request.
 - **Paddle sandbox works end to end on staging** (2026-11-22): a checkout with Paddle's test
   card switched a dashboard account to Starter within 7 seconds; switching to Pro (prorated)
   and back (not billed), a top-up (1,000 images credited), the billing portal link and a

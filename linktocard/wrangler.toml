@@ -161,7 +161,8 @@ APP_URL = "https://linktocard.com"
 SUPPORT_EMAIL = "support@linktocard.com"
 MAIL_FROM = "Link To Card <login@linktocard.com>"
 PADDLE_ENV = "production"
-# TODO(Ahmad): paste from the Paddle LIVE dashboard at go-live.
+# Empty on purpose until live Paddle approves the domain: checkout is off and the pricing
+# buttons say "Coming soon". Paste the LIVE values here at go-live (never sandbox ones).
 PADDLE_CLIENT_TOKEN = ""
 PADDLE_PRICE_STARTER = ""
 PADDLE_PRICE_PRO = ""
@@ -170,8 +171,7 @@ PADDLE_PRICE_TOPUP = ""
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "linktocard-production"
-# TODO(Ahmad): paste the id printed by `npx wrangler d1 create linktocard-production`.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "e56cf6cc-487d-4eff-94e0-bfd5a33fa72a"
 migrations_dir = "src/db/migrations"
 
 [[env.production.r2_buckets]]
