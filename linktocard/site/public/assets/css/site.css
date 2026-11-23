@@ -1335,3 +1335,6 @@ mark.placeholder {
     scroll-behavior: auto !important;
   }
 }
+
+/* Pricing: the "paid plans are coming soon" note shown while checkout is off. */
+#coming-soon { margin-bottom: var(--space-5); }

@@ -1,10 +1,25 @@
-// Pricing page: Starter / Pro / top-up buttons open Paddle's overlay checkout.
+// Pricing page (and the pricing cards on the home page): Starter / Pro / top-up
+// buttons open Paddle's overlay checkout. While the deployment has no Paddle
+// configuration (live payments not approved yet), they say "Coming soon" instead.
 import { errorMessage } from './api.js';
 import { checkoutAction, openCheckout, readyPaddle } from './checkout.js';
 
 export { checkoutAction };
 
 const ITEMS = ['starter', 'pro', 'topup'];
+export const COMING_SOON = 'Coming soon';
+
+/** Turns every checkout button inside `root` into a disabled "Coming soon"; returns how many. */
+export function markComingSoon(root) {
+  const buttons = [...root.querySelectorAll('[data-checkout]')];
+  for (const button of buttons) {
+    button.textContent = COMING_SOON;
+    button.removeAttribute('href');
+    button.removeAttribute('data-checkout');
+    button.setAttribute('aria-disabled', 'true');
+  }
+  return buttons.length;
+}
 
 async function getJson(url) {
   const response = await fetch(url, { credentials: 'same-origin' });
@@ -17,6 +32,7 @@ function init() {
   const notice = document.querySelector('#checkout-notice');
 
   const show = (message) => {
+    if (!notice) return;
     notice.textContent = message;
     notice.hidden = false;
     notice.scrollIntoView({ block: 'nearest' });
@@ -60,8 +76,20 @@ function init() {
   // /pricing?checkout=starter: where sign-in sends a visitor back to.
   const query = new URLSearchParams(location.search);
   const requested = query.get('checkout');
-  if (query.has('_ptxn')) resumeTransaction();
-  else if (ITEMS.includes(requested)) start(requested);
+  getJson('/api/config')
+    .then((config) => {
+      if (config && !config.paddle) {
+        markComingSoon(document);
+        const soon = document.querySelector('#coming-soon');
+        if (soon) soon.hidden = false;
+        return;
+      }
+      if (query.has('_ptxn')) resumeTransaction();
+      else if (ITEMS.includes(requested)) start(requested);
+    })
+    .catch(() => {
+      if (ITEMS.includes(requested)) start(requested);
+    });
 }
 
 if (typeof document !== 'undefined') init();

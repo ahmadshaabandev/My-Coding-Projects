@@ -103,7 +103,7 @@ function billingBlock(ctx, { primary }) {
   const { config } = ctx;
   const actions = billingActions(user, config);
   if (actions.length === 0) {
-    return h('p', { class: 'alert alert-info', role: 'note' }, `Upgrades and top-ups are not on sale yet, so there is nothing to buy here. Need more images? Email ${config.support_email}.`);
+    return h('p', { class: 'alert alert-info', role: 'note' }, `Paid plans and top-ups are coming soon, so there is nothing to buy here yet. Need more images? Email ${config.support_email}.`);
   }
   const error = errorSlot();
   const status = h('p', { class: 'alert alert-info', role: 'status', hidden: true });

@@ -1,0 +1,8 @@
+# Redirects www.linktocard.com to https://linktocard.com (see www.ts).
+# Deploy: npm run deploy:www   (production only; there is no staging copy)
+name = "linktocard-www-redirect"
+main = "www.ts"
+compatibility_date = "2026-11-19"
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "www.linktocard.com", custom_domain = true }]
