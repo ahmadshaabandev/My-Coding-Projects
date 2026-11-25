@@ -49,11 +49,38 @@ export interface FetchDeps {
   resolveHost: (hostname: string) => Promise<string[]>;
 }
 
-export function defaultFetchDeps(): FetchDeps {
+/** The Worker's own static files, so a check of our own site does not go out to the network. */
+export interface OwnSite {
+  ASSETS: { fetch(request: Request): Promise<Response> };
+  APP_URL: string;
+}
+
+export function defaultFetchDeps(own?: OwnSite): FetchDeps {
   // Read the global at call time and call it unbound (workerd's fetch throws "Illegal
   // invocation" as a method of another object); tests replace it with vi.spyOn.
-  const fetchImpl: typeof fetch = (input, init) => fetch(input, init);
-  return { fetchImpl, resolveHost: (hostname) => resolveHostViaDoh(hostname, fetchImpl) };
+  const network: typeof fetch = (input, init) => fetch(input, init);
+  const fetchImpl: typeof fetch = own ? ownSiteFetch(own, network) : network;
+  return { fetchImpl, resolveHost: (hostname) => resolveHostViaDoh(hostname, network) };
+}
+
+/**
+ * A Worker cannot fetch its own custom domain (Cloudflare answers 522), so our own pages and
+ * images are read from the static files the Worker serves, which are the same bytes a visitor
+ * gets. www.<host> answers with the 301 the separate www Worker sends. Worker paths never get
+ * here: vetUrl refuses them.
+ */
+function ownSiteFetch(own: OwnSite, network: typeof fetch): typeof fetch {
+  const origin = new URL(own.APP_URL);
+  return async (input, init) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+    if (url.protocol === origin.protocol && url.host === origin.host) {
+      return own.ASSETS.fetch(new Request(url.href, { method: init?.method ?? 'GET', headers: init?.headers }));
+    }
+    if (url.protocol === origin.protocol && url.host === `www.${origin.host}`) {
+      return new Response(null, { status: 301, headers: { location: `${origin.origin}${url.pathname}${url.search}` } });
+    }
+    return network(input, init);
+  };
 }
 
 /** Shown for every blocked address: says what is wrong without revealing what we resolved. */

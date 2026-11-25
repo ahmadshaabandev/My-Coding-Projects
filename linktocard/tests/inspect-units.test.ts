@@ -341,3 +341,22 @@ describe('own API paths', () => {
   });
 });
 
+describe('checking our own site', () => {
+  it('reads our own pages from the static files, answers www with the redirect, and sends other hosts to the network', async () => {
+    const { defaultFetchDeps } = await import('../src/inspect/fetch');
+    const served: string[] = [];
+    const ASSETS = { fetch: async (request: Request) => { served.push(request.url); return new Response('<html><head><title>Ours</title></head></html>', { headers: { 'content-type': 'text/html' } }); } };
+    const network = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('elsewhere'));
+    const deps = defaultFetchDeps({ ASSETS, APP_URL: 'https://linktocard.com' });
+
+    expect(await (await deps.fetchImpl('https://linktocard.com/pricing', { method: 'GET' })).text()).toContain('Ours');
+    expect(served).toEqual(['https://linktocard.com/pricing']);
+    const www = await deps.fetchImpl('https://www.linktocard.com/docs?x=1', { method: 'GET' });
+    expect(www.status).toBe(301);
+    expect(www.headers.get('location')).toBe('https://linktocard.com/docs?x=1');
+    expect(network).not.toHaveBeenCalled();
+    expect(await (await deps.fetchImpl('https://example.com/', { method: 'GET' })).text()).toBe('elsewhere');
+    expect(network).toHaveBeenCalledTimes(1);
+  });
+});
+

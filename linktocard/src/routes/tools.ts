@@ -13,8 +13,8 @@ import { Hono } from 'hono';
 import { INSPECT } from '../config';
 import { ApiError } from '../lib/errors';
 import { clientIp } from '../lib/rate-limit';
-import { inspectUrl, liveCheck, normaliseInputUrl } from '../inspect/check';
-import { defaultFetchDeps, discard, FetchFailure, guardedFetch, mediaType, pageFetchError, readBody, withBudget } from '../inspect/fetch';
+import { defaultInspectDeps, inspectUrl, liveCheck, normaliseInputUrl } from '../inspect/check';
+import { defaultFetchDeps, discard, FetchFailure, type OwnSite, guardedFetch, mediaType, pageFetchError, readBody, withBudget } from '../inspect/fetch';
 import { enforceProxyLimit, enforcePublicLimit } from '../inspect/limits';
 import type { AppEnv } from '../types';
 
@@ -24,8 +24,11 @@ toolsRouter.get('/og-check', async (c) => {
   const input = normaliseInputUrl(c.req.query('url'));
   const request = c.req.raw;
   const remoteIp = request.headers.get('cf-connecting-ip');
-  const result = await inspectUrl(c.env.DB, input, () =>
-    enforcePublicLimit(c.env, clientIp(request), remoteIp, c.req.query('turnstile') ?? null, Date.now()),
+  const result = await inspectUrl(
+    c.env.DB,
+    input,
+    () => enforcePublicLimit(c.env, clientIp(request), remoteIp, c.req.query('turnstile') ?? null, Date.now()),
+    defaultInspectDeps(c.env),
   );
   return c.json(result);
 });
@@ -42,8 +45,8 @@ const PROXY_TYPES: readonly string[] = [
   'image/bmp',
 ];
 
-async function proxyRecorded(target: string): Promise<Response> {
-  const deps = defaultFetchDeps();
+async function proxyRecorded(target: string, own: OwnSite): Promise<Response> {
+  const deps = defaultFetchDeps(own);
   const maxBytes = INSPECT.proxyMaxBytes;
   const { bytes, type } = await withBudget(
     INSPECT.proxyTimeoutMs,
@@ -93,6 +96,6 @@ for (const kind of ['image', 'favicon'] as const) {
     const target = kind === 'image' ? row?.image_url : row?.favicon_url;
     if (!row || !target) throw new ApiError('not_found', `No ${kind} for this check. Results expire after ${INSPECT.cacheTtlMs / 60_000} minutes; run the check again.`);
     await enforceProxyLimit(c.env, clientIp(c.req.raw), Date.now());
-    return proxyRecorded(target);
+    return proxyRecorded(target, c.env);
   });
 }

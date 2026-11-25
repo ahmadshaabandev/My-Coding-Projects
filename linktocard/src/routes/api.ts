@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import { requireApiKey } from '../auth/middleware';
 import { all } from '../db/client';
 import { ApiError } from '../lib/errors';
-import { inspectUrl, normaliseInputUrl } from '../inspect/check';
+import { defaultInspectDeps, inspectUrl, normaliseInputUrl } from '../inspect/check';
 import { enforceInspectLimit } from '../inspect/limits';
 import { assertKnownFields, backgroundFor, iso, readJsonObject, usageJson } from '../lib/http';
 import { CARD_FIELDS, getCard, imageUrl, parseCardInput, starterTemplateJson, storedImageHeaders, warningsHeader } from '../lib/images';
@@ -93,6 +93,6 @@ apiRouter.get('/inspect', requireApiKey, async (c) => {
   const { user } = c.var;
   const input = normaliseInputUrl(c.req.query('url'));
   // Cached results are free; an uncached check counts against the key's daily allowance.
-  const result = await inspectUrl(c.env.DB, input, () => enforceInspectLimit(c.env, user, c.var.apiKey?.id ?? user.id, Date.now()));
+  const result = await inspectUrl(c.env.DB, input, () => enforceInspectLimit(c.env, user, c.var.apiKey?.id ?? user.id, Date.now()), defaultInspectDeps(c.env));
   return c.json(result);
 });

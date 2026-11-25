@@ -11,7 +11,7 @@ import { ApiError } from '../lib/errors';
 import { iso } from '../lib/http';
 import type { OgCheckRow } from '../types';
 import { buildChecks } from './checks';
-import { type FetchDeps, FetchFailure, defaultFetchDeps, discard, guardedFetch, mediaType, pageFetchError, readBody, vetUrl, withBudget } from './fetch';
+import { type FetchDeps, type OwnSite, FetchFailure, defaultFetchDeps, discard, guardedFetch, mediaType, pageFetchError, readBody, vetUrl, withBudget } from './fetch';
 import { type ImageOutcome, isImageType, probeImage } from './image';
 import { decodeHtml, parseHead, pickFavicon, resolveUrl } from './parse';
 import { checkRobots } from './robots';
@@ -25,8 +25,8 @@ export interface InspectDeps extends FetchDeps {
   robotsTimeoutMs?: number;
 }
 
-export function defaultInspectDeps(): InspectDeps {
-  return { ...defaultFetchDeps(), now: () => Date.now() };
+export function defaultInspectDeps(own?: OwnSite): InspectDeps {
+  return { ...defaultFetchDeps(own), now: () => Date.now() };
 }
 
 const HTML_TYPES: readonly string[] = ['text/html', 'application/xhtml+xml'];
