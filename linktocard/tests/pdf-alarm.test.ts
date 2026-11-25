@@ -99,8 +99,27 @@ describe('runPdfBudgetAlarm', () => {
     }
     const report = await runPdfBudgetAlarm(env, NOW);
     expect(report).toMatchObject({ browserMs: 60_000 + 1.5 * PDF.dailyBrowserMsBudget, attempts: 4, pdfs: 1, unreported: 3, over: true, sent: true });
-    expect(sent[0]!.text).toContain('For 3 of the attempts Browser Run reported no time');
+    expect(sent[0]!.text).toContain('For 3 of the attempts Browser Run reported no browser time');
     expect(sent[0]!.text).toContain(`PDF rendering on ${env.ENVIRONMENT} used`);
+  });
+
+  it('counts the measured length when Browser Run reports 0 (what it sends for PDF quick actions)', async () => {
+    const sent = mockResend();
+    const insert = (id: string, browserMs: number | null, wallMs: number | null) =>
+      run(
+        env.DB,
+        "INSERT INTO browser_usage (id, user_id, source, status, browser_ms, wall_ms, pages, created_at) VALUES (?1, NULL, 'api', 200, ?2, ?3, 1, ?4)",
+        id,
+        browserMs,
+        wallMs,
+        NOW - 30_000,
+      );
+    await insert('bu_zero', 0, PDF.dailyBrowserMsBudget);
+    await insert('bu_larger_reported', 2_000, 1_000);
+    await insert('bu_none', null, null);
+    const report = await runPdfBudgetAlarm(env, NOW);
+    expect(report).toMatchObject({ browserMs: PDF.dailyBrowserMsBudget + 2_000, attempts: 3, pdfs: 3, unreported: 2, over: true, sent: true });
+    expect(sent).toHaveLength(1);
   });
 
   it('sends again on the next UTC day if the usage is still over', async () => {

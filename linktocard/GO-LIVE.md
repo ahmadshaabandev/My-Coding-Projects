@@ -133,9 +133,9 @@ domain.
 > **Before the next production deploy, whatever it is for** (opening checkout in section 6,
 > Turnstile in 9b, a copy fix): apply every pending migration first,
 > `npx wrangler d1 migrations apply DB --env production --remote`. Production was set up at
-> 0001-0004; the code now also reads `0005_og_checks.sql` (OG checker) and `0006_pdf.sql`
-> (`pdf_usage`, `browser_usage`), even with PDFs switched off. Both only create tables and
-> indexes. `npx wrangler d1 migrations list DB --env production --remote` shows what is pending.
+> 0001-0004 and got `0005_og_checks.sql` with the OG checker; on 2026-11-25 only `0006_pdf.sql`
+> (`pdf_usage`, `browser_usage`) is pending. The code reads its tables even with PDFs switched
+> off (and degrades to zero PDF usage without them). It only creates tables and indexes. `npx wrangler d1 migrations list DB --env production --remote` shows what is pending.
 
 **Done on 2026-11-23**, with checkout off until live Paddle is approved:
 

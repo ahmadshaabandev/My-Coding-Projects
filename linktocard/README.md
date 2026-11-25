@@ -363,34 +363,36 @@ it if it is wrong.
   not be opened from the build environment. Check the comparison pages against the live
   sites before launch.
 - Browsers other than Chromium.
-- **PDF documents on Cloudflare Browser Run.** Browser Run could not be reached from the build
-  environment; every PDF test uses a mocked binding, and the templates were printed only with a
-  local Chromium using the same options. On staging, check with the first real renders: that
-  `allowRequestPattern: ['^data:']` does not block the document itself (if it does, use
-  `['^data:', '^about:']` in `src/pdf/render.ts`, never http(s)); that every option and
-  `cacheTTL: 0` are accepted and the answer is `application/pdf` with `X-Browser-Ms-Used`; the
-  real error statuses and messages (a timeout must mention "timeout" to become 504
-  `render_timeout`); that the page count can be read from its PDFs (the counter follows the
-  classic cross-reference table Chrome writes; if Browser Run's PDFs had another structure, every
-  PDF would end as 500 `render_failed`); that the embedded fonts apply with JavaScript off; the request size limit
-  with large inlined images; how the five templates, the free footer line and the docs'
-  page-number footer look; that Chrome repeats table header rows on every page; and the daily
-  alarm email through Resend.
+- **PDF documents on Cloudflare Browser Run.** Checked on staging on 2026-11-25 with real
+  renders: `allowRequestPattern: ['^data:']` does not block the document itself; every option
+  we send (including `cacheTTL: 0`, `tagged: false`, `outline: false`) is accepted and the answer
+  is `application/pdf`; the page counter read every PDF (1, 4, 14, 15, 27 and 41 pages, each equal
+  to `pdfinfo`); the bundled fonts are embedded with JavaScript off; the Free line appears on Free
+  and tool PDFs only; a `<script>` and an `onerror` handler had no effect. Browser Run sends
+  `X-Browser-Ms-Used: 0` for PDF quick actions, so the alarm and the brake count the measured
+  length of each call (about 0.23-1.2 s per PDF on staging); what Cloudflare actually bills is
+  only visible in the dashboard. Still not checked: the real error statuses and messages (a
+  timeout must mention "timeout" to become 504 `render_timeout`); the request size limit with
+  large inlined images; that the browser makes no request of its own for a remote `<img>` or CSS
+  `url()` (GO-LIVE section 10 has the check); that Chrome repeats table header rows on every
+  page; the docs' page-number footer; and the daily alarm email through Resend.
 
 ## Changelog
 
-- **2026-11-25: PDF documents from HTML templates** (built, not deployed yet; off in production).
+- **2026-11-25: PDF documents from HTML templates** (on staging; off in production until Ahmad approves).
   `POST /v1/pdf`, signed `/v1/pdf/...` links, stored PDFs under `/i/`, five PDF starter templates,
   `/docs/pdf`, three free tools and three guides, all behind `PDF_ENABLED` and the `SITE_PDF`
   site switch. Printed by Cloudflare Browser Run with JavaScript off and no network access;
   card images are still drawn without a browser. A PDF counts as images by its pages, charged as
-  one block. New: migration `0006_pdf.sql` (apply it, and `0005`, before the next production
+  one block. New: migration `0006_pdf.sql` (production already has `0005`; apply `0006` before the next production
   deploy of any kind: `/api/me` and the daily cron read its tables even with PDFs off), three rate limiters
   (`RL_PDF_KEY`, `RL_PDF_FREE`, `RL_TOOLS_PDF`), the `BROWSER` binding on staging and production,
   `PDF_DAILY_BROWSER_MS_BUDGET` and a daily alarm email. The terms now forbid counterfeit or
-  misleading documents (not PDF-specific, live everywhere). Where AI was used: the code, tests,
+  misleading documents (in both site builds, not only with PDFs on; on production from its next deploy). Where AI was used: the code, tests,
   templates, docs and copy were written with AI tools (Claude Code), in three parts with an
-  integration pass. Ahmad reviews before release.
+  integration pass, then reviewed by separate AI reviewers (security, billing, operations, content)
+  whose confirmed findings were fixed, and checked with real renders on staging. Ahmad reviews
+  before release.
 - **2026-11-25: Free OG checker** (`/tools/og-checker`, `/v1/inspect`, five guides, `/bot`). The
   Worker fetches one public page on request (https only, 5 s, 2 MB, 3 redirects, private and
   metadata addresses refused, User-Agent `LinkToCardBot/1.0`), parses its share tags, probes the

@@ -220,9 +220,9 @@ export interface BrowserUsageRow {
   source: 'api' | 'signed' | 'tool';
   /** HTTP status of the browser's answer; 0 when the call itself failed. */
   status: number;
-  /** X-Browser-Ms-Used; null when the browser did not report it. */
+  /** X-Browser-Ms-Used; null when the browser did not report it. Browser Run sends 0 for PDF quick actions. */
   browser_ms: number | null;
-  /** How long the call took, measured by the Worker; what the alarm and the brake count when browser_ms is null. */
+  /** How long the call took, measured by the Worker; the alarm and the brake count the larger of the two. */
   wall_ms: number | null;
   /** Pages of the PDF it returned; null without a readable PDF. */
   pages: number | null;

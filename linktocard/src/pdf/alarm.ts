@@ -1,9 +1,11 @@
 /**
  * Daily alarm on Browser Run time, run by the daily cron next to the cleanup: when the
  * browser time of all PDF renders of the last 24 hours is over the budget, SUPPORT_EMAIL gets
- * one email, at most once per UTC day. Browser time is browser_usage.browser_ms (what Browser
- * Run reported), or wall_ms (the measured length of the call) for attempts it did not report:
- * timeouts and 5xx answers, which are the longest ones.
+ * one email, at most once per UTC day. The time of each attempt is the larger of
+ * browser_usage.browser_ms (X-Browser-Ms-Used) and wall_ms (the measured length of the call).
+ * Browser Run answers PDF quick actions with X-Browser-Ms-Used: 0 (seen on staging, 2026-11-25),
+ * and reports nothing for timeouts and 5xx answers, so the measured length is what counts in
+ * practice; it is an upper bound of the browser time.
  *
  * The budget is PDF_DAILY_BROWSER_MS_BUDGET (milliseconds) when it is set to a positive whole
  * number, otherwise PDF.dailyBrowserMsBudget. "Once per day" is an atomic D1 row (tool_usage,
@@ -17,8 +19,10 @@ import type { Env } from '../types';
 
 export const PDF_BUDGET_ALARM_SUBJECT = 'Link To Card: PDF browser time over budget';
 
-/** Browser time of the browser_usage rows a query selects: reported where known, measured otherwise. */
-export const BROWSER_MS_SQL = 'COALESCE(SUM(COALESCE(browser_ms, wall_ms)), 0)';
+/** Browser time of the browser_usage rows a query selects: per row the larger of reported and measured. */
+export const BROWSER_MS_SQL = 'COALESCE(SUM(MAX(COALESCE(browser_ms, 0), COALESCE(wall_ms, 0))), 0)';
+/** Rows whose browser time Browser Run did not report (no header, or 0). */
+export const UNREPORTED_SQL = 'COUNT(*) - COUNT(NULLIF(browser_ms, 0))';
 
 export interface PdfBudgetReport {
   browserMs: number;
@@ -26,7 +30,7 @@ export interface PdfBudgetReport {
   /** Render attempts that reached the browser in the last 24 hours, and how many returned a PDF. */
   attempts: number;
   pdfs: number;
-  /** Attempts whose time Browser Run did not report; their measured wall time is counted instead. */
+  /** Attempts Browser Run reported no time for (no header, or 0); their measured length counts. */
   unreported: number;
   /** over the budget; sent = this run sent the email; alreadySent = an earlier run today did. */
   over: boolean;
@@ -56,7 +60,7 @@ export function budgetAlarmEmail(
 ): EmailContent {
   const where = environment ? ` on ${environment}` : '';
   const unreported = report.unreported
-    ? ` For ${report.unreported} of the attempts Browser Run reported no time (a timeout or an error); their measured duration is counted instead.`
+    ? ` For ${report.unreported} of the attempts Browser Run reported no browser time (it reports 0 for PDFs, and nothing for timeouts and errors); the measured length of the call is counted instead.`
     : '';
   const paragraphs = [
     `In the 24 hours up to ${new Date(now).toISOString()}, PDF rendering${where} used ${minutes(report.browserMs)} of Browser Run time. The daily budget is ${minutes(report.budgetMs)}.`,
@@ -78,7 +82,7 @@ export async function runPdfBudgetAlarm(env: Env, now: number): Promise<PdfBudge
   try {
     totals = await first<{ ms: number; attempts: number; pdfs: number; unreported: number }>(
       env.DB,
-      `SELECT ${BROWSER_MS_SQL} AS ms, COUNT(*) AS attempts, COUNT(pages) AS pdfs, COUNT(*) - COUNT(browser_ms) AS unreported
+      `SELECT ${BROWSER_MS_SQL} AS ms, COUNT(*) AS attempts, COUNT(pages) AS pdfs, ${UNREPORTED_SQL} AS unreported
        FROM browser_usage WHERE created_at > ?1 AND created_at <= ?2`,
       now - DAY_MS,
       now,
