@@ -8,8 +8,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd } from '../../src/billing/plans';
-import { INSPECT, LIMITS, RATE_LIMITS } from '../../src/config';
-import { buildSite, findPlaceholders, listTokens, renderSite, type RenderedSite } from '../../scripts/build-site';
+import { INSPECT, LIMITS, RATE_LIMITS, type RateLimitName } from '../../src/config';
+import { buildSite, findPlaceholders, isPdfRateLimit, listTokens, renderSite, type RenderedSite } from '../../scripts/build-site';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-11-22T12:00:00Z');
@@ -61,7 +61,10 @@ describe('built site', () => {
   });
 
   it('writes flat .html files and never <dir>/index.html', () => {
-    const content = walk(join(ROOT, 'site/content')).filter((file) => file.endsWith('.md'));
+    // Content behind a feature switch (front matter "feature: pdf") is not built by default; tests/node/site-features.test.ts covers it.
+    const content = walk(join(ROOT, 'site/content'))
+      .filter((file) => file.endsWith('.md'))
+      .filter((file) => !/^feature:\s*\S+\s*$/m.test(readFileSync(join(ROOT, 'site/content', file), 'utf8').split(/^---\s*$/m)[1] ?? ''));
     for (const file of [...HAND_BUILT, ...content.map((name) => name.replace(/\.md$/, '.html'))]) {
       expect(files, file).toContain(file);
     }
@@ -321,8 +324,19 @@ describe('built site', () => {
     expect(bannerbear).not.toMatch(/"according to their site" come from bannerbear\.com/);
   });
 
-  it('publishes the API description next to the pages, byte for byte', () => {
-    expect(readFileSync(join(outDir, 'openapi.yaml'), 'utf8')).toBe(readFileSync(join(ROOT, 'openapi.yaml'), 'utf8'));
+  it('publishes the API description next to the pages: the repository copy without the switched-off features', () => {
+    const published = readFileSync(join(outDir, 'openapi.yaml'), 'utf8');
+    expect(published).toBe(site.openapi);
+    // Only whole "# feature:pdf" blocks are left out; every other line is the repository's, in order.
+    const source = readFileSync(join(ROOT, 'openapi.yaml'), 'utf8').split('\n');
+    const kept = published.split('\n');
+    let at = 0;
+    for (const line of kept) {
+      while (at < source.length && source[at] !== line) at++;
+      expect(at, line).toBeLessThan(source.length);
+      at++;
+    }
+    expect(published).not.toMatch(/feature:|\/v1\/pdf|\.pdf:/);
   });
 
   it('lists only public pages in sitemap.xml and points robots.txt at it', () => {
@@ -513,8 +527,11 @@ describe('content pipeline', () => {
     );
     expect(html).toMatch(/<div class="table-wrap"><table>\s*<thead>/);
     expect(html).toContain('<div class="alert">Raw <b>HTML</b></div>');
-    for (const rule of Object.values(RATE_LIMITS)) {
-      expect(html).toContain(`<td>${formatCount(rule.limit)} requests per minute</td>`);
+    // Without SITE_PDF=on the PDF limiters stay out of the table (tests/node/site-features.test.ts checks them with it on).
+    for (const [name, rule] of Object.entries(RATE_LIMITS) as Array<[RateLimitName, (typeof RATE_LIMITS)[RateLimitName]]>) {
+      const row = `<td>${formatCount(rule.limit)} requests per ${rule.periodSeconds === 60 ? 'minute' : `${rule.periodSeconds} seconds`}</td>`;
+      if (isPdfRateLimit(name)) expect(html, name).not.toContain(rule.scope.charAt(0).toUpperCase() + rule.scope.slice(1));
+      else expect(html, name).toContain(row);
     }
   });
 

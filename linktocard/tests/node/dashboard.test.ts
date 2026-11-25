@@ -43,6 +43,7 @@ interface Helpers {
   sizeOption(size: { id: string; width: number; height: number }): { value: string; label: string; detail: string };
   renderSummary(render: Render, names?: Record<string, string>): Record<'template' | 'via' | 'size' | 'format' | 'bytes' | 'counted', string>;
   usageView(usage: Usage): { percent: number; level: string; exhausted: boolean };
+  pdfUsageLine(usage: Usage & { pdf?: unknown }, config: { pdf_enabled?: boolean } | null): string | null;
   billingActions(user: User, config: { paddle: unknown } | null): BillingAction[];
   checkoutSnapshot(item: string, me: Me): Snapshot;
   checkoutSettled(before: Snapshot, me: Me): boolean;
@@ -221,6 +222,29 @@ describe('usage and billing', () => {
     // The monthly allowance is gone but a top-up still pays: a warning, not an outage.
     expect(helpers.usageView(usage(2000, 2000, 400))).toEqual({ percent: 100, level: 'warn', exhausted: false });
     expect(helpers.usageView(usage(2500, 2000))).toMatchObject({ percent: 100, exhausted: true });
+  });
+
+  it('shows PDFs apart from images only when /api/me reports them, and stays quiet where PDFs are off', () => {
+    const used = usage(14, 100);
+    // usage.pdf: PDFs charged this period and the images they counted as.
+    expect(helpers.pdfUsageLine({ ...used, pdf: { count: 3, images: 7 } }, { pdf_enabled: true })).toBe('3 PDFs this period, counted as 7 images.');
+    expect(helpers.pdfUsageLine({ ...used, pdf: { count: 1, images: 2 } }, { pdf_enabled: true })).toBe('1 PDF this period, counted as 2 images.');
+    expect(helpers.pdfUsageLine({ ...usage(1500, 2000), pdf: { count: 1200, images: 1300 } }, null)).toBe('1,200 PDFs this period, counted as 1,300 images.');
+    // A PDF that did not fit in the allowance came whole from a top-up, outside usage.used: the
+    // line must not claim a share of usage.used.
+    expect(helpers.pdfUsageLine({ ...usage(100, 100), pdf: { count: 40, images: 240 } }, { pdf_enabled: true })).toBe('40 PDFs this period, counted as 240 images.');
+    expect(helpers.pdfUsageLine({ ...used, pdf: { count: 0, images: 0 } }, { pdf_enabled: true })).toBe('No PDFs made this period.');
+    // Production with PDFs switched off: nothing about PDFs at all.
+    expect(helpers.pdfUsageLine({ ...used, pdf: { count: 0, images: 0 } }, { pdf_enabled: false })).toBeNull();
+    expect(helpers.pdfUsageLine(used, { pdf_enabled: true })).toBeNull();
+    expect(helpers.pdfUsageLine({ ...used, pdf: 'three' }, { pdf_enabled: true })).toBeNull();
+    expect(helpers.pdfUsageLine({ ...used, pdf: { count: -1, images: 'x' } }, { pdf_enabled: true })).toBe('No PDFs made this period.');
+  });
+
+  it('puts the PDF line on the plan card as text', () => {
+    const billing = readFileSync(join(ROOT, 'site/public/assets/js/dashboard/billing.js'), 'utf8');
+    expect(billing).toContain("const pdfLine = pdfUsageLine(usage, ctx.config);");
+    expect(billing).toContain("pdfLine ? h('p', { class: 'usage-pdf' }, pdfLine) : null,");
   });
 
   const configured = { paddle: { environment: 'sandbox', client_token: 'test_token', prices: { starter: 'pri_s', pro: 'pri_p', topup: 'pri_t' } } };

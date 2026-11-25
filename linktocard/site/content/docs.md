@@ -33,6 +33,12 @@ curl [[site.url]]/v1/images \
 
 See the [API reference](/docs/api).
 
+<!-- feature:pdf -->
+## PDF documents
+
+The same idea, a template plus data, also makes PDF documents: invoices, receipts, quotes, certificates of completion, reports, or anything you write in HTML and CSS. Send it to `POST /v1/pdf` with an API key, or sign a link to `/v1/pdf/...` like a card URL. [PDF documents](/docs/pdf) has the details, and the free [HTML to PDF](/tools/html-to-pdf) tool lets you try it without an account.
+
+<!-- /feature:pdf -->
 To see what a page sends today, before or after you add a card, paste its address into the free [Open Graph checker](/tools/og-checker); [`GET /v1/inspect`](/docs/api#get-v1-inspect) returns the same check as JSON.
 
 ## What you get
@@ -43,14 +49,28 @@ To see what a page sends today, before or after you add a card, paste its addres
 - **Text:** `{{placeholders}}` filled from your data. Classes on `<body>` let plain CSS react to missing or long values.
 - **Fonts:** Inter, Source Serif 4 and JetBrains Mono are built in. You can upload your own on paid plans.
 - **Emoji:** colour emoji in any text.
+<!-- feature:pdf -->
+- **PDFs:** up to [[pdf.maxPages]] pages from your own HTML or one of [[pdf.templateCount]] PDF starter templates (`[[pdf.templateIds]]`), as a stored URL or the file itself.
+<!-- /feature:pdf -->
 
 ## What it does not do
 
 - No visual editor. Templates are HTML and CSS that you write, or one of the five starter templates.
+<!-- feature:no-pdf -->
 - No screenshots. The renderer does not load web pages and cannot capture an existing page. (The checker reads a page's tags; it does not draw the page.)
 - No video, GIF or PDF output. One request gives one still image.
+<!-- /feature:no-pdf -->
+<!-- feature:pdf -->
+- No screenshots. Nothing here opens a web page by its address to capture it: cards are drawn from your template, PDFs are printed from the HTML you send, and the checker reads a page's tags without drawing the page.
+- No video or GIF. A card request gives one still image; a PDF request gives one document.
+<!-- /feature:pdf -->
 - No AI. Nothing is generated; the card shows exactly the text and images you send.
+<!-- feature:no-pdf -->
 - No browser. Templates are drawn by a layout engine that understands a large part of CSS, but JavaScript never runs and some HTML is not supported. [HTML and CSS templates](/docs/html-css-templates) lists exactly what works.
+<!-- /feature:no-pdf -->
+<!-- feature:pdf -->
+- No browser for cards. Card templates are drawn by a layout engine that understands a large part of CSS, but JavaScript never runs and some HTML is not supported. [HTML and CSS templates](/docs/html-css-templates) lists exactly what works. PDFs are the one exception: Cloudflare Browser Run prints them in headless Chrome, with JavaScript turned off and no network access.
+<!-- /feature:pdf -->
 
 ## Pages
 
@@ -58,6 +78,9 @@ To see what a page sends today, before or after you add a card, paste its addres
 - [Signed URLs](/docs/signed-urls): the signature format, signer code for Node.js, PHP and Python, caching, rotation, and every reason for a 403.
 - [HTML and CSS templates](/docs/html-css-templates): placeholders, state classes, fonts, emoji, images, the starter templates and a complete example.
 - [Frameworks](/docs/frameworks): plain HTML, WordPress, Ghost, Webflow, Hugo, Astro and Next.js.
+<!-- feature:pdf -->
+- [PDF documents](/docs/pdf): `POST /v1/pdf` and signed PDF links, the PDF starter templates, sections for line items, limits and how a PDF is counted.
+<!-- /feature:pdf -->
 - [API reference](/docs/api): every endpoint, field, header and error code, including `GET /v1/inspect`.
 - [Limits](/docs/limits): what each plan includes, the technical limits, and what happens when you reach one.
 

@@ -9,6 +9,10 @@ nav: HTML and CSS templates
 A template is HTML plus CSS. A render takes a template, a flat map of text values (`data`), a size and a format, and returns one image.
 
 Templates are drawn by Satori 0.63.2, a layout engine, and rasterised by resvg. It lays out HTML with real CSS, but **it is not a browser**: JavaScript never runs and some HTML is not supported. This page states what works. Everything on it was rendered through the service before it was written down.
+<!-- feature:pdf -->
+
+This page is about card images. PDF documents use the same kind of template but are printed by Chrome, so more of HTML and CSS works there, and their sections, page setup and starter templates are described in [PDF documents](/docs/pdf).
+<!-- /feature:pdf -->
 
 You can use a template in three ways: save it under **Templates** in the dashboard and refer to it by id (`t_...`) in a signed URL or an API call; send it inline as `html` and `css` to [`POST /v1/images`](/docs/api#post-v1-images); or use one of the [starter templates](#starter-templates).
 

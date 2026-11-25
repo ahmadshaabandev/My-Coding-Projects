@@ -19,9 +19,10 @@ import { contactFormEmail, sendEmail } from '../lib/email';
 import { ApiError } from '../lib/errors';
 import { cleanName, codePointLength, iso, isoOrNull, readJsonObject, usageJson } from '../lib/http';
 import { imageUrl, parseFormat, parseSize, resolveTemplate, templateNotFound, validateData } from '../lib/images';
-import { getUsage, listRecentRenders } from '../lib/quota';
+import { getPdfUsage, getUsage, listRecentRenders } from '../lib/quota';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
 import { SIG_PARAM, SIZE_PARAM, buildSignedUrl, canonicalString, deriveSiteSecret, type OgExtension } from '../lib/signed-url';
+import { pdfEnabled } from '../pdf/render';
 import type { AppEnv, Env, SiteRow, TopupRow, UserRow } from '../types';
 
 const MAX_CONTACT_MESSAGE_CHARS = 4000;
@@ -67,6 +68,8 @@ dashboardRouter.get('/config', (c) => {
     sizes: Object.values(SIZES).map(({ id, width, height }) => ({ id, width, height })),
     formats: FORMATS,
     turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
+    // PDF_ENABLED is "true" and the Browser Run binding exists (src/pdf/render.ts).
+    pdf_enabled: pdfEnabled(c.env),
   });
 });
 
@@ -120,7 +123,9 @@ dashboardRouter.get('/me', requireSessionAllowSuspended, async (c) => {
           : { status: user.subscription_status, period_end: isoOrNull(user.period_end), cancel_at: isoOrNull(user.cancel_at) },
       has_billing: user.paddle_customer_id !== null,
     },
-    usage: usageJson(await getUsage(c.env.DB, user, now)),
+    // usage.pdf: PDFs charged this period and the images they counted as. They are already counted
+    // in usage.used, or in a top-up when the block did not fit in the allowance (src/lib/quota.ts).
+    usage: { ...usageJson(await getUsage(c.env.DB, user, now)), pdf: await getPdfUsage(c.env.DB, user, now) },
     topups: topups.map((topup) => ({ ...topup, expires_at: iso(topup.expires_at) })),
     limits: {
       fonts: fontLimits(plan),

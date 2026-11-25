@@ -2,19 +2,35 @@
  * Static-site build: site/pages + site/content -> site/dist, as flat .html files.
  *
  *   npm run build:site                     build site/dist
+ *   SITE_PDF=on npm run build:site         the same, with the PDF pages and blocks (staging)
  *   npm run build:site -- --tokens         print every [[token]] and partial
  *   npm run build:site -- --check-golive   exit 1 while placeholders remain
  *
  * No framework and no bundler: token expansion, marked and four small layouts.
  * Every number on the site comes from src/billing/plans.ts and src/config.ts,
  * so published prices and limits cannot drift from the enforced ones.
+ *
+ * Feature switches (only "pdf" so far), so a feature can be published on staging before
+ * production. SITE_PDF must be "on", "off" or unset (= off); anything else stops the build,
+ * so a typo cannot silently publish the wrong site.
+ *   - A page or Markdown file with `feature: pdf` in its front matter is built only when
+ *     SITE_PDF is "on" (`feature: no-pdf`: only when it is off). A page that is not built is
+ *     also absent from sitemap.xml and the docs navigation, which are made from built pages.
+ *   - In any page, Markdown file, partial or layout, <!-- feature:pdf --> ... <!-- /feature:pdf -->
+ *     is kept only when on, <!-- feature:no-pdf --> ... <!-- /feature:no-pdf --> only when off.
+ *     The markers never reach the output. A marker alone on its line takes the line with it,
+ *     so a block can sit between Markdown table rows or list items. Blocks do not nest.
+ *   - openapi.yaml uses the same blocks as YAML comment lines (# feature:pdf ... # /feature:pdf):
+ *     the copy in the repository describes everything, the published copy only what is switched on.
+ *   - site/public files listed in FEATURE_PUBLIC_FILES are copied only when their feature is on.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Marked, Renderer, type Tokens } from 'marked';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd, type Plan } from '../src/billing/plans';
-import { AUTH, DAY_MS, FORMATS, LIMITS, RATE_LIMITS, SIZES } from '../src/config';
+import { AUTH, DAY_MS, FORMATS, LIMITS, PDF, RATE_LIMITS, SIZES, pdfUnits, type PdfFormat, type RateLimitName } from '../src/config';
+import { PDF_TEMPLATES, type PdfStarterTemplate } from '../src/pdf/templates';
 import { STARTER_TEMPLATES as RENDER_TEMPLATES } from '../src/render/templates';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -60,8 +76,12 @@ export interface RenderedPage {
 
 export interface RenderedSite {
   config: SiteConfig;
+  /** The feature switches this build was made with. */
+  features: SiteFeatures;
   pages: RenderedPage[];
   sitemap: string;
+  /** openapi.yaml as published: the repository copy with the feature blocks applied. */
+  openapi: string;
 }
 
 export interface TokenListing {
@@ -89,6 +109,7 @@ interface TokenContext {
   placeholders: Set<string>;
   /** Partial name -> source (file partials may contain tokens and other partials). */
   partials: Record<string, string>;
+  features: SiteFeatures;
 }
 
 interface PageSource {
@@ -149,6 +170,107 @@ function loadConfig(file: string, env: Record<string, string | undefined>): Site
   return config;
 }
 
+// ------------------------------------------------------------------ feature switches
+
+export const FEATURES = ['pdf'] as const;
+export type Feature = (typeof FEATURES)[number];
+export type SiteFeatures = Record<Feature, boolean>;
+
+const FEATURE_ENV: Record<Feature, string> = { pdf: 'SITE_PDF' };
+
+/** site/public files that exist only for a feature (everything else is always copied). */
+const FEATURE_PUBLIC_FILES: Readonly<Record<string, Feature>> = {
+  'assets/js/pdf-tools.js': 'pdf',
+};
+
+/** Which features this build publishes. Only "on" switches one on; "off" and unset leave it off. */
+export function siteFeatures(env: Record<string, string | undefined>): SiteFeatures {
+  const features = {} as SiteFeatures;
+  for (const feature of FEATURES) {
+    const name = FEATURE_ENV[feature];
+    const value = (env[name] ?? '').trim();
+    if (value !== '' && value !== 'on' && value !== 'off') throw new Error(`${name} must be "on" or "off" (or unset), not "${value}"`);
+    features[feature] = value === 'on';
+  }
+  return features;
+}
+
+interface FeatureSwitch {
+  feature: Feature;
+  /** true for "pdf" (kept when on), false for "no-pdf" (kept when off). */
+  when: boolean;
+}
+
+function parseSwitch(name: string, where: string): FeatureSwitch {
+  const negated = name.startsWith('no-');
+  const feature = negated ? name.slice('no-'.length) : name;
+  if (!(FEATURES as readonly string[]).includes(feature)) {
+    throw new Error(`${where}: unknown feature "${name}" (known: ${FEATURES.flatMap((known) => [known, `no-${known}`]).join(', ')})`);
+  }
+  return { feature: feature as Feature, when: !negated };
+}
+
+const switchedOn = (rule: FeatureSwitch, features: SiteFeatures): boolean => features[rule.feature] === rule.when;
+
+/** A marker: <!-- feature:x --> or <!-- /feature:x --> in HTML and Markdown; a whole "# feature:x" comment line in YAML. */
+const FEATURE_MARKERS = {
+  html: /<!--[ \t]*(\/?)feature:([a-z][a-z0-9-]*)[ \t]*-->/g,
+  yaml: /^[ \t]*#[ \t]*(\/?)feature:([a-z][a-z0-9-]*)[ \t]*\r?$/gm,
+} as const;
+
+/** Anything that still looks like a marker after the real ones are gone is a typo, not a comment to publish. */
+const STRAY_MARKERS = {
+  html: /<!--[^>]*?\bfeature\s*:/,
+  yaml: /^[ \t]*#[ \t]*\/?feature\s*:/m,
+} as const;
+
+const lineOf = (text: string, index: number): number => text.slice(0, index).split('\n').length;
+
+/** Removes [start, end); when that leaves its line blank, the whole line goes, so no empty line splits a Markdown block. */
+function removeRange(text: string, start: number, end: number): string {
+  const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+  const newline = text.indexOf('\n', end);
+  const lineEnd = newline < 0 ? text.length : newline;
+  const blank = text.slice(lineStart, start).trim() === '' && text.slice(end, lineEnd).trim() === '';
+  return blank ? text.slice(0, lineStart) + text.slice(newline < 0 ? text.length : newline + 1) : text.slice(0, start) + text.slice(end);
+}
+
+/**
+ * Keeps or drops the feature blocks of one source file (see the header of this file).
+ * Throws, naming the file and line, on an unknown feature, a nested, unclosed or
+ * mismatched block, and on anything left over that looks like a marker.
+ */
+export function applyFeatureBlocks(text: string, features: SiteFeatures, file: string, syntax: 'html' | 'yaml' = 'html'): string {
+  // Real markers blanked out (positions kept), whatever still looks like one is a typo.
+  const masked = text.replace(FEATURE_MARKERS[syntax], (marker) => ' '.repeat(marker.length));
+  const stray = STRAY_MARKERS[syntax].exec(masked);
+  if (stray) throw new Error(`${file}:${lineOf(text, stray.index)}: malformed feature marker (write <!-- feature:pdf --> or # feature:pdf exactly)`);
+
+  const ranges: Array<[start: number, end: number]> = [];
+  let open: { name: string; rule: FeatureSwitch; start: number; end: number } | null = null;
+  for (const match of text.matchAll(FEATURE_MARKERS[syntax])) {
+    const name = match[2] ?? '';
+    const start = match.index;
+    const end = start + match[0].length;
+    const where = `${file}:${lineOf(text, start)}`;
+    if (match[1] !== '/') {
+      if (open) throw new Error(`${where}: feature:${name} opens inside feature:${open.name}; feature blocks do not nest`);
+      open = { name, rule: parseSwitch(name, where), start, end };
+      continue;
+    }
+    if (!open) throw new Error(`${where}: /feature:${name} closes a block that was never opened`);
+    if (open.name !== name) throw new Error(`${where}: /feature:${name} closes feature:${open.name}`);
+    if (switchedOn(open.rule, features)) ranges.push([open.start, open.end], [start, end]);
+    else ranges.push([open.start, end]);
+    open = null;
+  }
+  if (open) throw new Error(`${file}:${lineOf(text, open.start)}: feature:${open.name} is never closed`);
+  // From the end, so every earlier position stays valid.
+  let out = text;
+  for (const [start, end] of ranges.reverse()) out = removeRange(out, start, end);
+  return out;
+}
+
 // ------------------------------------------------------------------ tokens
 
 const escapeHtml = (text: string): string =>
@@ -169,6 +291,63 @@ function planTokens(plan: Plan): Record<string, string> {
     [`${prefix}.support`]: plan.support,
     // Free has no Paddle product; say so instead of leaving the token undefined.
     [`${prefix}.paddleName`]: plan.paddleProductName ?? '(no Paddle product)',
+  };
+}
+
+/** A byte limit in KB or MB as the site prints it: "256", "1.5". */
+const inUnits = (bytes: number, unit: number): string => String(Math.round((bytes / unit) * 100) / 100);
+
+/** A template's sample as one JSON value, for the free tools' "Fill in an example" button. */
+function pdfSampleJson(id: PdfStarterTemplate['id']): string {
+  const template = PDF_TEMPLATES.find((candidate) => candidate.id === id);
+  if (!template) throw new Error(`src/pdf/templates exports no "${id}" template`);
+  return JSON.stringify(template.sample);
+}
+
+/**
+ * [[pdf.*]]: every PDF number the pages print, from PDF and pdfUnits() in src/config.ts and
+ * the starter list in src/pdf/templates. Pages never type a PDF number themselves.
+ */
+function pdfTokens(): Record<string, string> {
+  return {
+    'pdf.maxPages': String(PDF.maxPages),
+    'pdf.basePages': String(PDF.basePages),
+    'pdf.baseUnits': String(PDF.baseUnits),
+    'pdf.extraPagesPerUnit': String(PDF.extraPagesPerUnit),
+    'pdf.maxUnits': String(pdfUnits(PDF.maxPages)),
+    'pdf.maxHtmlKb': formatCount(PDF.maxHtmlBytes / KB),
+    'pdf.maxHtmlMb': inUnits(PDF.maxHtmlBytes, MB),
+    'pdf.maxCssKb': inUnits(PDF.maxCssBytes, KB),
+    'pdf.maxAssetMb': inUnits(PDF.maxAssetBytes, MB),
+    'pdf.maxRequestBodyMb': inUnits(PDF.maxRequestBodyBytes, MB),
+    'pdf.maxHeaderFooterKb': inUnits(PDF.maxHeaderFooterBytes, KB),
+    'pdf.renderTimeoutSeconds': String(PDF.renderTimeoutMs / 1000),
+    'pdf.maxMarginMm': String(PDF.maxMarginMm),
+    'pdf.defaultMarginMm': String(PDF.defaultMarginMm),
+    'pdf.maxDataKeys': String(PDF.maxDataKeys),
+    'pdf.maxDataValueChars': formatCount(PDF.maxDataValueChars),
+    'pdf.maxItems': String(PDF.maxItems),
+    'pdf.maxItemFields': String(PDF.maxItemFields),
+    'pdf.maxItemValueChars': formatCount(PDF.maxItemValueChars),
+    'pdf.maxElements': formatCount(PDF.maxElements),
+    'pdf.maxDepth': String(PDF.maxDepth),
+    'pdf.maxRemoteAssets': String(PDF.maxRemoteAssets),
+    'pdf.maxFilenameChars': String(PDF.maxFilenameChars),
+    'pdf.freeMark': PDF.freeMark,
+    'pdf.freeMarkMinBottomMm': String(PDF.freeMarkMinBottomMm),
+    'pdf.toolPdfsPerHour': String(PDF.toolPdfsPerHour),
+    'pdf.toolTurnstileAfterPdfs': String(PDF.toolTurnstileAfterPdfs),
+    'pdf.browserUsageRetentionDays': String(PDF.browserUsageRetentionDays),
+    'pdf.formats': PDF.formats.join(', '),
+    'pdf.defaultFormat': PDF.defaultFormat,
+    'pdf.templateIds': PDF_TEMPLATES.map((template) => template.id).join(', '),
+    'pdf.templateCount': String(PDF_TEMPLATES.length),
+    'pdf.sample.invoice': pdfSampleJson('invoice'),
+    'pdf.sample.certificate': pdfSampleJson('certificate'),
+    // Unformatted, for attributes such as maxlength="..." and data-max-items="...".
+    'pdf.raw.maxDataValueChars': String(PDF.maxDataValueChars),
+    'pdf.raw.maxItems': String(PDF.maxItems),
+    'pdf.raw.maxItemValueChars': String(PDF.maxItemValueChars),
   };
 }
 
@@ -211,6 +390,7 @@ function buildTokens(config: SiteConfig, now: Date): Record<string, string> {
     'auth.sessionDays': String(AUTH.sessionTtlMs / DAY_MS),
   };
   for (const id of PLAN_ORDER) Object.assign(tokens, planTokens(PLANS[id]));
+  Object.assign(tokens, pdfTokens());
   for (const size of Object.values(SIZES)) {
     tokens[`size.${size.id}.width`] = String(size.width);
     tokens[`size.${size.id}.height`] = String(size.height);
@@ -324,12 +504,16 @@ const fontAllowance = (plan: Plan): string =>
 const topUpAllowance = (plan: Plan): string =>
   plan.topUps ? `${formatUsd(TOPUP.priceUsd)} per ${formatCount(TOPUP.images)} images` : 'Not available';
 
+/** What a plan's PDFs look like: the Free plan prints the mark in every page's footer (src/pdf/service.ts planMark). */
+const pdfMarkLine = (plan: Plan): string => (plan.watermark ? `PDFs carry a “${PDF.freeMark}” footer line` : 'PDFs without a footer mark');
+
 /** "Start free" is the one primary action on the site, so the paid plans get the quieter button. */
-function planCard(plan: Plan): string {
+function planCard(plan: Plan, site: SiteFeatures): string {
   const paid = plan.paddleProductName !== null;
   const features = [
     `Rendered images cached for ${plan.cacheDays} days`,
     plan.watermark ? 'Small watermark in one corner' : 'No watermark',
+    ...(site.pdf ? [pdfMarkLine(plan)] : []),
     fontAllowance(plan),
     plan.topUps ? `Top-ups: ${topUpAllowance(plan)}` : 'No top-ups: a hard stop at the limit',
     plan.support,
@@ -352,7 +536,7 @@ ${action}
 </article>`;
 }
 
-const pricingTable = (): string => `<div class="plans">\n${PLAN_ORDER.map((id) => planCard(PLANS[id])).join('\n')}\n</div>`;
+const pricingTable = (site: SiteFeatures): string => `<div class="plans">\n${PLAN_ORDER.map((id) => planCard(PLANS[id], site)).join('\n')}\n</div>`;
 
 function htmlTable(head: string[], rows: string[][]): string {
   const cells = (tag: 'th' | 'td', values: string[], rowHeader: boolean): string =>
@@ -404,13 +588,96 @@ function limitsTable(): string {
 ${htmlTable(['Limit', 'Value'], sharedRows)}`;
 }
 
-function rateLimitsTable(): string {
+/** The limiters that exist only for PDFs (RL_PDF_KEY, RL_PDF_FREE, RL_TOOLS_PDF): published only with the PDF pages. */
+export const isPdfRateLimit = (name: RateLimitName): boolean => /_PDF(?:_|$)/.test(name);
+
+function rateLimitsTable(site: SiteFeatures): string {
   const period = (seconds: number): string => (seconds === 60 ? 'minute' : `${seconds} seconds`);
-  const rows = Object.values(RATE_LIMITS).map((rule) => {
+  const names = (Object.keys(RATE_LIMITS) as RateLimitName[]).filter((name) => site.pdf || !isPdfRateLimit(name));
+  const rows = names.map((name) => {
+    const rule = RATE_LIMITS[name];
     const scope = rule.scope.charAt(0).toUpperCase() + rule.scope.slice(1);
     return [scope, `${formatCount(rule.limit)} requests per ${period(rule.periodSeconds)}`];
   });
   return htmlTable(['Applies to', 'Limit'], rows);
+}
+
+/** "1-10 pages" -> 2 images, "11-20 pages" -> 3, ...: every page count from 1 to PDF.maxPages, grouped by pdfUnits(). */
+export function pdfUnitRows(): Array<{ from: number; to: number; units: number }> {
+  const rows: Array<{ from: number; to: number; units: number }> = [];
+  for (let pages = 1; pages <= PDF.maxPages; pages++) {
+    const units = pdfUnits(pages);
+    const last = rows.at(-1);
+    if (last && last.units === units) last.to = pages;
+    else rows.push({ from: pages, to: pages, units });
+  }
+  return rows;
+}
+
+function pdfUnitsTable(): string {
+  const range = ({ from, to }: { from: number; to: number }): string => (from === to ? `${from} ${from === 1 ? 'page' : 'pages'}` : `${from}-${to} pages`);
+  return htmlTable(
+    ['PDF length', 'Counts as'],
+    pdfUnitRows().map((row) => [range(row), plural(row.units, 'image')]),
+  );
+}
+
+function pdfLimitsTable(): string {
+  const formats = PDF.formats.map((format) => (format === PDF.defaultFormat ? `${format} (default)` : format)).join(', ');
+  return htmlTable(
+    ['Limit', 'Value'],
+    [
+      ['Pages per PDF', `${PDF.maxPages}; a longer document is refused (HTTP 422) and not counted`],
+      ['Paper formats', `${formats}; portrait or landscape`],
+      ['Page margins', `Up to ${PDF.maxMarginMm} mm on each side; ${PDF.defaultMarginMm} mm when neither the request nor the template sets one`],
+      ['Template HTML, after placeholders are filled in', `${inUnits(PDF.maxHtmlBytes, MB)} MB`],
+      ['Template CSS', `${inUnits(PDF.maxCssBytes, KB)} KB`],
+      ['Header or footer template', `${inUnits(PDF.maxHeaderFooterBytes, KB)} KB each`],
+      ['Elements after sections are repeated', `${formatCount(PDF.maxElements)}, nested at most ${PDF.maxDepth} deep`],
+      ['Remote images per PDF', `${PDF.maxRemoteAssets} different URLs, ${inUnits(PDF.maxAssetBytes, MB)} MB together`],
+      ['Data values', `${PDF.maxDataKeys} keys, ${formatCount(PDF.maxDataValueChars)} characters each`],
+      ['List items (items)', `${PDF.maxItems} entries, ${PDF.maxItemFields} fields each, ${formatCount(PDF.maxItemValueChars)} characters per field`],
+      ['Render time', `${PDF.renderTimeoutMs / 1000} seconds for loading and ${PDF.renderTimeoutMs / 1000} seconds for printing`],
+      ['Request body', `${inUnits(PDF.maxRequestBodyBytes, MB)} MB`],
+      ['File name', `${PDF.maxFilenameChars} characters, ending in .pdf`],
+    ],
+  );
+}
+
+/** Paper sizes as the tool pages name them; a format added to PDF.formats fails the type check until it has a label. */
+const PAPER_LABELS: Record<PdfFormat, string> = {
+  a4: 'A4 (210 x 297 mm)',
+  letter: 'US Letter (8.5 x 11 in)',
+  a5: 'A5 (148 x 210 mm)',
+};
+
+/** The <option>s of a paper-size <select>, with the default format selected. */
+function pdfFormatOptions(): string {
+  return PDF.formats.map((format) => `<option value="${format}"${format === PDF.defaultFormat ? ' selected' : ''}>${escapeHtml(PAPER_LABELS[format])}</option>`).join('');
+}
+
+/**
+ * The PDF starter templates for /docs/pdf: description, page setup and every data key, with
+ * the list fields of `items`. Generated from src/pdf/templates, so the docs list exactly the
+ * keys the templates use.
+ */
+function pdfTemplateList(): string {
+  const sections = PDF_TEMPLATES.map((template) => {
+    const { format, landscape } = template.defaultPdf;
+    const rows = template.fields.map((field) => {
+      const key = field.kind === 'items' ? `<code>${field.key}</code>: a list; each entry has ${(field.itemFields ?? []).map((name) => `<code>${name}</code>`).join(', ')}` : `<code>${field.key}</code>`;
+      return `<tr><td>${key}</td><td>${escapeHtml(field.label)}</td><td>${field.required ? 'Yes' : ''}</td></tr>`;
+    });
+    return `<h3 id="template-${template.id}"><code>${template.id}</code>: ${escapeHtml(template.name)}</h3>
+<p>${escapeHtml(template.description)} ${format.toUpperCase()}, ${landscape ? 'landscape' : 'portrait'}.</p>
+<div class="table-wrap"><table class="table">
+<thead><tr><th>Key</th><th>What it is</th><th>Required</th></tr></thead>
+<tbody>
+${rows.join('\n')}
+</tbody>
+</table></div>`;
+  });
+  return sections.join('\n');
 }
 
 /**
@@ -464,30 +731,38 @@ function walk(dir: string): string[] {
   return files.sort();
 }
 
-function loadPartials(paths: Paths): Record<string, string> {
+function loadPartials(paths: Paths, features: SiteFeatures): Record<string, string> {
   const partials: Record<string, string> = {
-    'pricing-table': pricingTable(),
+    'pricing-table': pricingTable(features),
     'limits-table': limitsTable(),
-    'rate-limits-table': rateLimitsTable(),
+    'rate-limits-table': rateLimitsTable(features),
     'template-picker': templatePicker(paths.siteDir),
     'playground-image': playgroundImage(paths.siteDir),
     'template-gallery': templateGallery(paths.siteDir),
+    // Used only by `feature: pdf` pages; harmless to build when the feature is off.
+    'pdf-units-table': pdfUnitsTable(),
+    'pdf-limits-table': pdfLimitsTable(),
+    'pdf-templates': pdfTemplateList(),
+    'pdf-format-options': pdfFormatOptions(),
   };
   const dir = join(paths.siteDir, 'partials');
   for (const file of walk(dir).filter((name) => name.endsWith('.html'))) {
     const name = file.slice(0, -'.html'.length);
     if (partials[name] !== undefined) throw new Error(`${display(join(dir, file))}: "${name}" is a generated partial`);
-    partials[name] = readFileSync(join(dir, file), 'utf8');
+    partials[name] = applyFeatureBlocks(readFileSync(join(dir, file), 'utf8'), features, display(join(dir, file)));
   }
   return partials;
 }
 
 function tokenContext(paths: Paths, options: BuildOptions): { config: SiteConfig; ctx: TokenContext } {
-  const config = loadConfig(join(paths.siteDir, 'site.config.json'), options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const config = loadConfig(join(paths.siteDir, 'site.config.json'), env);
+  const features = siteFeatures(env);
   const ctx: TokenContext = {
     tokens: buildTokens(config, options.now ?? new Date()),
     placeholders: placeholderTokens(config),
-    partials: loadPartials(paths),
+    partials: loadPartials(paths, features),
+    features,
   };
   return { config, ctx };
 }
@@ -543,13 +818,16 @@ function renderMarkdown(markdown: string): string {
 
 const LAYOUTS: readonly Layout[] = ['site', 'page', 'doc', 'legal'];
 
-function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: TokenContext): PageSource {
+/** A page, or null when its front matter names a feature this build leaves out. */
+function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: TokenContext): PageSource | null {
   const source = display(join(root, rel));
   const outPath = rel.replace(/\.(md|html)$/, '.html');
   if (/(^|\/)index\.html$/.test(outPath) && !(kind === 'page' && outPath === 'index.html')) {
     throw new Error(`${source}: would emit ${outPath}; pages are flat files (write docs.md, not docs/index.md)`);
   }
-  const { data, body } = parseFrontMatter(readFileSync(join(root, rel), 'utf8'), source);
+  const text = applyFeatureBlocks(readFileSync(join(root, rel), 'utf8'), ctx.features, source);
+  const { data, body } = parseFrontMatter(text, source);
+  if (data.feature !== undefined && !switchedOn(parseSwitch(data.feature, source), ctx.features)) return null;
   const field = (key: string): string => expand(data[key] ?? '', ctx, source, 'text');
   const title = field('title');
   const description = field('description');
@@ -580,7 +858,7 @@ function loadPages(paths: Paths, ctx: TokenContext): PageSource[] {
   const pages = [
     ...walk(pagesDir).filter((file) => file.endsWith('.html')).map((file) => loadPage(pagesDir, file, 'page', ctx)),
     ...walk(paths.contentDir).filter((file) => file.endsWith('.md')).map((file) => loadPage(paths.contentDir, file, 'content', ctx)),
-  ];
+  ].filter((page): page is PageSource => page !== null);
   const seen = new Map<string, string>();
   for (const page of pages) {
     const other = seen.get(page.outPath);
@@ -658,9 +936,17 @@ export function listTokens(options: BuildOptions = {}): TokenListing {
   return { tokens: ctx.tokens, partials: Object.keys(ctx.partials).sort() };
 }
 
+/** openapi.yaml as published: the paths and schemas of features that are off are left out. */
+function renderOpenapi(features: SiteFeatures): string {
+  return applyFeatureBlocks(readFileSync(join(ROOT, 'openapi.yaml'), 'utf8'), features, 'openapi.yaml', 'yaml');
+}
+
 function renderWith(paths: Paths, config: SiteConfig, ctx: TokenContext): RenderedSite {
   const layoutFile = (name: string): string => join(paths.siteDir, 'layouts', `${name}.html`);
-  const layout = (name: string): string => expand(readFileSync(layoutFile(name), 'utf8'), ctx, display(layoutFile(name)), 'html');
+  const layout = (name: string): string => {
+    const file = display(layoutFile(name));
+    return expand(applyFeatureBlocks(readFileSync(layoutFile(name), 'utf8'), ctx.features, file), ctx, file, 'html');
+  };
   const layouts = { base: layout('base'), site: '', page: layout('page'), doc: layout('doc'), legal: layout('legal') };
   const sources = loadPages(paths, ctx);
   const docs = sources
@@ -673,7 +959,7 @@ function renderWith(paths: Paths, config: SiteConfig, ctx: TokenContext): Render
     indexed: page.indexed,
     html: renderPage(page, layouts, docs, config),
   }));
-  return { config, pages, sitemap: renderSitemap(sources, config) };
+  return { config, features: ctx.features, pages, sitemap: renderSitemap(sources, config), openapi: renderOpenapi(ctx.features) };
 }
 
 /** Renders every page in memory. Throws (naming the file) on an unknown token, partial or layout. */
@@ -729,6 +1015,8 @@ export function buildSite(options: BuildOptions = {}): RenderedSite & { outDir: 
 
   const publicDir = join(paths.siteDir, 'public');
   for (const file of walk(publicDir)) {
+    const feature = FEATURE_PUBLIC_FILES[file];
+    if (feature !== undefined && !site.features[feature]) continue;
     const data = readFileSync(join(publicDir, file));
     emit(file, TOKENIZED_PUBLIC_FILES.has(file) ? expand(data.toString('utf8'), ctx, display(join(publicDir, file)), 'text') : data);
   }
@@ -736,7 +1024,8 @@ export function buildSite(options: BuildOptions = {}): RenderedSite & { outDir: 
   const modules = join(ROOT, 'node_modules');
   for (const { from, to } of VENDOR_FILES) emit(to, readFileSync(join(modules, from)));
   // The API description the docs link to; kept at the repository root so tools find it there too.
-  emit('openapi.yaml', readFileSync(join(ROOT, 'openapi.yaml')));
+  // The root copy describes every feature; the published one only those this build switches on.
+  emit('openapi.yaml', site.openapi);
   const emojiDir = join(modules, '@twemoji/svg');
   for (const file of readdirSync(emojiDir).filter((name) => name.endsWith('.svg'))) {
     emit(`_emoji/${file}`, readFileSync(join(emojiDir, file)));
@@ -794,7 +1083,8 @@ function main(argv: string[]): number {
   }
   if (argv.includes('--check-golive')) return checkGoLive();
   const site = buildSite();
-  console.log(`Built ${site.pages.length} pages into ${display(site.outDir)} (${site.config.url})`);
+  const switches = FEATURES.map((feature) => `${feature} ${site.features[feature] ? 'on' : 'off'}`).join(', ');
+  console.log(`Built ${site.pages.length} pages into ${display(site.outDir)} (${site.config.url}; features: ${switches})`);
   const placeholders = findPlaceholders(site);
   if (placeholders.length > 0) {
     console.warn(`Note: placeholders remain (${placeholders.map(({ value }) => value).join(', ')}). Run "npm run build:site -- --check-golive" before go-live.`);

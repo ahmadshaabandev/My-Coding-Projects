@@ -53,6 +53,9 @@ PADDLE_CLIENT_TOKEN = ""
 PADDLE_PRICE_STARTER = ""
 PADDLE_PRICE_PRO = ""
 PADDLE_PRICE_TOPUP = ""
+# PDF documents: on, but without a BROWSER binding here the PDF routes answer 503 not_configured
+# (tests inject a mock binding). Browser Run is bound for staging and production only.
+PDF_ENABLED = "true"
 
 [[d1_databases]]
 binding = "DB"
@@ -91,6 +94,21 @@ name = "RL_PREVIEW"
 namespace_id = "1005"
 simple = { limit = 60, period = 60 }
 
+[[ratelimits]]
+name = "RL_PDF_KEY"
+namespace_id = "1006"
+simple = { limit = 20, period = 10 }
+
+[[ratelimits]]
+name = "RL_PDF_FREE"
+namespace_id = "1007"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "RL_TOOLS_PDF"
+namespace_id = "1008"
+simple = { limit = 3, period = 60 }
+
 # ---------------------------------------------------------------- staging (Paddle sandbox)
 [env.staging]
 workers_dev = true
@@ -112,6 +130,7 @@ PADDLE_CLIENT_TOKEN = "test_ac634185fbf78142dae68f30158"
 PADDLE_PRICE_STARTER = "pri_01m82bzchs8tna3fz949myr8fm"
 PADDLE_PRICE_PRO = "pri_01m82bzcsrnsf4143bxmahcqpx"
 PADDLE_PRICE_TOPUP = "pri_01m82bzd1t7wfsswxz18b9e81z"
+PDF_ENABLED = "true"
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -148,6 +167,26 @@ name = "RL_PREVIEW"
 namespace_id = "2005"
 simple = { limit = 60, period = 60 }
 
+[[env.staging.ratelimits]]
+name = "RL_PDF_KEY"
+namespace_id = "2006"
+simple = { limit = 20, period = 10 }
+
+[[env.staging.ratelimits]]
+name = "RL_PDF_FREE"
+namespace_id = "2007"
+simple = { limit = 10, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "RL_TOOLS_PDF"
+namespace_id = "2008"
+simple = { limit = 3, period = 60 }
+
+# Cloudflare Browser Run renders PDF documents (quickAction('pdf', ...)). Not at the top level:
+# the test pool and `wrangler dev` must start without a network connection.
+[env.staging.browser]
+binding = "BROWSER"
+
 # ---------------------------------------------------------------- production (Paddle live)
 [env.production]
 workers_dev = false
@@ -172,6 +211,8 @@ PADDLE_CLIENT_TOKEN = "live_af7ed7091e4363c559f5abbf6fc"
 PADDLE_PRICE_STARTER = "pri_01m84q5rxc7p4wemzgrmca6fg8"
 PADDLE_PRICE_PRO = "pri_01m84q5s5x5bwwdkj1rca0dc5d"
 PADDLE_PRICE_TOPUP = "pri_01m84q5se0b8mmt14heam77enr"
+# PDF documents stay off in production until Ahmad approves them: every PDF endpoint answers 503.
+PDF_ENABLED = "false"
 
 [[env.production.d1_databases]]
 binding = "DB"
@@ -207,3 +248,21 @@ simple = { limit = 30, period = 60 }
 name = "RL_PREVIEW"
 namespace_id = "3005"
 simple = { limit = 60, period = 60 }
+
+[[env.production.ratelimits]]
+name = "RL_PDF_KEY"
+namespace_id = "3006"
+simple = { limit = 20, period = 10 }
+
+[[env.production.ratelimits]]
+name = "RL_PDF_FREE"
+namespace_id = "3007"
+simple = { limit = 10, period = 60 }
+
+[[env.production.ratelimits]]
+name = "RL_TOOLS_PDF"
+namespace_id = "3008"
+simple = { limit = 3, period = 60 }
+
+[env.production.browser]
+binding = "BROWSER"

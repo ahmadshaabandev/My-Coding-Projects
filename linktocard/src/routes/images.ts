@@ -2,17 +2,46 @@
  * GET /i/{userId}/{cacheKey}.{ext} - a stored image, as returned in `url` by
  * POST /v1/images. The 256-bit cache key in the path is the capability; there
  * is nothing to sign. Never renders, never counts.
+ *
+ * GET /i/{userId}/{cacheKey}.pdf - a stored PDF (POST /v1/pdf `url`), shown inline under the
+ * file name it was rendered with (R2 metadata). Like every PDF endpoint it answers 503 while
+ * PDFs are switched off.
  */
 import { Hono } from 'hono';
 import { getUserById } from '../db/client';
 import { ApiError } from '../lib/errors';
 import { etagFor, matchesEtag, notModified } from '../lib/http';
 import { parseImageFile, readStoredImage, storedImageHeaders } from '../lib/images';
+import { assertPdfEnabled } from '../pdf/render';
+import { parsePdfFile, readStoredPdf, storedPdfHeaders } from '../pdf/service';
 import type { AppEnv } from '../types';
 
 const USER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 export const imagesRouter = new Hono<AppEnv>();
+
+imagesRouter.get('/:userId/:file', async (c, next) => {
+  if (!c.req.param('file').endsWith('.pdf')) return next();
+  assertPdfEnabled(c.env);
+  const request = c.req.raw;
+  const userId = c.req.param('userId');
+  const cacheKey = parsePdfFile(c.req.param('file'));
+  const now = Date.now();
+  const head = request.method === 'HEAD';
+  const conditional = cacheKey !== null && matchesEtag(request, etagFor(cacheKey));
+
+  const owner = cacheKey && USER_ID_RE.test(userId) ? await getUserById(c.env.DB, userId) : null;
+  if (owner && owner.suspended_at !== null) {
+    throw new ApiError('account_suspended', `This account is suspended. Contact ${c.env.SUPPORT_EMAIL}.`);
+  }
+  const stored = owner && cacheKey ? await readStoredPdf(c.env.BUCKET, owner.id, cacheKey, now, !head && !conditional) : null;
+  if (!stored) throw new ApiError('not_found', 'PDF not found. It may have expired: render it again to get a fresh URL.');
+
+  const headers = storedPdfHeaders(stored.pdf, 'hit', now);
+  if (conditional) return notModified(headers);
+  if (head) headers.set('content-length', String(stored.pdf.bytes));
+  return new Response(stored.body, { headers });
+});
 
 imagesRouter.get('/:userId/:file', async (c) => {
   const request = c.req.raw;

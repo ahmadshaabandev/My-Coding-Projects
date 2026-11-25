@@ -4,7 +4,7 @@
 import { checkoutAction, openCheckout } from '../checkout.js';
 import { api } from './client.js';
 import { alertBox, button, confirmDialog, errorSlot, h, showError, withBusy } from './dom.js';
-import { billingActions, checkoutSettled, checkoutSnapshot, formatCount, formatDate, pollUntil, usageView } from './helpers.js';
+import { billingActions, checkoutSettled, checkoutSnapshot, formatCount, formatDate, pdfUsageLine, pollUntil, usageView } from './helpers.js';
 
 const CHECKOUT_MEMO = 'ltc:checkout';
 
@@ -67,6 +67,7 @@ function usageBlock(ctx) {
   const { usage, topups } = ctx.me;
   const view = usageView(usage);
   const reset = formatDate(usage.period_end);
+  const pdfLine = pdfUsageLine(usage, ctx.config);
   const meter = h('progress', {
     class: `meter${view.level === 'ok' ? '' : ` meter-${view.level}`}`,
     max: usage.limit,
@@ -79,6 +80,8 @@ function usageBlock(ctx) {
     h('p', { class: 'usage-figure' }, h('strong', {}, formatCount(usage.remaining)), h('span', {}, usage.remaining === 1 ? 'image left this period' : 'images left this period')),
     meter,
     h('p', { class: 'usage-line' }, h('span', {}, `${formatCount(usage.used)} of ${formatCount(usage.limit)} used`), h('span', {}, `Resets ${reset}`)),
+    // PDFs separately: how many, and how many of the used images they took (only when /api/me sends usage.pdf).
+    pdfLine ? h('p', { class: 'usage-pdf' }, pdfLine) : null,
     usage.topup_remaining > 0
       ? h(
           'p',

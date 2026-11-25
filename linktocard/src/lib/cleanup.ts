@@ -1,12 +1,13 @@
 /**
  * Daily housekeeping (cron trigger). Every step is bounded, so one run costs a
  * handful of statements however much has piled up; the next run continues.
+ * Stored PDFs have ledger rows like images and expire with them.
  *
  * Nothing here is needed for correctness - expired sessions, tokens and images
  * are already ignored by the code that reads them - it only keeps D1 and R2
  * from growing forever.
  */
-import { DAY_MS } from '../config';
+import { DAY_MS, PDF } from '../config';
 import { all, run } from '../db/client';
 import type { Env } from '../types';
 
@@ -35,6 +36,8 @@ export const CLEANUP_LIMITS = {
    * table. Anyone can create them: 20 checks per client per hour, kept 10 minutes.
    */
   toolRowDeletesPerRun: 20_000,
+  /** browser_usage rows older than PDF.browserUsageRetentionDays deleted per run (one row per PDF render attempt). */
+  browserUsageDeletesPerRun: 20_000,
 } as const;
 
 const LOGIN_TOKEN_KEEP_MS = DAY_MS;
@@ -58,6 +61,8 @@ export interface CleanupReport {
   ogChecks?: number;
   /** Ended OG checker / inspect counter windows; present only when some were deleted. */
   toolUsage?: number;
+  /** PDF browser-time rows past their retention; present only when some were deleted. */
+  browserUsage?: number;
 }
 
 /** R2 prefixes that hold one account's files: rendered images and uploaded fonts. */
@@ -178,6 +183,22 @@ async function deleteExpiredRows(db: D1Database, table: 'og_checks' | 'tool_usag
   return deleted;
 }
 
+/** browser_usage rows (cost tracking of PDF renders) are kept PDF.browserUsageRetentionDays days. */
+async function deleteOldBrowserUsage(db: D1Database, now: number, limit: number): Promise<number> {
+  let deleted = 0;
+  while (deleted < CLEANUP_LIMITS.browserUsageDeletesPerRun) {
+    const changes = await run(
+      db,
+      'DELETE FROM browser_usage WHERE id IN (SELECT id FROM browser_usage WHERE created_at <= ?1 LIMIT ?2)',
+      now - PDF.browserUsageRetentionDays * DAY_MS,
+      Math.min(limit, CLEANUP_LIMITS.browserUsageDeletesPerRun - deleted),
+    );
+    deleted += changes;
+    if (changes < limit) break;
+  }
+  return deleted;
+}
+
 export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): Promise<CleanupReport> {
   const limit = CLEANUP_LIMITS.rowsPerStatement;
   // Sign-in tokens are kept a day, well past the hour in which they feed the per-address
@@ -210,6 +231,7 @@ export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): 
   const deletedAccounts = await purgeDeletedAccounts(env);
   const ogChecks = await deleteExpiredRows(env.DB, 'og_checks', 'id', now, limit);
   const toolUsage = await deleteExpiredRows(env.DB, 'tool_usage', 'bucket', now, limit);
+  const browserUsage = await deleteOldBrowserUsage(env.DB, now, limit);
   return {
     loginTokens,
     sessions,
@@ -219,5 +241,6 @@ export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): 
     deletedAccounts,
     ...(ogChecks > 0 ? { ogChecks } : {}),
     ...(toolUsage > 0 ? { toolUsage } : {}),
+    ...(browserUsage > 0 ? { browserUsage } : {}),
   };
 }

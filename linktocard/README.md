@@ -2,7 +2,9 @@
 
 Turn every link into a beautiful share card: an API and a signed-URL service that renders
 Open Graph images (PNG, JPEG, WebP) from HTML/CSS templates or five starter templates.
-It runs on Cloudflare Workers with Satori and resvg. There is no headless browser anywhere.
+It runs on Cloudflare Workers with Satori and resvg; card images never touch a browser.
+PDF documents from HTML templates are built too, printed by Cloudflare Browser Run, and are
+switched off in production until Ahmad approves them (see "PDF documents" below).
 
 ## Status, stated plainly
 
@@ -38,6 +40,11 @@ It runs on Cloudflare Workers with Satori and resvg. There is no headless browse
   page's `og:image` tag. Rendered on the first request, stored, then served from cache.
 - `POST /v1/images`: render with an API key, returns a hosted image URL (or the bytes).
 - `GET /v1/usage`, `GET /v1/templates`.
+- PDF documents (built; switched on in the staging configuration but not deployed there yet;
+  off in production): `POST /v1/pdf`, signed
+  `GET /v1/pdf/{siteId}/{template}.pdf` links, stored PDFs under `/i/...pdf`, five PDF starter
+  templates, and three free tools (`/tools/html-to-pdf`, `/tools/invoice-generator`,
+  `/tools/certificate-generator`).
 - A dashboard: sign in by email link, sites and signing secrets, signed-URL builder,
   template editor with live preview, API keys, custom fonts on paid plans, usage, billing.
 - A marketing site with a live playground, pricing, docs, comparisons and legal pages.
@@ -51,7 +58,8 @@ generation, team accounts, automatic overage billing, any payment processor othe
 | --- | --- |
 | Runtime | One Cloudflare Worker (TypeScript, Hono) plus Workers Static Assets for the site |
 | Rendering | Satori (HTML/CSS to SVG), resvg-wasm (SVG to pixels), jSquash (JPEG, WebP) |
-| Data | D1 (accounts, keys, templates, usage, webhook log), R2 (rendered images, fonts) |
+| PDF documents | Cloudflare Browser Run quick action (`env.BROWSER.quickAction('pdf', ...)`), bound on staging and production only |
+| Data | D1 (accounts, keys, templates, usage, webhook log, PDF browser time), R2 (rendered images and PDFs, fonts) |
 | Email | Resend (sign-in links, quota warnings, contact form) |
 | Billing | Paddle Billing only: Paddle.js overlay checkout, customer portal, webhooks |
 | Tooling | Wrangler, Vitest with the Cloudflare pool, plain Node for the site build |
@@ -76,6 +84,11 @@ link directly (and the terminal prints it). This shortcut exists only when `ENVI
 
 Regenerate the starter-template sample images after changing a template: `npm run samples`.
 
+`npm run dev` builds the site without the PDF pages. To see them locally, build with the switch
+on and start Wrangler yourself: `SITE_PDF=on npm run build:site && npx wrangler dev`. Locally
+every PDF endpoint answers 503 `not_configured`: Browser Run is bound only on staging and
+production, so `wrangler dev` and the test pool start without a network connection.
+
 ## Tests
 
 ```sh
@@ -88,8 +101,13 @@ npm run smoke       # the whole product over HTTP against a real `wrangler dev`
   (`npm run test:workers`).
 - `tests/node/*.test.ts` run in Node: the site build, docs, signing examples in three
   languages, the Paddle catalog instructions, and the dependency guard (`npm run test:node`).
+  The site build is tested with the PDF switch both off and on (`SITE_PDF`).
+- `tests/pdf-*.test.ts` cover PDF documents against a mocked Browser Run binding
+  (`tests/pdf-helpers.ts`); page counting is checked against real Chrome PDFs in
+  `tests/fixtures/pdf/`. The real renderer cannot be reached from a test or from `wrangler dev`.
 - `npm run smoke` starts `wrangler dev` on port 8799 with a throw-away database, signs in,
-  creates a key and a site, renders, checks caching and counting, and stops the server.
+  creates a key and a site, renders, checks caching and counting, checks that every PDF
+  endpoint answers 503 without Browser Run, and stops the server.
 
 The build request's acceptance list maps to `tests/acceptance.test.ts`, one test per item:
 
@@ -136,6 +154,8 @@ they are set with `npx wrangler secret put <NAME> --env staging|production`.
 | `PADDLE_ENV` | `sandbox` or `production` |
 | `PADDLE_CLIENT_TOKEN` | Paddle.js client-side token. Public by design. |
 | `PADDLE_PRICE_STARTER`, `PADDLE_PRICE_PRO`, `PADDLE_PRICE_TOPUP` | The three Paddle price ids (`pri_...`) |
+| `PDF_ENABLED` | `"true"` turns the PDF endpoints on; they also need the `BROWSER` binding. Anything else: every PDF endpoint answers 503 and `/api/config` reports `pdf_enabled: false`. `"true"` locally and on staging, `"false"` on production |
+| `PDF_DAILY_BROWSER_MS_BUDGET` | Optional. Browser Run milliseconds per 24 hours above which the daily cron emails `SUPPORT_EMAIL` (once per UTC day). Unset: `PDF.dailyBrowserMsBudget` in `src/config.ts` |
 
 While any Paddle variable is empty, the site still works: the pricing page and dashboard
 show that checkout is not available yet instead of opening a broken overlay.
@@ -150,6 +170,11 @@ address**, the short **locality** shown in the footer, the legal pages' "last up
 the governing law. The environment variables `SITE_URL`, `SITE_LEGAL_NAME`,
 `SITE_LEGAL_ADDRESS` and `SITE_LEGAL_LOCALITY` override the file for one build. Change
 `legalUpdated` whenever the wording of the terms, privacy policy or refund policy changes.
+
+`SITE_PDF` switches the PDF pages and blocks of the site (`feature: pdf` front matter,
+`<!-- feature:pdf -->` blocks): `on` builds them, `off` or unset leaves them out. Any other value
+stops the build. `npm run deploy:staging` builds with `on`, `npm run deploy:production` with
+`off`, so a value left exported in the shell cannot publish PDF pages on production.
 
 `RATE_LIMITS_DISABLED` exists only for the test suite and is ignored unless `ENVIRONMENT`
 is `test`.
@@ -178,6 +203,39 @@ request. Workers Paid includes 30 million CPU milliseconds a month, about 75,000
 Bundle size (measured with `wrangler deploy --dry-run --env staging` on 2026-11-22): 6.8 MB,
 2.7 MB gzipped, under the 10 MB compressed limit of Workers Paid. The static site adds about
 3,800 asset files, most of them the Twemoji SVGs the renderer loads for emoji.
+
+## PDF documents
+
+Built and tested. Switched on in the staging configuration, which has not been deployed with
+them yet; off in production (`PDF_ENABLED = "false"`, and production deploys build the site
+with `SITE_PDF=off`) until Ahmad approves them. The staging rollout and turning them on in
+production are GO-LIVE.md section 10.
+
+- **Renderer.** One `env.BROWSER.quickAction('pdf', options)` call per PDF (`src/pdf/render.ts`).
+  The browser only ever receives our own sanitised document as `html`, never a `url`, with
+  JavaScript off, `allowRequestPattern: ['^data:']` (no network access) and `cacheTTL: 0`. No
+  headless-browser package is a dependency; `tests/node/forbidden-deps.test.ts` enforces that.
+- **Template language and sanitiser** (`src/pdf/template.ts`, `src/pdf/css.ts`): `{{key}}`
+  placeholders and `{{#items}}` sections filled in on the parsed tree; scripts, event
+  attributes, frames, `javascript:` links and the like removed; `@import` and remote
+  `@font-face` refused. Remote images are downloaded first through the guarded image fetcher
+  and embedded (`src/pdf/assets.ts`); the bundled fonts are embedded when the CSS names them.
+- **Counting.** A PDF counts as several images by its page count (`pdfUnits()` in
+  `src/config.ts`; the table is on `/docs/pdf`), charged as one block from the allowance or one
+  top-up, never split (`chargePdf` in `src/lib/quota.ts`). Free-plan and free-tool PDFs carry the
+  "Made with Link To Card" footer line.
+- **Cost tracking.** Every browser call is a row in `browser_usage` (kept
+  `PDF.browserUsageRetentionDays` days). The daily cron emails `SUPPORT_EMAIL` when the last
+  24 hours used more browser time than `PDF_DAILY_BROWSER_MS_BUDGET`. On 2026-11-25 Cloudflare's
+  pricing page listed Browser Run on Workers Paid as 10 browser hours a month included, then
+  $0.09 per hour.
+- **Starter templates** (`src/pdf/templates/`): invoice, receipt, quote, certificate of
+  completion, report. There are deliberately no templates for bank statements, utility bills,
+  identity documents, diplomas or any government document, and the terms forbid counterfeit
+  documents.
+- **Not built:** fonts uploaded in the dashboard are used for card images only, not embedded in
+  PDFs; the dashboard's signed-URL builder makes card URLs only (signed PDF links are built on the
+  customer's server, as `/docs/pdf` shows).
 
 ## Cloudflare spending cap
 
@@ -294,9 +352,32 @@ it if it is wrong.
   not be opened from the build environment. Check the comparison pages against the live
   sites before launch.
 - Browsers other than Chromium.
+- **PDF documents on Cloudflare Browser Run.** Browser Run could not be reached from the build
+  environment; every PDF test uses a mocked binding, and the templates were printed only with a
+  local Chromium using the same options. On staging, check with the first real renders: that
+  `allowRequestPattern: ['^data:']` does not block the document itself (if it does, use
+  `['^data:', '^about:']` in `src/pdf/render.ts`, never http(s)); that every option and
+  `cacheTTL: 0` are accepted and the answer is `application/pdf` with `X-Browser-Ms-Used`; the
+  real error statuses and messages (a timeout must mention "timeout" to become 504
+  `render_timeout`); that the page count can be read from its PDFs (otherwise every PDF ends as
+  500 `render_failed`); that the embedded fonts apply with JavaScript off; the request size limit
+  with large inlined images; how the five templates, the free footer line and the docs'
+  page-number footer look; that Chrome repeats table header rows on every page; and the daily
+  alarm email through Resend.
 
 ## Changelog
 
+- **2026-11-25: PDF documents from HTML templates** (built, not deployed yet; off in production).
+  `POST /v1/pdf`, signed `/v1/pdf/...` links, stored PDFs under `/i/`, five PDF starter templates,
+  `/docs/pdf`, three free tools and three guides, all behind `PDF_ENABLED` and the `SITE_PDF`
+  site switch. Printed by Cloudflare Browser Run with JavaScript off and no network access;
+  card images are still drawn without a browser. A PDF counts as images by its pages, charged as
+  one block. New: migration `0006_pdf.sql` (apply it before deploying), three rate limiters
+  (`RL_PDF_KEY`, `RL_PDF_FREE`, `RL_TOOLS_PDF`), the `BROWSER` binding on staging and production,
+  `PDF_DAILY_BROWSER_MS_BUDGET` and a daily alarm email. The terms now forbid counterfeit or
+  misleading documents (not PDF-specific, live everywhere). Where AI was used: the code, tests,
+  templates, docs and copy were written with AI tools (Claude Code), in three parts with an
+  integration pass. Ahmad reviews before release.
 - **2026-11-25: Free OG checker** (`/tools/og-checker`, `/v1/inspect`, five guides, `/bot`). The
   Worker fetches one public page on request (https only, 5 s, 2 MB, 3 redirects, private and
   metadata addresses refused, User-Agent `LinkToCardBot/1.0`), parses its share tags, probes the
@@ -349,9 +430,11 @@ This project's own licence is not set. Until Ahmad adds one, all rights are rese
 
 ```
 src/index.ts            Worker entry: routes, error handling, cron
-src/routes/             HTTP routes (og, api, images, playground, dashboard, studio, auth, webhooks)
+src/routes/             HTTP routes (og, pdf, api, images, playground, dashboard, studio, auth, tools, webhooks)
 src/render/             template language, CSS handling, Satori/resvg engine, image proxy, fonts
 src/render/templates/   the five starter templates
+src/pdf/                PDF documents: template language, sanitiser, fonts, images, Browser Run call
+src/pdf/templates/      the five PDF starter templates
 src/lib/                signing, quota, images service, email, rate limits, cleanup
 src/auth/               magic links, sessions, API keys, middleware
 src/billing/            plans and Paddle

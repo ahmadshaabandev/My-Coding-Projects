@@ -1,0 +1,196 @@
+---
+title: Free HTML to PDF converter - paste HTML and CSS, get a PDF
+description: Free HTML to PDF converter with no sign-up. Paste your own HTML and CSS, choose the paper size, and download a PDF printed by headless Chrome with JavaScript turned off.
+scripts: pdf-tools
+feature: pdf
+---
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>HTML to PDF.</h1>
+<p>Paste HTML and CSS, choose the paper, and download the PDF. It is printed by headless Chrome, so grid, flexbox and print rules work as they do in Chrome. The form starts with a small example you can change. No account needed.</p>
+</div>
+<p class="alert alert-warn pdf-off" id="pdf-off" role="note" hidden>PDF rendering is not enabled yet. The form works, but no PDF can be made here at the moment.</p>
+<form class="card card-pop pdf-form" id="pdf-form" data-tool="html-to-pdf">
+<div class="pdf-code">
+<label class="field"><span class="label">HTML *</span><textarea class="textarea code-input pdf-html" name="html" rows="18" required spellcheck="false" autocapitalize="off" autocomplete="off">&lt;main class="brief"&gt;
+  &lt;p class="kicker"&gt;Project brief&lt;/p&gt;
+  &lt;h1&gt;Spring catalogue photo shoot&lt;/h1&gt;
+  &lt;p class="meta"&gt;Hollowfern Outdoor Co. · Prepared 3 March 2027&lt;/p&gt;
+
+  &lt;section class="facts"&gt;
+    &lt;div&gt;&lt;h2&gt;Goal&lt;/h2&gt;&lt;p&gt;Twelve product photos and four lifestyle images.&lt;/p&gt;&lt;/div&gt;
+    &lt;div&gt;&lt;h2&gt;Dates&lt;/h2&gt;&lt;p&gt;Shoot on 14 March, first edits by 21 March.&lt;/p&gt;&lt;/div&gt;
+    &lt;div&gt;&lt;h2&gt;Contact&lt;/h2&gt;&lt;p&gt;Rosa Lindqvist, art direction&lt;/p&gt;&lt;/div&gt;
+  &lt;/section&gt;
+
+  &lt;h2&gt;Shot list&lt;/h2&gt;
+  &lt;table&gt;
+    &lt;thead&gt;&lt;tr&gt;&lt;th&gt;#&lt;/th&gt;&lt;th&gt;Shot&lt;/th&gt;&lt;th&gt;Setting&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+    &lt;tbody&gt;
+      &lt;tr&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;Trail jacket, front and back&lt;/td&gt;&lt;td&gt;Studio, white&lt;/td&gt;&lt;/tr&gt;
+      &lt;tr&gt;&lt;td&gt;2&lt;/td&gt;&lt;td&gt;Rain shell on a model, walking&lt;/td&gt;&lt;td&gt;Harbour path&lt;/td&gt;&lt;/tr&gt;
+      &lt;tr&gt;&lt;td&gt;3&lt;/td&gt;&lt;td&gt;Daypack, open, with its contents&lt;/td&gt;&lt;td&gt;Studio, wood table&lt;/td&gt;&lt;/tr&gt;
+    &lt;/tbody&gt;
+  &lt;/table&gt;
+
+  &lt;p class="note"&gt;This is a sample. Replace it with your own HTML.&lt;/p&gt;
+&lt;/main&gt;</textarea></label>
+<label class="field"><span class="label">CSS</span><textarea class="textarea code-input pdf-css" name="css" rows="18" spellcheck="false" autocapitalize="off" autocomplete="off">body { font-family: 'Inter', sans-serif; font-size: 10.5pt; line-height: 1.5; color: #1d2026; }
+.kicker { margin: 0; font-size: 8pt; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #b8430f; }
+h1 { margin: 2mm 0 1mm; font-family: 'Source Serif 4', serif; font-size: 26pt; line-height: 1.1; }
+.meta { margin: 0; color: #5f6873; }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; margin: 8mm 0; padding: 5mm 0; border-block: 0.75pt solid #d4d9df; }
+h2 { margin: 0 0 1.5mm; font-size: 8.5pt; letter-spacing: 0.1em; text-transform: uppercase; color: #5f6873; }
+.facts p { margin: 0; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 2.2mm 3mm; text-align: left; border-bottom: 0.75pt solid #d4d9df; }
+tr { break-inside: avoid; }
+.note { margin-top: 10mm; font-size: 9pt; color: #5f6873; }</textarea></label>
+</div>
+
+<div class="pdf-actions">
+<label class="field pdf-paper"><span class="label">Paper</span><select class="select" name="format">[[> pdf-format-options]]</select></label>
+<label class="check pdf-landscape"><input type="checkbox" name="landscape"> Landscape</label>
+<button class="btn btn-primary" id="pdf-submit" type="submit">Create PDF</button>
+<p class="hint">Up to [[pdf.toolPdfsPerHour]] PDFs per hour and [[pdf.maxPages]] pages each. Every page carries a small &ldquo;[[pdf.freeMark]]&rdquo; line at the bottom.</p>
+</div>
+<p class="alert alert-danger" id="pdf-error" role="alert" tabindex="-1" hidden></p>
+<div class="alert alert-info tool-verify" id="pdf-verify" hidden>
+<p id="pdf-verify-text">Complete the quick check below and your PDF is made straight away.</p>
+<div class="tool-widget" id="pdf-widget"></div>
+</div>
+<div class="alert alert-ok pdf-result" id="pdf-result" hidden>
+<p id="pdf-result-text"></p>
+<a class="btn btn-secondary btn-sm" id="pdf-download" href="#pdf-result">Download</a>
+</div>
+<noscript><p class="alert alert-warn">This page needs JavaScript to send the form. <a href="/docs/pdf">POST /v1/pdf</a> does the same from a script.</p></noscript>
+</form>
+<p class="visually-hidden" id="pdf-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About the converter</p>
+<h2>What it does, and what it does not.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>What it does</h3>
+<ul>
+<li>Prints your HTML and CSS with Cloudflare Browser Run, which runs headless Chrome on Cloudflare&rsquo;s network, on A4, US Letter or A5, portrait or landscape, with [[pdf.defaultMarginMm]] mm margins.</li>
+<li>Downloads images from public <code>https://</code> addresses before printing and embeds them, up to [[pdf.maxRemoteAssets]] of them and [[pdf.maxAssetMb]] MB together. <code>data:</code> images work too.</li>
+<li>Embeds the fonts Inter, Source Serif 4 and JetBrains Mono when your CSS names them. Other fonts come from Cloudflare&rsquo;s browser.</li>
+<li>Sends the finished file straight back to your browser as a download. Your HTML and the PDF are not kept.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What it does not do</h3>
+<ul>
+<li>It does not open a web page by its address. Paste the HTML itself.</li>
+<li>It does not run JavaScript. Scripts and <code>on...</code> attributes are removed before printing, so content that a script would add does not appear.</li>
+<li>It does not load stylesheets or fonts from other sites: <code>&lt;link&gt;</code> elements are removed, and <code>@import</code> or a remote <code>@font-face</code> is refused. Put the CSS in the CSS box.</li>
+<li>It always prints the &ldquo;[[pdf.freeMark]]&rdquo; line in the footer. For documents without it, use the API on a paid plan.</li>
+</ul>
+</div>
+</div>
+
+<div class="tool-columns">
+<div class="prose">
+<h3>Templates, not just pages</h3>
+<p>Through the API, the same HTML becomes a template: write <code>{{customer}}</code> where a value goes and send the values as <code>data</code>, and repeat table rows with <code>{{#items}} ... {{/items}}</code>. The values are always text, so nothing a customer types can turn into markup.</p>
+<p>The API adds headers and footers with page numbers, margins of your choice and stored PDFs with a public URL. <a href="/docs/pdf#your-own-html-and-css">Your own HTML and CSS</a></p>
+</div>
+<div class="prose">
+<h3 id="api">Do this via the API</h3>
+<p>Send the same HTML and CSS to <code>POST /v1/pdf</code> with an API key from your dashboard, and ask for the PDF itself with <code>"response": "binary"</code>.</p>
+<div class="code-block" data-lang="shell"><button class="copy-btn" type="button" data-copy>Copy</button><pre><code class="language-shell">curl [[site.url]]/v1/pdf \
+  -H "Authorization: Bearer ltc_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "html": "&lt;h1&gt;Hello, {{name}}&lt;/h1&gt;&lt;p&gt;Your order has shipped.&lt;/p&gt;",
+    "css": "h1 { font-family: \"Source Serif 4\", serif; }",
+    "data": { "name": "Amara" },
+    "pdf": { "format": "letter" },
+    "response": "binary"
+  }' \
+  -o order.pdf</code></pre></div>
+<p>A PDF of up to [[pdf.basePages]] pages counts as [[pdf.baseUnits]] images of your plan. <a class="link-arrow" href="/docs/pdf">Read the PDF docs</a></p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about HTML to PDF.</h2>
+<p>Short answers about what prints and what does not.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>Can I convert a web page by pasting its URL?</summary>
+<div>
+<p>No. The converter only prints HTML that you paste, and the browser that prints it has no network access. Open the page, save or copy its HTML and CSS, and paste them here. Remember that a page you did not write may belong to someone else.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Why does my chart or my script not show up?</summary>
+<div>
+<p>JavaScript is turned off and scripts are removed before printing. Anything a script would draw or load is missing. Render charts as images or SVG first, or put the finished HTML in the box.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>How do I start a new page, or keep a table row together?</summary>
+<div>
+<p>With CSS, as Chrome prints it: <code>break-before: page</code> on an element starts a new page with it, and <code>break-inside: avoid</code> keeps an element, such as a table row, on one page. A table&rsquo;s <code>&lt;thead&gt;</code> repeats at the top of each page.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Which fonts can I use?</summary>
+<div>
+<p>Inter, Source Serif 4 and JetBrains Mono are embedded when your CSS names them, for example <code>font-family: 'Inter', sans-serif;</code>. Other names fall back to the fonts installed in Cloudflare&rsquo;s browser, which cover many scripts, including Chinese, Japanese, Korean and Arabic. Fonts from Google Fonts or another site cannot be loaded.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>How large can the document be?</summary>
+<div>
+<p>Up to [[pdf.maxHtmlMb]] MB of HTML, [[pdf.maxCssKb]] KB of CSS and [[pdf.maxPages]] pages. A longer document is refused, so split it. Printing gets [[pdf.renderTimeoutSeconds]] seconds.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Do you keep my HTML?</summary>
+<div>
+<p>No. Your HTML and CSS reach our server once, only to be printed, and the PDF goes straight back to you without being stored. We count PDFs per network for the current hour, and log the pages and the printing time of each PDF, not its content. <a href="/privacy">Privacy policy</a></p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is it free?</summary>
+<div>
+<p>Yes, without an account: up to [[pdf.toolPdfsPerHour]] PDFs per hour from one network, and after a few you may be asked to confirm you are a person. Every page carries the &ldquo;[[pdf.freeMark]]&rdquo; line. For more, or PDFs without the line, use the API.</p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>PDFs from your own app.</h2>
+<p>[[site.name]] turns one HTML template and your data into a PDF for every order, booking or report, through one API call or a signed link.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs/pdf">Read the PDF docs</a>
+</div>
+</div>
+</section>
+
+</main>

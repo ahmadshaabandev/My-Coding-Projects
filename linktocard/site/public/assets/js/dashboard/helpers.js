@@ -195,6 +195,24 @@ export function usageView(usage) {
   return { percent, level, exhausted };
 }
 
+/**
+ * The overview's PDF line, or null when there is nothing to show: /api/me sends usage.pdf
+ * ({ count, images }: PDFs charged this period and the images they counted as). Those images
+ * are not always part of usage.used: a PDF that did not fit in the allowance is taken whole from
+ * a top-up, so the line names no share of usage.used. It is shown when PDFs are switched on
+ * here, or when the period already has some.
+ */
+export function pdfUsageLine(usage, config) {
+  const pdf = usage?.pdf;
+  if (!pdf || typeof pdf !== 'object') return null;
+  const count = Number.isInteger(pdf.count) && pdf.count > 0 ? pdf.count : 0;
+  const images = Number.isInteger(pdf.images) && pdf.images > 0 ? pdf.images : 0;
+  if (count === 0 && config?.pdf_enabled !== true) return null;
+  if (count === 0) return 'No PDFs made this period.';
+  const pdfs = `${formatCount(count)} PDF${count === 1 ? '' : 's'} this period`;
+  return `${pdfs}, counted as ${formatCount(images)} image${images === 1 ? '' : 's'}.`;
+}
+
 // The statuses for which the API accepts a plan change (src/routes/dashboard.ts).
 const CHANGEABLE = ['active', 'trialing', 'past_due'];
 

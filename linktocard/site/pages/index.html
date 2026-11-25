@@ -153,6 +153,9 @@ const url = `[[site.url]]${path}?${query}`;</code></pre></div>
 </li>
 </ol>
 <p class="section-foot">Prefer to render ahead of time? <code>POST /v1/images</code> with an API key returns the image URL. <a href="/docs">The docs cover both.</a></p>
+<!-- feature:pdf -->
+<p class="section-foot">Need a document instead of a card? <code>POST /v1/pdf</code> turns an HTML template into a PDF, such as an invoice or a certificate of completion. <a href="/docs/pdf">PDF documents</a></p>
+<!-- /feature:pdf -->
 </div>
 </section>
 
@@ -202,7 +205,14 @@ const url = `[[site.url]]${path}?${query}`;</code></pre></div>
 <summary>What is [[site.name]], and what is it not?</summary>
 <div>
 <p>It renders Open Graph and social card images from HTML and CSS templates, either through a signed URL you put in your meta tags or through an API call.</p>
+<!-- feature:no-pdf -->
 <p>It is not a visual editor: templates are code. It does not take screenshots of web pages, it does not make video or GIFs, and it does not generate images with AI.</p>
+<!-- /feature:no-pdf -->
+<!-- feature:pdf -->
+<p>It also turns HTML templates into PDF documents, such as invoices, receipts and certificates of completion, through the same kind of API call or signed link.</p>
+<p>It is not a visual editor: templates are code. It still does not take screenshots of web pages, it does not make video or GIFs, and it does not generate images with AI.</p>
+<p>Card images are still drawn without a browser. PDFs are rendered by Cloudflare Browser Run, which runs headless Chrome on Cloudflare&rsquo;s network, from the HTML you send, with JavaScript turned off. It never opens a web page by its address.</p>
+<!-- /feature:pdf -->
 </div>
 </details>
 <details class="faq-item">

@@ -46,6 +46,9 @@ export default defineConfig({
             // Rate limiting is switched off for tests that are not about rate limiting
             // (honoured only when ENVIRONMENT is "test"); rate-limit tests re-enable it.
             RATE_LIMITS_DISABLED: '1',
+            // PDFs on; there is still no BROWSER binding, so a PDF route answers 503 unless the
+            // test passes a mock Browser Run binding in its env (tests/pdf-helpers.ts).
+            PDF_ENABLED: 'true',
           },
         },
       }

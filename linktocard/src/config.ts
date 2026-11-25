@@ -113,6 +113,9 @@ export const RATE_LIMITS = {
   RL_AUTH: { limit: 5, periodSeconds: 60, scope: 'per IP address (IPv6: per /64 network): sign-in link requests, sign-in verification and the contact form (counted separately); also at most 20 sign-in emails per hour, and at most 5 to one address' },
   RL_PLAYGROUND: { limit: 30, periodSeconds: 60, scope: 'per IP address (IPv6: per /64 network), homepage playground' },
   RL_PREVIEW: { limit: 60, periodSeconds: 60, scope: 'per account, dashboard live preview' },
+  RL_PDF_KEY: { limit: 20, periodSeconds: 10, scope: 'per API key, POST /v1/pdf' },
+  RL_PDF_FREE: { limit: 10, periodSeconds: 60, scope: 'per Free account, PDF renders (POST /v1/pdf and uncached signed PDF links)' },
+  RL_TOOLS_PDF: { limit: 3, periodSeconds: 60, scope: 'per IP address (IPv6: per /64 network), free PDF tools' },
 } as const;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;
@@ -206,6 +209,19 @@ export const PDF = {
   browserUsageRetentionDays: 90,
   formats: ['a4', 'letter', 'a5'] as const,
   defaultFormat: 'a4' as const,
+  /** Page margin on every side when neither the request nor the template sets one. */
+  defaultMarginMm: 15,
+  /** A customer header or footer template (pdf.header / pdf.footer), before placeholders are filled in. */
+  maxHeaderFooterBytes: 32 * 1024,
+  /** Elements in the document after {{#items}} sections are expanded, and how deeply they may nest. */
+  maxElements: 50_000,
+  maxDepth: 64,
+  /** Distinct remote images (<img src>, CSS url()) fetched and inlined for one PDF. */
+  maxRemoteAssets: 30,
+  /** Download name of a PDF (Content-Disposition), in characters including ".pdf". */
+  maxFilenameChars: 120,
+  /** Free PDF tools: PDFs per client and hour after which Turnstile is required (only when TURNSTILE_SECRET_KEY is set). */
+  toolTurnstileAfterPdfs: 2,
 } as const;
 
 export type PdfFormat = (typeof PDF.formats)[number];

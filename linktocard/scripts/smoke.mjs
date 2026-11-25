@@ -229,6 +229,20 @@ async function smoke() {
   }
   check('usage is untouched by previews', (await usage()) === uniqueRenders)
 
+  /* ---- PDFs: `wrangler dev` has no Browser Run binding, so every PDF route is switched off ---- */
+  const config = await http('GET', '/api/config')
+  check('GET /api/config reports pdf_enabled false without a BROWSER binding', config.status === 200 && config.json().pdf_enabled === false, config.brief())
+  const notEnabled = (r) => r.status === 503 && r.json().error.code === 'not_configured' && r.json().error.message === 'PDF rendering is not enabled yet.'
+  const pdfApi = await http('POST', '/v1/pdf', { headers: auth, json: { template: 'invoice', data: { seller_name: 'smoke.mjs' } } })
+  check('POST /v1/pdf -> 503 not_configured', notEnabled(pdfApi), pdfApi.brief())
+  const pdfSigned = await http('GET', `/v1/pdf/${site.json().site.id}/invoice.pdf?sig=${'0'.repeat(64)}`)
+  check('GET /v1/pdf/{site}/{template}.pdf -> 503 not_configured', notEnabled(pdfSigned), pdfSigned.brief())
+  const pdfTool = await http('POST', '/api/tools/pdf', { headers: origin, json: { tool: 'html-to-pdf', html: '<p>smoke</p>' } })
+  check('POST /api/tools/pdf -> 503 not_configured', notEnabled(pdfTool), pdfTool.brief())
+  const pdfFile = await http('GET', `/i/u_smoke/${'0'.repeat(64)}.pdf`)
+  check('GET /i/{user}/{key}.pdf -> 503 not_configured', notEnabled(pdfFile), pdfFile.brief())
+  check('usage is untouched by the PDF routes', (await usage()) === uniqueRenders)
+
   /* ---- revocation, webhook signature, JSON 404 ---- */
   const revoke = await http('DELETE', `/api/keys/${key.id}`, { headers: session })
   const afterRevoke = await http('GET', '/v1/usage', { headers: auth })

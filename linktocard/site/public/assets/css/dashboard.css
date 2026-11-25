@@ -163,6 +163,7 @@
 .usage .meter { height: 1.25rem; }
 .usage-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 var(--space-4); font: 400 var(--text-sm)/1.5 var(--font-mono); color: var(--text-muted); }
 .usage-topups { font-size: 0.9375rem; }
+.usage-pdf { font-size: 0.9375rem; color: var(--text-muted); }
 
 /* ---------------------------------------------------------------- 5 Builder */
 .builder { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5) var(--space-6); align-items: start; }

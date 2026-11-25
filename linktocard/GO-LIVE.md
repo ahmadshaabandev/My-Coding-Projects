@@ -284,7 +284,9 @@ npx wrangler d1 execute DB --env production --remote --command "UPDATE users SET
 
 - [ ] The next daily cleanup (03:17 UTC) deletes the account's rendered images and fonts from R2,
       then every database row of the account: sites, keys, templates, fonts, usage, top-ups,
-      rendered-image records, sessions, sign-in requests and its webhook log entries. An account
+      rendered-image and stored-PDF records, PDF counts, sessions, sign-in requests and its
+      webhook log entries. Its rows of PDF browser time stay, without the account id, until they
+      age out (`PDF.browserUsageRetentionDays`). An account
       with more than 6,000 stored images takes one more day per 6,000.
 - [ ] Confirm the next day that the row is gone, then reply to the customer:
       `npx wrangler d1 execute DB --env production --remote --command "SELECT COUNT(*) FROM users WHERE email = lower(trim('customer@example.com'))"`
@@ -311,3 +313,47 @@ visitors are asked to confirm they are human from the 6th check in an hour.
 - [ ] `npm run deploy:production`. The site's Content-Security-Policy already allows
       `https://challenges.cloudflare.com`.
 
+## 10. PDF documents (staging first; production only after Ahmad approves)
+
+PDF documents are built and tested against a mocked Browser Run binding. **The real renderer has
+never been called**: Browser Run cannot be reached from the build environment. Production stays
+off (`PDF_ENABLED = "false"`, site built with `SITE_PDF=off`) until you decide otherwise.
+
+Staging, for the first real renders:
+
+- [ ] Apply the new migration (and any earlier one not applied yet):
+      `npx wrangler d1 migrations apply DB --env staging --remote`. It adds `0006_pdf.sql`.
+- [ ] `npm run deploy:staging`. It builds the site with `SITE_PDF=on` and deploys the Worker with
+      the `BROWSER` binding (`[env.staging.browser]` in `wrangler.toml`).
+- [ ] `/api/config` on staging reports `"pdf_enabled": true`.
+- [ ] Make a PDF on `/tools/html-to-pdf`, `/tools/invoice-generator` and
+      `/tools/certificate-generator`, then one with `POST /v1/pdf` for each of the five starter
+      templates (`/docs/pdf` has the request), and open one signed PDF link.
+- [ ] Watch `npx wrangler tail --env staging` meanwhile, and work through the PDF list under
+      "Not verified" in README.md. The two that would stop every PDF: the document itself
+      must load with `allowRequestPattern: ['^data:']`, and the page count must be readable
+      (a log line "page count cannot be read" means every PDF fails with 500).
+- [ ] Browser time is recorded per attempt:
+      `npx wrangler d1 execute DB --env staging --remote --command "SELECT source, status, browser_ms, pages FROM browser_usage ORDER BY created_at DESC LIMIT 10"`
+- [ ] Optional, to see the budget alarm once: set `PDF_DAILY_BROWSER_MS_BUDGET = "1"` under
+      `[env.staging.vars]`, deploy, make one PDF, and expect the email "Link To Card: PDF browser
+      time over budget" at `SUPPORT_EMAIL` after the next daily cron (03:17 UTC). Remove the line
+      and deploy again.
+
+Production, only when you approve PDFs:
+
+- [ ] `npx wrangler d1 migrations apply DB --env production --remote`.
+- [ ] `wrangler.toml`, `[env.production.vars]`: `PDF_ENABLED = "true"`.
+- [ ] `package.json`: in `deploy:production`, change `SITE_PDF=off` to `SITE_PDF=on`, and update
+      the test in `tests/node/site-features.test.ts` that pins that script.
+- [ ] `site/site.config.json`: set `legalUpdated` to the launch date. The PDF parts of the terms
+      and the privacy policy go live with the PDF pages.
+- [ ] `npm test`, then `npm run deploy:production`, then `/api/config` reports
+      `"pdf_enabled": true`.
+- [ ] Turnstile (section 9b) also covers the free PDF tools: with `TURNSTILE_SECRET_KEY` set,
+      they ask for it after `PDF.toolTurnstileAfterPdfs` PDFs per client and hour.
+- [ ] Cost: Browser Run is billed by browser time beyond what Workers Paid includes (check
+      Cloudflare's current Browser Run pricing). The daily cron emails `SUPPORT_EMAIL` once per
+      UTC day when the last 24 hours went over `PDF_DAILY_BROWSER_MS_BUDGET` (default
+      `PDF.dailyBrowserMsBudget` in `src/config.ts`). It is an alarm, not a cap: to stop PDFs,
+      set `PDF_ENABLED = "false"` and deploy.

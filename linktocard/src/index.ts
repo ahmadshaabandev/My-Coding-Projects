@@ -9,23 +9,27 @@
  *   /auth/*                 magic-link sign-in
  *   /playground/card.png    homepage playground
  *   /v1/og/...              signed card URLs (public)
+ *   /v1/pdf, /v1/pdf/...    PDF documents: API key, and signed PDF links (public)
  *   /v1/*                   API-key endpoints
- *   /i/...                  stored images
- *   /api/tools/*            free tools (public, no session): the OG checker
+ *   /i/...                  stored images and PDFs
+ *   /api/tools/*            free tools (public, no session): the OG checker, the PDF tools
  *   /api/*                  dashboard API (session cookie)
  */
 import { Hono } from 'hono';
 import { WORKER_PATHS } from './config';
 import { runCleanup } from './lib/cleanup';
 import { ApiError, errorResponse } from './lib/errors';
+import { runPdfBudgetAlarm } from './pdf/alarm';
 import { apiRouter } from './routes/api';
 import { authRouter } from './routes/auth';
 import { dashboardRouter } from './routes/dashboard';
 import { imagesRouter } from './routes/images';
 import { ogRouter } from './routes/og';
+import { pdfRouter } from './routes/pdf';
 import { playgroundRouter } from './routes/playground';
 import { studioRouter } from './routes/studio';
 import { toolsRouter } from './routes/tools';
+import { toolsPdfRouter } from './routes/tools-pdf';
 import { paddleWebhookRouter } from './routes/webhooks/paddle';
 import type { AppEnv, Env } from './types';
 
@@ -61,9 +65,11 @@ app.route('/auth', authRouter);
 app.route('/playground', playgroundRouter);
 // Before the API-key routes: signed URLs share the /v1 prefix but carry no key.
 app.route('/v1/og', ogRouter);
+app.route('/v1/pdf', pdfRouter);
 app.route('/v1', apiRouter);
 app.route('/i', imagesRouter);
 app.route('/api/tools', toolsRouter);
+app.route('/api/tools', toolsPdfRouter);
 app.route('/api', dashboardRouter);
 app.route('/api', studioRouter);
 
@@ -95,10 +101,18 @@ function withoutEmptyBody(request: Request): Request {
 export default {
   fetch: (request: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> => app.fetch(withoutEmptyBody(request), env, ctx),
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const now = Date.now();
     ctx.waitUntil(
-      runCleanup(env, Date.now()).then(
+      runCleanup(env, now).then(
         (report) => console.log('cleanup:', JSON.stringify(report)),
         (error: unknown) => console.error('cleanup failed:', error),
+      ),
+    );
+    // Browser Run time of the last 24 h against the daily budget; one email per UTC day when over.
+    ctx.waitUntil(
+      runPdfBudgetAlarm(env, now).then(
+        (report) => console.log('pdf budget:', JSON.stringify(report)),
+        (error: unknown) => console.error('pdf budget alarm failed:', error),
       ),
     );
   },

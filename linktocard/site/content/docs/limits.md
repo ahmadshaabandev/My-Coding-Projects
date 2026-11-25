@@ -84,6 +84,12 @@ On [[plan.starter.name]] and [[plan.pro.name]] you can buy a top-up of [[topup.i
 - They are valid for [[topup.validDays]] days from the purchase and do carry over from month to month within that time.
 - Top-ups are not available on [[plan.free.name]]. There the limit is a hard stop until the next month, or until you upgrade.
 
+<!-- feature:pdf -->
+## PDF documents
+
+A PDF counts as [[pdf.baseUnits]] to [[pdf.maxUnits]] images, depending on its pages, and is taken from the allowance as one block. Its own limits (up to [[pdf.maxPages]] pages, [[pdf.maxHtmlMb]] MB of HTML, [[pdf.renderTimeoutSeconds]] seconds to render) are listed on [PDF documents](/docs/pdf#limits), with [what counts](/docs/pdf#what-counts).
+
+<!-- /feature:pdf -->
 ## Rate limits
 
 Rate limits are short-term request limits that protect the service. They are not part of your allowance.

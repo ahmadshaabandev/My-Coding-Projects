@@ -1,0 +1,231 @@
+---
+title: Free invoice generator - make a PDF invoice in your browser
+description: Free invoice generator with no sign-up. Fill in your business, your client and the lines; the page adds up the amounts and the tax as you type and makes a clean PDF invoice.
+scripts: pdf-tools
+feature: pdf
+---
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Invoice generator.</h1>
+<p>Fill in your business, your client and what you are billing for. The page works out each line, the tax and the total as you type, and turns it into a PDF invoice. No account, nothing to install.</p>
+</div>
+<p class="alert alert-warn pdf-off" id="pdf-off" role="note" hidden>PDF rendering is not enabled yet. The form works, but no PDF can be made here at the moment.</p>
+<form class="card card-pop pdf-form" id="pdf-form" data-tool="invoice" data-sample="[[pdf.sample.invoice]]" data-max-items="[[pdf.raw.maxItems]]" data-max-item-chars="[[pdf.raw.maxItemValueChars]]">
+<div class="pdf-form-head">
+<p class="hint">Fields marked * are needed. Everything else is optional and is left off the invoice when empty.</p>
+<div class="cluster">
+<button class="btn btn-secondary btn-sm" type="button" data-example>Fill in an example</button>
+<button class="btn btn-ghost btn-sm" type="button" data-clear>Clear the form</button>
+</div>
+</div>
+
+<fieldset class="pdf-group">
+<legend>From</legend>
+<div class="pdf-grid">
+<label class="field"><span class="label">Your business name *</span><input class="input" name="seller_name" required maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="organization" placeholder="Fernhill Studio"></label>
+<label class="field"><span class="label">Email</span><input class="input" name="seller_email" type="email" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="email" placeholder="billing@fernhill.example"></label>
+<label class="field"><span class="label">Address</span><textarea class="textarea textarea-short" name="seller_address" rows="3" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="street-address"></textarea></label>
+<div class="stack">
+<label class="field"><span class="label">Tax ID</span><input class="input" name="seller_tax_id" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off"></label>
+<label class="field"><span class="label">Logo address</span><input class="input" name="logo_url" type="url" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="https://example.com/logo.png" aria-describedby="logo-hint"><span class="hint" id="logo-hint">The public address of an image of your logo. It is downloaded when the PDF is made.</span></label>
+</div>
+</div>
+</fieldset>
+
+<fieldset class="pdf-group">
+<legend>Bill to</legend>
+<div class="pdf-grid">
+<label class="field"><span class="label">Client name *</span><input class="input" name="buyer_name" required maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="Okafor &amp; Lund Architects"></label>
+<label class="field"><span class="label">Client email</span><input class="input" name="buyer_email" type="email" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off"></label>
+<label class="field field-wide"><span class="label">Client address</span><textarea class="textarea textarea-short" name="buyer_address" rows="3" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off"></textarea></label>
+</div>
+</fieldset>
+
+<fieldset class="pdf-group">
+<legend>Invoice</legend>
+<div class="pdf-grid pdf-grid-4">
+<label class="field"><span class="label">Invoice number *</span><input class="input" name="invoice_number" required maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="INV-2026-0142"></label>
+<label class="field"><span class="label">Issue date *</span><input class="input" name="issue_date" type="date" required></label>
+<label class="field"><span class="label">Due date</span><input class="input" name="due_date" type="date"></label>
+<label class="field"><span class="label">Currency</span><input class="input" name="currency" maxlength="12" autocomplete="off" placeholder="USD"></label>
+</div>
+</fieldset>
+
+<fieldset class="pdf-group">
+<legend>Lines</legend>
+<ol class="items" data-items></ol>
+<button class="btn btn-secondary btn-sm" type="button" data-add-item>Add a line</button>
+<div class="pdf-totals">
+<div class="pdf-grid">
+<label class="field"><span class="label">Tax label</span><input class="input" name="tax_label" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="Sales tax (8.5%)"></label>
+<label class="field"><span class="label">Tax rate in %</span><input class="input" name="tax_rate" inputmode="decimal" maxlength="7" autocomplete="off" placeholder="Leave empty for no tax" aria-describedby="tax-hint"><span class="hint" id="tax-hint">One rate on the subtotal, rounded to the cent. Check it against the rules where you are.</span></label>
+</div>
+<dl class="totals" aria-live="polite">
+<div id="total-subtotal-row" hidden><dt>Subtotal</dt><dd><output id="total-subtotal">0.00</output></dd></div>
+<div id="total-tax-row" hidden><dt>Tax</dt><dd><output id="total-tax">-</output></dd></div>
+<div class="totals-grand"><dt>Total</dt><dd><output id="total-total">0.00</output></dd></div>
+</dl>
+</div>
+</fieldset>
+
+<fieldset class="pdf-group">
+<legend>Terms and notes</legend>
+<div class="pdf-grid">
+<label class="field"><span class="label">Payment terms</span><textarea class="textarea textarea-short" name="payment_terms" rows="3" maxlength="[[pdf.raw.maxDataValueChars]]" placeholder="Due within 30 days of the issue date."></textarea></label>
+<label class="field"><span class="label">Notes</span><textarea class="textarea textarea-short" name="notes" rows="3" maxlength="[[pdf.raw.maxDataValueChars]]" placeholder="Bank details, a thank-you, a reference."></textarea></label>
+</div>
+</fieldset>
+
+<div class="pdf-actions">
+<label class="field pdf-paper"><span class="label">Paper</span><select class="select" name="format">[[> pdf-format-options]]</select></label>
+<button class="btn btn-primary" id="pdf-submit" type="submit">Create PDF</button>
+<p class="hint">Up to [[pdf.toolPdfsPerHour]] PDFs per hour. Every page carries a small &ldquo;[[pdf.freeMark]]&rdquo; line at the bottom.</p>
+</div>
+<p class="alert alert-danger" id="pdf-error" role="alert" tabindex="-1" hidden></p>
+<div class="alert alert-info tool-verify" id="pdf-verify" hidden>
+<p id="pdf-verify-text">Complete the quick check below and your PDF is made straight away.</p>
+<div class="tool-widget" id="pdf-widget"></div>
+</div>
+<div class="alert alert-ok pdf-result" id="pdf-result" hidden>
+<p id="pdf-result-text"></p>
+<a class="btn btn-secondary btn-sm" id="pdf-download" href="#pdf-result">Download</a>
+</div>
+<noscript><p class="alert alert-warn">The generator needs JavaScript to add up the lines and make the PDF. <a href="/docs/pdf">POST /v1/pdf</a> makes the same invoice from your own system.</p></noscript>
+</form>
+<p class="visually-hidden" id="pdf-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About the generator</p>
+<h2>What it does, and what it does not.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>What it does</h3>
+<ul>
+<li>Multiplies each quantity by its unit price, adds the lines and applies one tax rate, in whole cents, and shows you every number before the PDF is made.</li>
+<li>Prints exactly those numbers with the <code>invoice</code> starter template: the four facts a payer looks for at the top, your client and your business, the lines, the totals, payment terms and notes.</li>
+<li>Leaves out every optional field you leave empty, so an invoice without a due date or a tax ID still looks finished.</li>
+<li>Saves the invoice to your device as a PDF named after the invoice number. No copy stays with us.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What it does not do</h3>
+<ul>
+<li>It does not know the tax rules or invoice requirements of your country. Check which details your invoices must show, and the rate you charge, with your accountant or tax authority.</li>
+<li>It does not number invoices for you or keep a record of the ones you made. Keep your own copy of each PDF.</li>
+<li>It does not send the invoice or collect a payment.</li>
+<li>It keeps the &ldquo;[[pdf.freeMark]]&rdquo; line at the foot of each page. Invoices made through the API on a paid plan carry only your own branding.</li>
+</ul>
+</div>
+</div>
+
+<div class="tool-columns">
+<div class="prose">
+<h3>Only for real invoices</h3>
+<p>Use it to bill for work you did or goods you sold, in your own name. Making a fake invoice or receipt, or one in someone else&rsquo;s name, is fraud in most places and is forbidden by our <a href="/terms">Terms of service</a>.</p>
+<p>When the API makes invoices for you, it works the same way: your system computes the amounts and sends them as text, and the template prints them. Nothing is calculated on our side.</p>
+</div>
+<div class="prose">
+<h3 id="api">Do this via the API</h3>
+<p>Make the same invoice from your own system with <code>POST /v1/pdf</code> and an API key from your dashboard. Send the numbers you computed; the answer is the URL of the stored PDF.</p>
+<div class="code-block" data-lang="shell"><button class="copy-btn" type="button" data-copy>Copy</button><pre><code class="language-shell">curl [[site.url]]/v1/pdf \
+  -H "Authorization: Bearer ltc_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "template": "invoice",
+    "data": {
+      "seller_name": "Fernhill Studio",
+      "buyer_name": "Okafor &amp; Lund Architects",
+      "invoice_number": "INV-2026-0142",
+      "issue_date": "Nov 25, 2026",
+      "currency": "USD",
+      "items": [
+        { "description": "Brand strategy workshop", "quantity": "2", "unit_price": "1,200.00", "amount": "2,400.00" }
+      ],
+      "total": "2,400.00"
+    },
+    "filename": "invoice-INV-2026-0142.pdf"
+  }'</code></pre></div>
+<p>An invoice of [[pdf.basePages]] pages or fewer uses [[pdf.baseUnits]] images of your monthly allowance; asking for the same invoice again uses none. <a class="link-arrow" href="/docs/pdf#what-counts">How PDFs are counted</a></p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about invoices.</h2>
+<p>Short answers. Where the answer depends on your country, we say so.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>How does it work out the tax and the total?</summary>
+<div>
+<p>Each line is quantity times unit price, rounded to the cent. The subtotal is the sum of the lines. The tax is the subtotal times the rate you enter, rounded to the cent once, and the total is the subtotal plus the tax. Leave the rate empty and the invoice shows only the total.</p>
+<p>If you need different rates on different lines, or a tax that is calculated differently, work the numbers out in your own system and use the API, which prints the amounts you send.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Which currencies and number formats can I use?</summary>
+<div>
+<p>Any currency: type its code or symbol in the currency field, and it is printed next to the amount due and the total. Amounts are written with a comma between thousands and a dot before the cents, such as 1,250.00. Type a dot for decimals: 1,5 is refused rather than guessed.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is the PDF a valid invoice where I live?</summary>
+<div>
+<p>We cannot tell you. What an invoice must contain (a tax number, a sequential number, the client&rsquo;s address, a statement about reverse charge, and so on) depends on the country and on your business. The template has room for the common details; check the rest with your accountant or tax authority.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Do you keep my invoices or my client&rsquo;s details?</summary>
+<div>
+<p>No. The form is sent to our server once, made into a PDF and sent back to your browser; the PDF is not stored. We keep a count of PDFs per network for the current hour, and a record of the pages and the time each PDF took, without its content. <a href="/privacy">Privacy policy</a></p>
+</div>
+</details>
+<details class="faq-item">
+<summary>How do I add my logo?</summary>
+<div>
+<p>Paste the address of the logo image as it is published on your website, starting with <code>https://</code>. It is downloaded once when the PDF is made and printed at the top left. The address must be public: an image behind a login cannot be downloaded.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is it free? Are there limits?</summary>
+<div>
+<p>Yes, without an account: up to [[pdf.toolPdfsPerHour]] PDFs per hour from one network, and after a few you may be asked to confirm you are a person. An invoice can have up to [[pdf.maxItems]] lines and [[pdf.maxPages]] pages. Every page carries the &ldquo;[[pdf.freeMark]]&rdquo; line.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Can my invoices be made automatically, for example after each payment?</summary>
+<div>
+<p>Yes, with the API: your system sends the invoice data to <code>POST /v1/pdf</code> and gets the PDF back. The guide <a href="/guides/invoice-pdf-from-stripe-webhook">Invoice PDFs from a Stripe webhook</a> walks through it with Stripe as the source of the payments, and <a href="/guides/html-to-pdf-zapier-webhooks">Zapier</a> and <a href="/guides/html-to-pdf-n8n">n8n</a> can send the same request without code.</p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Invoices from your own system.</h2>
+<p>[[site.name]] turns the data your system already has into PDF invoices, receipts and quotes, stored and linkable, with your own template if you want one.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs/pdf">Read the PDF docs</a>
+</div>
+</div>
+</section>
+
+</main>

@@ -1,0 +1,183 @@
+---
+title: Free certificate generator - certificates of completion as PDF
+description: Free certificate of completion generator with no sign-up. Enter the recipient, what they completed and who issues it, and download a landscape PDF certificate for your course, workshop or programme.
+scripts: pdf-tools
+feature: pdf
+---
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Certificate generator.</h1>
+<p>Make a certificate of completion for a course, a workshop or a programme that your own organisation ran. Enter who completed what, and download a landscape PDF ready to print or email. No account needed.</p>
+</div>
+<p class="alert alert-warn pdf-off" id="pdf-off" role="note" hidden>PDF rendering is not enabled yet. The form works, but no PDF can be made here at the moment.</p>
+<form class="card card-pop pdf-form" id="pdf-form" data-tool="certificate" data-sample="[[pdf.sample.certificate]]">
+<div class="pdf-form-head">
+<p class="hint">Fields marked * are needed. Optional fields are left off the certificate when empty.</p>
+<div class="cluster">
+<button class="btn btn-secondary btn-sm" type="button" data-example>Fill in an example</button>
+<button class="btn btn-ghost btn-sm" type="button" data-clear>Clear the form</button>
+</div>
+</div>
+
+<fieldset class="pdf-group">
+<legend>The certificate</legend>
+<div class="pdf-grid">
+<label class="field"><span class="label">Title *</span><input class="input" name="title" required maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" value="Certificate of Completion"></label>
+<label class="field"><span class="label">Recipient *</span><input class="input" name="recipient_name" required maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="Amara Nwosu"></label>
+<label class="field field-wide"><span class="label">What it is for *</span><textarea class="textarea textarea-short" name="achievement" rows="2" required maxlength="[[pdf.raw.maxDataValueChars]]" placeholder="for completing the 12-hour Advanced TypeScript workshop"></textarea></label>
+<label class="field"><span class="label">Date *</span><input class="input" name="date" type="date" required></label>
+<label class="field"><span class="label">Certificate ID</span><input class="input" name="certificate_id" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="LW-2026-0381"></label>
+</div>
+</fieldset>
+
+<fieldset class="pdf-group">
+<legend>Issued by</legend>
+<div class="pdf-grid">
+<label class="field"><span class="label">Your organisation *</span><input class="input" name="issuer_name" required maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="organization" placeholder="Lanternworks Training"></label>
+<label class="field"><span class="label">Logo address</span><input class="input" name="logo_url" type="url" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="https://example.com/logo.png" aria-describedby="logo-hint"><span class="hint" id="logo-hint">The public address of an image of your logo. It is downloaded when the PDF is made.</span></label>
+<label class="field"><span class="label">Signed by</span><input class="input" name="signer_name" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="Daniel Reyes"></label>
+<label class="field"><span class="label">Their role</span><input class="input" name="signer_title" maxlength="[[pdf.raw.maxDataValueChars]]" autocomplete="off" placeholder="Lead Instructor"></label>
+</div>
+</fieldset>
+
+<div class="pdf-actions">
+<label class="field pdf-paper"><span class="label">Paper, landscape</span><select class="select" name="format">[[> pdf-format-options]]</select></label>
+<button class="btn btn-primary" id="pdf-submit" type="submit">Create PDF</button>
+<p class="hint">Up to [[pdf.toolPdfsPerHour]] PDFs per hour. The certificate carries a small &ldquo;[[pdf.freeMark]]&rdquo; line at the bottom.</p>
+</div>
+<p class="alert alert-danger" id="pdf-error" role="alert" tabindex="-1" hidden></p>
+<div class="alert alert-info tool-verify" id="pdf-verify" hidden>
+<p id="pdf-verify-text">Complete the quick check below and your PDF is made straight away.</p>
+<div class="tool-widget" id="pdf-widget"></div>
+</div>
+<div class="alert alert-ok pdf-result" id="pdf-result" hidden>
+<p id="pdf-result-text"></p>
+<a class="btn btn-secondary btn-sm" id="pdf-download" href="#pdf-result">Download</a>
+</div>
+<noscript><p class="alert alert-warn">The generator needs JavaScript to make the PDF. <a href="/docs/pdf">POST /v1/pdf</a> makes the same certificate from your own system.</p></noscript>
+</form>
+<p class="visually-hidden" id="pdf-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About the generator</p>
+<h2>What it does, and what it does not.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>What it does</h3>
+<ul>
+<li>Lays out a landscape certificate with the <code>certificate</code> starter template: a coloured panel with your organisation and the title, the recipient&rsquo;s name as the largest line, what it was for, and along the foot the date, the signature line and the certificate ID.</li>
+<li>Prints an optional certificate ID, so you can look a certificate up in your own records when someone asks.</li>
+<li>Hands you the certificate as a PDF download, named after the recipient. We do not keep a copy.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What it does not do</h3>
+<ul>
+<li>It does not sign the certificate in any legal or cryptographic sense. &ldquo;Signed by&rdquo; prints a name.</li>
+<li>It does not host a page where others can check a certificate. If you need that, keep the IDs in your own system.</li>
+<li>It leaves a small &ldquo;[[pdf.freeMark]]&rdquo; line along the bottom edge. Certificates made through the API on a paid plan have no such line.</li>
+</ul>
+</div>
+</div>
+
+<div class="tool-columns">
+<div class="prose">
+<h3>You are the issuer</h3>
+<p>A certificate made here says that <em>your</em> organisation confirms something. Issue it only for a course, workshop or programme that you ran or are allowed to certify, in your own name.</p>
+<p>Do not use it for diplomas, degrees, licences, official qualifications or any document of a school, university, company or government that did not issue it. Certificates that claim another issuer are forbidden by our <a href="/terms">Terms of service</a>, and we suspend accounts and keys that make them.</p>
+</div>
+<div class="prose">
+<h3 id="api">Do this via the API</h3>
+<p>Run a course for many people? Make one certificate per participant from your own system with <code>POST /v1/pdf</code> and an API key from your dashboard.</p>
+<div class="code-block" data-lang="shell"><button class="copy-btn" type="button" data-copy>Copy</button><pre><code class="language-shell">curl [[site.url]]/v1/pdf \
+  -H "Authorization: Bearer ltc_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "template": "certificate",
+    "data": {
+      "title": "Certificate of Completion",
+      "recipient_name": "Amara Nwosu",
+      "achievement": "for completing the Advanced TypeScript workshop",
+      "issuer_name": "Lanternworks Training",
+      "date": "November 25, 2026",
+      "certificate_id": "LW-2026-0381"
+    },
+    "filename": "certificate-LW-2026-0381.pdf"
+  }'</code></pre></div>
+<p>Or sign one link per participant and email it: the PDF is made the first time it is opened. <a class="link-arrow" href="/docs/pdf#signed-pdf-links">Signed PDF links</a></p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about certificates.</h2>
+<p>Short answers, including what this is not for.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>Which paper sizes can I choose?</summary>
+<div>
+<p>A4, US Letter or A5, always in landscape. The design fills the whole page on all three; on this free tool the bottom edge keeps room for the footer line.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>How long can the text be?</summary>
+<div>
+<p>Each field can hold up to [[pdf.maxDataValueChars]] characters, but a certificate reads best with a short title and one or two lines about the achievement. It is always exactly one page: text too long for it is cut off rather than moved to a second page, so make a PDF and look at it before you send it.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Can I use my own design?</summary>
+<div>
+<p>Not on this page. With an API key you can send your own HTML and CSS to <code>POST /v1/pdf</code>, or start from the <code>certificate</code> template and change it. <a href="/docs/pdf#your-own-html-and-css">Your own HTML and CSS</a></p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Can I make certificates for a whole class at once?</summary>
+<div>
+<p>The page makes one PDF at a time, up to [[pdf.toolPdfsPerHour]] per hour. For a class, use the API: one request per participant, or one signed link per participant that you send by email.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Do you keep the names I enter?</summary>
+<div>
+<p>No. The names travel to our server once, to be printed, and come back to you inside the PDF; nothing of the certificate is stored. What we do keep is a count of PDFs per network for the hour, and for each PDF its page count and printing time, with no names in it. <a href="/privacy">Privacy policy</a></p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Can I make a diploma or an official certificate with it?</summary>
+<div>
+<p>No. This is for certificates of completion that your own organisation issues. Diplomas, degrees, licences and other official documents come from the institution that awards them; making one in its name is forbidden here, and in most places it is a crime.</p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Certificates from your course platform.</h2>
+<p>[[site.name]] makes a certificate for every participant from the data your system already has, through one API call or a signed link.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs/pdf">Read the PDF docs</a>
+</div>
+</div>
+</section>
+
+</main>

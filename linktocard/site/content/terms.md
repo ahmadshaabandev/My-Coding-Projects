@@ -21,15 +21,30 @@ In these terms "we" and "us" mean [[legal.name]], trading as [[site.name]], and 
 ## 2. What the service is
 
 [[site.name]] is a hosted API that renders social-card (Open Graph) images from HTML and CSS that you write, or from one of five starter templates. You get an image either from a signed image URL or from a REST endpoint.
+<!-- feature:pdf -->
+
+It also renders PDF documents from HTML and CSS templates, through a REST endpoint or a signed link, from your own HTML or from one of its PDF starter templates.
+<!-- /feature:pdf -->
 
 The service has deliberate limits, and you should rely only on what is described here and in the documentation:
 
+<!-- feature:no-pdf -->
 - Output is PNG, JPEG or WebP, in three fixed sizes.
 - Rendering uses the open-source Satori and resvg libraries on Cloudflare Workers. It is not a web browser. It supports a subset of HTML and CSS, does not run JavaScript, and will not always match a browser pixel for pixel.
+<!-- /feature:no-pdf -->
+<!-- feature:pdf -->
+- Card images are PNG, JPEG or WebP, in three fixed sizes. PDF documents have at most [[pdf.maxPages]] pages.
+- Card images are rendered with the open-source Satori and resvg libraries on Cloudflare Workers. That is not a web browser. It supports a subset of HTML and CSS, does not run JavaScript, and will not always match a browser pixel for pixel.
+- PDF documents are rendered by Cloudflare Browser Run, which runs a headless Chrome browser on Cloudflare's network, from the HTML the service sends it, with JavaScript turned off and no network access. A PDF will not always look exactly like the same HTML in your own browser.
+<!-- /feature:pdf -->
 - There is no visual editor, no website screenshots, no video or GIF output, and no AI or face generation.
 - Technical limits (for example on template size and render time) are listed in the documentation and are part of these terms.
 
 The service also includes a free Open Graph checker, on the website and as `GET /v1/inspect`. It fetches only the one page you ask it to check, that site's `robots.txt` and the image the page names, and it reports what it finds. Its results are a guide: other apps fetch pages and draw previews in their own way, and we do not promise that a link will look the same there.
+<!-- feature:pdf -->
+
+The website also offers free PDF tools: HTML to PDF, an invoice generator and a certificate generator. They need no account, make at most [[pdf.toolPdfsPerHour]] PDFs per hour from one network, print the line "[[pdf.freeMark]]" in the footer of every page and do not store the PDF. What you put into a document made with them is your responsibility, as with every other use of the service (section 4).
+<!-- /feature:pdf -->
 
 ## 3. Your account
 
@@ -47,20 +62,28 @@ You may not use the service to do any of the following, or help anyone else do s
 
 - break the law, or create content that is illegal where you or your audience are;
 - commit fraud, phishing or impersonation, including cards that pretend to come from a person, brand or organisation that has not agreed to it;
+- create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;
 - send or support spam;
 - infringe someone else's copyright, trademark or other rights, including using fonts or images you do not have the right to use;
 - distribute malware, or link to it;
 - probe, scan or attack the service, bypass its security, or abuse the API (for example by overloading it or using it to reach systems you have no right to reach);
 - use the Open Graph checker to probe, scan or map systems you have no right to probe, to send repeated requests to a site that is not yours, or to get around its limits or its check that you are a person;
+<!-- feature:no-pdf -->
 - get around quotas or rate limits, for example with multiple free accounts, or remove, hide or crop out the small mark on Free-plan images;
+<!-- /feature:no-pdf -->
+<!-- feature:pdf -->
+- get around quotas or rate limits, for example with multiple free accounts, or remove, hide or crop out the small mark on Free-plan images or the footer line on Free-plan and free-tool PDFs;
+<!-- /feature:pdf -->
 - create deepfakes, or use a real person's face, name or likeness without their consent;
 - resell the service as your own competing image-rendering service.
 
 We may remove content and suspend or close accounts that break these rules. Where the problem is not urgent we will contact you first and give you a chance to fix it. Where it is urgent (for example phishing or an attack on the service) we may act immediately and tell you afterwards.
 
+Counterfeit and misleading documents are always urgent. When we receive a report that the service was used to make one, we suspend the API keys and the account involved straight away, look into the report, and tell you afterwards.
+
 ## 5. Your content and ours
 
-**Your content stays yours.** You own your templates, the fonts and images you upload or reference, the data you send to be rendered, and the images the service produces for you.
+**Your content stays yours.** You own your templates, the fonts and images you upload or reference, the data you send to be rendered, and the images and other files the service produces for you.
 
 **You give us the permission we need to run the service.** That is a non-exclusive, worldwide licence to host, copy, process, render, cache and deliver your content, only for the purpose of providing the service to you. It ends when the content is deleted from the service, apart from copies that remain for a short time in caches and backups.
 
@@ -77,6 +100,10 @@ We may remove content and suspend or close accounts that break these rules. Wher
 
 **What counts as one image:** one image is one newly rendered output, in one size and format. Once rendered, an image is cached and served again without counting for the cache period of your plan: [[plan.free.cacheDays]] days on Free, [[plan.starter.cacheDays]] days on Starter and [[plan.pro.cacheDays]] days on Pro. After that period, or if the content of the card changes, it is rendered and counted again.
 
+<!-- feature:pdf -->
+**What a PDF counts as:** a PDF of 1 to [[pdf.basePages]] pages counts as [[pdf.baseUnits]] images, and every further [[pdf.extraPagesPerUnit]] pages started count as one more, up to [[pdf.maxUnits]] images for the longest PDF of [[pdf.maxPages]] pages. A PDF is taken as one block, from your monthly allowance or from a single top-up, never split between them; if neither has enough left, it is not rendered or not delivered, and nothing is charged. Like images, a PDF is stored for the cache period of your plan and served again without counting, and a failed render is not counted. PDFs made on the Free plan carry the line "[[pdf.freeMark]]" in the footer of every page.
+
+<!-- /feature:pdf -->
 Unused monthly images do not carry over to the next month. We do not charge overage fees: when a paid plan's allowance and any top-ups are used up, new images are not rendered until the next billing period, a top-up or an upgrade. Prices are in US dollars and exclude tax, which Paddle adds at checkout where it applies.
 
 ## 7. Payment

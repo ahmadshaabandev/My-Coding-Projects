@@ -16,6 +16,10 @@ Base URL: `[[site.url]]`
 | [`GET /v1/inspect`](#get-v1-inspect) | Checks one page's link-preview tags and its `og:image`. Needs an API key. Counts no images. |
 | [`GET /v1/og/...`](#get-v1-og) | A signed card URL, for `og:image`. The signature is the authentication. |
 | [`GET /i/...`](#get-i) | A stored image, as returned by `POST /v1/images`. Public. |
+<!-- feature:pdf -->
+
+PDF documents have their own page: [`POST /v1/pdf`, signed PDF links and stored PDFs](/docs/pdf#api-reference).
+<!-- /feature:pdf -->
 
 ## Conventions
 
@@ -495,7 +499,7 @@ Every error has the same shape, with an HTTP status that matches the code:
 | 403 | `account_suspended` | The account is suspended. Contact [[site.supportEmail]]. |
 | 403 | `plan_required` | The feature needs a paid plan. Returned by the dashboard for custom fonts on [[plan.free.name]]. |
 | 403 | `forbidden` | A dashboard request was refused (for example one sent from another site), or `GET /v1/inspect` was given an address that is not on the public internet. |
-| 403 | `verification_required` | The free checker on the website asks for a quick human check before more checks this hour. `details.site_key` names the widget. Not returned by the endpoints on this page. |
+| 403 | `verification_required` | A free tool on the website asks for a quick human check before more requests this hour. `details.site_key` names the widget. Not returned by the endpoints on this page. |
 | 404 | `not_found` | Unknown path, site, template or image, or an image whose cache period has ended. |
 | 409 | `conflict` | A per-account maximum is reached or the item already exists. Returned by the dashboard, for example for more than [[limit.maxSites]] sites or [[limit.maxApiKeys]] API keys. |
 | 410 | `gone` | Reserved. No endpoint returns it today. |
@@ -507,7 +511,12 @@ Every error has the same shape, with an HTTP status that matches the code:
 | 429 | `rate_limited` | Too many requests. Wait for the number of seconds in the `Retry-After` header. |
 | 500 | `render_failed` | The renderer failed on this card. Nothing was counted. If a template fails every time, send it to [[site.supportEmail]]. |
 | 500 | `internal_error` | Something failed on our side. Retry; if it continues, write to [[site.supportEmail]] with the `X-Request-Id`. |
+<!-- feature:no-pdf -->
 | 503 | `not_configured` | A part of the service is not set up on this deployment. You should not see this on `[[site.host]]`. |
+<!-- /feature:no-pdf -->
+<!-- feature:pdf -->
+| 503 | `not_configured` | A part of the service is not set up on this deployment, for example PDF rendering while it is switched off there ("PDF rendering is not enabled yet."). |
+<!-- /feature:pdf -->
 | 504 | `render_timeout` | The render took longer than [[limit.renderTimeoutSeconds]] seconds, usually because a remote image was slow. Nothing was counted. |
 
 ## Rate limits

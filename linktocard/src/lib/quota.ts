@@ -19,6 +19,14 @@
  * the customer keeps a cached image they were never charged for. That is the
  * deliberate direction of failure - this module can under-count in rare
  * failures but can never over-count.
+ *
+ * PDFs (chargePdf) follow the same three steps with one difference: a PDF counts
+ * as pdfUnits(pages) images (src/config.ts) and is charged as ONE block. The
+ * block is taken whole from the monthly allowance when it fits there, otherwise
+ * whole from the one top-up (oldest expiry first) that has enough left,
+ * otherwise nothing is taken and the caller answers 402. A block is never split
+ * between the allowance and a top-up or between two top-ups, so no counter can
+ * go past its limit.
  */
 import { effectivePlanId, getPlan, PLANS, TOPUP, type PlanId } from '../billing/plans';
 import { DAY_MS, type ImageFormat } from '../config';
@@ -52,6 +60,21 @@ export interface RenderCharge {
   /** How long the image stays cached, i.e. how long the same cache key is not charged again. */
   ttlMs: number;
 }
+
+/** A rendered PDF about to be stored; charged as one block of `units` images (pdfUnits(pages)). */
+export interface PdfCharge {
+  cacheKey: string;
+  siteId: string | null;
+  source: 'api' | 'signed';
+  template: string;
+  bytes: number;
+  r2Key: string;
+  ttlMs: number;
+  units: number;
+}
+
+/** A ledger row as the dashboard lists it: images only (a PDF row has format 'pdf'). */
+export type ImageRenderRow = RenderRow & { format: ImageFormat };
 
 export type ChargeResult =
   | {
@@ -145,6 +168,36 @@ const LABEL_LEDGER_TOPUP_SQL = `UPDATE renders SET charged_to = 'topup' WHERE ca
 const COUNT_TOPUP_USE_SQL = `UPDATE usage_periods SET topup_used = topup_used + 1 WHERE user_id = ?1 AND period_start = ?3 AND EXISTS (${NEXT_TOPUP})`;
 const TAKE_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - 1 WHERE id = (${NEXT_TOPUP})`;
 
+/*
+ * PDFs: a block of ?4 images. In each batch the counting statements run before the statement
+ * that takes the block and test exactly its condition, so inside the batch (one transaction)
+ * either all of them apply or none does - the same rule as the image top-up batch above.
+ */
+
+// ?1 user, ?2 period start, ?3 plan monthly images, ?4 units.
+const PDF_FITS_ALLOWANCE = 'user_id = ?1 AND period_start = ?2 AND used + ?4 <= MAX(0, ?3 + allowance_adjust)';
+const COUNT_PDF_IN_ALLOWANCE_SQL = `INSERT INTO pdf_usage (user_id, period_start, pdfs, units)
+  SELECT ?1, ?2, 1, ?4 WHERE EXISTS (SELECT 1 FROM usage_periods WHERE ${PDF_FITS_ALLOWANCE})
+  ON CONFLICT (user_id, period_start) DO UPDATE SET pdfs = pdfs + 1, units = units + excluded.units`;
+const TAKE_BLOCK_FROM_ALLOWANCE_SQL = `UPDATE usage_periods SET used = used + ?4
+  WHERE ${PDF_FITS_ALLOWANCE}
+  RETURNING used, MAX(0, ?3 + allowance_adjust) AS allowance, notified_90, notified_100`;
+
+// ?1 user, ?2 now, ?3 cache key or period start (unused by the last statement), ?4 units. Only a
+// top-up with the whole block left qualifies.
+const NEXT_TOPUP_FOR_BLOCK = `SELECT id FROM topups
+  WHERE user_id = ?1 AND refunded_at IS NULL AND remaining >= ?4 AND expires_at > ?2
+  ORDER BY expires_at, created_at, id LIMIT 1`;
+const LABEL_PDF_LEDGER_TOPUP_SQL = `UPDATE renders SET charged_to = 'topup' WHERE cache_key = ?3 AND EXISTS (${NEXT_TOPUP_FOR_BLOCK})`;
+const COUNT_BLOCK_TOPUP_USE_SQL = `UPDATE usage_periods SET topup_used = topup_used + ?4
+  WHERE user_id = ?1 AND period_start = ?3 AND EXISTS (${NEXT_TOPUP_FOR_BLOCK})`;
+const COUNT_PDF_FROM_TOPUP_SQL = `INSERT INTO pdf_usage (user_id, period_start, pdfs, units)
+  SELECT ?1, ?3, 1, ?4 WHERE EXISTS (${NEXT_TOPUP_FOR_BLOCK})
+  ON CONFLICT (user_id, period_start) DO UPDATE SET pdfs = pdfs + 1, units = units + excluded.units`;
+const TAKE_BLOCK_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - ?4 WHERE id = (${NEXT_TOPUP_FOR_BLOCK})`;
+
+const LARGEST_TOPUP_SQL = `SELECT COALESCE(MAX(remaining), 0) AS largest FROM topups WHERE ${USABLE_TOPUP}`;
+
 /**
  * A paid account inside its Paddle billing period uses that period. Everyone
  * else - Free (including a paid row whose scheduled cancellation has taken
@@ -217,7 +270,37 @@ export async function hasQuota(db: D1Database, user: QuotaUser, now: number): Pr
   return (await getUsage(db, user, now)).total_remaining > 0;
 }
 
-async function claimLedgerRow(db: D1Database, userId: string, period: Period, render: RenderCharge, now: number): Promise<boolean> {
+/**
+ * What a PDF can be charged against right now: the usage summary and the largest block that
+ * fits in one place (the allowance left, or the fullest usable top-up). A PDF counts as at
+ * least PDF.baseUnits images, so it is not rendered when the largest block is smaller.
+ */
+export async function pdfCapacity(db: D1Database, user: QuotaUser, now: number): Promise<{ usage: UsageSummary; largestBlock: number }> {
+  const usage = await getUsage(db, user, now);
+  const largestTopup = (await first<{ largest: number }>(db, LARGEST_TOPUP_SQL, user.id, now))?.largest ?? 0;
+  return { usage, largestBlock: Math.max(usage.remaining, largestTopup) };
+}
+
+/** PDFs charged in the current period and the images they counted as (GET /api/me usage.pdf). */
+export async function getPdfUsage(db: D1Database, user: QuotaUser, now: number): Promise<{ count: number; images: number }> {
+  const period = currentPeriod(user, now);
+  const row = await first<{ pdfs: number; units: number }>(
+    db,
+    'SELECT pdfs, units FROM pdf_usage WHERE user_id = ?1 AND period_start = ?2',
+    user.id,
+    period.start,
+  );
+  return { count: row?.pdfs ?? 0, images: row?.units ?? 0 };
+}
+
+type LedgerEntry = Pick<RenderCharge, 'cacheKey' | 'siteId' | 'template' | 'bytes' | 'r2Key' | 'ttlMs'> & {
+  source: RenderRow['source'];
+  width: number;
+  height: number;
+  format: RenderRow['format'];
+};
+
+async function claimLedgerRow(db: D1Database, userId: string, period: Period, render: LedgerEntry, now: number): Promise<boolean> {
   const claimed = await first<{ cache_key: string }>(
     db,
     CLAIM_LEDGER_SQL,
@@ -306,6 +389,55 @@ export async function chargeRender(db: D1Database, user: QuotaUser, render: Rend
   return { status: 'quota_exceeded', usage };
 }
 
+function crossedThresholds(taken: AllowanceRow): { crossed90: boolean; crossed100: boolean; limit: number } {
+  const { used, allowance: limit, notified_90: notified90, notified_100: notified100 } = taken;
+  return { crossed90: notified90 < limit && used * 10 >= limit * 9, crossed100: notified100 < limit && used >= limit, limit };
+}
+
+/**
+ * Charges a PDF that has just been rendered, as one block of `pdf.units` images (see the
+ * module comment). Same results and the same ledger guarantees as chargeRender:
+ *
+ *   charged         the block was taken from the allowance or from one top-up
+ *   duplicate       an unexpired ledger row already covers this cache key: no charge
+ *   quota_exceeded  no single place has the whole block left; nothing was taken
+ */
+export async function chargePdf(db: D1Database, user: QuotaUser, pdf: PdfCharge, now: number): Promise<ChargeResult> {
+  if (!Number.isInteger(pdf.units) || pdf.units < 1) throw new RangeError('a PDF must be charged a positive whole number of images');
+  const planId = await planInForce(db, user, now);
+  const period = currentPeriod(user, now);
+  const ledger: LedgerEntry = { ...pdf, width: 0, height: 0, format: 'pdf' };
+  if (!(await claimLedgerRow(db, user.id, period, ledger, now))) return { status: 'duplicate' };
+
+  const limit = PLANS[planId].monthlyImages;
+  const allowance = await db.batch([
+    db.prepare(OPEN_PERIOD_SQL).bind(user.id, period.start, period.end),
+    db.prepare(COUNT_PDF_IN_ALLOWANCE_SQL).bind(user.id, period.start, limit, pdf.units),
+    db.prepare(TAKE_BLOCK_FROM_ALLOWANCE_SQL).bind(user.id, period.start, limit, pdf.units),
+    countersStatement(db, user.id, period, now),
+  ]);
+  const taken = rowsOf<AllowanceRow>(allowance, 2)[0];
+  if (taken) {
+    const thresholds = crossedThresholds(taken);
+    const crossed90 = thresholds.crossed90 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period, thresholds.limit));
+    const crossed100 = thresholds.crossed100 && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, user.id, period, thresholds.limit));
+    return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, countersFrom(allowance, 3)), crossed90, crossed100 };
+  }
+
+  const topup = await db.batch([
+    db.prepare(LABEL_PDF_LEDGER_TOPUP_SQL).bind(user.id, now, pdf.cacheKey, pdf.units),
+    db.prepare(COUNT_BLOCK_TOPUP_USE_SQL).bind(user.id, now, period.start, pdf.units),
+    db.prepare(COUNT_PDF_FROM_TOPUP_SQL).bind(user.id, now, period.start, pdf.units),
+    db.prepare(TAKE_BLOCK_FROM_TOPUP_SQL).bind(user.id, now, period.start, pdf.units),
+    countersStatement(db, user.id, period, now),
+  ]);
+  const usage = summarize(planId, period, countersFrom(topup, 4));
+  if (topup[3]?.meta.changes === 1) return { status: 'charged', chargedTo: 'topup', usage, crossed90: false, crossed100: false };
+
+  await run(db, RELEASE_LEDGER_SQL, pdf.cacheKey, user.id, now);
+  return { status: 'quota_exceeded', usage };
+}
+
 /**
  * Records a purchased top-up. Idempotent on the Paddle transaction id, so a
  * redelivered webhook cannot credit twice. False when it already existed.
@@ -341,8 +473,13 @@ export async function markTopupRefunded(db: D1Database, transactionId: string, n
   return changes === 1;
 }
 
-/** Newest first; `limit` is clamped to 1..100. */
-export function listRecentRenders(db: D1Database, userId: string, limit: number): Promise<RenderRow[]> {
+/** Stored images, newest first; `limit` is clamped to 1..100. Stored PDFs are not listed. */
+export function listRecentRenders(db: D1Database, userId: string, limit: number): Promise<ImageRenderRow[]> {
   const capped = Math.min(Math.max(Math.trunc(limit) || 1, 1), MAX_RECENT_RENDERS);
-  return all<RenderRow>(db, 'SELECT * FROM renders WHERE user_id = ?1 ORDER BY created_at DESC, cache_key LIMIT ?2', userId, capped);
+  return all<ImageRenderRow>(
+    db,
+    "SELECT * FROM renders WHERE user_id = ?1 AND format <> 'pdf' ORDER BY created_at DESC, cache_key LIMIT ?2",
+    userId,
+    capped,
+  );
 }

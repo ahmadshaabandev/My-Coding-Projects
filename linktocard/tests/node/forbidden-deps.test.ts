@@ -96,7 +96,8 @@ describe('wrangler.toml agrees with src/config.ts', () => {
   });
 
   it.each(Object.keys(sections) as Array<keyof typeof sections>)('%s declares every rate limiter with the documented numbers', (name) => {
-    const declared = [...sections[name].matchAll(/name = "(RL_[A-Z]+)"\s*\nnamespace_id = "\d+"\s*\nsimple = \{ limit = (\d+), period = (\d+) \}/g)].map(
+    // RL_[A-Z_]+: limiter names may have several parts (RL_PDF_KEY, RL_TOOLS_PDF).
+    const declared = [...sections[name].matchAll(/name = "(RL_[A-Z_]+)"\s*\nnamespace_id = "\d+"\s*\nsimple = \{ limit = (\d+), period = (\d+) \}/g)].map(
       (entry) => [entry[1], { limit: Number(entry[2]), periodSeconds: Number(entry[3]) }] as const,
     );
     expect(Object.fromEntries(declared)).toEqual(

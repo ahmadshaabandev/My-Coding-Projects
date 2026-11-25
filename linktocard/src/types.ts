@@ -57,6 +57,16 @@ export interface Env extends Partial<Record<RateLimitName, RateLimitBinding>> {
   /** Public widget key published by /api/config (plain var). */
   TURNSTILE_SITE_KEY?: string;
 
+  /**
+   * Cloudflare Browser Run, the renderer of PDF documents. Declared for staging and production
+   * only, so the test pool and `wrangler dev` start offline; tests inject a mock.
+   */
+  BROWSER?: BrowserRun;
+  /** "true" turns the PDF endpoints on (they also need BROWSER); anything else answers 503. */
+  PDF_ENABLED?: string;
+  /** Daily alarm threshold in browser milliseconds over 24 h; unset means PDF.dailyBrowserMsBudget. */
+  PDF_DAILY_BROWSER_MS_BUDGET?: string;
+
   /** Test-only switch, honoured only when ENVIRONMENT === 'test'. */
   RATE_LIMITS_DISABLED?: string;
 }
@@ -159,15 +169,19 @@ export interface TopupRow {
   refunded_at: number | null;
 }
 
+/**
+ * One ledger row. A stored PDF has one too: format 'pdf', width and height 0, source 'api'
+ * (POST /v1/pdf) or 'signed' (signed PDF link); see src/db/migrations/0006_pdf.sql.
+ */
 export interface RenderRow {
   cache_key: string;
   user_id: string;
   site_id: string | null;
-  source: 'og' | 'api';
+  source: 'og' | 'api' | 'signed';
   template: string;
   width: number;
   height: number;
-  format: ImageFormat;
+  format: ImageFormat | 'pdf';
   bytes: number;
   r2_key: string;
   charged_to: 'plan' | 'topup';
@@ -187,6 +201,29 @@ export interface OgCheckRow {
   favicon_url: string | null;
   created_at: number;
   expires_at: number;
+}
+
+/** PDFs charged in one billing period and the images they counted as (0006_pdf.sql). */
+export interface PdfUsageRow {
+  user_id: string;
+  period_start: number;
+  pdfs: number;
+  units: number;
+}
+
+/** One PDF render attempt that reached the browser: cost tracking and the daily alarm (0006_pdf.sql). */
+export interface BrowserUsageRow {
+  id: string;
+  /** Null for the free tools, and once the account has been deleted. */
+  user_id: string | null;
+  source: 'api' | 'signed' | 'tool';
+  /** HTTP status of the browser's answer; 0 when the call itself failed. */
+  status: number;
+  /** X-Browser-Ms-Used; null when the browser did not report it. */
+  browser_ms: number | null;
+  /** Pages of the PDF it returned; null without a readable PDF. */
+  pages: number | null;
+  created_at: number;
 }
 
 /** A fixed-window counter: per-IP hourly checks, per-key daily inspections. */
