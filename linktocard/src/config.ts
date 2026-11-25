@@ -166,6 +166,60 @@ export const INSPECT = {
   userAgent: 'LinkToCardBot/1.0 (+https://linktocard.com/bot)',
 } as const;
 
+/**
+ * PDF documents (POST /v1/pdf, signed GET /v1/pdf/..., the free PDF tools), rendered by
+ * Cloudflare Browser Run's `pdf` quick action. Images are still rendered without a browser.
+ * The pricing page, /docs/pdf and the tests read every number from here.
+ */
+export const PDF = {
+  /** Pages per PDF. Rendered with pageRanges "1-<maxPages + 1>"; one page more is refused, not charged. */
+  maxPages: 50,
+  /** Quota: a PDF of up to `basePages` pages counts as `baseUnits` images ... */
+  basePages: 10,
+  baseUnits: 2,
+  /** ... plus one image for each further started block of `extraPagesPerUnit` pages. */
+  extraPagesPerUnit: 10,
+  /** Customer HTML after placeholder substitution, CSS, and all inlined images together. */
+  maxHtmlBytes: 1024 * 1024,
+  maxCssBytes: 256 * 1024,
+  maxAssetBytes: 10 * 1024 * 1024,
+  /** POST /v1/pdf and POST /api/tools/pdf request bodies. */
+  maxRequestBodyBytes: 1.5 * 1024 * 1024,
+  /** Browser budgets (navigation and PDF printing each). */
+  renderTimeoutMs: 30_000,
+  /** Page margins: CSS lengths, each at most this many millimetres. */
+  maxMarginMm: 60,
+  /** Data for PDF templates. */
+  maxDataKeys: 40,
+  maxDataValueChars: 2000,
+  maxItems: 200,
+  maxItemFields: 16,
+  maxItemValueChars: 500,
+  /** Free plan and free tools: a footer line on every page, with at least this bottom margin. */
+  freeMark: 'Made with Link To Card',
+  freeMarkMinBottomMm: 14,
+  /** Free PDF tools (no account): PDFs per client (IPv4 address or IPv6 /64) per clock hour. */
+  toolPdfsPerHour: 5,
+  /** Daily alarm: browser time over the last 24 h above this sends one email per day (PDF_DAILY_BROWSER_MS_BUDGET overrides). */
+  dailyBrowserMsBudget: 20 * 60 * 1000,
+  /** browser_usage rows are kept this long. */
+  browserUsageRetentionDays: 90,
+  formats: ['a4', 'letter', 'a5'] as const,
+  defaultFormat: 'a4' as const,
+} as const;
+
+export type PdfFormat = (typeof PDF.formats)[number];
+
+/**
+ * Images a PDF counts as: `baseUnits` for 1 to `basePages` pages, then one more for each
+ * further started block of `extraPagesPerUnit` pages (1-10 pages = 2, 11-20 = 3, ..., 41-50 = 6).
+ */
+export function pdfUnits(pages: number): number {
+  if (!Number.isInteger(pages) || pages < 1) throw new RangeError(`pdfUnits: pages must be a positive integer, got ${pages}`);
+  if (pages <= PDF.basePages) return PDF.baseUnits;
+  return PDF.baseUnits + Math.ceil((pages - PDF.basePages) / PDF.extraPagesPerUnit);
+}
+
 /** Auth lifetimes. */
 export const AUTH = {
   magicLinkTtlMs: 15 * 60 * 1000,
