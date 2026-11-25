@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PDF, RATE_LIMITS } from '../src/config';
 import { all, first } from '../src/db/client';
 import type { BrowserUsageRow, Env, RateLimitBinding } from '../src/types';
-import { errorOf, requestUrl } from './app-helpers';
+import { dohAnswer, errorOf, requestUrl } from './app-helpers';
 import { footerOf, mockBrowser, pdfEnv, pdfResponse, postTool, type MockBrowser } from './pdf-helpers';
 
 afterEach(() => {
@@ -17,6 +17,41 @@ let ipSeq = 0;
 const nextIp = (): string => `203.0.113.${++ipSeq}`;
 const allow: RateLimitBinding = { limit: () => Promise.resolve({ success: true }) };
 const limited = (browser: MockBrowser, overrides: Partial<Env> = {}): Env => pdfEnv(browser, { RATE_LIMITS_DISABLED: '0', RL_TOOLS_PDF: allow, ...overrides });
+
+describe('POST /api/tools/pdf: one image used many times', () => {
+  it('counts every use of an inlined image against the image budget, before the document is built', async () => {
+    // A real 1x1 PNG padded to 1 MB: one download, but 200 copies of its data: URI in the document.
+    const png = new Uint8Array(1024 * 1024);
+    png.set(Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0)));
+    const fetched: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === 'cloudflare-dns.com') return dohAnswer(url);
+      fetched.push(url.href);
+      return new Response(png.slice(), { headers: { 'content-type': 'image/png' } });
+    });
+    const browser = mockBrowser();
+    const items = Array.from({ length: 200 }, (_, i) => ({ n: String(i) }));
+    const response = await postTool(
+      { tool: 'html-to-pdf', html: '{{#items}}<img src="https://img.example.org/a.png">{{/items}}', data: { items } },
+      pdfEnv(browser),
+      { 'cf-connecting-ip': nextIp() },
+    );
+    expect(response.status).toBe(422);
+    expect(await errorOf(response)).toMatchObject({ code: 'template_error', details: { limit: PDF.maxAssetBytes } });
+    expect(fetched).toEqual(['https://img.example.org/a.png']);
+    expect(browser.calls).toEqual([]);
+
+    // The same image a few times is fine.
+    const few = await postTool(
+      { tool: 'html-to-pdf', html: '{{#items}}<img src="https://img.example.org/a.png">{{/items}}', data: { items: items.slice(0, 3) } },
+      pdfEnv(browser),
+      { 'cf-connecting-ip': nextIp() },
+    );
+    expect(few.status).toBe(200);
+    expect(browser.calls).toHaveLength(1);
+  });
+});
 
 describe('POST /api/tools/pdf', () => {
   it('html-to-pdf: the PDF as a download, marked on every page, never stored, browser time recorded without an account', async () => {

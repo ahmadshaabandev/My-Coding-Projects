@@ -232,8 +232,31 @@ describe('/docs/pdf', () => {
     expect(Object.keys(response).sort()).toEqual(['bytes', 'cached', 'created_at', 'credits_used', 'expires_at', 'filename', 'id', 'pages', 'template', 'url', 'usage', 'warnings']);
   });
 
-  it('states the cache lifetime the service sends', () => {
-    expect(markdown).toContain(`max-age=${HTTP_CACHE.imageMaxAgeSeconds}`);
+  it('states the cache lifetime the service sends, from HTTP_CACHE through a token', () => {
+    expect(markdown).toContain('max-age=[[http.imageMaxAgeSeconds]]');
+    expect(markdown).not.toMatch(/max-age=\d/);
+    expect(visibleText(article('docs/pdf.html'))).toContain(`max-age=${HTTP_CACHE.imageMaxAgeSeconds}`);
+  });
+
+  it('states what bounds browser time, the page box, the free mark and saved templates, as the engine does', () => {
+    const text = visibleText(article('docs/pdf.html'));
+    expect(text).toContain(
+      `Renders that produce no PDF${PDF.maxFailedRendersPerDay.free} per UTC day on ${PLANS.free.name}, ${PDF.maxFailedRendersPerDay.paid} on ${PLANS.starter.name} and ${PLANS.pro.name}`,
+    );
+    expect(text).toContain(`an account can have ${PDF.maxFailedRendersPerDay.free} of them per UTC day on ${PLANS.free.name}`);
+    expect(text).toContain(`${PLANS.starter.name} and ${PLANS.pro.name} are not affected, and stored PDFs keep working.`);
+    // @page is dropped by src/pdf/css.ts; header/footer <style> is dropped next to the mark.
+    expect(text).toContain('A CSS @page rule is removed, with a warning, wherever it is');
+    expect(text).not.toContain('@page { size: ... } rule does not change it');
+    expect(text).toContain('<style> elements in them are removed (with a warning');
+    expect(text).toContain('in grey on a small white background of its own');
+    // Saved templates go through the card validator (src/routes/studio.ts).
+    expect(text).toContain(`A template saved in the dashboard is checked like a card template: at most ${LIMITS.maxHtmlBytes / 1024} KB of HTML and ${LIMITS.maxCssBytes / 1024} KB of CSS, ${formatCount(LIMITS.maxNodes)} elements, nested at most ${LIMITS.maxDepth} deep.`);
+    expect(text).toContain(`Template saved in the dashboard${LIMITS.maxHtmlBytes / 1024} KB HTML`);
+    // Only fonts recorded from Cloudflare's list.
+    expect(text).not.toMatch(/Indic|colour emoji/);
+    // The kill switch also stops stored and signed PDFs.
+    expect(text).toContain('While it is off, stored PDF links (/i/...pdf) and signed PDF links answer it too.');
   });
 
   it('follows the docs rules: no unresolved token, TODO or localhost, no other payment provider, prices only from the catalog', () => {
@@ -645,6 +668,12 @@ describe('the three tool pages', () => {
     }
   });
 
+  it('promise no way to change a starter template\'s design: its HTML and CSS are not published', () => {
+    const text = visibleText(built('tools/certificate-generator.html'));
+    expect(text).toContain('With an API key you can send your own HTML and CSS to POST /v1/pdf.');
+    expect(text).not.toMatch(/start from the certificate template/i);
+  });
+
   it('give each tool its own words', () => {
     const seen = new Map<string, string>();
     for (const outPath of Object.values(PAGES)) {
@@ -698,6 +727,14 @@ describe('the three tool pages', () => {
     expect(visibleText(built(PAGES.certificate))).toContain('Do not use it for diplomas, degrees, licences, official qualifications or any document of a school, university, company or government that did not issue it.');
     expect(visibleText(built(PAGES.invoice))).toContain('Making a fake invoice or receipt, or one in someone else\u2019s name, is fraud in most places and is forbidden by our Terms of service.');
     for (const outPath of Object.values(PAGES)) expect(visibleText(built(outPath)), outPath).not.toMatch(/bank statement template|utility bill template|ID card|passport/i);
+  });
+});
+
+describe('privacy policy (PDF part)', () => {
+  it('says when the per-IP counts are really deleted: by the daily clean-up, not shortly after the hour', () => {
+    const text = visibleText(article('privacy.html'));
+    expect(text).toContain('The count of PDFs per IP address or network is kept until the end of that hour; the daily clean-up then deletes it, normally within a day.');
+    expect(text).not.toContain('shortly afterwards');
   });
 });
 

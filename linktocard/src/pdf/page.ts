@@ -89,10 +89,20 @@ export const EMPTY_TEMPLATE = '<span></span>';
  * footer templates do not see the document's fonts, so it uses the browser's sans-serif.
  * print-color-adjust: exact keeps its grey: without it Chrome darkens light text when it prints
  * (measured: #6b7280 came out as #24272c), and the mark should stay quieter than the document.
+ *
+ * The text sits on its own white background. Chrome paints the footer above the page, so
+ * whatever the document puts under the mark (a background, a band in the mark's own grey, text
+ * printed into the bottom margin) cannot make it unreadable.
  */
 export const FREE_MARK_HTML =
   '<div style="width:100%;box-sizing:border-box;padding:0 10mm;font-family:sans-serif;font-size:7.5pt;line-height:1.3;' +
-  `color:#6b7280;-webkit-print-color-adjust:exact;print-color-adjust:exact;text-align:center">${escapeHtml(PDF.freeMark)}</div>`;
+  'color:#6b7280;-webkit-print-color-adjust:exact;print-color-adjust:exact;text-align:center;position:relative;z-index:2147483647">' +
+  `<div style="display:inline-block;padding:0.4mm 2mm;background:#fff;color:#6b7280">${escapeHtml(PDF.freeMark)}</div></div>`;
+
+/** Chrome's own padding between the page edge and a header's top or a footer's bottom (0.4 cm). */
+const CHROME_EDGE_PADDING_MM = 4;
+/** Height the free mark's line takes at the bottom of the footer. */
+const MARK_LINE_MM = 5;
 
 export interface HeaderFooter {
   displayHeaderFooter: boolean;
@@ -100,11 +110,38 @@ export interface HeaderFooter {
   footerTemplate?: string;
 }
 
-/** Chrome's header/footer options: the customer's (sanitised) templates, and below the footer the free mark. */
-export function headerFooter(header: string | null, footer: string | null, mark: boolean): HeaderFooter {
-  const footerTemplate = mark ? (footer ? `<div style="width:100%">${footer}${FREE_MARK_HTML}</div>` : FREE_MARK_HTML) : footer;
-  if (header === null && footerTemplate === null) return { displayHeaderFooter: false };
-  return { displayHeaderFooter: true, headerTemplate: header ?? EMPTY_TEMPLATE, footerTemplate: footerTemplate ?? EMPTY_TEMPLATE };
+/**
+ * A customer header or footer next to the free mark. Chrome renders the header and footer
+ * templates in one document, so the customer's markup is put in a box it cannot paint outside
+ * of: no overflow, layout and paint containment (positioned content stays inside, nothing is
+ * drawn past its edge), at most the height the margin leaves it. Its <style> elements are
+ * already removed (src/pdf/service.ts preparePdf), so nothing it sends can select the mark.
+ */
+function contained(html: string, maxHeightMm: number): string {
+  return `<div style="position:relative;width:100%;max-height:${mm(Math.max(0, maxHeightMm))};overflow:hidden;contain:layout paint">${html}</div>`;
+}
+
+/**
+ * Chrome's header/footer options: the customer's (sanitised) templates and, when `mark` is
+ * set, the free mark below the footer. `margin` is the page's top and bottom margin, which
+ * bounds the customer's boxes on a marked PDF.
+ */
+export function headerFooter(
+  header: string | null,
+  footer: string | null,
+  mark: boolean,
+  margin: Pick<PdfMargin, 'top' | 'bottom'> = { top: mm(PDF.defaultMarginMm), bottom: mm(PDF.freeMarkMinBottomMm) },
+): HeaderFooter {
+  if (!mark) {
+    if (header === null && footer === null) return { displayHeaderFooter: false };
+    return { displayHeaderFooter: true, headerTemplate: header ?? EMPTY_TEMPLATE, footerTemplate: footer ?? EMPTY_TEMPLATE };
+  }
+  const top = marginToMm(margin.top, 'top');
+  const bottom = marginToMm(margin.bottom, 'bottom');
+  const headerTemplate = header === null ? EMPTY_TEMPLATE : contained(header, top - CHROME_EDGE_PADDING_MM);
+  const footerTemplate =
+    footer === null ? FREE_MARK_HTML : `<div style="width:100%">${contained(footer, bottom - CHROME_EDGE_PADDING_MM - MARK_LINE_MM)}${FREE_MARK_HTML}</div>`;
+  return { displayHeaderFooter: true, headerTemplate, footerTemplate };
 }
 
 /* ------------------------------------------------------------------ */

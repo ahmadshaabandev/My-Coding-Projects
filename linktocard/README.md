@@ -213,20 +213,31 @@ production are GO-LIVE.md section 10.
 
 - **Renderer.** One `env.BROWSER.quickAction('pdf', options)` call per PDF (`src/pdf/render.ts`).
   The browser only ever receives our own sanitised document as `html`, never a `url`, with
-  JavaScript off, `allowRequestPattern: ['^data:']` (no network access) and `cacheTTL: 0`. No
-  headless-browser package is a dependency; `tests/node/forbidden-deps.test.ts` enforces that.
+  JavaScript off, `allowRequestPattern: ['^data:']` (no network access), `cacheTTL: 0` and
+  `tagged: false`. No headless-browser package is a dependency;
+  `tests/node/forbidden-deps.test.ts` enforces that.
 - **Template language and sanitiser** (`src/pdf/template.ts`, `src/pdf/css.ts`): `{{key}}`
   placeholders and `{{#items}}` sections filled in on the parsed tree; scripts, event
-  attributes, frames, `javascript:` links and the like removed; `@import` and remote
-  `@font-face` refused. Remote images are downloaded first through the guarded image fetcher
+  attributes, frames, `javascript:` links and the like removed; `@import`, remote `@font-face`
+  and CSS strings broken by a line break refused; `@page` dropped (the page box comes from the
+  request alone). Remote images are downloaded first through the guarded image fetcher
   and embedded (`src/pdf/assets.ts`); the bundled fonts are embedded when the CSS names them.
 - **Counting.** A PDF counts as several images by its page count (`pdfUnits()` in
   `src/config.ts`; the table is on `/docs/pdf`), charged as one block from the allowance or one
-  top-up, never split (`chargePdf` in `src/lib/quota.ts`). Free-plan and free-tool PDFs carry the
-  "Made with Link To Card" footer line.
+  top-up, never split (`chargePdf` in `src/lib/quota.ts`; its ledger row is "pending" until the
+  block is taken, and an identical request is served only from a paid row). The page count is
+  read from the PDF's cross-reference table and page tree (`src/pdf/count.ts`), never by
+  searching its text. Free-plan and free-tool PDFs carry the "Made with Link To Card" footer
+  line on a white background of its own; next to it the customer's header and footer lose their
+  `<style>` elements and are kept inside their own margin (`src/pdf/page.ts`).
 - **Cost tracking.** Every browser call is a row in `browser_usage` (kept
-  `PDF.browserUsageRetentionDays` days). The daily cron emails `SUPPORT_EMAIL` when the last
-  24 hours used more browser time than `PDF_DAILY_BROWSER_MS_BUDGET`. On 2026-11-25 Cloudflare's
+  `PDF.browserUsageRetentionDays` days), with the time Browser Run reported and the measured
+  length of the call (counted when Browser Run reports none: timeouts, 5xx). The daily cron emails
+  `SUPPORT_EMAIL` when the last 24 hours used more browser time than
+  `PDF_DAILY_BROWSER_MS_BUDGET`. Two automatic limits (`src/pdf/guard.ts`): an account gets
+  `PDF.maxFailedRendersPerDay` renders per UTC day that reach the browser and charge nothing,
+  then 429; and while the last 24 hours used more than `PDF.freeBrakeBudgetMultiple` daily
+  budgets, Free-plan renders and the free tools answer 429. On 2026-11-25 Cloudflare's
   pricing page listed Browser Run on Workers Paid as 10 browser hours a month included, then
   $0.09 per hour.
 - **Starter templates** (`src/pdf/templates/`): invoice, receipt, quote, certificate of
@@ -359,8 +370,9 @@ it if it is wrong.
   `['^data:', '^about:']` in `src/pdf/render.ts`, never http(s)); that every option and
   `cacheTTL: 0` are accepted and the answer is `application/pdf` with `X-Browser-Ms-Used`; the
   real error statuses and messages (a timeout must mention "timeout" to become 504
-  `render_timeout`); that the page count can be read from its PDFs (otherwise every PDF ends as
-  500 `render_failed`); that the embedded fonts apply with JavaScript off; the request size limit
+  `render_timeout`); that the page count can be read from its PDFs (the counter follows the
+  classic cross-reference table Chrome writes; if Browser Run's PDFs had another structure, every
+  PDF would end as 500 `render_failed`); that the embedded fonts apply with JavaScript off; the request size limit
   with large inlined images; how the five templates, the free footer line and the docs'
   page-number footer look; that Chrome repeats table header rows on every page; and the daily
   alarm email through Resend.
@@ -372,7 +384,8 @@ it if it is wrong.
   `/docs/pdf`, three free tools and three guides, all behind `PDF_ENABLED` and the `SITE_PDF`
   site switch. Printed by Cloudflare Browser Run with JavaScript off and no network access;
   card images are still drawn without a browser. A PDF counts as images by its pages, charged as
-  one block. New: migration `0006_pdf.sql` (apply it before deploying), three rate limiters
+  one block. New: migration `0006_pdf.sql` (apply it, and `0005`, before the next production
+  deploy of any kind: `/api/me` and the daily cron read its tables even with PDFs off), three rate limiters
   (`RL_PDF_KEY`, `RL_PDF_FREE`, `RL_TOOLS_PDF`), the `BROWSER` binding on staging and production,
   `PDF_DAILY_BROWSER_MS_BUDGET` and a daily alarm email. The terms now forbid counterfeit or
   misleading documents (not PDF-specific, live everywhere). Where AI was used: the code, tests,

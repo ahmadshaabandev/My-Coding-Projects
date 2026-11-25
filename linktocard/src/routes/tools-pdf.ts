@@ -10,8 +10,9 @@
  * against an account; the browser time is recorded in browser_usage (source "tool").
  *
  * Limits, in this order: the kill switch (503), RL_TOOLS_PDF per client (burst), the request
- * itself (400/422 before anything is counted), then PDF.toolPdfsPerHour per client and hour in
- * D1 with Turnstile after the first few when TURNSTILE_SECRET_KEY is set (src/pdf/limits.ts).
+ * itself (400/422 before anything is counted), the automatic brake on free browser time (429,
+ * src/pdf/guard.ts), then PDF.toolPdfsPerHour per client and hour in D1 with Turnstile after
+ * the first few when TURNSTILE_SECRET_KEY is set (src/pdf/limits.ts).
  */
 import { Hono, type MiddlewareHandler } from 'hono';
 import { requireSameOrigin } from '../auth/middleware';
@@ -19,6 +20,7 @@ import { PDF } from '../config';
 import { readJsonObject } from '../lib/http';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
 import { parseToolRequest } from '../pdf/input';
+import { assertFreeBrowserCapacity } from '../pdf/guard';
 import { enforceToolPdfLimit } from '../pdf/limits';
 import { assertPdfEnabled } from '../pdf/render';
 import { pdfHeaders, preparePdf, printPrepared } from '../pdf/service';
@@ -41,6 +43,8 @@ toolsPdfRouter.post('/pdf', pdfEnabledOnly, requireSameOrigin, async (c) => {
   // Template errors come back before the PDF is counted.
   const prepared = preparePdf(job);
   const now = Date.now();
+  // The automatic brake on free browser time, before the visitor's hourly PDFs are counted.
+  await assertFreeBrowserCapacity(c.env, now);
   await enforceToolPdfLimit(c.env, client, request.headers.get('cf-connecting-ip'), turnstile, now);
 
   const rendered = await printPrepared(c.env, prepared, { userId: null, source: 'tool' }, now);

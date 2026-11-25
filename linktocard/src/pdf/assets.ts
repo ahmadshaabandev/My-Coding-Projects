@@ -7,7 +7,8 @@
  * (src/render/proxy.ts: http(s) only, default ports, public addresses checked over DNS on
  * every redirect hop, type, size and pixel limits, a timeout). On top of that:
  *   - Link To Card's own hosts are refused, so a document cannot reach our internal paths;
- *   - all images of one document together may be at most PDF.maxAssetBytes;
+ *   - all images of one document together may be at most PDF.maxAssetBytes, and the downloads
+ *     in flight at once never read more than that together;
  *   - at most PDF.maxRemoteAssets distinct URLs (src/pdf/template.ts counts them).
  */
 import { PDF } from '../config';
@@ -18,6 +19,12 @@ import { fetchRemoteImage, type ImageFetchOptions } from '../render/proxy';
 const OWN_HOSTS: readonly string[] = ['linktocard.com', 'linktocard-staging.names-on-base.workers.dev'];
 /** Downloads in flight at once for one document. */
 const CONCURRENCY = 4;
+/**
+ * What one of those downloads may read. Together they stay within PDF.maxAssetBytes, so a
+ * document's images never hold more than the budget in memory at once; an image larger than
+ * its slot is downloaded again on its own afterwards, with all of the budget that is left.
+ */
+const SLOT_BYTES = Math.floor(PDF.maxAssetBytes / CONCURRENCY);
 
 export interface AssetOptions {
   /** This deployment's origin; its host is refused like OWN_HOSTS. */
@@ -76,28 +83,60 @@ export async function inlineRemoteAssets(urls: readonly string[], options: Asset
   // as a method of another object); tests replace it with vi.spyOn.
   const base = options.fetchOptions?.fetchImpl ?? ((input, init) => fetch(input, init));
   const fetchImpl = refusingOwnHosts(options.appUrl, base);
+  const fetchOne = (url: string, maxBytes: number) => fetchRemoteImage(url, { ...options.fetchOptions, fetchImpl, maxBytes });
+  const tooLarge = (error: unknown): boolean => error instanceof ApiError && error.details?.reason === 'too_large';
   let next = 0;
+  /** Bytes of the images downloaded so far. */
   let used = 0;
+  /** Caps handed to the downloads in flight: used + reserved never passes the budget. */
+  let reserved = 0;
   let failed = false;
+  /** Images too large for a shared slot: downloaded one at a time afterwards, with all that is left. */
+  const large: string[] = [];
 
   const worker = async (): Promise<void> => {
     while (!failed && next < urls.length) {
       const url = urls[next++]!;
-      const left = PDF.maxAssetBytes - used;
-      if (left <= 0) throw totalTooLarge();
+      if (used >= PDF.maxAssetBytes) throw totalTooLarge();
+      const cap = Math.min(SLOT_BYTES, PDF.maxAssetBytes - used - reserved);
+      if (cap <= 0) {
+        large.push(url);
+        continue;
+      }
+      reserved += cap;
       try {
-        const image = await fetchRemoteImage(url, { ...options.fetchOptions, fetchImpl, maxBytes: left });
+        const image = await fetchOne(url, cap);
         used += image.bytes;
         if (used > PDF.maxAssetBytes) throw totalTooLarge();
         inlined.set(url, image.dataUri);
       } catch (error) {
+        // Over its slot but perhaps within what is left of the budget: try it again on its own.
+        if (tooLarge(error) && cap < PDF.maxAssetBytes - used) {
+          large.push(url);
+          continue;
+        }
         failed = true;
-        // Each download may use what is left of the budget, so "too large" means the total is over it.
-        if (error instanceof ApiError && error.details?.reason === 'too_large') throw totalTooLarge();
+        if (tooLarge(error)) throw totalTooLarge();
         throw error;
+      } finally {
+        reserved -= cap;
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, urls.length) }, worker));
+
+  for (const url of large) {
+    const left = PDF.maxAssetBytes - used;
+    if (left <= 0) throw totalTooLarge();
+    try {
+      const image = await fetchOne(url, left);
+      used += image.bytes;
+      inlined.set(url, image.dataUri);
+    } catch (error) {
+      // It may use everything that is left, so "too large" means the total is over the budget.
+      if (tooLarge(error)) throw totalTooLarge();
+      throw error;
+    }
+  }
   return inlined;
 }

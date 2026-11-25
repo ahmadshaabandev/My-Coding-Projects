@@ -27,10 +27,16 @@
  * otherwise nothing is taken and the caller answers 402. A block is never split
  * between the allowance and a top-up or between two top-ups, so no counter can
  * go past its limit.
+ *
+ * A PDF's ledger row is claimed as charged_to = 'pending' and becomes 'plan' or
+ * 'topup' in the same batch that takes the block, so a row that says it is paid
+ * always is. An identical request that finds a pending row must not be served as
+ * a duplicate: the block may not fit, and the row may be released a moment later
+ * (src/pdf/service.ts waits for the row to be paid or gone).
  */
 import { effectivePlanId, getPlan, PLANS, TOPUP, type PlanId } from '../billing/plans';
 import { DAY_MS, type ImageFormat } from '../config';
-import { all, first, run } from '../db/client';
+import { all, first, isMissingTableError, run } from '../db/client';
 import type { RenderRow, UsageSummary, UserRow } from '../types';
 import { randomId } from './crypto';
 
@@ -169,32 +175,63 @@ const COUNT_TOPUP_USE_SQL = `UPDATE usage_periods SET topup_used = topup_used + 
 const TAKE_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - 1 WHERE id = (${NEXT_TOPUP})`;
 
 /*
- * PDFs: a block of ?4 images. In each batch the counting statements run before the statement
- * that takes the block and test exactly its condition, so inside the batch (one transaction)
- * either all of them apply or none does - the same rule as the image top-up batch above.
+ * PDFs: a block of ?4 images. In each batch the statements that label the ledger row and count
+ * the PDF run before the statement that takes the block and test exactly its condition, so
+ * inside the batch (one transaction) either all of them apply or none does - the same rule as
+ * the image top-up batch above.
  */
 
 // ?1 user, ?2 period start, ?3 plan monthly images, ?4 units.
 const PDF_FITS_ALLOWANCE = 'user_id = ?1 AND period_start = ?2 AND used + ?4 <= MAX(0, ?3 + allowance_adjust)';
-const COUNT_PDF_IN_ALLOWANCE_SQL = `INSERT INTO pdf_usage (user_id, period_start, pdfs, units)
-  SELECT ?1, ?2, 1, ?4 WHERE EXISTS (SELECT 1 FROM usage_periods WHERE ${PDF_FITS_ALLOWANCE})
-  ON CONFLICT (user_id, period_start) DO UPDATE SET pdfs = pdfs + 1, units = units + excluded.units`;
-const TAKE_BLOCK_FROM_ALLOWANCE_SQL = `UPDATE usage_periods SET used = used + ?4
-  WHERE ${PDF_FITS_ALLOWANCE}
-  RETURNING used, MAX(0, ?3 + allowance_adjust) AS allowance, notified_90, notified_100`;
 
-// ?1 user, ?2 now, ?3 cache key or period start (unused by the last statement), ?4 units. Only a
-// top-up with the whole block left qualifies.
+// ?1 user, ?2 now, ?4 units. Only a top-up with the whole block left qualifies.
 const NEXT_TOPUP_FOR_BLOCK = `SELECT id FROM topups
   WHERE user_id = ?1 AND refunded_at IS NULL AND remaining >= ?4 AND expires_at > ?2
   ORDER BY expires_at, created_at, id LIMIT 1`;
-const LABEL_PDF_LEDGER_TOPUP_SQL = `UPDATE renders SET charged_to = 'topup' WHERE cache_key = ?3 AND EXISTS (${NEXT_TOPUP_FOR_BLOCK})`;
-const COUNT_BLOCK_TOPUP_USE_SQL = `UPDATE usage_periods SET topup_used = topup_used + ?4
-  WHERE user_id = ?1 AND period_start = ?3 AND EXISTS (${NEXT_TOPUP_FOR_BLOCK})`;
-const COUNT_PDF_FROM_TOPUP_SQL = `INSERT INTO pdf_usage (user_id, period_start, pdfs, units)
-  SELECT ?1, ?3, 1, ?4 WHERE EXISTS (${NEXT_TOPUP_FOR_BLOCK})
+
+/*
+ * The PDF ledger row. It is claimed unpaid ('pending'), takes over an expired row or a pending
+ * row whose claimant has been gone for PDF_PENDING_STALE_MS, and is labelled 'plan' or 'topup'
+ * inside the batch that takes the block. The counting statements of each batch also require
+ * that label, so a block is never taken for a row this request does not hold.
+ */
+export const PDF_PENDING_STALE_MS = 120_000;
+const CLAIM_PDF_LEDGER_SQL = `INSERT INTO renders
+    (cache_key, user_id, site_id, source, template, width, height, format, bytes, r2_key, charged_to, period_start, created_at, expires_at)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11, ?12, ?13)
+  ON CONFLICT (cache_key) DO UPDATE SET
+    user_id = excluded.user_id, site_id = excluded.site_id, source = excluded.source, template = excluded.template,
+    width = excluded.width, height = excluded.height, format = excluded.format, bytes = excluded.bytes,
+    r2_key = excluded.r2_key, charged_to = excluded.charged_to, period_start = excluded.period_start,
+    created_at = excluded.created_at, expires_at = excluded.expires_at
+  WHERE renders.expires_at <= excluded.created_at
+     OR (renders.charged_to = 'pending' AND renders.created_at < excluded.created_at - ${PDF_PENDING_STALE_MS})
+  RETURNING cache_key`;
+const RELEASE_PDF_LEDGER_SQL = "DELETE FROM renders WHERE cache_key = ?1 AND user_id = ?2 AND created_at = ?3 AND charged_to = 'pending'";
+
+// Allowance batch: ?1 user, ?2 period start, ?3 plan monthly images, ?4 units, ?5 cache key, ?6 claim time.
+const OUR_PDF_ROW = (label: 'plan' | 'topup', key: string, at: string): string =>
+  `EXISTS (SELECT 1 FROM renders WHERE cache_key = ${key} AND user_id = ?1 AND created_at = ${at} AND charged_to = '${label}')`;
+const LABEL_PDF_LEDGER_PLAN_SQL = `UPDATE renders SET charged_to = 'plan'
+  WHERE cache_key = ?5 AND user_id = ?1 AND created_at = ?6 AND charged_to = 'pending'
+    AND EXISTS (SELECT 1 FROM usage_periods WHERE ${PDF_FITS_ALLOWANCE})`;
+const COUNT_PAID_PDF_IN_ALLOWANCE_SQL = `INSERT INTO pdf_usage (user_id, period_start, pdfs, units)
+  SELECT ?1, ?2, 1, ?4 WHERE EXISTS (SELECT 1 FROM usage_periods WHERE ${PDF_FITS_ALLOWANCE}) AND ${OUR_PDF_ROW('plan', '?5', '?6')}
   ON CONFLICT (user_id, period_start) DO UPDATE SET pdfs = pdfs + 1, units = units + excluded.units`;
-const TAKE_BLOCK_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - ?4 WHERE id = (${NEXT_TOPUP_FOR_BLOCK})`;
+const TAKE_PAID_BLOCK_FROM_ALLOWANCE_SQL = `UPDATE usage_periods SET used = used + ?4
+  WHERE ${PDF_FITS_ALLOWANCE} AND ${OUR_PDF_ROW('plan', '?5', '?6')}
+  RETURNING used, MAX(0, ?3 + allowance_adjust) AS allowance, notified_90, notified_100`;
+
+// Top-up batch: ?1 user, ?2 now (the claim time), ?3 period start, ?4 units, ?5 cache key.
+const LABEL_PDF_LEDGER_TOPUP_PAID_SQL = `UPDATE renders SET charged_to = 'topup'
+  WHERE cache_key = ?5 AND user_id = ?1 AND created_at = ?2 AND charged_to = 'pending' AND EXISTS (${NEXT_TOPUP_FOR_BLOCK})`;
+const COUNT_PAID_BLOCK_TOPUP_USE_SQL = `UPDATE usage_periods SET topup_used = topup_used + ?4
+  WHERE user_id = ?1 AND period_start = ?3 AND EXISTS (${NEXT_TOPUP_FOR_BLOCK}) AND ${OUR_PDF_ROW('topup', '?5', '?2')}`;
+const COUNT_PAID_PDF_FROM_TOPUP_SQL = `INSERT INTO pdf_usage (user_id, period_start, pdfs, units)
+  SELECT ?1, ?3, 1, ?4 WHERE EXISTS (${NEXT_TOPUP_FOR_BLOCK}) AND ${OUR_PDF_ROW('topup', '?5', '?2')}
+  ON CONFLICT (user_id, period_start) DO UPDATE SET pdfs = pdfs + 1, units = units + excluded.units`;
+const TAKE_PAID_BLOCK_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - ?4
+  WHERE id = (${NEXT_TOPUP_FOR_BLOCK}) AND ${OUR_PDF_ROW('topup', '?5', '?2')}`;
 
 const LARGEST_TOPUP_SQL = `SELECT COALESCE(MAX(remaining), 0) AS largest FROM topups WHERE ${USABLE_TOPUP}`;
 
@@ -281,15 +318,21 @@ export async function pdfCapacity(db: D1Database, user: QuotaUser, now: number):
   return { usage, largestBlock: Math.max(usage.remaining, largestTopup) };
 }
 
-/** PDFs charged in the current period and the images they counted as (GET /api/me usage.pdf). */
+/**
+ * PDFs charged in the current period and the images they counted as (GET /api/me usage.pdf).
+ * Zero when the pdf_usage table does not exist yet (this code deployed before migration 0006):
+ * the dashboard must not break over a PDF number while PDFs are off.
+ */
 export async function getPdfUsage(db: D1Database, user: QuotaUser, now: number): Promise<{ count: number; images: number }> {
   const period = currentPeriod(user, now);
-  const row = await first<{ pdfs: number; units: number }>(
-    db,
-    'SELECT pdfs, units FROM pdf_usage WHERE user_id = ?1 AND period_start = ?2',
-    user.id,
-    period.start,
-  );
+  let row: { pdfs: number; units: number } | null;
+  try {
+    row = await first<{ pdfs: number; units: number }>(db, 'SELECT pdfs, units FROM pdf_usage WHERE user_id = ?1 AND period_start = ?2', user.id, period.start);
+  } catch (error) {
+    if (!isMissingTableError(error)) throw error;
+    console.error('pdf_usage is missing: apply migration 0006_pdf.sql');
+    row = null;
+  }
   return { count: row?.pdfs ?? 0, images: row?.units ?? 0 };
 }
 
@@ -304,6 +347,27 @@ async function claimLedgerRow(db: D1Database, userId: string, period: Period, re
   const claimed = await first<{ cache_key: string }>(
     db,
     CLAIM_LEDGER_SQL,
+    render.cacheKey,
+    userId,
+    render.siteId,
+    render.source,
+    render.template,
+    render.width,
+    render.height,
+    render.format,
+    render.bytes,
+    render.r2Key,
+    period.start,
+    now,
+    now + render.ttlMs,
+  );
+  return claimed !== null;
+}
+
+async function claimPdfLedgerRow(db: D1Database, userId: string, period: Period, render: LedgerEntry, now: number): Promise<boolean> {
+  const claimed = await first<{ cache_key: string }>(
+    db,
+    CLAIM_PDF_LEDGER_SQL,
     render.cacheKey,
     userId,
     render.siteId,
@@ -399,7 +463,9 @@ function crossedThresholds(taken: AllowanceRow): { crossed90: boolean; crossed10
  * module comment). Same results and the same ledger guarantees as chargeRender:
  *
  *   charged         the block was taken from the allowance or from one top-up
- *   duplicate       an unexpired ledger row already covers this cache key: no charge
+ *   duplicate       an unexpired ledger row already covers this cache key: no charge. The row
+ *                   may still be 'pending' (another request is charging it right now, and may
+ *                   release it): the caller must read it before serving anything.
  *   quota_exceeded  no single place has the whole block left; nothing was taken
  */
 export async function chargePdf(db: D1Database, user: QuotaUser, pdf: PdfCharge, now: number): Promise<ChargeResult> {
@@ -407,35 +473,47 @@ export async function chargePdf(db: D1Database, user: QuotaUser, pdf: PdfCharge,
   const planId = await planInForce(db, user, now);
   const period = currentPeriod(user, now);
   const ledger: LedgerEntry = { ...pdf, width: 0, height: 0, format: 'pdf' };
-  if (!(await claimLedgerRow(db, user.id, period, ledger, now))) return { status: 'duplicate' };
+  if (!(await claimPdfLedgerRow(db, user.id, period, ledger, now))) return { status: 'duplicate' };
 
   const limit = PLANS[planId].monthlyImages;
   const allowance = await db.batch([
     db.prepare(OPEN_PERIOD_SQL).bind(user.id, period.start, period.end),
-    db.prepare(COUNT_PDF_IN_ALLOWANCE_SQL).bind(user.id, period.start, limit, pdf.units),
-    db.prepare(TAKE_BLOCK_FROM_ALLOWANCE_SQL).bind(user.id, period.start, limit, pdf.units),
+    db.prepare(LABEL_PDF_LEDGER_PLAN_SQL).bind(user.id, period.start, limit, pdf.units, pdf.cacheKey, now),
+    db.prepare(COUNT_PAID_PDF_IN_ALLOWANCE_SQL).bind(user.id, period.start, limit, pdf.units, pdf.cacheKey, now),
+    db.prepare(TAKE_PAID_BLOCK_FROM_ALLOWANCE_SQL).bind(user.id, period.start, limit, pdf.units, pdf.cacheKey, now),
     countersStatement(db, user.id, period, now),
   ]);
-  const taken = rowsOf<AllowanceRow>(allowance, 2)[0];
+  const taken = rowsOf<AllowanceRow>(allowance, 3)[0];
   if (taken) {
     const thresholds = crossedThresholds(taken);
     const crossed90 = thresholds.crossed90 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period, thresholds.limit));
     const crossed100 = thresholds.crossed100 && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, user.id, period, thresholds.limit));
-    return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, countersFrom(allowance, 3)), crossed90, crossed100 };
+    return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, countersFrom(allowance, 4)), crossed90, crossed100 };
   }
 
   const topup = await db.batch([
-    db.prepare(LABEL_PDF_LEDGER_TOPUP_SQL).bind(user.id, now, pdf.cacheKey, pdf.units),
-    db.prepare(COUNT_BLOCK_TOPUP_USE_SQL).bind(user.id, now, period.start, pdf.units),
-    db.prepare(COUNT_PDF_FROM_TOPUP_SQL).bind(user.id, now, period.start, pdf.units),
-    db.prepare(TAKE_BLOCK_FROM_TOPUP_SQL).bind(user.id, now, period.start, pdf.units),
+    db.prepare(LABEL_PDF_LEDGER_TOPUP_PAID_SQL).bind(user.id, now, period.start, pdf.units, pdf.cacheKey),
+    db.prepare(COUNT_PAID_BLOCK_TOPUP_USE_SQL).bind(user.id, now, period.start, pdf.units, pdf.cacheKey),
+    db.prepare(COUNT_PAID_PDF_FROM_TOPUP_SQL).bind(user.id, now, period.start, pdf.units, pdf.cacheKey),
+    db.prepare(TAKE_PAID_BLOCK_FROM_TOPUP_SQL).bind(user.id, now, period.start, pdf.units, pdf.cacheKey),
     countersStatement(db, user.id, period, now),
   ]);
   const usage = summarize(planId, period, countersFrom(topup, 4));
   if (topup[3]?.meta.changes === 1) return { status: 'charged', chargedTo: 'topup', usage, crossed90: false, crossed100: false };
 
-  await run(db, RELEASE_LEDGER_SQL, pdf.cacheKey, user.id, now);
+  await run(db, RELEASE_PDF_LEDGER_SQL, pdf.cacheKey, user.id, now);
   return { status: 'quota_exceeded', usage };
+}
+
+/** The ledger row of a PDF as the duplicate path reads it: whether it is paid, and for how long. */
+export interface PdfLedgerState {
+  charged_to: 'plan' | 'topup' | 'pending';
+  created_at: number;
+  expires_at: number;
+}
+
+export function readPdfLedger(db: D1Database, userId: string, cacheKey: string): Promise<PdfLedgerState | null> {
+  return first<PdfLedgerState>(db, 'SELECT charged_to, created_at, expires_at FROM renders WHERE cache_key = ?1 AND user_id = ?2', cacheKey, userId);
 }
 
 /**

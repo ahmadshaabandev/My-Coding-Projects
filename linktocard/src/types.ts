@@ -184,7 +184,8 @@ export interface RenderRow {
   format: ImageFormat | 'pdf';
   bytes: number;
   r2_key: string;
-  charged_to: 'plan' | 'topup';
+  /** 'pending' only for a PDF row whose charge is in progress (src/lib/quota.ts chargePdf). */
+  charged_to: 'plan' | 'topup' | 'pending';
   period_start: number;
   created_at: number;
   expires_at: number;
@@ -221,6 +222,8 @@ export interface BrowserUsageRow {
   status: number;
   /** X-Browser-Ms-Used; null when the browser did not report it. */
   browser_ms: number | null;
+  /** How long the call took, measured by the Worker; what the alarm and the brake count when browser_ms is null. */
+  wall_ms: number | null;
   /** Pages of the PDF it returned; null without a readable PDF. */
   pages: number | null;
   created_at: number;

@@ -25,11 +25,12 @@ import { randomId, sha256Hex } from '../lib/crypto';
 import { quotaWarningEmail, sendEmail } from '../lib/email';
 import { ApiError } from '../lib/errors';
 import { etagFor, imageMaxAge, iso, usageJson, type Background } from '../lib/http';
-import { chargePdf, pdfCapacity } from '../lib/quota';
+import { chargePdf, pdfCapacity, PDF_PENDING_STALE_MS, readPdfLedger, type ChargeResult } from '../lib/quota';
 import { enforceRateLimit } from '../lib/rate-limit';
 import type { Env, TemplateRow, UsageSummary, UserRow } from '../types';
 import { inlineRemoteAssets } from './assets';
 import { bundledFontFaces } from './fonts';
+import { assertFailedRenderAllowance, assertFreeBrowserCapacity, noteUnchargedRender } from './guard';
 import { contentDisposition, headerFooter, parseFormat, parseLandscape, parseMargin, withMarkRoom } from './page';
 import { printPdf, type PrintRequest } from './render';
 import { preparePdfDocument, preparePdfFragment, type PdfData, type PreparedPdfHtml } from './template';
@@ -175,22 +176,29 @@ export interface RenderAttempt {
 /** Steps 4 of the module comment: pure, throws template_error / invalid_request before anything is downloaded. */
 export function preparePdf(job: PdfJob): PreparedPdf {
   const document = preparePdfDocument({ html: job.template.html, css: job.template.css, data: job.data }, { fontFaces: bundledFontFaces });
-  const header = job.header === null ? null : preparePdfFragment(job.header, job.data, 'header');
-  const footer = job.footer === null ? null : preparePdfFragment(job.footer, job.data, 'footer');
+  // Next to the free mark, header and footer stylesheets are dropped (src/pdf/page.ts headerFooter).
+  const header = job.header === null ? null : preparePdfFragment(job.header, job.data, 'header', { styles: !job.mark });
+  const footer = job.footer === null ? null : preparePdfFragment(job.footer, job.data, 'footer', { styles: !job.mark });
   const warnings = [...new Set([document, header, footer].flatMap((part) => part?.warnings ?? []))];
   return { job, document, header, footer, warnings };
 }
 
-async function recordBrowserUsage(db: D1Database, attempt: RenderAttempt, outcome: { status: number; browserMs: number | null; pages: number | null }, now: number): Promise<void> {
+async function recordBrowserUsage(
+  db: D1Database,
+  attempt: RenderAttempt,
+  outcome: { status: number; browserMs: number | null; wallMs: number; pages: number | null },
+  now: number,
+): Promise<void> {
   try {
     await run(
       db,
-      'INSERT INTO browser_usage (id, user_id, source, status, browser_ms, pages, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
+      'INSERT INTO browser_usage (id, user_id, source, status, browser_ms, wall_ms, pages, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)',
       randomId('bu'),
       attempt.userId,
       attempt.source,
       outcome.status,
       outcome.browserMs,
+      outcome.wallMs,
       outcome.pages,
       now,
     );
@@ -199,6 +207,12 @@ async function recordBrowserUsage(db: D1Database, attempt: RenderAttempt, outcom
     console.error('recording browser usage failed:', error);
   }
 }
+
+/**
+ * Characters the inlined images may add to the document, counted at every use: PDF.maxAssetBytes
+ * as base64 (4/3), plus room for the "data:image/...;base64," prefix of each of them.
+ */
+const MAX_INLINED_CHARS = Math.ceil((PDF.maxAssetBytes * 4) / 3) + 64 * 1024;
 
 /** Steps 5-7: inline the images, print once, record the browser time. Throws the render's error after recording it. */
 export async function printPrepared(env: Env, prepared: PreparedPdf, attempt: RenderAttempt, now: number): Promise<RenderedPdf> {
@@ -212,14 +226,29 @@ export async function printPrepared(env: Env, prepared: PreparedPdf, attempt: Re
   }
   const inlined = await inlineRemoteAssets(urls, { appUrl: env.APP_URL });
   const resolve = (url: string): string | undefined => inlined.get(url);
+  // The images are within PDF.maxAssetBytes once each; every further use repeats the whole
+  // data: URI in the document, so the copies are counted against the same budget before the
+  // document is built (one image in a 200-row loop would otherwise make it hundreds of MB).
+  const inlinedChars = parts.reduce((sum, part) => sum + (part?.inlinedChars(resolve) ?? 0), 0);
+  if (inlinedChars > MAX_INLINED_CHARS) {
+    throw new ApiError(
+      'template_error',
+      `The images in this document, counted every time they are used, add up to more than ${PDF.maxAssetBytes / (1024 * 1024)} MB. Use a repeated image fewer times, or a smaller one.`,
+      { details: { limit: PDF.maxAssetBytes } },
+    );
+  }
   const request: PrintRequest = {
     html: prepared.document.render(resolve),
     setup: prepared.job.setup,
-    headerFooter: headerFooter(prepared.header?.render(resolve) ?? null, prepared.footer?.render(resolve) ?? null, prepared.job.mark),
+    headerFooter: headerFooter(prepared.header?.render(resolve) ?? null, prepared.footer?.render(resolve) ?? null, prepared.job.mark, prepared.job.setup.margin),
   };
   const outcome = await printPdf(env.BROWSER, request);
   await recordBrowserUsage(env.DB, attempt, outcome, now);
-  if (outcome.error) throw outcome.error;
+  if (outcome.error) {
+    // A busy renderer (429) did no work for us; anything else used browser time for nothing.
+    if (attempt.userId !== null && outcome.status !== 429) await noteUnchargedRender(env, attempt.userId, now);
+    throw outcome.error;
+  }
   return { bytes: outcome.bytes!, pages: outcome.pages!, browserMs: outcome.browserMs, warnings: prepared.warnings };
 }
 
@@ -398,10 +427,18 @@ export interface PdfResult {
   usage: UsageSummary | null;
 }
 
+/** Waits (ms) between reads of a ledger row that an identical request holds unpaid. */
+const PENDING_WAITS_MS = [0, 50, 100, 150, 200, 300, 400, 500];
+const PENDING_RETRY_SECONDS = 2;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function renderAndCharge(env: Env, background: Background, request: PdfRequest, cacheKey: string, now: number): Promise<PdfResult> {
   const { user, job } = request;
   const capacity = await pdfCapacity(env.DB, user, now);
   if (capacity.largestBlock < PDF.baseUnits) throw pdfQuotaError(env, capacity.usage, PDF.baseUnits, true);
+  await assertFailedRenderAllowance(env, user.id, capacity.usage.plan, now);
+  if (capacity.usage.plan === 'free') await assertFreeBrowserCapacity(env, now);
   if (request.renderRateLimitKey) await enforceRateLimit(env, 'RL_KEY', request.renderRateLimitKey);
   if (capacity.usage.plan === 'free') await enforceRateLimit(env, 'RL_PDF_FREE', user.id);
 
@@ -420,41 +457,57 @@ async function renderAndCharge(env: Env, background: Background, request: PdfReq
     createdAt: now,
     expiresAt: now + ttlMs,
   };
-  const charge = await chargePdf(
-    env.DB,
-    user,
-    { cacheKey, siteId: request.siteId, source: request.source, template: job.template.label, bytes: pdf.bytes, r2Key: pdfR2Key(user.id, cacheKey), ttlMs, units },
-    now,
-  );
-  // The browser time is already recorded; the PDF is not handed out.
-  if (charge.status === 'quota_exceeded') throw pdfQuotaError(env, charge.usage, units, false);
+  const charge = (): Promise<ChargeResult> =>
+    chargePdf(
+      env.DB,
+      user,
+      { cacheKey, siteId: request.siteId, source: request.source, template: job.template.label, bytes: pdf.bytes, r2Key: pdfR2Key(user.id, cacheKey), ttlMs, units },
+      now,
+    );
 
   // A failed write must not fail a PDF that was paid for: the next request finds no object,
   // renders again and is told "duplicate" by the ledger.
   const store = (): Promise<void> => storePdf(env.BUCKET, pdf, rendered.bytes).catch((error: unknown) => console.error(`storing ${cacheKey}.pdf failed:`, error));
   const fresh = { pdf, cached: false, body: rendered.bytes, warnings: rendered.warnings };
-
-  if (charge.status === 'charged') {
+  const settle = async (result: Exclude<ChargeResult, { status: 'duplicate' }>): Promise<PdfResult> => {
+    if (result.status === 'quota_exceeded') {
+      // The browser time is already recorded; the PDF is not handed out.
+      await noteUnchargedRender(env, user.id, now);
+      throw pdfQuotaError(env, result.usage, units, false);
+    }
     await store();
-    const percent = charge.crossed100 ? 100 : charge.crossed90 ? 90 : null;
-    if (percent !== null) background(sendQuotaEmail(env, user, percent, charge.usage));
-    return { ...fresh, creditsUsed: units, usage: charge.usage };
-  }
+    const percent = result.crossed100 ? 100 : result.crossed90 ? 90 : null;
+    if (percent !== null) background(sendQuotaEmail(env, user, percent, result.usage));
+    return { ...fresh, creditsUsed: units, usage: result.usage };
+  };
 
-  // duplicate: the ledger already covers this PDF (a concurrent request, or an earlier charge
-  // whose object never reached R2). Serve it without charging and make sure the object exists.
-  const ledger = await first<{ created_at: number; expires_at: number }>(
-    env.DB,
-    'SELECT created_at, expires_at FROM renders WHERE cache_key = ?1 AND user_id = ?2',
-    cacheKey,
-    user.id,
-  );
-  if (ledger && ledger.expires_at > now) {
-    pdf.createdAt = ledger.created_at;
-    pdf.expiresAt = ledger.expires_at;
-    if (!(await readStoredPdf(env.BUCKET, user.id, cacheKey, now, false))) await store();
+  const initial = await charge();
+  if (initial.status !== 'duplicate') return settle(initial);
+
+  // duplicate: a ledger row already exists for this PDF. Only a PAID row may be served: a
+  // pending one belongs to an identical request that is charging right now and may find that
+  // the block does not fit (then it releases the row, and this request charges for itself).
+  for (const wait of PENDING_WAITS_MS) {
+    if (wait > 0) await sleep(wait);
+    const ledger = await readPdfLedger(env.DB, user.id, cacheKey);
+    const live = ledger !== null && ledger.expires_at > now;
+    if (live && ledger.charged_to !== 'pending') {
+      // Paid by a concurrent request, or by an earlier one whose object never reached R2.
+      pdf.createdAt = ledger.created_at;
+      pdf.expiresAt = ledger.expires_at;
+      if (!(await readStoredPdf(env.BUCKET, user.id, cacheKey, now, false))) await store();
+      return { ...fresh, creditsUsed: 0, usage: null };
+    }
+    if (!live || ledger.created_at < now - PDF_PENDING_STALE_MS) {
+      // Released, expired or abandoned: this request charges the PDF itself.
+      const again = await charge();
+      if (again.status !== 'duplicate') return settle(again);
+    }
   }
-  return { ...fresh, creditsUsed: 0, usage: null };
+  throw new ApiError('rate_limited', 'An identical PDF is being made by another request right now. Retry in a few seconds.', {
+    headers: { 'retry-after': String(PENDING_RETRY_SECONDS) },
+    details: { retry_after_seconds: PENDING_RETRY_SECONDS },
+  });
 }
 
 /** The PDF for a request: from R2 when it is stored, otherwise rendered, charged and stored. */

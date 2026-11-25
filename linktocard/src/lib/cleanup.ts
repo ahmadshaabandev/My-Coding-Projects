@@ -8,7 +8,7 @@
  * from growing forever.
  */
 import { DAY_MS, PDF } from '../config';
-import { all, run } from '../db/client';
+import { all, isMissingTableError, run } from '../db/client';
 import type { Env } from '../types';
 
 export const CLEANUP_LIMITS = {
@@ -187,12 +187,20 @@ async function deleteExpiredRows(db: D1Database, table: 'og_checks' | 'tool_usag
 async function deleteOldBrowserUsage(db: D1Database, now: number, limit: number): Promise<number> {
   let deleted = 0;
   while (deleted < CLEANUP_LIMITS.browserUsageDeletesPerRun) {
-    const changes = await run(
-      db,
-      'DELETE FROM browser_usage WHERE id IN (SELECT id FROM browser_usage WHERE created_at <= ?1 LIMIT ?2)',
-      now - PDF.browserUsageRetentionDays * DAY_MS,
-      Math.min(limit, CLEANUP_LIMITS.browserUsageDeletesPerRun - deleted),
-    );
+    let changes: number;
+    try {
+      changes = await run(
+        db,
+        'DELETE FROM browser_usage WHERE id IN (SELECT id FROM browser_usage WHERE created_at <= ?1 LIMIT ?2)',
+        now - PDF.browserUsageRetentionDays * DAY_MS,
+        Math.min(limit, CLEANUP_LIMITS.browserUsageDeletesPerRun - deleted),
+      );
+    } catch (error) {
+      // Deployed before migration 0006: nothing to clean, and the rest of the report still counts.
+      if (!isMissingTableError(error)) throw error;
+      console.error('browser_usage is missing: apply migration 0006_pdf.sql');
+      return deleted;
+    }
     deleted += changes;
     if (changes < limit) break;
   }

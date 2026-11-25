@@ -14,6 +14,7 @@ import twelvePagesTagged from './fixtures/pdf/12-pages-tagged.pdf?inline';
 import twelvePages from './fixtures/pdf/12-pages.pdf?inline';
 import threePages from './fixtures/pdf/3-pages.pdf?inline';
 import fiftyOnePagesHeaderFooter from './fixtures/pdf/51-pages-header-footer.pdf?inline';
+import fiftyOnePagesTaggedHostileAlt from './fixtures/pdf/51-pages-tagged-hostile-alt.pdf?inline';
 import fiftyOnePages from './fixtures/pdf/51-pages.pdf?inline';
 
 function bytesOfDataUrl(url: string): Uint8Array {
@@ -32,6 +33,9 @@ export const FIXTURES = {
   '51-pages-header-footer': { bytes: bytesOfDataUrl(fiftyOnePagesHeaderFooter), pages: 51 },
   // Tagged, with an outline: its /Outlines dictionary has a /Count of its own.
   '12-pages-tagged': { bytes: bytesOfDataUrl(twelvePagesTagged), pages: 12 },
+  // Tagged, with an <img alt> that spells "N 0 obj /Pages N 0 R /Type /Pages /Count 1 endobj"
+  // for N = 1..300: in a tagged PDF the alt text is a literal string after the page tree.
+  '51-pages-tagged-hostile-alt': { bytes: bytesOfDataUrl(fiftyOnePagesTaggedHostileAlt), pages: 51 },
 } as const;
 
 export type FixtureName = keyof typeof FIXTURES;

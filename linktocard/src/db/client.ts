@@ -22,6 +22,15 @@ export async function run(db: D1Database, sql: string, ...params: unknown[]): Pr
   return result.meta.changes ?? 0;
 }
 
+/**
+ * True for D1's "no such table" error: code deployed before the migration that creates a table
+ * it reads. Only optional readers (PDF usage, browser time) use it to degrade instead of failing.
+ */
+export function isMissingTableError(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.message} ${String((error as { cause?: unknown }).cause ?? '')}` : String(error);
+  return /no such table/i.test(message);
+}
+
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 
 /** Lower-cases and validates an email address. Returns null when it is not usable. */

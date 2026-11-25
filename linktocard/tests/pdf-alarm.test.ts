@@ -74,7 +74,7 @@ describe('runPdfBudgetAlarm', () => {
     const report = await runPdfBudgetAlarm(env, NOW);
     expect(report).toMatchObject({ browserMs: 21.5 * 60_000, attempts: 3, pdfs: 2, over: true, sent: true });
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ to: env.SUPPORT_EMAIL, subject: PDF_BUDGET_ALARM_SUBJECT, idempotencyKey: `pdf-budget-${Math.floor(NOW / DAY_MS)}` });
+    expect(sent[0]).toMatchObject({ to: env.SUPPORT_EMAIL, subject: PDF_BUDGET_ALARM_SUBJECT, idempotencyKey: `pdf-budget-${env.ENVIRONMENT}-${Math.floor(NOW / DAY_MS)}` });
     expect(sent[0]!.subject).toBe('Link To Card: PDF browser time over budget');
     expect(sent[0]!.text).toContain('used 21.5 minutes of Browser Run time');
     expect(sent[0]!.text).toContain(`The daily budget is ${(PDF.dailyBrowserMsBudget / 60_000).toFixed(1)} minutes`);
@@ -83,6 +83,24 @@ describe('runPdfBudgetAlarm', () => {
     // Later the same UTC day: no second email.
     expect(await runPdfBudgetAlarm(env, NOW + 6 * 3_600_000)).toMatchObject({ over: true, sent: false, alreadySent: true });
     expect(sent).toHaveLength(1);
+  });
+
+  it('counts attempts Browser Run reported no time for (timeouts, 5xx) at their measured length', async () => {
+    const sent = mockResend();
+    await usage(NOW - 60_000, 60_000, 1);
+    for (let i = 0; i < 3; i++) {
+      await run(
+        env.DB,
+        "INSERT INTO browser_usage (id, user_id, source, status, browser_ms, wall_ms, pages, created_at) VALUES (?1, NULL, 'api', 500, NULL, ?2, NULL, ?3)",
+        `bu_wall${i}`,
+        PDF.dailyBrowserMsBudget / 2,
+        NOW - 120_000,
+      );
+    }
+    const report = await runPdfBudgetAlarm(env, NOW);
+    expect(report).toMatchObject({ browserMs: 60_000 + 1.5 * PDF.dailyBrowserMsBudget, attempts: 4, pdfs: 1, unreported: 3, over: true, sent: true });
+    expect(sent[0]!.text).toContain('For 3 of the attempts Browser Run reported no time');
+    expect(sent[0]!.text).toContain(`PDF rendering on ${env.ENVIRONMENT} used`);
   });
 
   it('sends again on the next UTC day if the usage is still over', async () => {

@@ -69,6 +69,11 @@ export interface PreparedPdfHtml {
   remoteUrls: string[];
   warnings: string[];
   render(resolve: (url: string) => string | undefined): string;
+  /**
+   * Characters render() writes in place of remote URLs, counted at every place a URL is used:
+   * one image in a {{#items}} loop of 200 rows is 200 copies of its data: URI.
+   */
+  inlinedChars(resolve: (url: string) => string | undefined): number;
 }
 
 type Attributes = Record<string, string>;
@@ -570,13 +575,36 @@ class AssetTokens {
     return `ltcasset${this.nonce}x${index}x`;
   };
 
+  private pattern(): RegExp {
+    return new RegExp(`ltcasset${this.nonce}x(\\d+)x`, 'g');
+  }
+
+  private value(index: number, resolve: (url: string) => string | undefined): string {
+    const ref = this.refs[index]!;
+    const value = resolve(ref.url) ?? ref.url;
+    return ref.context === 'attribute' ? escapeAttributeText(value) : value;
+  }
+
   replace(html: string, resolve: (url: string) => string | undefined): string {
     if (this.refs.length === 0) return html;
-    return html.replace(new RegExp(`ltcasset${this.nonce}x(\\d+)x`, 'g'), (_match, index: string) => {
-      const ref = this.refs[Number(index)]!;
-      const value = resolve(ref.url) ?? ref.url;
-      return ref.context === 'attribute' ? escapeAttributeText(value) : value;
-    });
+    return html.replace(this.pattern(), (_match, index: string) => this.value(Number(index), resolve));
+  }
+
+  /** What replace() would write for every token in `html`, in characters, without building it. */
+  inlinedChars(html: string, resolve: (url: string) => string | undefined): number {
+    if (this.refs.length === 0) return 0;
+    const lengths = new Map<number, number>();
+    let total = 0;
+    for (const match of html.matchAll(this.pattern())) {
+      const index = Number(match[1]);
+      let length = lengths.get(index);
+      if (length === undefined) {
+        length = this.value(index, resolve).length;
+        lengths.set(index, length);
+      }
+      total += length;
+    }
+    return total;
   }
 }
 
@@ -641,6 +669,7 @@ export function preparePdfDocument(input: PdfDocumentInput, options: PdfBuildOpt
     remoteUrls: [...tokens.urls],
     warnings: [...warnings],
     render: (resolve) => tokens.replace(document, resolve),
+    inlinedChars: (resolve) => tokens.inlinedChars(document, resolve),
   };
 }
 
@@ -649,19 +678,32 @@ export function preparePdfDocument(input: PdfDocumentInput, options: PdfBuildOpt
  * same sanitising and placeholders as the document. The browser renders it as a separate small
  * document, so its <style> elements are kept, moved to the top of the fragment. Chrome fills in
  * elements with the classes pageNumber, totalPages, date and title.
+ *
+ * `styles: false` (a PDF with the free mark) removes the <style> elements instead, with a
+ * warning: Chrome renders the header, the footer and the mark in one document, so a stylesheet
+ * there could hide the mark. Style attributes stay; src/pdf/page.ts contains what they draw.
  */
-export function preparePdfFragment(source: string, data: PdfData, what: 'header' | 'footer'): PreparedPdfHtml {
+export function preparePdfFragment(source: string, data: PdfData, what: 'header' | 'footer', options: { styles?: boolean } = {}): PreparedPdfHtml {
   assertSourceSize(`The ${what} template`, source, PDF.maxHeaderFooterBytes);
   const warnings = new Set<string>();
   const tokens = new AssetTokens();
   const css = newScope(new Set(), warnings, tokens);
   const parsed = parseTemplate(source, true, css.warn);
   const state: BindState = { css, elements: 0, chars: 0, text: [] };
-  const styles = parsed.styles.map((sheet) => sanitizeStylesheet(sheet, css)).filter((sheet) => sheet !== '');
+  const keepStyles = options.styles ?? true;
+  if (!keepStyles && parsed.styles.some((sheet) => sheet.trim() !== '')) {
+    css.warn(`<style> in the ${what} was removed: on the Free plan, style the header and footer with style="" attributes.`);
+  }
+  const styles = keepStyles ? parsed.styles.map((sheet) => sanitizeStylesheet(sheet, css)).filter((sheet) => sheet !== '') : [];
   const nodes: ChildNode[] = [];
   bindNodes(parsed.children, { data: validatePdfData(data), item: null }, state, nodes);
   const html = `${styles.length > 0 ? `<style>${styles.join('\n')}</style>` : ''}${getOuterHTML(nodes, SERIALIZE)}`;
-  return { remoteUrls: [...tokens.urls], warnings: [...warnings], render: (resolve) => tokens.replace(html, resolve) };
+  return {
+    remoteUrls: [...tokens.urls],
+    warnings: [...warnings],
+    render: (resolve) => tokens.replace(html, resolve),
+    inlinedChars: (resolve) => tokens.inlinedChars(html, resolve),
+  };
 }
 
 /**

@@ -323,6 +323,15 @@ describe.each(PDF_TEMPLATES.map((template) => [template.id, template] as const))
       const text = `${template.html}\n${template.css}`.toLowerCase()
       for (const word of OFFICIAL_MARKS) expect(text, word).not.toContain(word)
     })
+
+    it('scales down on A5, where the 32pt title broke inside its words ("Certifica / te of")', () => {
+      // When Chrome prints, the media width is the page area: A5 landscape is 210 mm, A4 and Letter
+      // landscape are wider than 230 mm and keep the full-size design.
+      const small = /@media \(max-width: 230mm\) \{([\s\S]*?)\n\}/.exec(template.css)?.[1] ?? ''
+      expect(small).toMatch(/\.title \{ font-size: 22pt; \}/)
+      expect(small).toMatch(/\.recipient \{ font-size: 30pt;/)
+      expect(template.css).toMatch(/\.title \{[^}]*font-size: 32pt;/)
+    })
   }
 
   if ((TABLE_TEMPLATES as readonly string[]).includes(id)) {
@@ -347,12 +356,20 @@ describe.each(PDF_TEMPLATES.map((template) => [template.id, template] as const))
   }
 })
 
+/**
+ * The document with the "}}" that closes a nested CSS block (an @media rule ends with its last
+ * rule's "}" and its own) taken out of the stylesheet, so that only placeholders match /}}/.
+ */
+function withoutNestedCss(document: string): string {
+  return document.replace(/<style>[\s\S]*?<\/style>/, (style) => style.replace(/;\}\}/g, ';}'))
+}
+
 describe('PDF starter templates built by the engine', () => {
   describe.each(PDF_TEMPLATES.map((template) => [template.id, template] as const))('%s', (id, template) => {
     it('fills in every sample value and leaves no placeholder or marker', () => {
       const document = build(template, template.sample)
       expect(document.startsWith('<!doctype html><html><head><meta charset="utf-8"><style>')).toBe(true)
-      expect(document).not.toMatch(/\{\{|\}\}/)
+      expect(withoutNestedCss(document)).not.toMatch(/\{\{|\}\}/)
       const parsed = parseDocument(document)
       const text = textContent(parsed.children)
       for (const [key, value] of flatSampleValues(template)) {
@@ -381,7 +398,7 @@ describe('PDF starter templates built by the engine', () => {
 
     it('builds with only the required keys, leaving the optional ones out without a trace', () => {
       const document = build(template, requiredOnly(template))
-      expect(document).not.toMatch(/\{\{|\}\}|undefined|null|NaN/)
+      expect(withoutNestedCss(document)).not.toMatch(/\{\{|\}\}|undefined|null|NaN/)
       for (const field of textFields(template)) {
         if (field.required) continue
         expect(document, field.key).not.toContain(escapeText(String(template.sample[field.key])))

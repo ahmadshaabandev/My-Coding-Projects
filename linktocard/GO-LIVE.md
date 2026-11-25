@@ -130,6 +130,13 @@ domain.
 
 ## 4. Production deploy
 
+> **Before the next production deploy, whatever it is for** (opening checkout in section 6,
+> Turnstile in 9b, a copy fix): apply every pending migration first,
+> `npx wrangler d1 migrations apply DB --env production --remote`. Production was set up at
+> 0001-0004; the code now also reads `0005_og_checks.sql` (OG checker) and `0006_pdf.sql`
+> (`pdf_usage`, `browser_usage`), even with PDFs switched off. Both only create tables and
+> indexes. `npx wrangler d1 migrations list DB --env production --remote` shows what is pending.
+
 **Done on 2026-11-23**, with checkout off until live Paddle is approved:
 
 - D1 `linktocard-production` (migrations 0001-0004), R2 bucket `linktocard-production` with
@@ -236,8 +243,9 @@ Left to do, in order:
       check Apple Pay's status for the domain on the same page (it read `unverified` while in review).
 - [ ] After approval: set the default payment link to `https://linktocard.com/pricing`
       (`PATCH /settings/checkout-url`, or Checkout > Checkout settings).
-- [ ] After approval: set `CHECKOUT_ENABLED = "true"` in `[env.production.vars]` and
-      `npm run deploy:production`. The buttons stop saying "Coming soon".
+- [ ] After approval: apply pending migrations (the note at the top of section 4), set
+      `CHECKOUT_ENABLED = "true"` in `[env.production.vars]` and `npm run deploy:production`.
+      The buttons stop saying "Coming soon".
 - [ ] Bank details: Business account > Payouts > Payout settings.
 - [ ] Delete the temporary setup key once nothing more is needed from it.
 
@@ -310,7 +318,8 @@ visitors are asked to confirm they are human from the 6th check in an hour.
 - [ ] Put the site key (public) in `wrangler.toml` under `[env.production.vars]` as
       `TURNSTILE_SITE_KEY = "..."`.
 - [ ] Set the secret key: `npx wrangler secret put TURNSTILE_SECRET_KEY --env production`.
-- [ ] `npm run deploy:production`. The site's Content-Security-Policy already allows
+- [ ] Apply pending migrations (the note at the top of section 4), then
+      `npm run deploy:production`. The site's Content-Security-Policy already allows
       `https://challenges.cloudflare.com`.
 
 ## 10. PDF documents (staging first; production only after Ahmad approves)
@@ -335,14 +344,26 @@ Staging, for the first real renders:
       (a log line "page count cannot be read" means every PDF fails with 500).
 - [ ] Browser time is recorded per attempt:
       `npx wrangler d1 execute DB --env staging --remote --command "SELECT source, status, browser_ms, pages FROM browser_usage ORDER BY created_at DESC LIMIT 10"`
+- [ ] The browser makes no request of its own: put an image at an address whose requests you
+      can see (a request-logging service, or a file on a server you control) in a document's
+      `<img src>` and in a CSS `url()`, make the PDF, and check the log: each address was
+      requested once, by the Worker's image fetcher, and never by a browser (no Chrome
+      User-Agent). A browser request would mean `allowRequestPattern` does not hold.
 - [ ] Optional, to see the budget alarm once: set `PDF_DAILY_BROWSER_MS_BUDGET = "1"` under
       `[env.staging.vars]`, deploy, make one PDF, and expect the email "Link To Card: PDF browser
-      time over budget" at `SUPPORT_EMAIL` after the next daily cron (03:17 UTC). Remove the line
-      and deploy again.
+      time over budget" at `SUPPORT_EMAIL` after the next daily cron (03:17 UTC). A budget that
+      low also engages the automatic brake (below): Free-plan and free-tool PDFs on staging answer
+      429 until the line is removed. Remove the line and deploy again.
+- [ ] Staging is public (workers.dev) with PDFs on as soon as it is deployed: the limits below
+      apply there too, and its browser time is billed like production's.
 
 Production, only when you approve PDFs:
 
-- [ ] `npx wrangler d1 migrations apply DB --env production --remote`.
+- [ ] Migrations: already applied before an earlier deploy (the note at the top of section 4);
+      `npx wrangler d1 migrations list DB --env production --remote` should list nothing.
+- [ ] Turnstile first (section 9b): `TURNSTILE_SECRET_KEY` must be set on production before
+      PDFs go on. Without it the free tools are limited only per IPv4 address or IPv6 /64, and
+      one visitor with many IPv6 networks is not limited at all.
 - [ ] `wrangler.toml`, `[env.production.vars]`: `PDF_ENABLED = "true"`.
 - [ ] `package.json`: in `deploy:production`, change `SITE_PDF=off` to `SITE_PDF=on`, and update
       the test in `tests/node/site-features.test.ts` that pins that script.
@@ -353,7 +374,18 @@ Production, only when you approve PDFs:
 - [ ] Turnstile (section 9b) also covers the free PDF tools: with `TURNSTILE_SECRET_KEY` set,
       they ask for it after `PDF.toolTurnstileAfterPdfs` PDFs per client and hour.
 - [ ] Cost: Browser Run is billed by browser time beyond what Workers Paid includes (check
-      Cloudflare's current Browser Run pricing). The daily cron emails `SUPPORT_EMAIL` once per
-      UTC day when the last 24 hours went over `PDF_DAILY_BROWSER_MS_BUDGET` (default
-      `PDF.dailyBrowserMsBudget` in `src/config.ts`). It is an alarm, not a cap: to stop PDFs,
-      set `PDF_ENABLED = "false"` and deploy.
+      Cloudflare's current Browser Run pricing). What bounds it, all in `src/config.ts` `PDF`:
+      - The daily cron emails `SUPPORT_EMAIL` once per UTC day when the last 24 hours went over
+        `PDF_DAILY_BROWSER_MS_BUDGET` (default `PDF.dailyBrowserMsBudget`). Attempts Browser Run
+        reports no time for (timeouts, errors) count with their measured length.
+      - An account whose renders keep failing without a charge (too many pages, timeouts,
+        errors, not enough images) is stopped for the rest of the UTC day after
+        `PDF.maxFailedRendersPerDay` such renders (429).
+      - The automatic brake: while the last 24 hours used more than
+        `PDF.freeBrakeBudgetMultiple` times the daily budget, Free-plan renders and the free
+        tools answer 429; Starter and Pro keep rendering, and stored PDFs keep being served.
+        Lowering `PDF_DAILY_BROWSER_MS_BUDGET` and deploying engages it on purpose.
+      - To stop PDFs completely, set `PDF_ENABLED = "false"` and deploy. That is a full stop:
+        stored PDFs (`/i/...pdf`) and every signed `/v1/pdf` link, including PDFs customers
+        have already paid for and invoice links already emailed, answer 503 until it is
+        switched back.

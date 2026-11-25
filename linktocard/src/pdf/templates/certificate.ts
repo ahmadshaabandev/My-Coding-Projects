@@ -84,7 +84,20 @@ h1, p { margin: 0; }
 .sign { flex: 0 1 78mm; min-width: 36mm; max-width: none; padding-top: 11mm; text-align: center; }
 .sign::before { content: ''; display: block; margin-bottom: 2.2mm; border-top: 0.9pt solid var(--ink); }
 .sign .role { color: var(--muted); }
-.id { text-align: right; }`;
+.id { text-align: right; }
+
+/* Small paper (A5 landscape is 210 mm wide; A4 and Letter are wider): smaller type and less
+   padding, so the default title does not break inside its words and the facts keep their room. */
+@media (max-width: 230mm) {
+  .title { font-size: 22pt; }
+  .recipient { font-size: 30pt; margin: 2.5mm 0 4mm; }
+  .recipient::after { margin-top: 4mm; }
+  .achievement { font-size: 12pt; }
+  .panel { padding: 11mm 9mm 11mm 11mm; }
+  .body { padding: 11mm 13mm 10mm 12mm; }
+  .award { padding: 4mm 0 6mm; }
+  .sign { padding-top: 7mm; }
+}`;
 
 export const certificate: PdfStarterTemplate = {
   id: 'certificate',

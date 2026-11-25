@@ -7,11 +7,17 @@
  *
  *   @import                          refused (template_error): CSS must come with the request
  *   @font-face with a non-data: url  refused (template_error): fonts are bundled or embedded
+ *   @page (anywhere, also nested)    dropped with a warning: paper size, orientation and margins
+ *                                    come from the request's "pdf" (Chrome would let @page
+ *                                    margins override them, and take room from the free mark)
  *   url(https://...)                 handed to the asset collector, which inlines it as data:
  *   url(#id), url(data:...)          kept
  *   any other url(...)               the declaration is dropped
  *   escapes that could spell url(    the declaration is dropped
  *   image-set("...") with strings    the declaration is dropped (strings there are URLs)
+ *   image-set() with var()           the declaration is dropped (var() can bring in such a string)
+ *   a string with a raw line break   refused (template_error): Chrome would end the string there
+ *                                    and read the rest as CSS the sanitiser never saw
  *   src("...")                       the declaration is dropped (its string is a URL)
  *
  * The browser call itself also allows only data: requests, so a gap here would show up as a
@@ -41,6 +47,8 @@ export interface CssScope {
 const SILENT_AT_RULES = new Set(['charset']);
 /** At-rules that name a resource, and are dropped (with a warning) because nothing may be fetched. */
 const DROPPED_AT_RULES = new Set(['namespace']);
+/** The page box is set by the request's "pdf" alone. */
+const PAGE_AT_RULE_WARNING = 'Page size, orientation and margins come from "pdf" (format, landscape, margin); the CSS @page rule was ignored.';
 /** The at-keyword: it ends at the first character that cannot be part of a name, so "@import'a.css'" is @import. */
 const AT_NAME = /^@([\w-]+)/;
 const URL_FUNCTION = /(^|[^\w-])url\(/gi;
@@ -56,7 +64,12 @@ function preview(text: string): string {
   return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
-/** The text with every string literal removed (escapes inside strings handled). */
+const isLineBreak = (ch: string | undefined): boolean => ch === '\n' || ch === '\r' || ch === '\f';
+
+/**
+ * The text with every string literal removed (escapes inside strings handled). Like CSS, a
+ * string ends at an unescaped line break (sanitizeStylesheet refuses such text beforehand).
+ */
 export function withoutStrings(text: string): string {
   let out = '';
   let i = 0;
@@ -64,8 +77,8 @@ export function withoutStrings(text: string): string {
     const ch = text[i]!;
     if (ch === '"' || ch === "'") {
       let j = i + 1;
-      while (j < text.length && text[j] !== ch) j += text[j] === '\\' ? 2 : 1;
-      i = j + 1;
+      while (j < text.length && text[j] !== ch && !isLineBreak(text[j])) j += text[j] === '\\' ? 2 : 1;
+      i = isLineBreak(text[j]) ? j : j + 1;
       out += '""';
       continue;
     }
@@ -73,6 +86,50 @@ export function withoutStrings(text: string): string {
     i++;
   }
   return out;
+}
+
+/**
+ * Refuses CSS with a "bad string": a quoted string with an unescaped line break before its
+ * closing quote. A browser ends the string at the line break and reads what follows as new
+ * declarations or rules, which the tokenizer here (shared with the card renderer) would read as
+ * part of one string - so the sanitiser and Chrome would disagree about what the CSS says.
+ */
+function assertNoBadStrings(css: string): void {
+  let i = 0;
+  while (i < css.length) {
+    const ch = css[i]!;
+    if (ch === '/' && css[i + 1] === '*') {
+      const end = css.indexOf('*/', i + 2);
+      i = end < 0 ? css.length : end + 2;
+      continue;
+    }
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    // An unquoted url(...) is one token up to its ")": a quote inside it does not start a string.
+    if ((ch === 'u' || ch === 'U') && /^url\(\s*[^\s"')]/i.test(css.slice(i, i + 6)) && !/[\w-]/.test(css[i - 1] ?? '')) {
+      const end = css.indexOf(')', i);
+      i = end < 0 ? css.length : end + 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] !== ch) {
+        if (isLineBreak(css[j])) {
+          throw new ApiError(
+            'template_error',
+            `A CSS string has a line break before its closing quote ("${preview(css.slice(i, j))}"). Close the quote on the same line; write \\A for a line break inside content.`,
+          );
+        }
+        // An escaped line break (also CR LF) continues the string.
+        j += css[j] === '\\' ? (css[j + 1] === '\r' && css[j + 2] === '\n' ? 3 : 2) : 1;
+      }
+      i = j + 1;
+      continue;
+    }
+    i++;
+  }
 }
 
 /**
@@ -98,6 +155,11 @@ function rewriteUrls(property: string, value: string, scope: CssScope, context: 
   }
   if (SRC_FUNCTION.test(bare)) {
     scope.warn(`src(...) in "${property}" is not supported and was removed; use url().`);
+    return undefined;
+  }
+  // image-set() takes plain strings as URLs, and var() could bring one in from a custom property.
+  if (/image-set\(/i.test(bare) && /var\(/i.test(bare)) {
+    scope.warn(`image-set() with var() in "${property}" is not supported and was removed; write the url() inside image-set().`);
     return undefined;
   }
   // Inside image-set() a plain string is a URL too. Without its url() tokens, a quote that is
@@ -179,6 +241,10 @@ function sanitizeNodes(nodes: readonly CssNode[], scope: CssScope, context: Asse
       scope.warn(`@${name} is not supported and was ignored.`);
       continue;
     }
+    if (name === 'page') {
+      scope.warn(PAGE_AT_RULE_WARNING);
+      continue;
+    }
     if (node.kind === 'statement') {
       out.push(node);
       continue;
@@ -196,13 +262,15 @@ export function styleElementText(css: string): string {
   return css.replace(/<\/(style)/gi, '<\\/$1');
 }
 
-/** A whole stylesheet, sanitised and serialised. Throws ApiError('template_error') for @import and external @font-face. */
+/** A whole stylesheet, sanitised and serialised. Throws ApiError('template_error') for @import, external @font-face and bad strings. */
 export function sanitizeStylesheet(css: string, scope: CssScope): string {
+  assertNoBadStrings(css);
   return styleElementText(serializeCss(sanitizeNodes(parseCss(css), scope, 'sheet', false)));
 }
 
 /** The value of a style="" attribute, sanitised; '' when nothing is left. */
 export function sanitizeInlineStyle(style: string, scope: CssScope): string {
+  assertNoBadStrings(style);
   const kept: string[] = [];
   for (const declaration of parseInlineStyle(style)) {
     const clean = sanitizeDeclaration(declaration, scope, 'attribute', false);
@@ -211,8 +279,13 @@ export function sanitizeInlineStyle(style: string, scope: CssScope): string {
   return kept.join(';');
 }
 
-/** True when an attribute value (not style) contains a url(...) that is not a #fragment. */
+/**
+ * True when an attribute value (not style) contains a url(...) that is not a #fragment. Chrome
+ * reads SVG presentation attributes (fill, mask, clip-path, marker-*, cursor) as CSS, where an
+ * escape can spell url( ("\\75rl("): a value with a backslash and a "(" counts as one too.
+ */
 export function hasExternalCssUrl(value: string): boolean {
+  if (value.includes('\\') && value.includes('(')) return true;
   if (!/url\(/i.test(value)) return false;
   const targets = cssUrls(value);
   if ((withoutStrings(value).match(URL_FUNCTION) ?? []).length !== targets.length) return true;

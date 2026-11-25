@@ -78,11 +78,11 @@ We may also disclose data if the law requires it, or if it is needed to protect 
 <!-- /feature:no-pdf -->
 <!-- feature:pdf -->
 - **Rendered images and PDF documents:** for the cache period of your plan, which is [[plan.free.cacheDays]] days on Free, [[plan.starter.cacheDays]] days on Starter and [[plan.pro.cacheDays]] days on Pro.
-- **PDFs from the free PDF tools:** not stored. The PDF goes straight back to your browser. The count of PDFs per IP address or network is kept until the end of that hour; the regular clean-up deletes it shortly afterwards.
+- **PDFs from the free PDF tools:** not stored. The PDF goes straight back to your browser. The count of PDFs per IP address or network is kept until the end of that hour; the daily clean-up then deletes it, normally within a day.
 - **Records of PDF renders** (when, which account if any, whether it worked, the pages and the browser time; no document content): [[pdf.browserUsageRetentionDays]] days.
 <!-- /feature:pdf -->
 - **Previews from the playground on the home page:** about one day.
-- **Open Graph checker results** (the address checked and the tags and measurements read from it): 10 minutes. The count of checks per IP address or network: until the end of that hour; per API key: until the end of that day (UTC). Expired entries are deleted by a regular clean-up shortly afterwards.
+- **Open Graph checker results** (the address checked and the tags and measurements read from it): 10 minutes. The count of checks per IP address or network: until the end of that hour; per API key: until the end of that day (UTC). Expired entries are deleted by the daily clean-up, normally within a day.
 - **Sign-in links:** valid for a few minutes, and usable once.
 - **Sessions:** 30 days, or until you sign out.
 - **Logs and security data,** including IP addresses: kept only for a short time, as needed for rate limiting, troubleshooting and security.

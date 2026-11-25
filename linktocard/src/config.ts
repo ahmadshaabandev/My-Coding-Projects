@@ -222,6 +222,18 @@ export const PDF = {
   maxFilenameChars: 120,
   /** Free PDF tools: PDFs per client and hour after which Turnstile is required (only when TURNSTILE_SECRET_KEY is set). */
   toolTurnstileAfterPdfs: 2,
+  /**
+   * Renders per account and UTC day that reach the browser and end without a charged PDF (too
+   * many pages, a timeout, a browser error, not enough images left). Past it, the account's new
+   * renders answer 429 until the day ends; stored PDFs are still served (src/pdf/guard.ts).
+   */
+  maxFailedRendersPerDay: { free: 20, paid: 200 },
+  /**
+   * Automatic brake: while all PDF renders of the last 24 hours used more than this many daily
+   * budgets of browser time (PDF_DAILY_BROWSER_MS_BUDGET or dailyBrowserMsBudget), Free-plan
+   * renders and the free tools answer 429. Paid plans keep rendering (src/pdf/guard.ts).
+   */
+  freeBrakeBudgetMultiple: 5,
 } as const;
 
 export type PdfFormat = (typeof PDF.formats)[number];

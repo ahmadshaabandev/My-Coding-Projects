@@ -46,6 +46,8 @@ describe('quickActionOptions', () => {
         pageRanges: `1-${PDF.maxPages + 1}`,
         timeout: PDF.renderTimeoutMs,
         preferCSSPageSize: false,
+        tagged: false,
+        outline: false,
       },
     });
   });
@@ -65,6 +67,20 @@ describe('quickActionOptions', () => {
 });
 
 describe('printPdf', () => {
+  it('measures every call, so attempts without X-Browser-Ms-Used still have a length', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const slow = mockBrowser(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return browserErrorResponse(500, 'Navigation timeout of 30000 ms exceeded', null);
+    });
+    const timedOut = await printPdf(slow.binding, REQUEST);
+    expect(timedOut).toMatchObject({ status: 500, browserMs: null });
+    expect(timedOut.wallMs).toBeGreaterThanOrEqual(25);
+    const thrown = await printPdf(mockBrowser(() => Promise.reject(new Error('boom'))).binding, REQUEST);
+    expect(thrown).toMatchObject({ status: 0, browserMs: null });
+    expect(typeof thrown.wallMs).toBe('number');
+  });
+
   it('returns the bytes, the page count and X-Browser-Ms-Used', async () => {
     const browser = mockBrowser(() => pdfResponse('3-pages', 2500));
     const outcome = await printPdf(browser.binding, REQUEST);
@@ -174,11 +190,21 @@ describe('free mark', () => {
   it(`is "${PDF.freeMark}" in Chrome's footer, below the customer's footer`, () => {
     expect(FREE_MARK_HTML).toContain(`>${PDF.freeMark}</div>`);
     expect(headerFooter(null, null, true)).toEqual({ displayHeaderFooter: true, headerTemplate: EMPTY_TEMPLATE, footerTemplate: FREE_MARK_HTML });
-    expect(headerFooter('<b>h</b>', '<i>f</i>', true)).toEqual({
+    // The customer's header and footer each sit in a box they cannot paint outside of, sized
+    // to the margin; the mark is outside the footer's box, after it.
+    const box = (maxHeight: string, html: string): string => `<div style="position:relative;width:100%;max-height:${maxHeight};overflow:hidden;contain:layout paint">${html}</div>`;
+    expect(headerFooter('<b>h</b>', '<i>f</i>', true, { top: '20mm', bottom: '22mm' })).toEqual({
       displayHeaderFooter: true,
-      headerTemplate: '<b>h</b>',
-      footerTemplate: `<div style="width:100%"><i>f</i>${FREE_MARK_HTML}</div>`,
+      headerTemplate: box('16mm', '<b>h</b>'),
+      footerTemplate: `<div style="width:100%">${box('13mm', '<i>f</i>')}${FREE_MARK_HTML}</div>`,
     });
+    // A margin with no room left for them gives the boxes no height at all, never a negative one.
+    expect(headerFooter('<b>h</b>', '<i>f</i>', true, { top: '0', bottom: `${PDF.freeMarkMinBottomMm}mm` }).headerTemplate).toBe(box('0mm', '<b>h</b>'));
+  });
+
+  it('draws the mark on its own white background, so no colour under it can hide it', () => {
+    expect(FREE_MARK_HTML).toMatch(/<div style="[^"]*background:#fff[^"]*">Made with Link To Card<\/div><\/div>$/);
+    expect(FREE_MARK_HTML).toContain('z-index:2147483647');
   });
 
   it('keeps its own size and grey: Chrome would otherwise darken light text when printing', () => {
@@ -280,6 +306,57 @@ describe('inlineRemoteAssets', () => {
       (caught: unknown) => caught,
     );
     expect(error).toMatchObject({ code: 'template_error', details: { limit: PDF.maxAssetBytes } });
+  });
+
+  /** A PNG of `size` bytes streamed in 256 KB chunks with no content-length; tracks the bytes read by downloads still open. */
+  function streamingImages(size: number): { fetchImpl: typeof fetch; peakOpenBytes: () => number } {
+    const png = new Uint8Array(size);
+    png.set(PNG);
+    let open = 0;
+    let peak = 0;
+    const fetchImpl = (async () => {
+      let sent = 0;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          if (sent >= size) {
+            open -= sent;
+            controller.close();
+            return;
+          }
+          const chunk = png.slice(sent, sent + 256 * 1024);
+          sent += chunk.byteLength;
+          open += chunk.byteLength;
+          peak = Math.max(peak, open);
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          open -= sent;
+        },
+      });
+      return new Response(body, { headers: { 'content-type': 'image/png' } });
+    }) as unknown as typeof fetch;
+    return { fetchImpl, peakOpenBytes: () => peak };
+  }
+  const resolveHost = async (): Promise<string[]> => ['93.184.216.34'];
+
+  it(`never has more than ${PDF.maxAssetBytes / (1024 * 1024)} MB of images in flight, across its parallel downloads`, async () => {
+    const { fetchImpl, peakOpenBytes } = streamingImages(9 * 1024 * 1024);
+    const urls = Array.from({ length: 8 }, (_, i) => `https://img${i}.example.org/big.png`);
+    const error = await inlineRemoteAssets(urls, { appUrl: 'https://linktocard.test', fetchOptions: { fetchImpl, resolveHost, timeoutMs: 60_000 } }).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toMatchObject({ code: 'template_error', details: { limit: PDF.maxAssetBytes } });
+    // Each of the 4 parallel downloads notices it is over its share a chunk or two late (the
+    // stream reads one chunk ahead). Before the shares, all four could read 9 MB each.
+    expect(peakOpenBytes()).toBeLessThanOrEqual(PDF.maxAssetBytes + 4 * 2 * 256 * 1024);
+  });
+
+  it('still takes one image larger than a parallel download\'s share, alone, within the total', async () => {
+    const { fetchImpl, peakOpenBytes } = streamingImages(6 * 1024 * 1024);
+    const inlined = await inlineRemoteAssets(['https://img.example.org/big.png'], { appUrl: 'https://linktocard.test', fetchOptions: { fetchImpl, resolveHost, timeoutMs: 60_000 } });
+    expect(inlined.get('https://img.example.org/big.png')).toMatch(/^data:image\/png;base64,/);
+    expect(peakOpenBytes()).toBeLessThanOrEqual(PDF.maxAssetBytes);
   });
 
   it('knows our hosts', () => {

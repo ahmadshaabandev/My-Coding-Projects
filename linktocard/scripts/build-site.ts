@@ -29,7 +29,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Marked, Renderer, type Tokens } from 'marked';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd, type Plan } from '../src/billing/plans';
-import { AUTH, DAY_MS, FORMATS, LIMITS, PDF, RATE_LIMITS, SIZES, pdfUnits, type PdfFormat, type RateLimitName } from '../src/config';
+import { AUTH, DAY_MS, FORMATS, HTTP_CACHE, LIMITS, PDF, RATE_LIMITS, SIZES, pdfUnits, type PdfFormat, type RateLimitName } from '../src/config';
 import { PDF_TEMPLATES, type PdfStarterTemplate } from '../src/pdf/templates';
 import { STARTER_TEMPLATES as RENDER_TEMPLATES } from '../src/render/templates';
 
@@ -337,6 +337,8 @@ function pdfTokens(): Record<string, string> {
     'pdf.freeMarkMinBottomMm': String(PDF.freeMarkMinBottomMm),
     'pdf.toolPdfsPerHour': String(PDF.toolPdfsPerHour),
     'pdf.toolTurnstileAfterPdfs': String(PDF.toolTurnstileAfterPdfs),
+    'pdf.maxFailedRendersPerDayFree': String(PDF.maxFailedRendersPerDay.free),
+    'pdf.maxFailedRendersPerDayPaid': String(PDF.maxFailedRendersPerDay.paid),
     'pdf.browserUsageRetentionDays': String(PDF.browserUsageRetentionDays),
     'pdf.formats': PDF.formats.join(', '),
     'pdf.defaultFormat': PDF.defaultFormat,
@@ -388,6 +390,7 @@ function buildTokens(config: SiteConfig, now: Date): Record<string, string> {
     'limit.maxSignedUrlChars': formatCount(LIMITS.maxSignedUrlChars),
     'auth.magicLinkMinutes': String(AUTH.magicLinkTtlMs / 60_000),
     'auth.sessionDays': String(AUTH.sessionTtlMs / DAY_MS),
+    'http.imageMaxAgeSeconds': String(HTTP_CACHE.imageMaxAgeSeconds),
   };
   for (const id of PLAN_ORDER) Object.assign(tokens, planTokens(PLANS[id]));
   Object.assign(tokens, pdfTokens());
@@ -631,6 +634,10 @@ function pdfLimitsTable(): string {
       ['Paper formats', `${formats}; portrait or landscape`],
       ['Page margins', `Up to ${PDF.maxMarginMm} mm on each side; ${PDF.defaultMarginMm} mm when neither the request nor the template sets one`],
       ['Template HTML, after placeholders are filled in', `${inUnits(PDF.maxHtmlBytes, MB)} MB`],
+      [
+        'Template saved in the dashboard',
+        `${LIMITS.maxHtmlBytes / KB} KB HTML, ${LIMITS.maxCssBytes / KB} KB CSS, ${formatCount(LIMITS.maxNodes)} elements nested at most ${LIMITS.maxDepth} deep (the card template limits); send larger documents inline`,
+      ],
       ['Template CSS', `${inUnits(PDF.maxCssBytes, KB)} KB`],
       ['Header or footer template', `${inUnits(PDF.maxHeaderFooterBytes, KB)} KB each`],
       ['Elements after sections are repeated', `${formatCount(PDF.maxElements)}, nested at most ${PDF.maxDepth} deep`],
@@ -638,6 +645,10 @@ function pdfLimitsTable(): string {
       ['Data values', `${PDF.maxDataKeys} keys, ${formatCount(PDF.maxDataValueChars)} characters each`],
       ['List items (items)', `${PDF.maxItems} entries, ${PDF.maxItemFields} fields each, ${formatCount(PDF.maxItemValueChars)} characters per field`],
       ['Render time', `${PDF.renderTimeoutMs / 1000} seconds for loading and ${PDF.renderTimeoutMs / 1000} seconds for printing`],
+      [
+        'Renders that produce no PDF',
+        `${PDF.maxFailedRendersPerDay.free} per UTC day on ${PLANS.free.name}, ${PDF.maxFailedRendersPerDay.paid} on ${PLANS.starter.name} and ${PLANS.pro.name}; then new PDFs answer HTTP 429 until 00:00 UTC`,
+      ],
       ['Request body', `${inUnits(PDF.maxRequestBodyBytes, MB)} MB`],
       ['File name', `${PDF.maxFilenameChars} characters, ending in .pdf`],
     ],

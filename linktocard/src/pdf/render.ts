@@ -12,6 +12,8 @@
  *                         our own per-account R2 cache and want nothing shared between accounts
  *   pageRanges            "1-<maxPages + 1>": one page more than allowed tells us the document
  *                         is too long without printing all of it
+ *   tagged, outline       false: a plain PDF (Browser Run's default is tagged), the same file
+ *                         structure the page counter is tested on
  *
  * No addScriptTag, no url, no cookies, no extra headers. A response is application/pdf (200)
  * or a JSON error (400, 422, 429, 500, 503); X-Browser-Ms-Used reports the browser time.
@@ -35,6 +37,8 @@ export interface PrintOutcome {
   status: number;
   /** X-Browser-Ms-Used, when reported. */
   browserMs: number | null;
+  /** How long the call took, measured here: the browser time when Browser Run reports none (timeouts, 5xx). */
+  wallMs: number;
   bytes: Uint8Array | null;
   /** Pages counted in the returned PDF; null when there is none or it cannot be read. */
   pages: number | null;
@@ -74,6 +78,10 @@ export function quickActionOptions(request: PrintRequest): BrowserRunPDFOptions 
       pageRanges: `1-${PDF.maxPages + 1}`,
       timeout: PDF.renderTimeoutMs,
       preferCSSPageSize: false,
+      // Explicit, so the file the page counter reads does not depend on Browser Run's defaults
+      // (tagged is true there): a tagged PDF carries the document's alt texts as strings.
+      tagged: false,
+      outline: false,
     },
   };
 }
@@ -138,13 +146,15 @@ function withDeadline<T>(work: Promise<T>): Promise<T> {
  */
 export async function printPdf(browser: BrowserRun, request: PrintRequest): Promise<PrintOutcome> {
   let response: Response;
+  const started = Date.now();
   try {
     response = await withDeadline(browser.quickAction('pdf', quickActionOptions(request)));
   } catch (error) {
     const apiError = error instanceof ApiError ? error : new ApiError('render_failed', 'The PDF renderer could not be reached. Try again in a moment.');
     if (!(error instanceof ApiError)) console.error('Browser Run call failed:', error);
-    return { status: 0, browserMs: null, bytes: null, pages: null, error: apiError };
+    return { status: 0, browserMs: null, wallMs: Math.max(0, Date.now() - started), bytes: null, pages: null, error: apiError };
   }
+  const wallMs = Math.max(0, Date.now() - started);
   const browserMs = browserMsOf(response);
   const { status } = response;
   const contentType = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
@@ -152,7 +162,7 @@ export async function printPdf(browser: BrowserRun, request: PrintRequest): Prom
   if (status !== 200 || contentType !== 'application/pdf') {
     const message = await errorMessage(response);
     if (status === 200) console.error(`Browser Run answered 200 with content-type "${contentType}"`);
-    return { status, browserMs, bytes: null, pages: null, error: browserError(status === 200 ? 500 : status, message) };
+    return { status, browserMs, wallMs, bytes: null, pages: null, error: browserError(status === 200 ? 500 : status, message) };
   }
 
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -162,11 +172,12 @@ export async function printPdf(browser: BrowserRun, request: PrintRequest): Prom
     return {
       status,
       browserMs,
+      wallMs,
       bytes,
       pages: null,
       error: new ApiError('render_failed', 'The PDF renderer returned a file that could not be read. Try again; if it keeps happening, contact support.'),
     };
   }
-  if (pages > PDF.maxPages) return { status, browserMs, bytes, pages, error: tooManyPages(pages) };
-  return { status, browserMs, bytes, pages, error: null };
+  if (pages > PDF.maxPages) return { status, browserMs, wallMs, bytes, pages, error: tooManyPages(pages) };
+  return { status, browserMs, wallMs, bytes, pages, error: null };
 }

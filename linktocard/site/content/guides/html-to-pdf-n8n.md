@@ -61,7 +61,7 @@ Replace the example values with values from earlier steps, using n8n's expressio
 - Values are text or numbers. Send money as the text you want printed, such as `"1,250.00"`: the templates never calculate.
 - `items` is a list of flat objects, one per line, with at most [[pdf.maxItems]] entries.
 
-If you send your own HTML instead of a starter template, check that n8n leaves its `{{placeholders}}` alone: [[site.name]] placeholders use double curly braces, and automation tools often use a similar syntax for their own expressions. Saving the template in the [[site.name]] dashboard and sending only its id (`"template": "t_..."`) avoids the question.
+If you send your own HTML instead of a starter template, check that n8n leaves its `{{placeholders}}` alone: [[site.name]] placeholders use double curly braces, and automation tools often use a similar syntax for their own expressions. Saving the template in the [[site.name]] dashboard and sending only its id (`"template": "t_..."`) avoids the question, for templates of up to [[limit.maxHtmlKb]] KB of HTML and [[limit.maxNodes]] elements (the dashboard's limits).
 
 ## 3. Use the answer
 

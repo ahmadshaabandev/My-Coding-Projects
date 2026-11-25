@@ -1039,7 +1039,7 @@ components:
           description: HTML printed at the top of every page, at most 32 KB, sanitised and filled in like the document. It does not use the document's CSS; style it inline. <span class="pageNumber"></span> and <span class="totalPages"></span> print the page numbers.
         footer:
           type: string
-          description: HTML printed at the bottom of every page, with the same rules as header. On the Free plan the "Made with Link To Card" line is printed below it.
+          description: HTML printed at the bottom of every page, with the same rules as header. On the Free plan the "Made with Link To Card" line is printed below it, and the header and footer lose their <style> elements (style attributes still work) and are cut off at the edge of their margin.
     PdfRequest:
       type: object
       description: Send exactly one of "template" and "html". Unknown fields are refused.

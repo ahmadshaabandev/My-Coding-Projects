@@ -109,7 +109,7 @@ Yes. The free [certificate generator](/tools/certificate-generator), [invoice ge
 
 ### Can I use my own design?
 
-Yes. Save your HTML and CSS as a template in the [[site.name]] dashboard and put its id (`t_...`) in `template`. The Zap stays the same.
+Yes. Save your HTML and CSS as a template in the [[site.name]] dashboard and put its id (`t_...`) in `template`. The Zap stays the same. A saved template can have up to [[limit.maxHtmlKb]] KB of HTML and [[limit.maxNodes]] elements; send a longer document inline as `html`.
 
 ## Start
 

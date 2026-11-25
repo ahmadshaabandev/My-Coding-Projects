@@ -252,9 +252,25 @@ describe('CSS', () => {
     expect(prepared.remoteUrls).toEqual(['https://cdn.example.com/a.png']);
   });
 
-  it('drops @namespace and @charset, keeps @page, @media and nested rules', () => {
+  it('drops @namespace, @charset and @page, keeps @media and nested rules', () => {
+    // @page is dropped: the paper size, orientation and margins come from "pdf" alone. Chrome
+    // would otherwise let @page margins override the request's (and the free mark's room), and
+    // follow its orientation keyword whatever "landscape" says.
     const css = '@charset "utf-8"; @namespace svg url(http://www.w3.org/2000/svg); @page { size: A4; margin: 1cm; @bottom-center { content: counter(page) } } @media print { .a { color: red } }';
-    expect(head('<p>x</p>', css)).toContain('<style>@page{size:A4;margin:1cm;@bottom-center{content:counter(page);}}@media print{.a{color:red;}}</style>');
+    expect(head('<p>x</p>', css)).toContain('<style>@media print{.a{color:red;}}</style>');
+    expect(warningsOf('<p>x</p>', css)).toContain('Page size, orientation and margins come from "pdf" (format, landscape, margin); the CSS @page rule was ignored.');
+  });
+
+  it.each([
+    ['nested in @media', '@media print { @page { size: landscape } .a { color: red } }', '@media print{.a{color:red;}}'],
+    ['nested in @supports', '@supports (display: grid) { @page :first { margin: 0 } }', '@supports (display: grid){}'],
+    ['in capitals', '@PAGE { margin-bottom: 0; background: #6b7280 } .a { color: red }', '.a{color:red;}'],
+    ['in a <style> element', '', '.b{color:blue;}'],
+  ])('drops @page %s', (_label, css, kept) => {
+    const html = css === '' ? '<style>@page { size: A3 landscape } .b { color: blue }</style><p>x</p>' : '<p>x</p>';
+    const style = /<style>([\s\S]*)<\/style>/.exec(head(html, css))![1]!;
+    expect(style).not.toMatch(/@page/i);
+    expect(style).toContain(kept);
   });
 
   it('cannot close the <style> element early', () => {
@@ -318,6 +334,49 @@ describe('bundled fonts', () => {
   });
 });
 
+describe('CSS the browser would read differently from the sanitiser', () => {
+  // A string with a raw line break ends there in CSS ("bad string"), and the browser reads what
+  // follows as new declarations or rules: a url() or @font-face the sanitiser never saw.
+  it.each([
+    ['a stylesheet (LF)', '<p class="a">x</p>', '.a { x: "foo\n; background-image: url(https://evil.example/a.png); y: "\n}'],
+    ['a stylesheet (CR)', '<p class="a">x</p>', '.a { x: "foo\r; background-image: url(https://evil.example/a.png); y: "\r}'],
+    ['a stylesheet (FF)', '<p class="a">x</p>', '.a { x: \'foo\f; background-image: url(https://evil.example/a.png); y: \'\f}'],
+    ['a stylesheet that hides an @font-face', '<p class="a">x</p>', '.a { x: "a\n;} @font-face { font-family: E; src: url(https://evil.example/f.woff2) } .a { y: "\n}'],
+    ['a <style> element', '<style>.a { x: "foo\n; background: url(https://evil.example/a.png); y: "\n}</style><p class="a">x</p>', ''],
+    ['a style attribute', '<p style="x: \'foo\n; background-image: url(https://evil.example/a.png); y: \'">x</p>', ''],
+  ])('is refused in %s', (_label, html, css) => {
+    const error = errorOf(() => buildPdfDocument({ html, css, data: {} }));
+    expect(error.code).toBe('template_error');
+    expect(error.message).toContain('A CSS string has a line break before its closing quote');
+  });
+
+  it('is refused when a data value brings the line break into a style attribute', () => {
+    const data = { v: "'a\n; background: url(https://evil.example/d.png); y: '" };
+    expect(errorOf(() => buildPdfDocument({ html: '<p style="x: {{v}}">x</p>', css: '', data })).code).toBe('template_error');
+  });
+
+  it('allows an escaped line break inside a string, quotes inside comments and unquoted url()', () => {
+    expect(head('<p>x</p>', '.a::after { content: "a\\\nb" } .b::after { content: "c\\\r\nd" }')).toContain('.a::after{content:"a\\\nb";}');
+    expect(() => buildPdfDocument({ html: '<p>x</p>', css: "/* it's a comment\n with a quote */ .a { color: red }\n.b { background: url(it's.png) }\n.c { color: blue }", data: {} })).not.toThrow();
+  });
+
+  it.each([
+    ['image-set', '.b { --u: "https://evil.example/u.png"; background-image: image-set(var(--u) 1x) }'],
+    ['-webkit-image-set', '.b { --u: "https://evil.example/u.png"; background-image: -webkit-image-set(var(--u) 1x) }'],
+  ])('drops %s() with var(), which can bring in a URL string', (_label, css) => {
+    const prepared = preparePdfDocument({ html: '<p class="b">x</p>', css, data: {} });
+    expect(prepared.render(() => undefined)).not.toMatch(/image-set/);
+    expect(prepared.warnings).toContain('image-set() with var() in "background-image" is not supported and was removed; write the url() inside image-set().');
+    expect(body('<p style="--u: \'https://evil.example/u.png\'; background-image: image-set(var(--u) 1x)">x</p>')).not.toMatch(/image-set/);
+  });
+
+  it.each(['fill', 'mask', 'clip-path', 'marker-start', 'cursor', 'filter'])('drops an SVG %s attribute that spells url( with a CSS escape', (attribute) => {
+    expect(body(`<svg><rect ${attribute}="\\75rl(https://evil.example/x.svg#a)"/></svg>`)).toBe('<svg><rect/></svg>');
+    expect(body(`<svg><rect ${attribute}="{{f}}"/></svg>`, { f: '\\55 RL(https://evil.example/x.svg#a)' })).toBe('<svg><rect/></svg>');
+    expect(body(`<svg><rect ${attribute}="url(#a)"/></svg>`)).toBe(`<svg><rect ${attribute}="url(#a)"/></svg>`);
+  });
+});
+
 describe('header and footer templates', () => {
   it('get the same sanitising and placeholders, with their <style> moved to the top', () => {
     const footer = preparePdfFragment(
@@ -335,6 +394,14 @@ describe('header and footer templates', () => {
     // Inside <svg>, <style> content is markup (as in a browser): only its text is CSS.
     const footer = preparePdfFragment('<svg><style>.a{fill:red}<img src=x onerror=alert(1)></style><rect/></svg><p>f</p>', {}, 'footer');
     expect(footer.render(() => undefined)).toBe('<style>.a{fill:red;}</style><svg><rect/></svg><p>f</p>');
+  });
+
+  it('drop their <style> elements, with a warning, when the free mark shares their document', () => {
+    const source = '<style>#footer { display: none }</style><svg><style>.a{fill:red}</style><rect class="a"/></svg><span style="color:#111">Page <span class="pageNumber"></span></span>';
+    const footer = preparePdfFragment(source, {}, 'footer', { styles: false });
+    expect(footer.render(() => undefined)).toBe('<svg><rect class="a"/></svg><span style="color:#111">Page <span class="pageNumber"></span></span>');
+    expect(footer.warnings).toEqual(['<style> in the footer was removed: on the Free plan, style the header and footer with style="" attributes.']);
+    expect(preparePdfFragment(source, {}, 'footer').render(() => undefined)).toContain('<style>#footer{display:none;}');
   });
 
   it('are capped at PDF.maxHeaderFooterBytes and refuse @import', () => {

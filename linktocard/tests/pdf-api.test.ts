@@ -22,6 +22,7 @@ import {
   usageOf,
   userRow,
 } from './app-helpers';
+import { resetFreeBrake } from '../src/pdf/guard';
 import { browserErrorResponse, footerOf, mockBrowser, pdfEnv, pdfResponse, postPdf, signedPdfPath, type MockBrowser } from './pdf-helpers';
 
 afterEach(() => {
@@ -189,9 +190,30 @@ describe('POST /v1/pdf', () => {
     const pdf = { header: '<div onclick="x()">{{seller_name}}<script>1</script></div>', footer: '<div>Page <span class="pageNumber"></span></div>' };
     await postPdf(secret, { template: 'invoice', data: unique(INVOICE_DATA), pdf }, pdfEnv(browser));
     const { pdfOptions } = browser.calls[0]!.options;
-    expect(pdfOptions?.headerTemplate).toBe('<div>Fernhill Studio</div>');
+    // Next to the mark, each customer part sits in a box it cannot paint outside of (src/pdf/page.ts).
+    expect(pdfOptions?.headerTemplate).toMatch(/^<div style="[^"]*contain:layout paint[^"]*"><div>Fernhill Studio<\/div><\/div>$/);
     expect(pdfOptions?.footerTemplate).toContain('<div>Page <span class="pageNumber"></span></div>');
     expect(pdfOptions?.footerTemplate).toContain(PDF.freeMark);
+  });
+
+  it('removes header and footer stylesheets on Free, so they cannot hide the mark; paid plans keep them', async () => {
+    const pdf = {
+      header: '<style>#footer{display:none!important}</style><span>Acme</span>',
+      footer: '<style>div[style*="6b7280"]{display:none!important}</style><div style="font-size:8px">Page <span class="pageNumber"></span></div>',
+    };
+    const free = await account('free');
+    const browser = mockBrowser();
+    const response = await postPdf(free.secret, { template: 'invoice', data: unique(INVOICE_DATA), pdf }, pdfEnv(browser));
+    expect(((await response.json()) as PdfJson).warnings).toEqual(expect.arrayContaining([expect.stringContaining('<style> in the header was removed')]));
+    const options = browser.calls[0]!.options.pdfOptions!;
+    expect(`${options.headerTemplate}${options.footerTemplate}`).not.toMatch(/<style/i);
+    expect(options.footerTemplate).toContain('<div style="font-size:8px">Page <span class="pageNumber"></span></div>');
+    expect(options.footerTemplate).toContain(PDF.freeMark);
+
+    const paid = await account('starter');
+    const paidBrowser = mockBrowser();
+    await postPdf(paid.secret, { template: 'invoice', data: unique(INVOICE_DATA), pdf }, pdfEnv(paidBrowser));
+    expect(paidBrowser.calls[0]!.options.pdfOptions!.headerTemplate).toBe('<style>#footer{display:none!important;}</style><span>Acme</span>');
   });
 
   it('applies format, landscape and margins, and the template defaults otherwise', async () => {
@@ -349,6 +371,70 @@ describe('POST /v1/pdf: quota', () => {
     expect((await usageOf(userId)).used).toBe(PLANS.free.monthlyImages - 2);
     expect(await ledgerCount(userId)).toBe(0);
     expect((await env.BUCKET.list({ prefix: `r/${userId}/` })).objects).toEqual([]);
+  });
+});
+
+describe('POST /v1/pdf: identical requests racing for the last images', () => {
+  // A pending ledger row is not a paid one: the request that claimed it may find that the block
+  // does not fit and release it. Identical requests must never be served (or stored) off it.
+  it(`answers 402 to every one of 8 identical 12-page requests with ${PDF.baseUnits} images left, and stores nothing`, async () => {
+    const { userId, secret } = await account();
+    await setUsed(await userRow(userId), PLANS.free.monthlyImages - 2);
+    const browser = mockBrowser(() => pdfResponse('12-pages', 3000));
+    const bindings = pdfEnv(browser);
+    const body = { template: 'report', data: unique({ title: 'Race' }) };
+    const responses = await Promise.all(Array.from({ length: 8 }, () => postPdf(secret, body, bindings)));
+    const statuses = await Promise.all(responses.map(async (response) => `${response.status}/${(await errorOf(response)).code}`));
+    expect(statuses).toEqual(Array.from({ length: 8 }, () => '402/quota_exceeded'));
+    expect((await usageOf(userId)).used).toBe(PLANS.free.monthlyImages - 2);
+    expect(await ledgerCount(userId)).toBe(0);
+    expect((await env.BUCKET.list({ prefix: `r/${userId}/` })).objects).toEqual([]);
+    // A later lone request is not a cache hit either.
+    expect((await postPdf(secret, body, bindings)).status).toBe(402);
+  });
+
+  it('charges exactly one of 8 identical requests that fit, and serves the others the paid PDF', async () => {
+    const { userId, secret } = await account();
+    const browser = mockBrowser(() => pdfResponse('12-pages', 3000));
+    const bindings = pdfEnv(browser);
+    const body = { template: 'report', data: unique({ title: 'Race' }) };
+    const responses = await Promise.all(Array.from({ length: 8 }, () => postPdf(secret, body, bindings)));
+    const results = await Promise.all(responses.map(async (response) => ({ status: response.status, body: (await response.json()) as PdfJson })));
+    expect(results.map((result) => result.status)).toEqual(Array.from({ length: 8 }, () => 200));
+    expect(results.map((result) => result.body.credits_used).sort()).toEqual([0, 0, 0, 0, 0, 0, 0, 3]);
+    expect((await usageOf(userId)).used).toBe(3);
+    expect(await all(env.DB, 'SELECT charged_to FROM renders WHERE user_id = ?1', userId)).toEqual([{ charged_to: 'plan' }]);
+  });
+
+  it('does not serve a PDF whose ledger row another request still holds unpaid', async () => {
+    const { userId, secret } = await account();
+    const browser = mockBrowser(() => pdfResponse('1-page'));
+    const bindings = pdfEnv(browser);
+    const body = { template: 'invoice', data: unique(INVOICE_DATA) };
+    // The first request stores the PDF; its R2 object and ledger row are then replaced by a
+    // pending claim, as if an identical request were in the middle of charging it.
+    const paid = (await (await postPdf(secret, body, bindings)).json()) as PdfJson;
+    await env.BUCKET.delete(`r/${userId}/${paid.id}.pdf`);
+    await run(env.DB, "UPDATE renders SET charged_to = 'pending', created_at = ?1, expires_at = ?2 WHERE cache_key = ?3", Date.now() + 60_000, Date.now() + 86_400_000, paid.id);
+    const response = await postPdf(secret, body, bindings);
+    expect(response.status).toBe(429);
+    expect(await errorOf(response)).toMatchObject({ code: 'rate_limited' });
+    expect(response.headers.get('retry-after')).toBe('2');
+    expect((await env.BUCKET.list({ prefix: `r/${userId}/` })).objects).toEqual([]);
+  });
+
+  it('takes over a pending row whose request has been gone for minutes, and charges it', async () => {
+    const { userId, secret } = await account();
+    const bindings = pdfEnv(mockBrowser(() => pdfResponse('1-page')));
+    const body = { template: 'invoice', data: unique(INVOICE_DATA) };
+    const paid = (await (await postPdf(secret, body, bindings)).json()) as PdfJson;
+    await env.BUCKET.delete(`r/${userId}/${paid.id}.pdf`);
+    await run(env.DB, "UPDATE renders SET charged_to = 'pending', created_at = ?1 WHERE cache_key = ?2", Date.now() - 10 * 60_000, paid.id);
+    const response = await postPdf(secret, body, bindings);
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as PdfJson).credits_used).toBe(pdfUnits(1));
+    expect(await all(env.DB, 'SELECT charged_to FROM renders WHERE user_id = ?1', userId)).toEqual([{ charged_to: 'plan' }]);
+    expect((await env.BUCKET.list({ prefix: `r/${userId}/` })).objects).toHaveLength(1);
   });
 });
 
@@ -510,6 +596,78 @@ describe('rate limits', () => {
     const ok = await postPdf(starter.secret, { template: 'invoice', data: unique() }, limited(mockBrowser(), { ...allow, RL_PDF_FREE: untouched.binding }));
     expect(ok.status).toBe(200);
     expect(untouched.keys).toEqual([]);
+  });
+
+  it(`stops an account after ${PDF.maxFailedRendersPerDay.free} renders in a UTC day that produced no PDF; stored PDFs keep working`, async () => {
+    const { userId, secret } = await account('free');
+    const allow = { RL_IP: limiter(true).binding, RL_PDF_KEY: limiter(true).binding, RL_PDF_FREE: limiter(true).binding };
+    const stored = { template: 'invoice', data: unique(INVOICE_DATA) };
+    expect((await postPdf(secret, stored, limited(mockBrowser(), allow))).status).toBe(200);
+
+    // Too long (422), the renderer busy (429, not counted: it did no work), a timeout (504).
+    const tooLong = mockBrowser(() => pdfResponse('51-pages', 8000));
+    for (let i = 1; i < PDF.maxFailedRendersPerDay.free; i++) {
+      expect((await postPdf(secret, { template: 'report', data: unique() }, limited(tooLong, allow))).status).toBe(422);
+    }
+    const busy = mockBrowser(() => browserErrorResponse(429, 'Too many requests', null));
+    expect((await postPdf(secret, { template: 'report', data: unique() }, limited(busy, allow))).status).toBe(429);
+    const timeout = mockBrowser(() => browserErrorResponse(500, 'Navigation timeout of 30000 ms exceeded', null));
+    expect((await postPdf(secret, { template: 'report', data: unique() }, limited(timeout, allow))).status).toBe(504);
+
+    const browser = mockBrowser();
+    const refused = await postPdf(secret, { template: 'invoice', data: unique(INVOICE_DATA) }, limited(browser, allow));
+    expect(refused.status).toBe(429);
+    expect(await errorOf(refused)).toMatchObject({ code: 'rate_limited', details: { limit: PDF.maxFailedRendersPerDay.free } });
+    expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(browser.calls).toEqual([]);
+    // The stored PDF is not a render: still served.
+    expect(((await (await postPdf(secret, stored, limited(browser, allow))).json()) as PdfJson).cached).toBe(true);
+    // Every attempt that reached the browser is on record, with its measured length.
+    expect((await browserRows(userId)).every((row) => typeof row.wall_ms === 'number')).toBe(true);
+  });
+
+  it('counts a PDF the account could not pay for after rendering as a failed render', async () => {
+    const { userId, secret } = await account('free');
+    await setUsed(await userRow(userId), PLANS.free.monthlyImages - 2);
+    const allow = { RL_IP: limiter(true).binding, RL_PDF_KEY: limiter(true).binding, RL_PDF_FREE: limiter(true).binding };
+    const browser = mockBrowser(() => pdfResponse('12-pages', 3000));
+    expect((await postPdf(secret, { template: 'report', data: unique() }, limited(browser, allow))).status).toBe(402);
+    const day = Math.floor(Date.now() / 86_400_000);
+    expect(await first(env.DB, 'SELECT count FROM tool_usage WHERE bucket = ?1', `pdff:${userId}:${day}`)).toEqual({ count: 1 });
+  });
+
+  it('brakes Free-plan renders and the free tools, not paid ones, while the last 24 hours used too much browser time', async () => {
+    resetFreeBrake();
+    const budget = 1000;
+    // A timeout's time is not reported by Browser Run; its measured length counts instead.
+    await run(
+      env.DB,
+      "INSERT INTO browser_usage (id, user_id, source, status, browser_ms, wall_ms, pages, created_at) VALUES ('bu_brake', NULL, 'tool', 500, NULL, ?1, NULL, ?2)",
+      budget * PDF.freeBrakeBudgetMultiple + 1,
+      Date.now() - 60_000,
+    );
+    try {
+      const allow = { RL_IP: limiter(true).binding, RL_PDF_KEY: limiter(true).binding, RL_PDF_FREE: limiter(true).binding, RL_TOOLS_PDF: limiter(true).binding };
+      const overrides = { ...allow, PDF_DAILY_BROWSER_MS_BUDGET: String(budget) };
+      const browser = mockBrowser();
+      const free = await account('free');
+      const braked = await postPdf(free.secret, { template: 'invoice', data: unique(INVOICE_DATA) }, limited(browser, overrides));
+      expect(braked.status).toBe(429);
+      expect((await errorOf(braked)).message).toContain('Starter and Pro are not affected');
+      const tool = await call(
+        '/api/tools/pdf',
+        { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '198.51.100.99' }, body: JSON.stringify({ tool: 'invoice', data: {} }) },
+        limited(browser, overrides),
+      );
+      expect(tool.status).toBe(429);
+      expect(browser.calls).toEqual([]);
+
+      const starter = await account('starter');
+      expect((await postPdf(starter.secret, { template: 'invoice', data: unique(INVOICE_DATA) }, limited(browser, overrides))).status).toBe(200);
+    } finally {
+      await run(env.DB, "DELETE FROM browser_usage WHERE id = 'bu_brake'");
+      resetFreeBrake();
+    }
   });
 
   it('signed links use RL_KEY per site, only when a render is needed', async () => {

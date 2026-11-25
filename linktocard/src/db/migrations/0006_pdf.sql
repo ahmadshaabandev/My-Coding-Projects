@@ -27,6 +27,7 @@ CREATE TABLE browser_usage (
   source     TEXT NOT NULL,                                     -- 'api' | 'signed' | 'tool'
   status     INTEGER NOT NULL,                                  -- the browser's HTTP status; 0 when the call failed
   browser_ms INTEGER,                                           -- X-Browser-Ms-Used; NULL when not reported
+  wall_ms    INTEGER,                                           -- measured length of the call (counted when browser_ms is NULL)
   pages      INTEGER,                                           -- pages of the returned PDF; NULL without one
   created_at INTEGER NOT NULL
 );
