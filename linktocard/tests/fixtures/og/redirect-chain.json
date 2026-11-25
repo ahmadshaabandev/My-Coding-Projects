@@ -1,0 +1,10 @@
+{
+  "comment": "Three redirects (the most allowed), with a relative Location and a host change, then the good page.",
+  "start": "https://start.ogfixtures.com/go",
+  "hops": [
+    { "from": "https://start.ogfixtures.com/go", "status": 301, "location": "/step-2" },
+    { "from": "https://start.ogfixtures.com/step-2", "status": 302, "location": "https://www.ogfixtures.com/step-3" },
+    { "from": "https://www.ogfixtures.com/step-3", "status": 308, "location": "https://www.ogfixtures.com/final/page" }
+  ],
+  "final": "https://www.ogfixtures.com/final/page"
+}

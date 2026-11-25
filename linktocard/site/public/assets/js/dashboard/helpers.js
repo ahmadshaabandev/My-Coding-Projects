@@ -280,3 +280,12 @@ export function fontSizeProblem(fileBytes, maxBytes) {
   if (fileBytes <= maxBytes) return null;
   return `This file is ${formatBytes(fileBytes)}. Your plan allows ${formatBytes(maxBytes)} per font file.`;
 }
+
+/** Most characters of a ?title= taken into the first card (the OG checker's sign-up link carries the page title). */
+export const MAX_PREFILL_TITLE = 200;
+
+/** { title } from /dashboard?title=..., trimmed and capped; {} when there is none. */
+export function prefillFromQuery(search) {
+  const title = String(new URLSearchParams(search ?? '').get('title') ?? '').replace(/\s+/g, ' ').trim();
+  return title ? { title: Array.from(title).slice(0, MAX_PREFILL_TITLE).join('') } : {};
+}

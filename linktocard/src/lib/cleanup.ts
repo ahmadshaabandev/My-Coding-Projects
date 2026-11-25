@@ -30,6 +30,11 @@ export const CLEANUP_LIMITS = {
   loginTokenDeletesPerRun: 20_000,
   /** Accounts whose deletion was requested, purged per run (each may need several runs if it stored many images). */
   accountDeletionsPerRun: 5,
+  /**
+   * Expired OG checker rows (og_checks results, tool_usage counters) deleted per run, per
+   * table. Anyone can create them: 20 checks per client per hour, kept 10 minutes.
+   */
+  toolRowDeletesPerRun: 20_000,
 } as const;
 
 const LOGIN_TOKEN_KEEP_MS = DAY_MS;
@@ -49,6 +54,10 @@ export interface CleanupReport {
   playgroundImages: number;
   webhookEvents: number;
   deletedAccounts: number;
+  /** Expired OG checker results; present only when some were deleted. */
+  ogChecks?: number;
+  /** Ended OG checker / inspect counter windows; present only when some were deleted. */
+  toolUsage?: number;
 }
 
 /** R2 prefixes that hold one account's files: rendered images and uploaded fonts. */
@@ -153,6 +162,22 @@ async function deleteOldPlaygroundImages(bucket: R2Bucket, now: number): Promise
   return old.length;
 }
 
+/** Deletes expired rows in statements of `limit`, until a short one shows the end or the cap is reached. */
+async function deleteExpiredRows(db: D1Database, table: 'og_checks' | 'tool_usage', key: 'id' | 'bucket', now: number, limit: number): Promise<number> {
+  let deleted = 0;
+  while (deleted < CLEANUP_LIMITS.toolRowDeletesPerRun) {
+    const changes = await run(
+      db,
+      `DELETE FROM ${table} WHERE ${key} IN (SELECT ${key} FROM ${table} WHERE expires_at <= ?1 LIMIT ?2)`,
+      now,
+      Math.min(limit, CLEANUP_LIMITS.toolRowDeletesPerRun - deleted),
+    );
+    deleted += changes;
+    if (changes < limit) break;
+  }
+  return deleted;
+}
+
 export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): Promise<CleanupReport> {
   const limit = CLEANUP_LIMITS.rowsPerStatement;
   // Sign-in tokens are kept a day, well past the hour in which they feed the per-address
@@ -183,5 +208,16 @@ export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): 
   const renders = await deleteExpiredRenders(env, now);
   const playgroundImages = await deleteOldPlaygroundImages(env.BUCKET, now);
   const deletedAccounts = await purgeDeletedAccounts(env);
-  return { loginTokens, sessions, renders, playgroundImages, webhookEvents, deletedAccounts };
+  const ogChecks = await deleteExpiredRows(env.DB, 'og_checks', 'id', now, limit);
+  const toolUsage = await deleteExpiredRows(env.DB, 'tool_usage', 'bucket', now, limit);
+  return {
+    loginTokens,
+    sessions,
+    renders,
+    playgroundImages,
+    webhookEvents,
+    deletedAccounts,
+    ...(ogChecks > 0 ? { ogChecks } : {}),
+    ...(toolUsage > 0 ? { toolUsage } : {}),
+  };
 }

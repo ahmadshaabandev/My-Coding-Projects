@@ -117,6 +117,55 @@ export const RATE_LIMITS = {
 
 export type RateLimitName = keyof typeof RATE_LIMITS;
 
+/**
+ * The free OG checker (/tools/og-checker, GET /api/tools/og-check) and its API twin
+ * GET /v1/inspect. One page fetch per request, never a crawl; see src/inspect/*.
+ */
+export const INSPECT = {
+  /** Longest URL accepted, in characters. */
+  maxUrlChars: 2048,
+  /** Page fetch: one budget for DNS, every redirect hop and the body. */
+  pageTimeoutMs: 5000,
+  /** Bytes of HTML read; the rest is not downloaded. */
+  pageMaxBytes: 2 * 1024 * 1024,
+  maxRedirects: 3,
+  /** Image probe (HEAD then GET): its own budget and byte cap. */
+  imageTimeoutMs: 5000,
+  imageMaxBytes: 8 * 1024 * 1024,
+  /** robots.txt: same rules, read once, informational only. */
+  robotsTimeoutMs: 5000,
+  robotsMaxBytes: 512 * 1024,
+  /** GET /api/tools/og-check/{id}/image|favicon: what the image proxy streams at most. */
+  proxyMaxBytes: 5 * 1024 * 1024,
+  proxyTimeoutMs: 5000,
+  /**
+   * Image/favicon proxy fetches per client (IPv4 address or IPv6 /64) per clock hour. A
+   * check shows at most two (browsers keep them 10 minutes), so 20 checks need 40.
+   */
+  proxyFetchesPerHour: 120,
+  /** A result (and its image proxy URLs) lives this long. */
+  cacheTtlMs: 10 * 60 * 1000,
+  /** Checklist thresholds. */
+  imageWarnBytes: 5 * 1024 * 1024,
+  minImageSidePx: 200,
+  targetAspectRatio: 1.91,
+  aspectRatioTolerance: 0.03,
+  maxTitleChars: 70,
+  maxDescriptionChars: 200,
+  slowResponseMs: 3000,
+  /** Public checker: uncached checks per client (IPv4 address or IPv6 /64) per clock hour. */
+  publicChecksPerHour: 20,
+  /** Uncached checks per client and hour after which Turnstile is required (only when TURNSTILE_SECRET_KEY is set). */
+  turnstileAfterChecks: 5,
+  turnstileTimeoutMs: 3000,
+  /**
+   * GET /v1/inspect: uncached checks per API key per UTC day. The owner set Free; Starter
+   * and Pro are our own assumption. Inspections never count as images.
+   */
+  dailyInspectionsByPlan: { free: 100, starter: 1000, pro: 5000 },
+  userAgent: 'LinkToCardBot/1.0 (+https://linktocard.com/bot)',
+} as const;
+
 /** Auth lifetimes. */
 export const AUTH = {
   magicLinkTtlMs: 15 * 60 * 1000,

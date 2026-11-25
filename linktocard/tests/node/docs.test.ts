@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PLANS, TOPUP, formatCount, formatUsd } from '../../src/billing/plans';
-import { FORMATS, HTTP_CACHE, LIMITS, RATE_LIMITS, SIZES } from '../../src/config';
+import { FORMATS, HTTP_CACHE, INSPECT, LIMITS, RATE_LIMITS, SIZES } from '../../src/config';
 import { ERROR_STATUS } from '../../src/lib/errors';
 import type { SignedUrlFailure } from '../../src/lib/signed-url';
 import { STARTER_TEMPLATES, STARTER_TEMPLATE_IDS } from '../../src/render/templates';
@@ -325,8 +325,8 @@ describe('API reference', () => {
     expect(rows).toEqual(Object.entries(ERROR_STATUS));
   });
 
-  it('documents the five public endpoints', () => {
-    for (const heading of ['## POST /v1/images', '## GET /v1/usage', '## GET /v1/templates', '## GET /v1/og', '## GET /i']) {
+  it('documents the six public endpoints', () => {
+    for (const heading of ['## POST /v1/images', '## GET /v1/usage', '## GET /v1/templates', '## GET /v1/inspect', '## GET /v1/og', '## GET /i']) {
       expect(markdown.split('\n'), heading).toContain(heading);
     }
   });
@@ -340,6 +340,50 @@ describe('API reference', () => {
       const { name, description, example } = field;
       const json = `{ "name": ${JSON.stringify(name)}, "description": ${JSON.stringify(description)}, "example": ${JSON.stringify(example)}, "required": ${field.required === true} }`;
       expect(markdown, name).toContain(json);
+    }
+  });
+
+  it('states the limits GET /v1/inspect enforces, from config.ts', () => {
+    const section = markdown.slice(markdown.indexOf('## GET /v1/inspect'), markdown.indexOf('\n## ', markdown.indexOf('## GET /v1/inspect') + 1));
+    for (const id of ['free', 'starter', 'pro'] as const) {
+      expect(section, id).toContain(`| [[plan.${id}.name]] | ${formatCount(INSPECT.dailyInspectionsByPlan[id])} |`);
+    }
+    const free = INSPECT.dailyInspectionsByPlan.free;
+    expect(section).toContain(`"message": "This API key has used its ${free} inspections for today (UTC). Cached results do not count."`);
+    expect(section).toContain(`"details": { "limit": ${free}, "period_seconds": 86400 }`);
+    expect(section).toContain(`\`${INSPECT.userAgent}\``);
+    expect(section).toContain(`following at most ${INSPECT.maxRedirects} redirects`);
+    expect(section).toContain(`allows ${INSPECT.pageTimeoutMs / 1000} seconds for the page in total, and reads at most its first ${INSPECT.pageMaxBytes / (1024 * 1024)} MB`);
+    expect(section).toContain(`within its own ${INSPECT.imageTimeoutMs / 1000} seconds`);
+    expect(section).toContain(`at most ${INSPECT.maxUrlChars} characters`);
+    expect(section).toContain(`A result is kept for ${INSPECT.cacheTtlMs / 60_000} minutes.`);
+    expect(section).toContain(`limit of ${INSPECT.publicChecksPerHour} uncached checks per hour`);
+    expect(section).toContain(`The file is not over ${INSPECT.imageWarnBytes / (1024 * 1024)} MB.`);
+    expect(section).toContain(`Both sides are at least ${INSPECT.minImageSidePx} pixels.`);
+    expect(section).toContain(`The shape is ${INSPECT.targetAspectRatio}:1, within ${INSPECT.aspectRatioTolerance * 100} %`);
+    expect(section).toContain(`\`og:title\` of at most ${INSPECT.maxTitleChars} characters`);
+    expect(section).toContain(`\`og:description\` of at most ${INSPECT.maxDescriptionChars} characters`);
+    expect(section).toContain(`within ${INSPECT.slowResponseMs / 1000} seconds`);
+  });
+
+  it('lists the twelve checks and the page_fetch_failed reasons the code can produce', () => {
+    // Read from the source as text: src/inspect/* targets the Workers runtime, not this Node project.
+    const types = read('src/inspect/types.ts');
+    const checkIds = [...(/CHECK_IDS = \[([\s\S]*?)\]/.exec(types)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+    expect(checkIds).toHaveLength(12);
+    const section = markdown.slice(markdown.indexOf('The checks, by `id`:'), markdown.indexOf('### Errors from this endpoint'));
+    const rows = [...section.matchAll(/^\| `([a-z_]+)` \| (?!What it tests)/gm)].map((match) => match[1]);
+    expect(rows).toEqual(checkIds);
+    const fetchTs = read('src/inspect/fetch.ts');
+    const reasons = new Set([...(/export type FetchFailureReason =([\s\S]*?);/.exec(fetchTs)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((match) => match[1]));
+    const line = markdown.split('\n').find((candidate) => candidate.startsWith('| 422 | `page_fetch_failed` | The page could not be read.')) ?? '';
+    const documented = [...line.matchAll(/`([a-z_]+)`/g)].map((match) => match[1]).filter((code) => code !== 'page_fetch_failed');
+    expect(documented.length).toBeGreaterThan(5);
+    for (const reason of documented) expect(reasons.has(reason), reason).toBe(true);
+    const openapi = read('openapi.yaml');
+    expect(openapi).toContain(`enum: [${checkIds.join(', ')}]`);
+    for (const id of ['free', 'starter', 'pro'] as const) {
+      expect(openapi).toContain(`${PLANS[id].name} ${INSPECT.dailyInspectionsByPlan[id]}`);
     }
   });
 
@@ -362,9 +406,9 @@ describe('openapi.yaml', () => {
     expect(openapi).toContain('scheme: bearer');
   });
 
-  it('describes the five public paths', () => {
+  it('describes the six public paths', () => {
     const paths = [...openapi.matchAll(/^ {2}(\/\S+):$/gm)].map((match) => match[1]);
-    expect(paths).toEqual(['/v1/images', '/v1/usage', '/v1/templates', '/v1/og/{site_id}/{template}.{ext}', '/i/{account_id}/{id}.{ext}']);
+    expect(paths).toEqual(['/v1/images', '/v1/usage', '/v1/templates', '/v1/inspect', '/v1/og/{site_id}/{template}.{ext}', '/i/{account_id}/{id}.{ext}']);
   });
 
   it('names the real site and refers only to components it defines', () => {

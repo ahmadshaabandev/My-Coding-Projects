@@ -299,3 +299,15 @@ npx wrangler d1 execute DB --env production --remote --command "UPDATE users SET
       `site/content/privacy.md` and rebuild. If it is Cloudflare Email Routing forwarding to your
       own mailbox, name your mailbox provider too.
 
+## 9b. Turnstile for the OG checker (optional, recommended)
+
+Without it the checker allows 20 uncached checks per hour per IP and nothing else. With it,
+visitors are asked to confirm they are human from the 6th check in an hour.
+
+- [ ] Cloudflare dashboard > Turnstile > Add widget: hostname `linktocard.com`, mode Managed.
+- [ ] Put the site key (public) in `wrangler.toml` under `[env.production.vars]` as
+      `TURNSTILE_SITE_KEY = "..."`.
+- [ ] Set the secret key: `npx wrangler secret put TURNSTILE_SECRET_KEY --env production`.
+- [ ] `npm run deploy:production`. The site's Content-Security-Policy already allows
+      `https://challenges.cloudflare.com`.
+

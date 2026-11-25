@@ -1338,3 +1338,137 @@ mark.placeholder {
 
 /* Pricing: the "paid plans are coming soon" note shown while checkout is off. */
 #coming-soon { margin-bottom: var(--space-5); }
+
+/* ---------------------------------------------------------------- 10 Tools
+ * The free Open Graph checker (/tools/og-checker): .tool-form, .verdict, the six
+ * approximate link-preview mockups (.previews .pv .pv-<platform>), the checklist
+ * (.checklist .cl-item .cl-pass/-warn/-fail), the image facts (.facts) and the
+ * parsed-tags table (.tool-tags). The mockups use the site's own tokens: they
+ * suggest each app's layout and never use an app's logo or brand colours.
+ */
+.tool-form { display: grid; gap: var(--space-3); max-width: 50rem; }
+.tool-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.tool-row .input { flex: 1 1 16rem; min-width: 0; min-height: 3.25rem; font-size: 1.0625rem; }
+.tool-row .btn { flex: 0 0 auto; min-height: 3.25rem; padding-inline: 1.9rem; font-size: var(--text-lg); font-weight: 700; }
+.tool-form .alert { overflow-wrap: anywhere; }
+.tool-verify > * + * { margin-top: var(--space-3); }
+.tool-widget { max-width: 100%; min-height: 4.25rem; overflow-x: auto; }
+
+.tool-results .container > * + * { margin-top: clamp(2.5rem, 5vw, 3.5rem); }
+.tool-results[aria-busy='true'] .container { opacity: 0.55; transition: opacity 0.15s; }
+.tool-block-head { max-width: 44rem; margin-bottom: var(--space-5); }
+.tool-block-head h2 { font-size: var(--text-3xl); line-height: 1.05; }
+.tool-block-head p { margin-top: var(--space-3); }
+.tool-split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--space-6); align-items: start; }
+
+.verdict { position: relative; display: grid; gap: var(--space-3); border-left-width: 10px; }
+.verdict[data-tone='ok'] { border-left-color: var(--ok); box-shadow: 8px 8px 0 var(--ok); }
+.verdict[data-tone='warn'] { border-left-color: var(--warn); box-shadow: 8px 8px 0 var(--hl); }
+.verdict[data-tone='fail'] { border-left-color: var(--danger); box-shadow: 8px 8px 0 var(--accent); }
+.verdict .eyebrow { justify-self: start; }
+.verdict-title { font: 900 clamp(1.75rem, 1.3rem + 2vw, 2.75rem)/1.05 var(--font-display); letter-spacing: -0.02em; }
+.verdict-text { max-width: 44rem; font-size: var(--text-lg); color: var(--text-muted); }
+.verdict-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem var(--space-4); padding-top: var(--space-3); font-size: var(--text-sm); border-top: 1px solid var(--border); }
+.verdict-meta dt { font: 400 var(--text-xs)/1.9 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
+.verdict-meta dd { overflow-wrap: anywhere; }
+
+/* Previews: one figure per app, a caption with the "Approximate preview" tag, a screen, a card. */
+.previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr)); gap: var(--space-6) var(--space-5); }
+#previews-note { margin-bottom: var(--space-5); }
+.pv { display: grid; gap: var(--space-2); align-content: start; min-width: 0; }
+.pv-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-3); }
+.pv-name { font-weight: 700; }
+.pv-approx { padding: 0.1rem 0.55rem; font: 400 0.6875rem/1.5 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink); background: var(--surface); border: 1.5px dashed var(--line); border-radius: 999px; }
+.pv-screen { padding: var(--space-4); overflow: hidden; background: var(--paper); border: 2px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.pv-card { display: grid; min-width: 0; overflow: hidden; overflow-wrap: anywhere; color: var(--ink); background: var(--surface); }
+.pv-img { display: block; width: 100%; aspect-ratio: 1.91 / 1; object-fit: cover; background: var(--paper-2); }
+.pv-noimg { display: grid; place-items: center; font: 400 var(--text-xs)/1.4 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); background: repeating-linear-gradient(-45deg, var(--paper-2) 0 10px, var(--surface) 10px 20px); }
+.pv-text { display: grid; gap: 0.15rem; padding: 0.6rem 0.75rem 0.7rem; }
+.pv-title { font-weight: 700; line-height: 1.3; }
+.pv-title.is-missing { font-weight: 500; color: var(--text-muted); }
+.pv-desc { display: -webkit-box; overflow: hidden; font-size: var(--text-sm); line-height: 1.4; color: var(--text-muted); -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.pv-domain { font-size: var(--text-xs); color: var(--text-muted); }
+.pv-favicon { width: 16px; height: 16px; border-radius: 3px; vertical-align: -3px; }
+
+.pv-facebook .pv-card { border: 1px solid var(--border); }
+.pv-facebook .pv-text { background: var(--paper-2); border-top: 1px solid var(--border); }
+.pv-facebook .pv-domain { order: -1; font-family: var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.pv-facebook .pv-desc { -webkit-line-clamp: 1; line-clamp: 1; }
+
+.pv-x .pv-card { gap: 0.35rem; background: transparent; }
+.pv-x .pv-media { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; }
+.pv-x .pv-overlay { position: absolute; left: 0.6rem; bottom: 0.6rem; max-width: calc(100% - 1.2rem); padding: 0.1rem 0.4rem; overflow: hidden; font-size: var(--text-xs); color: #fff; white-space: nowrap; text-overflow: ellipsis; background: rgb(0 0 0 / 0.72); border-radius: 4px; }
+.pv-x .pv-domain { padding-left: 0.15rem; }
+
+.pv-whatsapp .pv-screen { background: var(--paper-2); }
+.pv-whatsapp .pv-bubble { display: grid; gap: 0.4rem; max-width: 92%; margin-left: auto; padding: 0.3rem 0.3rem 0.5rem; background: var(--ok-soft); border: 1px solid var(--border); border-radius: 10px 2px 10px 10px; }
+.pv-whatsapp .pv-card { border-radius: 7px; background: var(--surface); }
+.pv-whatsapp .pv-text { padding: 0.45rem 0.6rem 0.55rem; }
+.pv-whatsapp .pv-title { font-size: var(--text-sm); }
+.pv-whatsapp .pv-desc { font-size: var(--text-xs); }
+.pv-whatsapp .pv-url { padding-inline: 0.4rem; overflow: hidden; font-size: var(--text-sm); color: var(--link); text-decoration: underline; text-overflow: ellipsis; white-space: nowrap; }
+
+.pv-slack .pv-screen { background: var(--surface); }
+.pv-slack .pv-card { gap: 0.2rem; padding-left: 0.75rem; background: transparent; border-left: 4px solid var(--border); }
+.pv-slack .pv-site { display: flex; align-items: center; gap: 0.4rem; font-size: var(--text-sm); font-weight: 700; }
+.pv-slack .pv-title { color: var(--link); }
+.pv-slack .pv-desc { -webkit-line-clamp: 3; line-clamp: 3; }
+.pv-slack .pv-img { max-width: 22rem; margin-top: 0.35rem; border-radius: 8px; }
+
+.pv-discord .pv-screen { background: #1f1c16; border-color: var(--line); }
+.pv-discord .pv-card { gap: 0.3rem; max-width: 26rem; padding: 0.6rem 0.8rem 0.8rem; color: #f4ecda; background: #2a2620; border-left: 4px solid var(--pv-accent, #6f6656); border-radius: 4px; }
+.pv-discord .pv-site { font-size: var(--text-xs); color: #b8ae9a; }
+.pv-discord .pv-title { color: #93a5ff; }
+.pv-discord .pv-title.is-missing { color: #b8ae9a; }
+.pv-discord .pv-desc { color: #d8cfbd; -webkit-line-clamp: 4; line-clamp: 4; }
+.pv-discord .pv-img { margin-top: 0.4rem; border-radius: 4px; background: #1f1c16; }
+.pv-discord .pv-noimg { background: #1f1c16; }
+
+.pv-imessage .pv-screen { background: var(--surface); }
+.pv-imessage .pv-card { max-width: 18rem; margin-left: auto; border: 1px solid var(--border); border-radius: 18px; }
+.pv-imessage .pv-text { gap: 0; background: var(--paper-2); }
+.pv-imessage .pv-title { font-size: var(--text-sm); }
+
+/* Checklist */
+.checklist { display: grid; gap: var(--space-3); padding: 0; list-style: none; }
+.cl-item { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: var(--space-3); padding: var(--space-4); background: var(--surface); border: 2px solid var(--line); border-radius: var(--radius); }
+.cl-fail { box-shadow: 4px 4px 0 var(--danger); }
+.cl-warn { box-shadow: 4px 4px 0 var(--hl); }
+.cl-icon { display: grid; place-items: center; width: 2rem; height: 2rem; font-weight: 700; line-height: 1; border: 2px solid currentColor; border-radius: 50%; }
+.cl-pass .cl-icon { color: var(--ok); background: var(--ok-soft); }
+.cl-warn .cl-icon { color: var(--warn); background: var(--warn-soft); }
+.cl-fail .cl-icon { color: var(--danger); background: var(--danger-soft); }
+.cl-body { min-width: 0; overflow-wrap: anywhere; }
+.cl-body > * + * { margin-top: var(--space-2); }
+.cl-title { padding-top: 0.2rem; font-weight: 700; line-height: 1.35; }
+.cl-detail, .cl-fix { font-size: 0.9375rem; color: var(--text-muted); }
+.cl-fix strong { color: var(--ink); }
+.cl-cta { font-size: 0.9375rem; }
+
+/* Image facts */
+.facts-card { display: grid; gap: var(--space-4); }
+.facts-img { display: block; width: 100%; max-height: 14rem; object-fit: contain; background: var(--paper-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.facts-image .pv-noimg { min-height: 6rem; }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.45rem var(--space-4); font-size: 0.9375rem; }
+.facts dt { font: 400 var(--text-xs)/1.9 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
+.facts dd { overflow-wrap: anywhere; }
+
+.tool-tags th code { white-space: nowrap; }
+.tool-tags td { overflow-wrap: anywhere; }
+.tool-tags tbody th { width: 1%; }
+
+/* The copy below the tool */
+.tool-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6) var(--space-7); }
+.tool-columns + .tool-columns { margin-top: var(--space-7); }
+.tool-columns .prose h3 { margin-top: 0; font: 900 var(--text-2xl)/1.1 var(--font-display); letter-spacing: -0.015em; }
+.tool-columns .prose { max-width: none; font-size: 1rem; }
+
+@media (max-width: 62rem) {
+  .tool-split, .tool-columns { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 40rem) {
+  .tool-row .btn { flex: 1 1 100%; }
+  .pv-screen { padding: var(--space-3); }
+  .verdict-meta, .facts { grid-template-columns: minmax(0, 1fr); gap: 0 var(--space-4); }
+  .verdict-meta dd + dt, .facts dd + dt { margin-top: var(--space-2); }
+}

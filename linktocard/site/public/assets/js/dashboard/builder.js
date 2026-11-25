@@ -39,10 +39,11 @@ export function fieldControl(spec, value, { name, lightValue, onchange }) {
  * @param ctx        the dashboard context (config for sizes, formats and cache days)
  * @param sites      the account's sites (at least one)
  * @param templates  GET /api/templates
- * @param options    compact: tuck size and format away; oncopied: after the meta tags were copied
+ * @param options    compact: tuck size and format away; oncopied: after the meta tags were copied;
+ *                   prefill: starting values for fields the template has, e.g. { title } from the OG checker
  * @returns { form, output, destroy }: two nodes, so a caller can lay them out as two steps
  */
-export function createBuilder(ctx, { sites, templates, compact = false, oncopied }) {
+export function createBuilder(ctx, { sites, templates, compact = false, oncopied, prefill = {} }) {
   const uid = `builder-${++builders}`;
   const everyTemplate = [...templates.starter, ...templates.custom];
   const state = { siteId: sites[0].id, templateId: everyTemplate[0].id, size: 'og', format: 'png', values: {} };
@@ -137,7 +138,7 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
     try {
       const { specs, values, lightValue } = await fieldSpecs(templateId);
       if (state.templateId !== templateId) return;
-      state.values[templateId] ??= values;
+      state.values[templateId] ??= { ...values, ...Object.fromEntries(specs.filter((spec) => prefill[spec.name]).map((spec) => [spec.name, prefill[spec.name]])) };
       clear(fields).append(
         ...specs.map((spec) =>
           fieldControl(spec, state.values[templateId][spec.name] ?? '', {

@@ -22,6 +22,7 @@ Contact for anything on this page: <[[site.supportEmail]]>
 | **Usage data**: render counts, timestamps, and the IP address a request came from | Created when you or your visitors' platforms request images or use the dashboard and API. |
 | **Templates and render data**: the HTML and CSS you save, and the values you send to be rendered | You send them through the dashboard, the API or a signed image URL. |
 | **Fonts and images**: fonts you upload, and images your cards reference, which the service fetches in order to draw the card | You upload them or point the service at them. |
+| **Open Graph checker**: the page address you enter, the tags and measurements read from that page, and a count of checks per IP address (IPv6: per /64 network) for the current hour | You enter the address on the [Open Graph checker](/tools/og-checker), or send it to `GET /v1/inspect` with an API key, which counts checks per key for the day instead. |
 | **Messages to us**: the email address and message you enter in the contact form, and emails you send to support | You send them to us. The contact form is not stored by the service; it is delivered to our support mailbox as an email. |
 | **Billing status**: which plan you are on, whether a subscription is active, and identifiers Paddle gives us for your customer and subscription records | Sent to us by Paddle when you buy, renew, cancel or are refunded. |
 
@@ -31,7 +32,7 @@ Please do not put sensitive personal information in card content. Text and image
 
 ## 3. What we use it for
 
-- **To provide the service:** signing you in, rendering and caching images, counting usage against your plan.
+- **To provide the service:** signing you in, rendering and caching images, counting usage against your plan, and running the Open Graph checks you ask for.
 - **To keep it secure and fair:** rate limiting, spotting abuse and investigating problems. This is what IP addresses are used for.
 - **To handle billing:** matching payments processed by Paddle to your account and plan.
 - **To contact you about your account:** sign-in links, warnings when your monthly allowance is nearly or fully used, replies to your messages, and essential service messages, such as changes to these terms or to your plan. We do not send marketing email.
@@ -45,11 +46,13 @@ We use three outside companies. Each receives only what it needs for its job.
 
 | Company | What it does | What it receives |
 | --- | --- | --- |
-| **Cloudflare** | Hosting, database (D1), object storage (R2) and network | Everything stored in or passing through the service: account data, templates, uploaded fonts, rendered images, and request data such as IP addresses. |
+| **Cloudflare** | Hosting, database (D1), object storage (R2) and network; Turnstile, the check that tells people from bots, if the Open Graph checker shows it | Everything stored in or passing through the service: account data, templates, uploaded fonts, rendered images, checker results, and request data such as IP addresses. When Turnstile is shown, the data its widget collects in your browser to tell a person from a bot. |
 | **Resend** | Email delivery | Your email address and the content of the emails we send you, such as sign-in links and usage warnings. Messages sent with the contact form also pass through Resend on their way to our support mailbox. |
 | **Paddle** | Payments, as our reseller and Merchant of Record | The details you enter at checkout, including payment details. Paddle decides how to handle payment data in its own right, as an independent controller; see [Paddle's privacy notice](https://www.paddle.com/legal/privacy). |
 
 When a card references an image hosted somewhere else, the service requests that image from that host, in the way any web client would.
+
+When you use the Open Graph checker, our server (a Cloudflare Worker) requests the page you entered, that site's `robots.txt` and the image the page names, identifying itself as `LinkToCardBot/1.0`; the [LinkToCardBot page](/bot) describes it. The request comes from our server, not from your browser, and carries none of your cookies. The site you check sees that request in the way it sees any visitor. We never store the page's HTML.
 
 We may also disclose data if the law requires it, or if it is needed to protect the service or other people from harm.
 
@@ -58,6 +61,7 @@ We may also disclose data if the law requires it, or if it is needed to protect 
 - **Account data** (email address, templates, uploaded fonts, settings, usage counts): for as long as your account exists. When you ask us to delete your account, we delete it.
 - **Rendered images:** for the cache period of your plan, which is [[plan.free.cacheDays]] days on Free, [[plan.starter.cacheDays]] days on Starter and [[plan.pro.cacheDays]] days on Pro.
 - **Previews from the playground on the home page:** about one day.
+- **Open Graph checker results** (the address checked and the tags and measurements read from it): 10 minutes. The count of checks per IP address or network: until the end of that hour; per API key: until the end of that day (UTC). Expired entries are deleted by a regular clean-up shortly afterwards.
 - **Sign-in links:** valid for a few minutes, and usable once.
 - **Sessions:** 30 days, or until you sign out.
 - **Logs and security data,** including IP addresses: kept only for a short time, as needed for rate limiting, troubleshooting and security.
@@ -85,6 +89,8 @@ Depending on where you live, the law may give you further rights, including the 
 We use no analytics cookies, no advertising cookies and no tracking pixels.
 
 When you buy a plan, Paddle's checkout opens in an overlay on our site. Paddle may set its own cookies inside that checkout; they are covered by Paddle's privacy notice, not by this page.
+
+The Open Graph checker sets no cookie. If it asks you to confirm that you are a person, that check is Cloudflare Turnstile, which runs in a frame loaded from Cloudflare. What it stores in your browser is decided by Cloudflare and described in Cloudflare's own documentation, not by this page.
 
 ## 8. Where data is processed
 

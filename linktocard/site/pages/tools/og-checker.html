@@ -1,0 +1,198 @@
+---
+title: Open Graph checker - see how your link looks when shared
+description: Free Open Graph checker. Paste a page URL to see its og: and twitter: tags, test its og:image, get a plain fix for each problem and approximate previews for Facebook, LinkedIn, X, WhatsApp, Slack, Discord and iMessage.
+scripts: og-checker
+---
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Open Graph checker.</h1>
+<p>Paste a page URL. The checker fetches that one page, reads its Open Graph and Twitter tags, tests the image they point to, and shows how the link may look when someone shares it.</p>
+</div>
+<form class="card card-pop tool-form" id="check-form" action="/tools/og-checker" method="get" novalidate>
+<label class="label" for="check-url">Paste a page URL</label>
+<div class="tool-row">
+<input class="input" id="check-url" name="url" type="url" inputmode="url" autocomplete="url" spellcheck="false" maxlength="2048" required placeholder="https://example.com/blog/my-post" aria-describedby="check-hint">
+<button class="btn btn-primary" id="check-submit" type="submit">Check</button>
+</div>
+<p class="hint" id="check-hint">Public https:// pages only. No account needed. Results are kept for 10 minutes, so the same link checked again loads instantly.</p>
+<p class="alert alert-danger" id="check-error" role="alert" hidden></p>
+<div class="alert alert-info tool-verify" id="check-verify" hidden>
+<p id="check-verify-text">Complete the quick check below and your result loads straight away.</p>
+<div class="tool-widget" id="check-widget"></div>
+</div>
+<noscript><p class="alert alert-warn">The checker needs JavaScript to show its results. The <a href="/docs/api">inspect API</a> returns the same answer as JSON.</p></noscript>
+</form>
+<p class="visually-hidden" id="check-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section section-alt tool-results" id="results" aria-labelledby="results-title" hidden>
+<div class="container">
+<h2 class="visually-hidden" id="results-title" tabindex="-1">Results</h2>
+<div class="card verdict" id="verdict">
+<p class="eyebrow">Result</p>
+<p class="verdict-title" id="verdict-title"></p>
+<p class="verdict-text" id="verdict-text"></p>
+<dl class="verdict-meta" id="verdict-meta"></dl>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>How the link may look</h2>
+<p class="muted">Mockups drawn from the page's tags, not screenshots. Each app has its own layout, crop and text length, and changes them without notice, so treat these as a guide.</p>
+</div>
+<p class="alert alert-info" id="previews-note" hidden></p>
+<div class="previews" id="previews"></div>
+</div>
+
+<div class="tool-block tool-split">
+<div>
+<div class="tool-block-head">
+<h2>Checklist</h2>
+<p class="muted">Problems first. Each one says what to change in your page.</p>
+</div>
+<ul class="checklist" id="checklist"></ul>
+</div>
+<aside class="card facts-card" aria-labelledby="facts-title">
+<h2 id="facts-title">The image</h2>
+<div class="facts-image" id="facts-image" hidden></div>
+<dl class="facts" id="facts"></dl>
+</aside>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>Tags found on the page</h2>
+<p class="muted">Exactly as the page states them. A relative image URL is shown here as written; the checklist says whether it was relative.</p>
+</div>
+<div class="table-wrap tool-tags">
+<table>
+<thead><tr><th scope="col">Tag</th><th scope="col">Value</th></tr></thead>
+<tbody id="tags"></tbody>
+</table>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About the checker</p>
+<h2>What it does, and what it does not.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>What it does</h3>
+<ul>
+<li>Fetches the one page you paste, from our server, as <a href="/bot">LinkToCardBot/1.0</a>. It follows up to 3 redirects and checks every address on the way.</li>
+<li>Reads <code>og:*</code> and <code>twitter:*</code> tags, the <code>&lt;title&gt;</code>, the meta description, the canonical link, the favicon and <code>theme-color</code>.</li>
+<li>Downloads the <code>og:image</code> (or <code>twitter:image</code>) to measure its HTTP status, type, file size, pixel size and aspect ratio.</li>
+<li>Reads the site's <code>robots.txt</code> and tells you if it disallows the checker or all bots for that page.</li>
+<li>Runs twelve checks, each with a plain fix, and draws approximate previews from what it found.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What it does not do</h3>
+<ul>
+<li>It does not run JavaScript. Tags that your page adds in the browser after it loads are not seen, so put them in the HTML your server sends.</li>
+<li>It does not crawl. Per check it requests the page, its <code>robots.txt</code> and its image (a HEAD, then a GET), and nothing else. The image and favicon are fetched again only to show them to you here.</li>
+<li>It does not log in, and it cannot reach <code>localhost</code>, private networks or plain <code>http://</code> pages.</li>
+<li>It cannot see what an app has already cached for your link, and it does not ask any app to refresh it.</li>
+<li>It never stores or returns the page's HTML: only the parsed tags and the results, for 10 minutes.</li>
+</ul>
+</div>
+</div>
+
+<div class="tool-columns">
+<div class="prose">
+<h3>Why the previews differ between apps</h3>
+<p>Every app that unfurls a link runs its own fetcher and draws its own card. They read the same tags, but each decides how large the image is, how it is cropped, how many lines of title and description fit, whether the site name or favicon appears, and how long the result is cached. Some use a different tag first: X looks for <code>twitter:*</code> tags, most others for <code>og:*</code>.</p>
+<p>The mockups on this page use the same parsed data in six approximate layouts. They are close enough to spot a missing image, a bad crop or a title that is cut off; they are not a promise of the exact pixels.</p>
+</div>
+<div class="prose">
+<h3 id="api">Do this via API</h3>
+<p>The same check is available as JSON for scripts and CI. Call <code>GET /v1/inspect</code> with an API key from your dashboard. It returns the same result this page shows and counts no images.</p>
+<div class="code-block" data-lang="shell"><button class="copy-btn" type="button" data-copy>Copy</button><pre><code class="language-shell">curl -H "Authorization: Bearer ltc_your_api_key" \
+  "[[site.url]]/v1/inspect?url=https%3A%2F%2Fexample.com%2Fblog%2Fmy-post"</code></pre></div>
+<p>Each key has a daily number of inspect calls set by your plan. <a class="link-arrow" href="/docs/api">Read the API reference</a></p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about link previews.</h2>
+<p>Short answers, and where we are not sure, we say so.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>I fixed my tags. Why does the old preview still show?</summary>
+<div>
+<p>Apps cache what they fetched for a URL, and most do not say for how long. This checker always reads your page fresh (after its own 10-minute cache), but it cannot clear another app's cache.</p>
+<p>Facebook's Sharing Debugger and LinkedIn's Post Inspector let you ask those two to fetch the page again. For other apps, sharing the URL with a small change, such as <code>?v=2</code> on the end, makes it a new URL that they have not cached yet.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>What size should my og:image be?</summary>
+<div>
+<p>1200 &times; 630 pixels is the size most sites use. It is the 1.91:1 shape this checker tests for, and it is large enough to look sharp in the big-image layouts. Keep the file well under 5 MB, use PNG or JPEG, and give it an absolute <code>https://</code> URL.</p>
+<p>Keep text and faces away from the edges: some apps crop the image to a square or a smaller rectangle.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Do I need twitter: tags if I already have og: tags?</summary>
+<div>
+<p>Set <code>twitter:card</code> at least. It has no Open Graph equivalent: it names the layout you want, and <code>summary_large_image</code> asks for the big image. For title, description and image, X can read the <code>og:</code> versions when the <code>twitter:</code> ones are missing; add <code>twitter:</code> tags only when you want different text on X.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>The checker says robots.txt blocks it. Does that matter?</summary>
+<div>
+<p>The checker fetches a page only because a person asked for it, like a link preview does, so it reports <code>robots.txt</code> as a warning and still reads the page. Some link-preview fetchers may follow <code>robots.txt</code> more strictly, so a rule that blocks all bots from a page you want shared is worth a second look.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Why can I not check my localhost or staging site?</summary>
+<div>
+<p>The checker only fetches public <code>https://</code> addresses, and it refuses anything that resolves to a private, local or reserved network, so it cannot be used to probe networks it should not see. A page behind a login is fetched as a logged-out visitor, which is what the apps see too.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is it free? Are there limits?</summary>
+<div>
+<p>Yes, and you do not need an account. There is an hourly limit on fresh checks from one network, and after a few checks you may be asked to confirm you are a person. A URL checked in the last 10 minutes is answered from the cache and does not count.</p>
+<p>For regular use, the <a href="#api">inspect API</a> gives each API key its own daily allowance.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>What does the checker keep?</summary>
+<div>
+<p>The parsed tags and the check results, for 10 minutes, so the result and its image can be shown and shared. It never keeps the page's HTML. To show the image, it is fetched again from your server through our own address; nothing is stored. <a href="/privacy">Privacy policy</a></p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Stop fixing cards by hand.</h2>
+<p>[[site.name]] renders a correct [[size.og.width]] &times; [[size.og.height]] card for every page from one HTML and CSS template, and gives you the meta tags to paste.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs">Read the docs</a>
+</div>
+</div>
+</section>
+
+</main>

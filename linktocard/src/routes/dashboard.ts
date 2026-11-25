@@ -66,6 +66,7 @@ dashboardRouter.get('/config', (c) => {
     topup: { price_usd: TOPUP.priceUsd, images: TOPUP.images, valid_days: TOPUP.validDays },
     sizes: Object.values(SIZES).map(({ id, width, height }) => ({ id, width, height })),
     formats: FORMATS,
+    turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
   });
 });
 

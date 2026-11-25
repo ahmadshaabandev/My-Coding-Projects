@@ -11,6 +11,7 @@
  *   /v1/og/...              signed card URLs (public)
  *   /v1/*                   API-key endpoints
  *   /i/...                  stored images
+ *   /api/tools/*            free tools (public, no session): the OG checker
  *   /api/*                  dashboard API (session cookie)
  */
 import { Hono } from 'hono';
@@ -24,6 +25,7 @@ import { imagesRouter } from './routes/images';
 import { ogRouter } from './routes/og';
 import { playgroundRouter } from './routes/playground';
 import { studioRouter } from './routes/studio';
+import { toolsRouter } from './routes/tools';
 import { paddleWebhookRouter } from './routes/webhooks/paddle';
 import type { AppEnv, Env } from './types';
 
@@ -61,6 +63,7 @@ app.route('/playground', playgroundRouter);
 app.route('/v1/og', ogRouter);
 app.route('/v1', apiRouter);
 app.route('/i', imagesRouter);
+app.route('/api/tools', toolsRouter);
 app.route('/api', dashboardRouter);
 app.route('/api', studioRouter);
 

@@ -4,6 +4,7 @@
  *   POST /v1/images     render (or fetch from cache) one card
  *   GET  /v1/usage      the account's usage for the current period
  *   GET  /v1/templates  starter templates and the account's own
+ *   GET  /v1/inspect    check a page's link-preview tags (the OG checker's JSON; not an image)
  *
  * Auth is attached per route, so an unknown /v1 path is a plain 404.
  */
@@ -11,6 +12,8 @@ import { Hono } from 'hono';
 import { requireApiKey } from '../auth/middleware';
 import { all } from '../db/client';
 import { ApiError } from '../lib/errors';
+import { inspectUrl, normaliseInputUrl } from '../inspect/check';
+import { enforceInspectLimit } from '../inspect/limits';
 import { assertKnownFields, backgroundFor, iso, readJsonObject, usageJson } from '../lib/http';
 import { CARD_FIELDS, getCard, imageUrl, parseCardInput, starterTemplateJson, storedImageHeaders, warningsHeader } from '../lib/images';
 import { getUsage } from '../lib/quota';
@@ -84,4 +87,12 @@ apiRouter.get('/templates', requireApiKey, async (c) => {
     starter: STARTER_TEMPLATES.map((template) => starterTemplateJson(template, false)),
     custom: custom.map((template) => ({ ...template, updated_at: iso(template.updated_at) })),
   });
+});
+
+apiRouter.get('/inspect', requireApiKey, async (c) => {
+  const { user } = c.var;
+  const input = normaliseInputUrl(c.req.query('url'));
+  // Cached results are free; an uncached check counts against the key's daily allowance.
+  const result = await inspectUrl(c.env.DB, input, () => enforceInspectLimit(c.env, user, c.var.apiKey?.id ?? user.id, Date.now()));
+  return c.json(result);
 });

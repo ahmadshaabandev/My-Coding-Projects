@@ -3,7 +3,7 @@ import { api } from './client.js';
 import { planCard, checkoutReturnNotice } from './billing.js';
 import { createBuilder, siteForm } from './builder.js';
 import { alertBox, button, h, memory, toast } from './dom.js';
-import { guideStage, usageView } from './helpers.js';
+import { guideStage, prefillFromQuery, usageView } from './helpers.js';
 
 const guideKey = (userId) => `ltc:guide:${userId}`;
 
@@ -73,6 +73,7 @@ function guide(ctx, { sites, templates, stage, rerender }) {
     sites: [site],
     templates,
     compact: true,
+    prefill: prefillFromQuery(location.search),
     oncopied: () => {
       memory.set(guideKey(userId), true);
       done.hidden = false;

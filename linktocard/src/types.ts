@@ -52,6 +52,11 @@ export interface Env extends Partial<Record<RateLimitName, RateLimitBinding>> {
   /** One secret, or several separated by commas while rotating. */
   PADDLE_WEBHOOK_SECRET?: string;
 
+  /** Cloudflare Turnstile for the public OG checker. Unset: no challenge, the hourly limit alone applies. */
+  TURNSTILE_SECRET_KEY?: string;
+  /** Public widget key published by /api/config (plain var). */
+  TURNSTILE_SITE_KEY?: string;
+
   /** Test-only switch, honoured only when ENVIRONMENT === 'test'. */
   RATE_LIMITS_DISABLED?: string;
 }
@@ -168,6 +173,26 @@ export interface RenderRow {
   charged_to: 'plan' | 'topup';
   period_start: number;
   created_at: number;
+  expires_at: number;
+}
+
+/** One OG checker result (src/db/migrations/0005_og_checks.sql). Times are epoch ms. */
+export interface OgCheckRow {
+  id: string;
+  /** The normalised URL that was checked; the cache key. */
+  url_key: string;
+  /** CheckResult JSON (src/inspect/types.ts) as stored, cached = false. */
+  result: string;
+  image_url: string | null;
+  favicon_url: string | null;
+  created_at: number;
+  expires_at: number;
+}
+
+/** A fixed-window counter: per-IP hourly checks, per-key daily inspections. */
+export interface ToolUsageRow {
+  bucket: string;
+  count: number;
   expires_at: number;
 }
 

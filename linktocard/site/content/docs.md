@@ -33,6 +33,8 @@ curl [[site.url]]/v1/images \
 
 See the [API reference](/docs/api).
 
+To see what a page sends today, before or after you add a card, paste its address into the free [Open Graph checker](/tools/og-checker); [`GET /v1/inspect`](/docs/api#get-v1-inspect) returns the same check as JSON.
+
 ## What you get
 
 - **Sizes:** [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`) and [[size.portrait.width]] x [[size.portrait.height]] (`portrait`).
@@ -45,7 +47,7 @@ See the [API reference](/docs/api).
 ## What it does not do
 
 - No visual editor. Templates are HTML and CSS that you write, or one of the five starter templates.
-- No screenshots. It does not load web pages and cannot capture an existing page.
+- No screenshots. The renderer does not load web pages and cannot capture an existing page. (The checker reads a page's tags; it does not draw the page.)
 - No video, GIF or PDF output. One request gives one still image.
 - No AI. Nothing is generated; the card shows exactly the text and images you send.
 - No browser. Templates are drawn by a layout engine that understands a large part of CSS, but JavaScript never runs and some HTML is not supported. [HTML and CSS templates](/docs/html-css-templates) lists exactly what works.
@@ -56,7 +58,7 @@ See the [API reference](/docs/api).
 - [Signed URLs](/docs/signed-urls): the signature format, signer code for Node.js, PHP and Python, caching, rotation, and every reason for a 403.
 - [HTML and CSS templates](/docs/html-css-templates): placeholders, state classes, fonts, emoji, images, the starter templates and a complete example.
 - [Frameworks](/docs/frameworks): plain HTML, WordPress, Ghost, Webflow, Hugo, Astro and Next.js.
-- [API reference](/docs/api): every endpoint, field, header and error code.
+- [API reference](/docs/api): every endpoint, field, header and error code, including `GET /v1/inspect`.
 - [Limits](/docs/limits): what each plan includes, the technical limits, and what happens when you reach one.
 
 Questions that these pages do not answer: [[site.supportEmail]].

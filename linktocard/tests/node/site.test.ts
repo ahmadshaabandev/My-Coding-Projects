@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd } from '../../src/billing/plans';
-import { LIMITS, RATE_LIMITS } from '../../src/config';
+import { INSPECT, LIMITS, RATE_LIMITS } from '../../src/config';
 import { buildSite, findPlaceholders, listTokens, renderSite, type RenderedSite } from '../../scripts/build-site';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -19,7 +19,15 @@ afterAll(() => rmSync(temp, { recursive: true, force: true }));
 const HAND_BUILT = ['index.html', 'pricing.html', 'contact.html', 'login.html', 'login/verify.html', 'dashboard.html', '404.html'];
 const HEADER_LINKS = ['/', '/docs', '/pricing', '/login'];
 // The comparison pages are linked from the footer only: the header carries nothing but the way in.
-const FOOTER_LINKS = ['/terms', '/privacy', '/refund', '/pricing', '/docs', '/contact', '/compare/bannerbear', '/compare/vercel-og'];
+const FOOTER_LINKS = ['/terms', '/privacy', '/refund', '/pricing', '/docs', '/contact', '/compare/bannerbear', '/compare/vercel-og', '/tools/og-checker'];
+/** The Open Graph checker's guides (site/content/guides/<slug>.md). */
+const GUIDES = [
+  'og-image-not-showing-whatsapp',
+  'og-image-not-showing-linkedin',
+  'twitter-card-not-showing',
+  'facebook-og-image-cache-refresh',
+  'og-image-size',
+] as const;
 /** Pages other engineers write as Markdown; a link to one that is not written yet is reported, not failed. */
 const CONTENT_ROUTES = /^\/(terms|privacy|refund|docs(\/[\w-]+)?|compare\/[\w-]+)$/;
 /** Paths answered by the Worker, not by a file. */
@@ -319,7 +327,9 @@ describe('built site', () => {
 
   it('lists only public pages in sitemap.xml and points robots.txt at it', () => {
     const sitemap = readFileSync(join(outDir, 'sitemap.xml'), 'utf8');
-    for (const path of ['/', '/pricing', '/contact']) expect(sitemap).toContain(`<loc>${site.config.url}${path}</loc>`);
+    for (const path of ['/', '/pricing', '/contact', '/tools/og-checker', '/bot', ...GUIDES.map((slug) => `/guides/${slug}`)]) {
+      expect(sitemap).toContain(`<loc>${site.config.url}${path}</loc>`);
+    }
     for (const path of ['/dashboard', '/login', '/404']) expect(sitemap).not.toContain(`${site.config.url}${path}`);
     expect(readFileSync(join(outDir, 'robots.txt'), 'utf8')).toContain(`Sitemap: ${site.config.url}/sitemap.xml`);
   });
@@ -331,12 +341,94 @@ describe('built site', () => {
     expect(headers).toContain('X-Frame-Options: DENY');
     const csp = headers.split('\n').find((line) => line.trim().startsWith('Content-Security-Policy:')) ?? '';
     expect(csp).toContain("default-src 'self'");
-    expect(csp).toContain("script-src 'self' https://cdn.paddle.com;");
-    expect(csp).toContain('frame-src https://*.paddle.com');
+    // Turnstile (the OG checker's optional human check) is the only other origin allowed to run script or frames.
+    expect(csp).toContain("script-src 'self' https://cdn.paddle.com https://challenges.cloudflare.com;");
+    expect(csp).toContain('frame-src https://*.paddle.com https://challenges.cloudflare.com;');
+    expect(csp).toContain("img-src 'self' data: blob: https://*.paddle.com;");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(headers).toMatch(/\/assets\/\*\n\s+Cache-Control: public, max-age=3600\n/);
     expect(headers).not.toContain('immutable\n');
     expect(headers.split('\n').every((line) => line.length < 2000)).toBe(true);
+  });
+
+  it('links the Open Graph checker from the home page, the pricing page, the docs and the footer', () => {
+    for (const outPath of ['index.html', 'pricing.html', 'docs.html']) {
+      const main = pageHtml(site, outPath).slice(0, pageHtml(site, outPath).indexOf('<footer'));
+      expect(main, outPath).toMatch(/<a href="\/tools\/og-checker">Open Graph checker<\/a>/);
+    }
+    const footer = pageHtml(site, 'index.html').slice(pageHtml(site, 'index.html').indexOf('<footer'));
+    expect(footer).toContain('<li><a href="/tools/og-checker">Tools</a></li>');
+  });
+
+  it('gives each guide its own title and description, a no-JS form to the checker, an FAQ and a way to fix it', () => {
+    const titles = new Map<string, string>();
+    const descriptions = new Map<string, string>();
+    for (const page of site.pages) {
+      const title = /<title>([^<]+)<\/title>/.exec(page.html)?.[1] ?? '';
+      const description = /<meta name="description" content="([^"]+)">/.exec(page.html)?.[1] ?? '';
+      expect(titles.get(title), `${page.outPath} repeats the title of ${titles.get(title)}`).toBeUndefined();
+      expect(descriptions.get(description), `${page.outPath} repeats the description of ${descriptions.get(description)}`).toBeUndefined();
+      titles.set(title, page.outPath);
+      descriptions.set(description, page.outPath);
+    }
+    for (const slug of GUIDES) {
+      const html = pageHtml(site, `guides/${slug}.html`);
+      const where = `guides/${slug}`;
+      expect(html, where).toContain('<main class="container page">');
+      // Works without JavaScript: a plain GET to the checker, whose script runs ?url= on load.
+      const form = /<form [^>]*action="\/tools\/og-checker" method="get">([\s\S]*?)<\/form>/.exec(html)?.[1] ?? '';
+      expect(form, where).toContain(`name="url" type="url"`);
+      expect(form, where).toContain(`maxlength="${INSPECT.maxUrlChars}" required`);
+      expect(form, where).toContain('<button class="btn btn-primary" type="submit">Check</button>');
+      const faq = html.slice(html.indexOf('<h2 id="faq">'), html.indexOf('<h2 ', html.indexOf('<h2 id="faq">') + 1));
+      expect(html.indexOf('<h2 id="faq">'), where).toBeGreaterThan(-1);
+      expect(faq.match(/<h3 /g)?.length ?? 0, where).toBeGreaterThanOrEqual(4);
+      expect(html, where).toMatch(/<a href="\/login">Fix it automatically with Link To Card<\/a>/);
+    }
+  });
+
+  it('writes each guide for its own problem, not one template with the words swapped', () => {
+    const seen = new Map<string, string>();
+    for (const slug of GUIDES) {
+      const html = pageHtml(site, `guides/${slug}.html`);
+      const article = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
+      const paragraphs = [...article.matchAll(/<(?:p|li)>([\s\S]*?)<\/(?:p|li)>/g)].map((match) => stripTags(match[1] ?? '').trim());
+      for (const text of paragraphs.filter((paragraph) => paragraph.length >= 80)) {
+        expect(seen.get(text), `guides/${slug} repeats a paragraph of ${seen.get(text)}: ${text}`).toBeUndefined();
+        seen.set(text, slug);
+      }
+    }
+    expect(seen.size).toBeGreaterThan(30);
+  });
+
+  it('scores the sizes in the image size guide exactly as the checker does', () => {
+    const html = pageHtml(site, 'guides/og-image-size.html');
+    const rows = [...html.matchAll(/<td>(\d+) x (\d+)<\/td>\s*<td>([\d.]+):1<\/td>\s*<td>(Pass|Warn|Fail)<\/td>/g)];
+    expect(rows.length).toBeGreaterThanOrEqual(6);
+    for (const [, w, h, shape, verdict] of rows) {
+      const width = Number(w);
+      const height = Number(h);
+      const off = Math.abs(width / height / INSPECT.targetAspectRatio - 1);
+      const expected = Math.min(width, height) < INSPECT.minImageSidePx ? 'Fail' : off <= INSPECT.aspectRatioTolerance ? 'Pass' : 'Warn';
+      expect(`${w}x${h} ${verdict}`).toBe(`${w}x${h} ${expected}`);
+      expect(shape, `${w}x${h}`).toBe((width / height).toFixed(2));
+    }
+    const text = unescapeHtml(stripTags(html));
+    expect(text).toContain(`fails an image smaller than ${INSPECT.minImageSidePx} px on either side, and warns when the shape is more than ${INSPECT.aspectRatioTolerance * 100} % away from ${INSPECT.targetAspectRatio}:1`);
+    expect(text).toContain(`warns when the image is over ${INSPECT.imageWarnBytes / (1024 * 1024)} MB, and stops reading at ${INSPECT.imageMaxBytes / (1024 * 1024)} MB`);
+  });
+
+  it('states in the privacy policy and the terms what the checker fetches and keeps', () => {
+    const privacy = unescapeHtml(stripTags(pageHtml(site, 'privacy.html')));
+    // src/inspect/check.ts stores results for INSPECT.cacheTtlMs; src/inspect/limits.ts counts per client per hour.
+    expect(privacy).toContain(`Open Graph checker results (the address checked and the tags and measurements read from it): ${INSPECT.cacheTtlMs / 60_000} minutes.`);
+    expect(privacy).toContain('a count of checks per IP address (IPv6: per /64 network) for the current hour');
+    expect(privacy).toContain(`identifying itself as ${INSPECT.userAgent.split(' ')[0]}`);
+    expect(privacy).toMatch(/We never store the page(?:'|&#39;)s HTML\./);
+    expect(privacy).toMatch(/Turnstile/);
+    const terms = unescapeHtml(stripTags(pageHtml(site, 'terms.html')));
+    expect(terms).toContain('It fetches only the one page you ask it to check');
+    expect(terms).toContain('use the Open Graph checker to probe, scan or map systems you have no right to probe');
   });
 
   it('prints the staging origin when SITE_URL overrides the configured one', () => {
@@ -442,7 +534,7 @@ describe('content pipeline', () => {
   it('renders legal pages in a narrow column with "Last updated" and highlighted placeholders', () => {
     const html = pageHtml(render(), 'notice.html');
     expect(html).toContain('<main class="container page page-legal">');
-    expect(html).toContain('<p class="eyebrow">Last updated <time datetime="2026-11-23">23 November 2026</time></p>');
+    expect(html).toContain('<p class="eyebrow">Last updated <time datetime="2026-11-25">25 November 2026</time></p>');
     expect(html).toContain('Sold by Ahmad Shaaban, Nahr Street, Shehim, Chouf, Lebanon.');
     const unfilled = pageHtml(renderSite({ contentDir, env: { SITE_LEGAL_NAME: 'LEGAL_NAME', SITE_LEGAL_ADDRESS: 'LEGAL_ADDRESS' }, now: NOW }), 'notice.html');
     expect(unfilled).toContain('Sold by <mark class="placeholder">LEGAL_NAME</mark>, <mark class="placeholder">LEGAL_ADDRESS</mark>.');
@@ -479,7 +571,7 @@ describe('tokens', () => {
       'legal.name': 'Ahmad Shaaban',
       'legal.address': 'Nahr Street, Shehim, Chouf, Lebanon',
       'legal.locality': 'Shehim, Chouf, Lebanon',
-      'legal.updated': '23 November 2026',
+      'legal.updated': '25 November 2026',
       'legal.governingLaw': 'Lebanon',
       'plan.free.paddleName': '(no Paddle product)',
       'plan.starter.price': formatUsd(PLANS.starter.priceUsd),

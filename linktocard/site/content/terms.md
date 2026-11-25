@@ -29,6 +29,8 @@ The service has deliberate limits, and you should rely only on what is described
 - There is no visual editor, no website screenshots, no video or GIF output, and no AI or face generation.
 - Technical limits (for example on template size and render time) are listed in the documentation and are part of these terms.
 
+The service also includes a free Open Graph checker, on the website and as `GET /v1/inspect`. It fetches only the one page you ask it to check, that site's `robots.txt` and the image the page names, and it reports what it finds. Its results are a guide: other apps fetch pages and draw previews in their own way, and we do not promise that a link will look the same there.
+
 ## 3. Your account
 
 You sign in with a link sent to your email address; there is no password. You are responsible for:
@@ -49,6 +51,7 @@ You may not use the service to do any of the following, or help anyone else do s
 - infringe someone else's copyright, trademark or other rights, including using fonts or images you do not have the right to use;
 - distribute malware, or link to it;
 - probe, scan or attack the service, bypass its security, or abuse the API (for example by overloading it or using it to reach systems you have no right to reach);
+- use the Open Graph checker to probe, scan or map systems you have no right to probe, to send repeated requests to a site that is not yours, or to get around its limits or its check that you are a person;
 - get around quotas or rate limits, for example with multiple free accounts, or remove, hide or crop out the small mark on Free-plan images;
 - create deepfakes, or use a real person's face, name or likeness without their consent;
 - resell the service as your own competing image-rendering service.

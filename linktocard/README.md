@@ -295,6 +295,17 @@ it if it is wrong.
   sites before launch.
 - Browsers other than Chromium.
 
+## Changelog
+
+- **2026-11-25: Free OG checker** (`/tools/og-checker`, `/v1/inspect`, five guides, `/bot`). The
+  Worker fetches one public page on request (https only, 5 s, 2 MB, 3 redirects, private and
+  metadata addresses refused, User-Agent `LinkToCardBot/1.0`), parses its share tags, probes the
+  image and returns a checklist; images are shown through a proxy keyed by the check id, never by
+  URL. 20 uncached checks per hour per IP; Turnstile after 5 once `TURNSTILE_SECRET_KEY` is set
+  (GO-LIVE.md section 9b). Where AI was used: the code, tests, guides and copy were written with
+  AI tools (Claude Code); a separate AI review attacked the fetch path and its fixes are tested.
+  Ahmad reviews before release.
+
 ## Where AI was used
 
 All of it. The code, tests, site design, documentation, legal page drafts and research

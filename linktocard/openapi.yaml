@@ -11,12 +11,16 @@ info:
     - POST /v1/images with an API key.
 
     One image is one rendered size. Cache hits and failed renders are never counted.
+
+    GET /v1/inspect checks one page's link-preview tags and its og:image, like the
+    free checker at https://linktocard.com/tools/og-checker. It never counts as an image.
     Human documentation: https://linktocard.com/docs/api
 servers:
   - url: https://linktocard.com
 tags:
   - name: Images
   - name: Account
+  - name: Tools
 paths:
   /v1/images:
     post:
@@ -156,6 +160,57 @@ paths:
           $ref: "#/components/responses/InvalidApiKey"
         "403":
           $ref: "#/components/responses/AccountSuspended"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/inspect:
+    get:
+      tags: [Tools]
+      operationId: inspectPage
+      summary: Check one page's Open Graph and Twitter tags and its og:image.
+      description: |
+        Fetches the one page given in `url` as "LinkToCardBot/1.0 (+https://linktocard.com/bot)":
+        https only, at most 3 redirects (each address checked), 5 seconds and 2 MB for the page.
+        Measures the og:image (or twitter:image) with a HEAD then a GET, and reads robots.txt
+        once (a block is a warning only). Never runs JavaScript, never crawls, never returns
+        the page's HTML.
+
+        A result is stored for 10 minutes; the same url within that time returns it with
+        cached: true and is not counted. Uncached checks count against a daily allowance per
+        API key (UTC day): Free 100, Starter 1000, Pro 5000. Counts no images.
+      security:
+        - apiKey: []
+      parameters:
+        - name: url
+          in: query
+          required: true
+          description: Absolute https:// URL of the page, default port, no username or password. A fragment is dropped.
+          schema:
+            type: string
+            format: uri
+            maxLength: 2048
+          example: https://example.com/blog/launch-week
+      responses:
+        "200":
+          description: The check result.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "403":
+          description: forbidden (the address or a redirect target is not on the public internet) or account_suspended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/PageFetchFailed"
         "429":
           $ref: "#/components/responses/RateLimited"
   /v1/og/{site_id}/{template}.{ext}:
@@ -514,6 +569,124 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CustomTemplate"
+    CheckResult:
+      type: object
+      description: The result of GET /v1/inspect. Tag values are exactly as the page states them; null when missing.
+      required: [id, url, final_url, status, fetched_at, response_ms, cached, expires_at, page, og, twitter, image, robots, checks, preview]
+      properties:
+        id:
+          type: string
+          pattern: "^chk_[0-9a-z]{16}$"
+        url:
+          type: string
+          format: uri
+          description: The normalised input URL.
+        final_url:
+          type: string
+          format: uri
+          description: The address after redirects; relative URLs are resolved against it.
+        status:
+          type: integer
+        fetched_at:
+          type: string
+          format: date-time
+        response_ms:
+          type: integer
+        cached:
+          type: boolean
+          description: true when the result came from the 10-minute store (not counted).
+        expires_at:
+          type: string
+          format: date-time
+        page:
+          type: object
+          required: [title, description, canonical, favicon, theme_color]
+          properties:
+            title: { type: [string, "null"] }
+            description: { type: [string, "null"] }
+            canonical: { type: [string, "null"] }
+            favicon: { type: [string, "null"] }
+            theme_color: { type: [string, "null"] }
+        og:
+          type: object
+          required: [title, description, image, image_alt, image_width, image_height, url, type, site_name]
+          properties:
+            title: { type: [string, "null"] }
+            description: { type: [string, "null"] }
+            image: { type: [string, "null"] }
+            image_alt: { type: [string, "null"] }
+            image_width: { type: [string, "null"] }
+            image_height: { type: [string, "null"] }
+            url: { type: [string, "null"] }
+            type: { type: [string, "null"] }
+            site_name: { type: [string, "null"] }
+        twitter:
+          type: object
+          required: [card, title, description, image, site]
+          properties:
+            card: { type: [string, "null"] }
+            title: { type: [string, "null"] }
+            description: { type: [string, "null"] }
+            image: { type: [string, "null"] }
+            site: { type: [string, "null"] }
+        image:
+          description: The measured og:image (or twitter:image); null when the page has neither.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [url, status, content_type, bytes, width, height, aspect_ratio, response_ms]
+              properties:
+                url: { type: string }
+                status: { type: [integer, "null"] }
+                content_type: { type: [string, "null"] }
+                bytes: { type: [integer, "null"] }
+                width: { type: [integer, "null"] }
+                height: { type: [integer, "null"] }
+                aspect_ratio: { type: [number, "null"] }
+                response_ms: { type: [integer, "null"] }
+        robots:
+          type: object
+          required: [checked, allowed, note]
+          properties:
+            checked: { type: boolean }
+            allowed: { type: [boolean, "null"] }
+            note: { type: [string, "null"] }
+        checks:
+          type: array
+          description: All twelve checks, always in this order of id.
+          items:
+            $ref: "#/components/schemas/CheckItem"
+        preview:
+          type: object
+          required: [title, description, domain, site_name, image, favicon]
+          properties:
+            title: { type: [string, "null"] }
+            description: { type: [string, "null"] }
+            domain: { type: string }
+            site_name: { type: [string, "null"] }
+            image:
+              type: [string, "null"]
+              description: Path on linktocard.com that shows the image while the result is stored.
+            favicon:
+              type: [string, "null"]
+              description: Path on linktocard.com that shows the favicon while the result is stored.
+    CheckItem:
+      type: object
+      required: [id, status, title, detail, fix]
+      properties:
+        id:
+          type: string
+          enum: [og_image, og_image_absolute, og_image_https, og_image_reachable, og_image_size, og_image_dimensions, og_image_ratio, twitter_card, og_title, og_description, robots, response_time]
+        status:
+          type: string
+          enum: [pass, warn, fail]
+        title:
+          type: string
+        detail:
+          type: string
+        fix:
+          type: [string, "null"]
+          description: What to change; null when the check passes.
     ErrorCode:
       type: string
       description: |
@@ -521,12 +694,14 @@ components:
         invalid_request 400, unsupported_size 400, unsupported_format 400,
         unauthorized 401, invalid_api_key 401, quota_exceeded 402,
         invalid_signature 403, account_suspended 403, plan_required 403, forbidden 403,
-        not_found 404, conflict 409, gone 410, payload_too_large 413,
-        unsupported_media_type 415, template_error 422, image_fetch_failed 422,
-        rate_limited 429, render_failed 500, internal_error 500,
-        not_configured 503, render_timeout 504.
-        unauthorized, plan_required, forbidden, conflict and unsupported_media_type are
-        returned only by the dashboard's own endpoints; gone is reserved.
+        verification_required 403, not_found 404, conflict 409, gone 410,
+        payload_too_large 413, unsupported_media_type 415, template_error 422,
+        image_fetch_failed 422, page_fetch_failed 422, rate_limited 429,
+        render_failed 500, internal_error 500, not_configured 503, render_timeout 504.
+        unauthorized, plan_required, conflict and unsupported_media_type are returned only
+        by the dashboard's own endpoints; forbidden by the dashboard and by GET /v1/inspect
+        for an address that is not on the public internet; verification_required only by
+        the free checker on the website; gone is reserved.
       enum:
         - invalid_request
         - unsupported_size
@@ -538,6 +713,7 @@ components:
         - account_suspended
         - plan_required
         - forbidden
+        - verification_required
         - not_found
         - conflict
         - gone
@@ -545,6 +721,7 @@ components:
         - unsupported_media_type
         - template_error
         - image_fetch_failed
+        - page_fetch_failed
         - rate_limited
         - render_failed
         - internal_error
@@ -652,6 +829,12 @@ components:
             $ref: "#/components/schemas/Error"
     Unprocessable:
       description: template_error or image_fetch_failed. Nothing is stored or counted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PageFetchFailed:
+      description: page_fetch_failed. The page could not be read. details.reason is dns_failed, connect_failed, timeout, too_many_redirects, insecure_redirect, bad_redirect, http_error (details.status is the site's status) or not_html.
       content:
         application/json:
           schema:

@@ -1,6 +1,6 @@
 ---
 title: API reference
-description: Reference for POST /v1/images, GET /v1/usage, GET /v1/templates, signed card URLs and stored images - authentication, fields, real responses, every error code, rate limits and counting rules.
+description: Reference for POST /v1/images, GET /v1/usage, GET /v1/templates, GET /v1/inspect, signed card URLs and stored images - authentication, fields, real responses, every error code, rate limits and counting rules.
 layout: doc
 order: 6
 nav: API reference
@@ -13,6 +13,7 @@ Base URL: `[[site.url]]`
 | [`POST /v1/images`](#post-v1-images) | Renders one card, or returns it from cache. Needs an API key. |
 | [`GET /v1/usage`](#get-v1-usage) | Your allowance for the current period. Needs an API key. |
 | [`GET /v1/templates`](#get-v1-templates) | The starter templates and your own. Needs an API key. |
+| [`GET /v1/inspect`](#get-v1-inspect) | Checks one page's link-preview tags and its `og:image`. Needs an API key. Counts no images. |
 | [`GET /v1/og/...`](#get-v1-og) | A signed card URL, for `og:image`. The signature is the authentication. |
 | [`GET /i/...`](#get-i) | A stored image, as returned by `POST /v1/images`. Public. |
 
@@ -267,6 +268,169 @@ The response, shortened here to the first of the five starter templates:
 
 `starter` describes each starter template and its fields. `required` marks the field a design is built around; the API does not reject a request that leaves it out. `custom` lists your own templates, newest change first. `version` goes up each time you change a template's HTML or CSS.
 
+## GET /v1/inspect
+
+```bash
+curl -G [[site.url]]/v1/inspect \
+  -H "Authorization: Bearer $LTC_API_KEY" \
+  --data-urlencode "url=https://example.com/blog/launch-week"
+```
+
+Checks one page the way the free [Open Graph checker](/tools/og-checker) does, and returns the same result as JSON: the page's `og:*` and `twitter:*` tags, measurements of its image, and a checklist with a fix for each problem. Use it in a script or in CI to catch a missing or broken card before you publish. It never renders an image and never counts against your monthly allowance.
+
+### Request
+
+| Parameter | Meaning |
+| --- | --- |
+| `url` | Required. The page to check: an absolute `https://` URL on the default port, without a username or password, at most 2048 characters. A `#fragment` is dropped. |
+
+For each uncached check the service:
+
+- fetches that one page as `LinkToCardBot/1.0 (+https://linktocard.com/bot)`, following at most 3 redirects. Every address on the way, including each redirect, is checked, and one that is not on the public internet is refused with 403 `forbidden`;
+- allows 5 seconds for the page in total, and reads at most its first 2 MB. Only `text/html` and `application/xhtml+xml` responses are read;
+- requests the `og:image` (or the `twitter:image` when there is no `og:image`) with a HEAD and then a GET, within its own 5 seconds, to measure its status, type, file size and pixel size. It reads PNG, JPEG, GIF and WebP headers;
+- reads the site's `robots.txt` once. A rule that blocks the page is reported as a warning; the page is still checked, because a person asked for it.
+
+It does not run JavaScript, follow links or crawl. Tags that your page adds in the browser are not seen. [LinkToCardBot](/bot) describes the fetcher.
+
+### Caching and limits
+
+A result is kept for 10 minutes. The same `url` checked again within that time returns the stored result with `"cached": true`: nothing is fetched and nothing is counted. The website's checker and this endpoint share these stored results.
+
+Uncached checks count against a daily allowance per API key. The day is the UTC calendar day.
+
+| Plan | Uncached checks per API key per day |
+| --- | --- |
+| [[plan.free.name]] | 100 |
+| [[plan.starter.name]] | 1,000 |
+| [[plan.pro.name]] | 5,000 |
+
+Over the allowance the answer is 429 `rate_limited`, with `Retry-After` set to the seconds until 00:00 UTC:
+
+```json
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "This API key has used its 100 inspections for today (UTC). Cached results do not count.",
+    "docs": "[[site.url]]/docs/api#errors",
+    "details": { "limit": 100, "period_seconds": 86400 }
+  }
+}
+```
+
+The per-IP limit in [Rate limits](#rate-limits) applies too. The checker on the website has its own, separate limit of 20 uncached checks per hour per network and needs no key.
+
+### Response
+
+```json
+{
+  "id": "chk_k3v9x2m8q1w7p4zt",
+  "url": "https://example.com/blog/launch-week",
+  "final_url": "https://example.com/blog/launch-week",
+  "status": 200,
+  "fetched_at": "2026-11-25T10:14:03.512Z",
+  "response_ms": 412,
+  "cached": false,
+  "expires_at": "2026-11-25T10:24:03.512Z",
+  "page": {
+    "title": "Launch week: what we shipped - Example Blog",
+    "description": "Five days, five releases: a new editor, faster search and a public API.",
+    "canonical": "https://example.com/blog/launch-week",
+    "favicon": "https://example.com/favicon.ico",
+    "theme_color": "#1d4ed8"
+  },
+  "og": {
+    "title": "Launch week: what we shipped",
+    "description": "Five days, five releases: a new editor, faster search and a public API.",
+    "image": "https://example.com/images/launch-week.png",
+    "image_alt": "Launch week, in white letters on a blue background",
+    "image_width": "1200",
+    "image_height": "630",
+    "url": "https://example.com/blog/launch-week",
+    "type": "article",
+    "site_name": "Example Blog"
+  },
+  "twitter": { "card": null, "title": null, "description": null, "image": null, "site": null },
+  "image": {
+    "url": "https://example.com/images/launch-week.png",
+    "status": 200,
+    "content_type": "image/png",
+    "bytes": 84213,
+    "width": 1200,
+    "height": 630,
+    "aspect_ratio": 1.905,
+    "response_ms": 188
+  },
+  "robots": { "checked": true, "allowed": true, "note": null },
+  "checks": [
+    { "id": "og_image", "status": "pass", "title": "og:image is set", "detail": "og:image is \"https://example.com/images/launch-week.png\".", "fix": null },
+    { "id": "og_image_absolute", "status": "pass", "title": "Image URL is absolute", "detail": "The image URL is a full address.", "fix": null },
+    { "id": "og_image_https", "status": "pass", "title": "Image URL uses https", "detail": "The image is served over https.", "fix": null },
+    { "id": "og_image_reachable", "status": "pass", "title": "Image loads", "detail": "HTTP 200, image/png.", "fix": null },
+    { "id": "og_image_size", "status": "pass", "title": "Image file size is fine", "detail": "The image is 0.1 MB.", "fix": null },
+    { "id": "og_image_dimensions", "status": "pass", "title": "Image dimensions are fine", "detail": "The image is 1200x630 px.", "fix": null },
+    { "id": "og_image_ratio", "status": "pass", "title": "Aspect ratio is 1.91:1", "detail": "1200x630 is 1.90:1.", "fix": null },
+    { "id": "twitter_card", "status": "warn", "title": "twitter:card is missing", "detail": "The page has no twitter:card tag, which tells X which card layout to use.", "fix": "Add <meta name=\"twitter:card\" content=\"summary_large_image\"> for a large image card." },
+    { "id": "og_title", "status": "pass", "title": "og:title is set", "detail": "og:title is 28 characters.", "fix": null },
+    { "id": "og_description", "status": "pass", "title": "og:description is set", "detail": "og:description is 71 characters.", "fix": null },
+    { "id": "robots", "status": "pass", "title": "robots.txt allows this page", "detail": "robots.txt does not block this page.", "fix": null },
+    { "id": "response_time", "status": "pass", "title": "Page responds quickly", "detail": "The page took 0.4 s.", "fix": null }
+  ],
+  "preview": {
+    "title": "Launch week: what we shipped",
+    "description": "Five days, five releases: a new editor, faster search and a public API.",
+    "domain": "example.com",
+    "site_name": "Example Blog",
+    "image": "/api/tools/og-check/chk_k3v9x2m8q1w7p4zt/image",
+    "favicon": "/api/tools/og-check/chk_k3v9x2m8q1w7p4zt/favicon"
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The result's id, `chk_` and 16 characters. |
+| `url`, `final_url` | The address you sent, normalised, and the address after redirects. Relative URLs in the page are resolved against `final_url`. |
+| `status`, `response_ms` | The page's HTTP status and how long it took to answer. |
+| `fetched_at`, `expires_at`, `cached` | When the page was fetched, when the stored result expires, and whether this answer came from the store. |
+| `page` | The `<title>`, meta description, canonical link, favicon (`/favicon.ico` when the page names none) and `theme-color`. |
+| `og`, `twitter` | The tags exactly as the page states them, or `null` when a tag is missing. A relative `og:image` stays relative here; the `og_image_absolute` check reports it. |
+| `image` | The measured `og:image` (or `twitter:image`), or `null` when the page has neither. Any measurement that could not be made is `null`. |
+| `robots` | Whether `robots.txt` could be read (`checked`), whether it allows the page (`allowed`), and a `note` when it blocks the page or could not be read. |
+| `checks` | The twelve checks below, always all of them and in this order. `status` is `pass`, `warn` or `fail`; `fix` says what to change and is `null` when the check passes. |
+| `preview` | The text and image a link preview would most likely use: `og:` values first, then `twitter:`, then the page's own title and description. `image` and `favicon` are paths on [[site.host]] that show those images while the result is stored; they answer 404 after `expires_at`. |
+
+The checks, by `id`:
+
+| `id` | What it tests |
+| --- | --- |
+| `og_image` | The page has an `og:image`. |
+| `og_image_absolute` | The image URL is a full address, not relative to the page. |
+| `og_image_https` | The image URL uses `https://`. |
+| `og_image_reachable` | The image loads without a login and is served as an image. |
+| `og_image_size` | The file is not over 5 MB. |
+| `og_image_dimensions` | Both sides are at least 200 pixels. |
+| `og_image_ratio` | The shape is 1.91:1, within 3 %, like 1200 x 630. Other shapes are a warning. |
+| `twitter_card` | The page has a `twitter:card` with a documented value. |
+| `og_title` | The page has an `og:title` of at most 70 characters. |
+| `og_description` | The page has an `og:description` of at most 200 characters. |
+| `robots` | `robots.txt` does not block the page. Only ever a warning. |
+| `response_time` | The page answered within 3 seconds. |
+
+The thresholds are this checker's rules of thumb, not limits published by any one app.
+
+### Errors from this endpoint
+
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | `url` is missing, too long, not an absolute URL, not `https://`, or not on the default port. `details.reason` is `invalid_url`, `insecure_url` or `bad_port` where one applies. |
+| 401 | `invalid_api_key` | The key is missing, wrong or revoked. |
+| 403 | `forbidden` | The address, or an address it redirects to, is not on the public internet: a private, local or reserved network. |
+| 422 | `page_fetch_failed` | The page could not be read. `details.reason` is one of `dns_failed`, `connect_failed`, `timeout`, `too_many_redirects`, `insecure_redirect`, `bad_redirect`, `http_error` (with the site's status in `details.status`) or `not_html`. |
+| 429 | `rate_limited` | The key's daily allowance is used up, or the per-IP rate limit was reached. |
+
+A `url` that is refused with 400 is never counted. A check that fails once the page has been requested counts as one uncached check, and is not stored, so the next request tries the page again.
+
 ## GET /v1/og
 
 ```text
@@ -330,7 +494,8 @@ Every error has the same shape, with an HTTP status that matches the code:
 | 403 | `invalid_signature` | A signed URL did not verify. `details.reason` says why; see [every 403 and its fix](/docs/signed-urls#every-403-and-its-fix). |
 | 403 | `account_suspended` | The account is suspended. Contact [[site.supportEmail]]. |
 | 403 | `plan_required` | The feature needs a paid plan. Returned by the dashboard for custom fonts on [[plan.free.name]]. |
-| 403 | `forbidden` | A dashboard request was refused (for example one sent from another site). Not returned by the endpoints on this page. |
+| 403 | `forbidden` | A dashboard request was refused (for example one sent from another site), or `GET /v1/inspect` was given an address that is not on the public internet. |
+| 403 | `verification_required` | The free checker on the website asks for a quick human check before more checks this hour. `details.site_key` names the widget. Not returned by the endpoints on this page. |
 | 404 | `not_found` | Unknown path, site, template or image, or an image whose cache period has ended. |
 | 409 | `conflict` | A per-account maximum is reached or the item already exists. Returned by the dashboard, for example for more than [[limit.maxSites]] sites or [[limit.maxApiKeys]] API keys. |
 | 410 | `gone` | Reserved. No endpoint returns it today. |
@@ -338,6 +503,7 @@ Every error has the same shape, with an HTTP status that matches the code:
 | 415 | `unsupported_media_type` | A font upload in the dashboard had the wrong `Content-Type`. |
 | 422 | `template_error` | The template cannot be rendered as written: too many elements, a relative image URL, a shadow over the limit, and so on. The message says what to change. |
 | 422 | `image_fetch_failed` | An image the template refers to could not be loaded. `details.reason` and `details.url` say which and why. |
+| 422 | `page_fetch_failed` | `GET /v1/inspect` could not read the page: DNS, connection, timeout, redirects, an HTTP error or a response that is not HTML. `details.reason` says which. |
 | 429 | `rate_limited` | Too many requests. Wait for the number of seconds in the `Retry-After` header. |
 | 500 | `render_failed` | The renderer failed on this card. Nothing was counted. If a template fails every time, send it to [[site.supportEmail]]. |
 | 500 | `internal_error` | Something failed on our side. Retry; if it continues, write to [[site.supportEmail]] with the `X-Request-Id`. |
@@ -367,8 +533,8 @@ Rate limits protect the service. They are separate from your monthly allowance, 
 
 [[> counting-rules]]
 
-The same rules apply to signed URLs and to `POST /v1/images`. [Limits](/docs/limits) has the numbers for each plan.
+The same rules apply to signed URLs and to `POST /v1/images`. `GET /v1/inspect` never counts as an image. [Limits](/docs/limits) has the numbers for each plan.
 
 ## OpenAPI
 
-An OpenAPI 3.1 description of these five endpoints is published at [/openapi.yaml](/openapi.yaml).
+An OpenAPI 3.1 description of these six endpoints is published at [/openapi.yaml](/openapi.yaml).
