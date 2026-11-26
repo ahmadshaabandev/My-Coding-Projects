@@ -7,16 +7,23 @@
  *   1. cache key   account + template identity + data + page setup + header/footer + free
  *                  mark + file name
  *   2. R2 lookup   hit -> served, quota untouched
- *   3. pre-check   less than PDF.baseUnits images left in any one place -> 402, no render
- *   4. prepare     sanitise and fill in the template (template_error before any download)
- *   5. assets      remote images inlined as data: URIs (image_fetch_failed)
- *   6. browser     one quickAction call; a browser_usage row records it whatever happens
- *   7. pages       > PDF.maxPages -> 422, not charged; unreadable count -> 500, not charged
- *   8. chargePdf   pdfUnits(pages) as one block: charged | duplicate | quota_exceeded (402,
- *                  the PDF is not returned)
- *   9. store       in R2 with its file name, pages and units as metadata
+ *   3. pre-checks  less than PDF.baseUnits images left in any one place -> 402; the day's failed
+ *                  renders used up -> 429; Free while the free brake is on -> 429 (guard.ts)
+ *   4. claim       the ledger row of the cache key, 'pending' (claimPdf). Held by an identical
+ *                  request -> wait for it and serve its PDF free; its failure remembered -> the
+ *                  same answer, nothing rendered or counted
+ *   5. reserve     one failed-render slot (guard.ts), then the render rate limits
+ *   6. prepare     sanitise and fill in the template (template_error before any download)
+ *   7. assets      remote images inlined as data: URIs (image_fetch_failed)
+ *   8. browser     one quickAction call; a browser_usage row records it whatever happens
+ *   9. pages       > PDF.maxPages -> 422, not charged; unreadable count -> 500, not charged
+ *  10. charge      pdfUnits(pages) as one block (chargeClaimedPdf): charged | quota_exceeded
+ *                  (402, the PDF is not returned)
+ *  11. store       in R2 with its file name, pages and units as metadata
  *
- * The free tools run steps 4-7 only: never stored, never counted against an account.
+ * Every way out after step 4 settles the claim (paid, or released) and after step 5 the slot
+ * (given back unless the document itself failed or the PDF did not fit). The free tools run
+ * steps 6-9 only: never stored, never counted against an account.
  */
 import { PLAN_ORDER, formatCount, getPlan } from '../billing/plans';
 import { DAY_MS, PDF, pdfUnits } from '../config';
@@ -25,14 +32,40 @@ import { randomId, sha256Hex } from '../lib/crypto';
 import { quotaWarningEmail, sendEmail } from '../lib/email';
 import { ApiError } from '../lib/errors';
 import { etagFor, imageMaxAge, iso, usageJson, type Background } from '../lib/http';
-import { chargePdf, pdfCapacity, PDF_PENDING_STALE_MS, readPdfLedger, type ChargeResult } from '../lib/quota';
+import {
+  chargeClaimedPdf,
+  claimPdf,
+  pdfCapacity,
+  PDF_PENDING_STALE_MS,
+  readPdfLedger,
+  releasePdfClaim,
+  type PdfChargeResult,
+  type PdfClaim,
+  type PdfClaimResult,
+  type PdfFailureNote,
+  type PdfLedgerState,
+} from '../lib/quota';
 import { enforceRateLimit } from '../lib/rate-limit';
 import type { Env, TemplateRow, UsageSummary, UserRow } from '../types';
 import { inlineRemoteAssets } from './assets';
 import { bundledFontFaces } from './fonts';
-import { assertFailedRenderAllowance, assertFreeBrowserCapacity, noteUnchargedRender } from './guard';
+import {
+  assertFailedRenderAllowance,
+  assertFreeBrowserCapacity,
+  documentFailureNote,
+  failureRange,
+  forgetFailure,
+  giveBackFailedRender,
+  quotaFailureNote,
+  readRememberedFailure,
+  recallFailure,
+  reserveFailedRender,
+  type FailedRenderReservation,
+  type FailureScope,
+  type RememberedFailure,
+} from './guard';
 import { contentDisposition, headerFooter, parseFormat, parseLandscape, parseMargin, withMarkRoom } from './page';
-import { printPdf, type PrintRequest } from './render';
+import { printPdf, type FailureCause, type PrintRequest } from './render';
 import { preparePdfDocument, preparePdfFragment, type PdfData, type PreparedPdfHtml } from './template';
 import { PDF_TEMPLATE_IDS, getPdfTemplate } from './templates';
 import type { PdfPageSetup } from './templates/types';

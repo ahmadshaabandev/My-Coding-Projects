@@ -18,12 +18,12 @@ import { first, getUserById } from '../db/client';
 import { ApiError } from '../lib/errors';
 import { backgroundFor, etagFor, iso, matchesEtag, notModified, readJsonObject, usageJson } from '../lib/http';
 import { warningsHeader } from '../lib/images';
-import { getUsage, pdfCapacity } from '../lib/quota';
+import { getUsage } from '../lib/quota';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
 import { deriveSiteSecret, describeSignedUrlFailure, verifySignedUrl } from '../lib/signed-url';
 import { parsePdfPath, parsePdfRequest, signedPdfJob } from '../pdf/input';
 import { assertPdfEnabled } from '../pdf/render';
-import { getPdf, pdfCacheKey, pdfHeaders, pdfQuotaError, pdfUrl, readStoredPdf, storedPdfHeaders, type PdfRequest } from '../pdf/service';
+import { assertPdfWouldRender, getPdf, pdfCacheKey, pdfHeaders, pdfUrl, readStoredPdf, storedPdfHeaders, type PdfRequest } from '../pdf/service';
 import type { AppEnv, Env, SiteRow } from '../types';
 
 export const pdfRouter = new Hono<AppEnv>();
@@ -114,7 +114,8 @@ pdfRouter.get('/*', async (c) => {
   const cacheKey = await pdfCacheKey(pdfRequest.user.id, pdfRequest.job);
   const conditional = matchesEtag(request, etagFor(cacheKey));
 
-  // HEAD never renders and never charges: the stored PDF's headers, or what a GET would most likely say.
+  // HEAD never renders, charges or counts: the stored PDF's headers, or what a GET would most
+  // likely say (the same 402 and 429 checks a render passes first, and a remembered failure).
   if (request.method === 'HEAD') {
     const stored = await readStoredPdf(c.env.BUCKET, pdfRequest.user.id, cacheKey, now, false);
     if (stored) {
@@ -122,8 +123,7 @@ pdfRouter.get('/*', async (c) => {
       headers.set('content-length', String(stored.pdf.bytes));
       return new Response(null, { headers });
     }
-    const capacity = await pdfCapacity(c.env.DB, pdfRequest.user, now);
-    if (capacity.largestBlock < PDF.baseUnits) throw pdfQuotaError(c.env, capacity.usage, PDF.baseUnits, true);
+    await assertPdfWouldRender(c.env, pdfRequest, cacheKey, now);
     return new Response(null, { headers: pdfHeaders({ filename: pdfRequest.job.filename, disposition: 'inline', cacheControl: 'no-store', cacheKey, cache: 'miss' }) });
   }
 
