@@ -6,8 +6,8 @@ It runs on Cloudflare Workers with Satori and resvg; card images never touch a b
 PDF documents from HTML templates are built too, printed by Cloudflare Browser Run, and are
 switched off in production until Ahmad approves them (see "PDF documents" below). Build v3 adds
 bulk documents with certificate verification, a PDF toolkit, cards from links, personalized
-email images, connectors for Zapier, Make and n8n, and free funnel pages: built and tested, not
-deployed anywhere yet, each behind its own switch (see "Build v3 tools" below).
+email images, connectors for Zapier, Make and n8n, and free funnel pages: built, tested and on
+staging since 2026-11-26, off in production, each behind its own switch (see "Build v3 tools" below).
 
 ## Status, stated plainly
 
@@ -36,7 +36,14 @@ deployed anywhere yet, each behind its own switch (see "Build v3 tools" below).
   `npm run deploy:production` refuses to run if a placeholder ever returns to a page.
 - Whether Paddle can pay out to an individual in Lebanon is unverified. Read
   [GO-LIVE.md](GO-LIVE.md) step 0 before spending money on anything.
-- **Build v3 (2026-11-26) is not deployed.** Its four Worker switches (`BATCH_ENABLED`,
+- **Build v3 (2026-11-26) is on staging, not in production.** Checked on staging with real renders
+  the same day: a 3-row certificate batch ran through the queue (6 images charged, each PDF with its
+  certificate ID, a verify link and a QR code that decodes to its `/v/{id}` page, which loads with no
+  console errors), and its ZIP is a valid archive of the 3 PDFs; the toolkit's merge, fields, stamp
+  (the Free line printed) and from-images answered; a card built from https://www.cloudflare.com/
+  rendered; an email banner signed with `open=name` rendered for two names and a tampered signed
+  value answered 403; the 13 new public pages answer 200. The connectors are not published.
+  Its four Worker switches (`BATCH_ENABLED`,
   `PDF_TOOLKIT_ENABLED`, `LINK_CARDS_ENABLED`, `EMAIL_FIELDS_ENABLED`) are `"true"` locally and in the
   staging configuration and `"false"` in production, and `npm run deploy:production` builds the site
   with none of the new features. The next production deploy of any kind needs the production queue
