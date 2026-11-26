@@ -253,21 +253,31 @@ production are GO-LIVE.md section 10.
     plan, that reach the browser and fail because of the document (more than
     `PDF.maxPages` pages, over `PDF.maxPdfBytes`, a timeout, a browser 422, an unreadable page
     count) or need more images than are left (402 after rendering), then 429 until 00:00 UTC.
-    It counts per account for `POST /v1/pdf` and per site for signed links, and a render
-    reserves its slot with an atomic bump before the browser runs, so concurrent requests
-    cannot pass it. Browser Run's own failures (5xx without a timeout, 400, unreachable, busy,
-    a body that stopped) give the slot back and never count;
+    It counts per account for `POST /v1/pdf`, and for signed links per site and for all sites
+    of the account together (`PDF.maxFailedSignedRendersPerDay`, so a deleted and re-created
+    site starts no new count). Before the browser runs, a render takes a place under every cap
+    of its scope in one batch (a `tool_usage` row per render, alive for `PDF_PENDING_STALE_MS`),
+    so concurrent requests cannot pass it; when renders still running hold the last places the
+    answer is 429 with `Retry-After: 5`, not until midnight. A charged PDF and Browser Run's own
+    failures (5xx without a timeout, 400, unreachable, busy, a body that stopped) free the place;
+    a document failure or a 402 after rendering keeps it as a failure; a render cut off by the
+    runtime (client gone, more than about 30 s left) keeps it too, because its browser time is
+    neither known nor recorded;
   - the failure memory: such a failure is remembered for `PDF.failedRenderMemoryMs` by cache
     key (`tool_usage`, bucket `pdfm:<cache key>:<answer>`), and the identical request gets the
     same answer without rendering or counting (a remembered 402 is checked again against what
     is left now);
-  - the free brake: while the browser time of Free accounts and the free tools in the last 24
-    hours is over `PDF.freeBrakeBudgetMultiple` daily budgets, Free-plan renders and the free
-    tools answer 429 (`Retry-After: 3600`); paid accounts' browser time never engages it. It
-    lifts as that use ages out of the 24-hour window, at the latest 24 hours after it stopped.
+  - the free brake: while the browser time of Free-plan renders and the free tools in the last
+    24 hours is over `PDF.freeBrakeBudgetMultiple` daily budgets, Free-plan renders and the free
+    tools answer 429 (`Retry-After: 3600`); renders made on a paid plan never engage it, also
+    after the account moved to Free (`browser_usage.plan`, migration `0007`). It lifts as that
+    use ages out of the 24-hour window, at the latest 24 hours after it stopped.
 
-  `HEAD` of a signed link runs the same checks a render runs first (402, the site's cap, the
-  brake, a remembered failure) and never renders or counts. On 2026-11-25 Cloudflare's
+  `HEAD` of a signed link runs the same checks a render runs first (402, the site's caps, the
+  brake, a remembered failure) and never renders or counts. Identical requests that wait for
+  one render look at the ledger read-only and pay the site's `RL_KEY` once, as any uncached
+  signed request; a paid PDF whose R2 object is missing is rendered again by one of them only
+  (lock `pdfr:<cache key>`). On 2026-11-25 Cloudflare's
   pricing page listed Browser Run on Workers Paid as 10 browser hours a month included, then
   $0.09 per hour.
 - **Starter templates** (`src/pdf/templates/`): invoice, receipt, quote, certificate of
@@ -419,10 +429,27 @@ it if it is wrong.
   Playwright Chromium only, not yet on staging: the plain-text Free header and footer, the
   `PDF.maxPdfBytes` cap (whether Browser Run sends `Content-Length` on PDF answers is not
   known; the cap holds either way), the wait of identical requests, the failed-render cap per
-  account and per site, the failure memory and the brake counting Free and tool time only.
+  account, per site and per account's sites, the failure memory and the brake counting Free and
+  tool time only (by the plan of each render).
 
 ## Changelog
 
+- **2026-11-26: PDF fixes after checking the round-3 fixes** (not deployed; PDFs are still off
+  in production). CSS: an unquoted `url(` with `(` or a quote in it is removed with its
+  declaration, and a rule with `url(` in its selector or at-rule prelude is removed: Chrome ends
+  such a `url(` at its first `)`, so an `@page`, `@import` or remote `@font-face` behind it
+  reached the browser unseen (a gap since the first PDF release). Failed renders of signed links
+  also count for all sites of an account together (`PDF.maxFailedSignedRendersPerDay`), so a
+  deleted and re-created site no longer starts a new count. Renders still running are told
+  apart from failures: when they hold the last places the answer is a 429 of a few seconds that
+  says so, and `HEAD` ignores them. A request that claims a PDF after waiting is dated at its
+  claim; a paid PDF whose stored file is missing is rendered again by one request only; waiting
+  requests of signed links pay the site's rate limit and read the ledger read-only. The free
+  brake counts each render by the plan it was made on: migration
+  `0007_browser_usage_plan.sql` (one nullable column; apply it before the next deploy, see
+  GO-LIVE.md). The API reference's error list and the PDF guides now say how PDF failures are
+  remembered and counted. Where AI was used: written with AI tools (Claude Code) after a
+  separate AI verification pass; Ahmad reviews before release.
 - **2026-11-26: PDF fixes after the second review** (not deployed; PDFs are still off in
   production). Free-plan headers and footers are printed as plain text with page numbers in a
   fixed style next to the mark, so no customer markup shares Chrome's footer with it; `@page`

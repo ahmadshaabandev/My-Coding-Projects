@@ -91,10 +91,11 @@ The API answers with a status code and a JSON error that says what to change:
 | 401 `invalid_api_key` | The key is missing, wrong or revoked | Check the credential |
 | 402 `quota_exceeded` | Not enough images left this period for this PDF | Wait for the next period, or upgrade |
 | 422 `template_error` | The document cannot be printed, for example more than [[pdf.maxPages]] pages | Shorten it or fix the template |
-| 429 `rate_limited` | Too many requests at once | Wait for the seconds in `Retry-After`, then retry |
-| 5xx | A problem on our side | Retry after a minute |
+| 429 `rate_limited` | Too many requests at once, the daily cap on failed renders, or the pause of the [[plan.free.name]] plan when it used far more browser time than usual; the message says which | Wait for the seconds in `Retry-After`, then retry. After the daily cap that is until 00:00 UTC, and after the pause an hour |
+| 504 `render_timeout` | The document took longer than [[pdf.renderTimeoutSeconds]] seconds to load or to print | Make it smaller or simpler, for example fewer or smaller images |
+| Other 5xx | A problem on our side or in the renderer | Retry after a minute |
 
-If the workflow retries failed steps, retry only 429 and 5xx answers. A 4xx answer fails the same way every time until the data changes.
+If the workflow retries failed steps, retry only 429 and 5xx answers other than 504. A 4xx answer fails the same way every time until the data changes, and so does a 504: the document is too slow to print. The same request within [[pdf.failedRenderMemoryMinutes]] minutes gets the same answer without being rendered again, and each retry after that counts toward the [daily cap on failed renders](/docs/pdf#what-counts).
 
 ## Running the workflow again
 

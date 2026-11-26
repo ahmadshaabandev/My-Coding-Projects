@@ -198,11 +198,14 @@ export async function reserveFailedRender(env: Env, scope: FailureScope, planId:
     ...rows.slice(0, -1).map(({ row }) => env.DB.prepare(UNDO_PLACE_SQL).bind(row, last)),
   ]);
   if ((results[caps.length - 1]?.results ?? []).length === 1) return { rows, day };
-  for (const cap of caps) {
-    const state = await capState(env.DB, cap, now);
-    if (state.used >= cap.limit) throw capReached(cap, day, now);
-    if (state.used + state.running >= cap.limit) throw placesInUse(cap, state.running);
-  }
+  // A cap that is full for the day says so first; otherwise renders still running hold the places.
+  const states = await Promise.all(caps.map((cap) => capState(env.DB, cap, now)));
+  caps.forEach((cap, i) => {
+    if (states[i]!.used >= cap.limit) throw capReached(cap, day, now);
+  });
+  caps.forEach((cap, i) => {
+    if (states[i]!.used + states[i]!.running >= cap.limit) throw placesInUse(cap, states[i]!.running);
+  });
   // The places were freed in the meantime.
   throw placesInUse(caps[0]!, 0);
 }

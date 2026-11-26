@@ -133,9 +133,12 @@ domain.
 > **Before the next production deploy, whatever it is for** (opening checkout in section 6,
 > Turnstile in 9b, a copy fix): apply every pending migration first,
 > `npx wrangler d1 migrations apply DB --env production --remote`. Production was set up at
-> 0001-0004 and got `0005_og_checks.sql` with the OG checker; on 2026-11-25 only `0006_pdf.sql`
-> (`pdf_usage`, `browser_usage`) is pending. The code reads its tables even with PDFs switched
-> off (and degrades to zero PDF usage without them). It only creates tables and indexes. `npx wrangler d1 migrations list DB --env production --remote` shows what is pending.
+> 0001-0004 and got `0005_og_checks.sql` with the OG checker; on 2026-11-26 `0006_pdf.sql`
+> (`pdf_usage`, `browser_usage`) and `0007_browser_usage_plan.sql` (one nullable column,
+> `browser_usage.plan`) are pending. The code reads the tables of `0006` even with PDFs switched
+> off (and degrades to zero PDF usage without them); the column of `0007` is used only while
+> PDFs render (without it the browser time is still recorded, without the plan, and the error log
+> names the migration). They only create tables, indexes and that column. `npx wrangler d1 migrations list DB --env production --remote` shows what is pending.
 
 **Done on 2026-11-23**, with checkout off until live Paddle is approved:
 
@@ -333,7 +336,8 @@ stays off (`PDF_ENABLED = "false"`, site built with `SITE_PDF=off`) until you de
 Staging, for the first real renders:
 
 - [ ] Apply the new migration (and any earlier one not applied yet):
-      `npx wrangler d1 migrations apply DB --env staging --remote`. It adds `0006_pdf.sql`.
+      `npx wrangler d1 migrations apply DB --env staging --remote`. It adds `0006_pdf.sql` and
+      `0007_browser_usage_plan.sql` (the plan each render was made on, read by the free brake).
 - [ ] `npm run deploy:staging`. It builds the site with `SITE_PDF=on` and deploys the Worker with
       the `BROWSER` binding (`[env.staging.browser]` in `wrangler.toml`).
 - [ ] `/api/config` on staging reports `"pdf_enabled": true`.
@@ -410,14 +414,19 @@ Production, only when you approve PDFs:
         cannot render, an unreadable page count), or need more images than are left (402 after
         rendering), are capped at `PDF.maxFailedRendersPerDay` per UTC day by the owner's plan:
         per account for `POST /v1/pdf`, and per site for signed PDF links, so visitors of a
-        failing link can stop only that site's new signed PDFs. Then 429 until 00:00 UTC.
+        failing link can stop only that site's new signed PDFs. Signed links of all of an
+        account's sites together have `PDF.maxFailedSignedRendersPerDay` (a re-created site
+        starts no new count), so one account's failures stay below
+        `maxFailedRendersPerDay + maxFailedSignedRendersPerDay` a day: on a paid plan, at the
+        measured 61 s of a print that cannot finish, about 10 browser hours a day at worst.
+        Then 429 until 00:00 UTC. A render cut off before it ends counts as a failure.
         Browser Run's own errors (5xx that is not a timeout, 400, unreachable, busy, a body that
         stopped) do not count, so an outage on Cloudflare's side locks nobody out.
       - A failed document is remembered for `PDF.failedRenderMemoryMs` and the identical
         request is answered without rendering, so a failing signed link opened again and again
         uses the browser once per 10 minutes. Identical requests at the same time render once.
-      - The automatic brake: while the browser time of Free accounts and the free tools in the
-        last 24 hours is over `PDF.freeBrakeBudgetMultiple` times the daily budget, Free-plan
+      - The automatic brake: while the browser time of Free-plan renders (by the plan each was
+        made on) and the free tools in the last 24 hours is over `PDF.freeBrakeBudgetMultiple` times the daily budget, Free-plan
         renders and the free tools answer 429; it lifts as that use ages out of the 24 hours.
         Starter and Pro keep rendering, their own browser time never engages it, and stored
         PDFs keep being served. Lowering `PDF_DAILY_BROWSER_MS_BUDGET` and deploying engages it

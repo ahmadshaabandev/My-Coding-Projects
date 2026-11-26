@@ -326,9 +326,18 @@ describe('/docs/pdf', () => {
     expect(text).toContain(`POST /v1/pdf counts per account. Signed PDF links count per site, each site with its own ${PDF.maxFailedRendersPerDay.free} or ${PDF.maxFailedRendersPerDay.paid}: a link's render counts on its site whoever opens it, and reaching the cap stops only that site's new signed PDFs. POST /v1/pdf and your other sites are not affected.`);
     expect(text).toContain('a render takes its place under the cap before it starts, so requests sent at the same time cannot pass it together. Past it, new PDFs there answer 429 rate_limited until 00:00 UTC');
     const guard = read('src/pdf/guard.ts');
-    expect(guard).toContain("`${scope.kind === 'site' ? 'pdffs' : 'pdff'}:${scope.id}:${day}`");
-    expect(guard).toContain('details: { limit, scope: scope.kind, period_seconds: DAY_MS / 1000, retry_after_seconds: retryAfter }');
-    expect(text).toContain('details { "limit", "scope": "account" or "site", "period_seconds", "retry_after_seconds" }');
+    expect(guard).toContain("const COUNTER_PREFIX: Record<CapKind, string> = { account: 'pdff', site: 'pdffs', sites: 'pdffo' };");
+    expect(guard).toContain('details: { limit, scope: cap.kind, period_seconds: DAY_MS / 1000, retry_after_seconds: retryAfter }');
+    expect(text).toContain('details { "limit", "scope": "account", "site" or "sites", "period_seconds", "retry_after_seconds" }');
+    // All sites of an account together (V-LG-1), and renders still running (V-LG-2).
+    const { free: allSitesFree, paid: allSitesPaid } = PDF.maxFailedSignedRendersPerDay;
+    expect(text).toContain(`the signed PDF links of all your sites also share one cap of ${allSitesFree} per UTC day on ${PLANS.free.name} and ${allSitesPaid} on ${PLANS.starter.name} and ${PLANS.pro.name}`);
+    expect(text).toContain('deleting a site and creating a new one does not start a new count');
+    expect(text).toContain(`Signed PDF links of all of an account's sites together: ${allSitesFree} on ${PLANS.free.name}, ${allSitesPaid} on paid plans`);
+    expect(guard).toContain('const IN_PROGRESS_RETRY_SECONDS = 5;');
+    expect(guard).toContain("'renders are'} still running for ${whose}");
+    expect(text).toContain('a new render answers 429 rate_limited with a Retry-After of a few seconds and the message "N PDF renders are still running for ...", details { "limit", "scope", "running", "retry_after_seconds" }');
+    expect(text).toContain('A render that is cut off before it ends counts too');
     // The failure memory, with the message suffix guard.ts adds.
     expect(text).toContain(`For ${minutes} minutes after a render fails because of the document, or needs more images than are left, the identical request gets the same answer without being rendered and without counting again.`);
     expect(guard).toContain('(An identical request failed like this at ${clock(at)}; until ${clock(until)} it gets this answer without being rendered again.)');
@@ -340,7 +349,8 @@ describe('/docs/pdf', () => {
     expect(read('src/pdf/service.ts')).toContain('has not finished; this request waited ${Math.round(waitedMs / 1000)} s for it and charged nothing.');
     expect(text).toContain('"An identical request started making this PDF ... s ago and has not finished; this request waited ... s for it and charged nothing."');
     // The brake: Free and tool time only, an hour's Retry-After, up to 24 hours.
-    expect(guard).toContain("(b.source = 'tool' OR u.plan = 'free')");
+    expect(guard).toContain("(b.source = 'tool' OR b.plan = 'free' OR (b.plan IS NULL AND u.plan = 'free'))");
+    expect(read('src/db/migrations/0007_browser_usage_plan.sql')).toContain('ALTER TABLE browser_usage ADD COLUMN plan TEXT;');
     expect(guard).toContain('const BRAKE_RETRY_SECONDS = 3600;');
     expect(text).toContain(`When ${PLANS.free.name} accounts and the free tools together have used far more browser time than usual in the last 24 hours, new PDFs on the ${PLANS.free.name} plan and in the free tools answer 429 rate_limited, with a Retry-After of an hour. Only their own browser time counts toward this brake: PDFs made on ${PLANS.starter.name} and ${PLANS.pro.name} never engage it. It lifts by itself as that use ages out of the last 24 hours, so it can last up to 24 hours after the use stopped.`);
     expect(text).not.toContain('for a while');
@@ -557,6 +567,9 @@ describe('openapi.yaml (PDF paths)', () => {
     expect(text).toContain(`render_timeout. Loading or printing the document took longer than ${PDF.renderTimeoutMs / 1000} seconds. Nothing is charged; it counts toward the daily cap on failed renders, and the identical request gets the same answer for ${minutes} minutes`);
     expect(text).toContain(`A 402 after rendering counts toward the daily cap on failed renders and is remembered for ${minutes} minutes`);
     expect(text).toContain(`rate_limited. Nothing is charged. One of: a rate limit; the daily cap on failed renders (${free} per UTC day on Free, ${paid} on Starter and Pro, per account for POST /v1/pdf and per site for signed links; Retry-After is the time until 00:00 UTC`);
+    expect(text).toContain(`The signed links of all of an account's sites together are capped at ${PDF.maxFailedSignedRendersPerDay.free} on Free and ${PDF.maxFailedSignedRendersPerDay.paid} on Starter and Pro as well.`);
+    expect(text).toContain('details { limit, scope: account, site or sites, period_seconds, retry_after_seconds }');
+    expect(text).toContain('renders still running that hold the last places under such a cap (Retry-After of a few seconds, details { limit, scope, running, retry_after_seconds })');
     expect(text).toContain('(Retry-After 3600; it lifts as that use ages out of the 24-hour window)');
     expect(text).toContain(`an identical request still making this PDF after ${waitSeconds} seconds`);
     expect(text).toContain('render_failed or internal_error. Nothing is charged. render_failed: the renderer failed, could not be reached or did not finish sending the PDF; these failures of Browser Run do not count toward the daily cap on failed renders and are not remembered.');
@@ -933,5 +946,37 @@ describe('the three PDF guides', () => {
     });
     expectValidStarterBody({ template: 'invoice', data }, 'stripe guide');
     expect(data).toMatchObject({ issue_date: 'Nov 25, 2026', currency: 'USD', total: '60.76', tax: '4.76', items: [{ quantity: '2', unit_price: '28.00', amount: '56.00' }] });
+  });
+});
+
+describe('PDF errors outside /docs/pdf', () => {
+  const minutes = PDF.failedRenderMemoryMs / 60_000;
+
+  it('the API reference, where every error links, says how PDF failures are remembered and counted; without PDFs it is unchanged (VSD-1)', () => {
+    const on = visibleText(article('docs/api.html'));
+    expect(on).toContain('For card images, errors are never cached and a failed render is never counted.');
+    expect(on).toContain(`a failure caused by the document is remembered for ${minutes} minutes (the identical request gets the same answer without being rendered again) and counts toward the daily cap on failed renders`);
+    expect(on).toContain(`A PDF took longer than ${PDF.renderTimeoutMs / 1000} seconds to load or to print; nothing was charged, but it counts toward the daily cap on failed renders and is remembered for ${minutes} minutes`);
+    expect(on).not.toContain('Errors are never cached and a failed render is never counted.');
+    const offPage = renderSite({ env: {}, now: NOW }).pages.find((page) => page.outPath === 'docs/api.html')!.html;
+    const off = visibleText(offPage.slice(offPage.indexOf('<article'), offPage.indexOf('</article>')));
+    expect(off).toContain('Errors are never cached and a failed render is never counted.');
+    expect(off).toMatch(/504 ?render_timeout ?The render took longer than \d+ seconds, usually because a remote image was slow\. Nothing was counted\./);
+    expect(off).not.toContain('A PDF took longer than');
+  });
+
+  it('the PDF guides retry 429 and 5xx but not a 504, and name every cause of a 429 (VSD-2)', () => {
+    const n8n = visibleText(article('guides/html-to-pdf-n8n.html'));
+    expect(n8n).toContain('retry only 429 and 5xx answers other than 504');
+    expect(n8n).toContain(`The same request within ${minutes} minutes gets the same answer without being rendered again, and each retry after that counts toward the daily cap on failed renders.`);
+    expect(n8n).toContain('Too many requests at once, the daily cap on failed renders, or the pause of the');
+    expect(n8n).not.toMatch(/5xx ?A problem on our side ?Retry after a minute/);
+    const zapier = visibleText(article('guides/html-to-pdf-zapier-webhooks.html'));
+    expect(zapier).toContain('Too many PDFs at once, the daily cap on failed renders, or the pause of the');
+    expect(zapier).toContain('which can be hours');
+    expect(zapier).toContain(`took longer than ${PDF.renderTimeoutMs / 1000} seconds to load or to print: make it smaller or simpler. Sending it again does not help`);
+    const stripe = built('guides/invoice-pdf-from-stripe-webhook.html');
+    expect(codeBlocks(stripe, 'js').join('\n')).toContain('error.retryable = response.status === 429 || (response.status >= 500 && response.status !== 504);');
+    expect(visibleText(stripe)).toContain('Retry only 429 rate_limited and 5xx answers other than 504');
   });
 });

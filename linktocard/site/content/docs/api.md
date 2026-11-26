@@ -485,7 +485,13 @@ Every error has the same shape, with an HTTP status that matches the code:
 - `code` is stable. Branch on it.
 - `message` is written for a developer and says what to change. Its wording can change.
 - `details` is present only for some errors.
+<!-- feature:no-pdf -->
 - Errors are never cached and a failed render is never counted.
+<!-- /feature:no-pdf -->
+<!-- feature:pdf -->
+- For card images, errors are never cached and a failed render is never counted.
+- PDFs are different, because a render that fails in the browser has still used it: a failure caused by the document is remembered for [[pdf.failedRenderMemoryMinutes]] minutes (the identical request gets the same answer without being rendered again) and counts toward the daily cap on failed renders. See [PDF errors](/docs/pdf#errors) and [what counts](/docs/pdf#what-counts).
+<!-- /feature:pdf -->
 
 | Status | Code | Meaning |
 | --- | --- | --- |
@@ -517,7 +523,12 @@ Every error has the same shape, with an HTTP status that matches the code:
 <!-- feature:pdf -->
 | 503 | `not_configured` | A part of the service is not set up on this deployment, for example PDF rendering while it is switched off there ("PDF rendering is not enabled yet."). |
 <!-- /feature:pdf -->
+<!-- feature:no-pdf -->
 | 504 | `render_timeout` | The render took longer than [[limit.renderTimeoutSeconds]] seconds, usually because a remote image was slow. Nothing was counted. |
+<!-- /feature:no-pdf -->
+<!-- feature:pdf -->
+| 504 | `render_timeout` | A card image took longer than [[limit.renderTimeoutSeconds]] seconds, usually because a remote image was slow; nothing was counted. A PDF took longer than [[pdf.renderTimeoutSeconds]] seconds to load or to print; nothing was charged, but it counts toward the daily cap on failed renders and is remembered for [[pdf.failedRenderMemoryMinutes]] minutes (see [PDF errors](/docs/pdf#errors)). |
+<!-- /feature:pdf -->
 
 ## Rate limits
 

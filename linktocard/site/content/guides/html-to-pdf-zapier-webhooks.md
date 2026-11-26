@@ -87,7 +87,8 @@ The API answers with an error code and a message that says what to change:
 | 401 | `invalid_api_key` | The `Authorization` header is missing the word `Bearer`, or the key was revoked |
 | 402 | `quota_exceeded` | The images of this period are used up |
 | 422 | `template_error` or `image_fetch_failed` | The document cannot be printed, or an image address cannot be downloaded |
-| 429 | `rate_limited` | Too many PDFs at once: wait for the seconds in `Retry-After` |
+| 429 | `rate_limited` | Too many PDFs at once, the daily cap on failed renders, or the pause of the [[plan.free.name]] plan when it used far more browser time than usual (the message says which): wait for the seconds in `Retry-After`, which can be hours |
+| 504 | `render_timeout` | The document took longer than [[pdf.renderTimeoutSeconds]] seconds to load or to print: make it smaller or simpler. Sending it again does not help |
 
 ## A Zap that runs twice
 

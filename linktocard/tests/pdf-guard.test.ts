@@ -1,5 +1,6 @@
 // Bounds on Browser Run time (src/pdf/guard.ts): the failed-render cap per account (POST
-// /v1/pdf) and per site (signed links), reserved before the browser runs; which outcomes count;
+// /v1/pdf), per site and per account's sites together (signed links), reserved before the
+// browser runs, with renders still running told apart from failures; which outcomes count;
 // the free brake on Free and free-tool browser time only; HEAD of a signed link. Each test here
 // failed on c15216b.
 import { env } from 'cloudflare:workers';
@@ -113,6 +114,103 @@ describe('signed links count per site, never against the owner\'s API (G1)', () 
   });
 });
 
+describe('signed links of all sites of an account count together too (V-LG-1)', () => {
+  it('a new site starts no new count: past PDF.maxFailedSignedRendersPerDay new signed PDFs of every site answer 429, POST /v1/pdf still works', async () => {
+    const owner = await createUser('free');
+    const key = await apiKeyFor(owner.id);
+    const perSite = PDF.maxFailedRendersPerDay.free;
+    const allSites = PDF.maxFailedSignedRendersPerDay.free;
+    const tooLong = mockBrowser(() => pdfResponse('51-pages', 0));
+    // Sites used up one after the other, each deleted afterwards as the dashboard does (soft delete).
+    let failed = 0;
+    while (failed + perSite <= allSites) {
+      const site = await createSite(owner.id);
+      for (let i = 0; i < perSite; i++) {
+        expect((await call(await signedPdfPath(site, 'report', { title: `v1-${++seq}` }), {}, limitsOn(tooLong))).status).toBe(422);
+      }
+      failed += perSite;
+      await run(env.DB, 'UPDATE sites SET deleted_at = ?1 WHERE id = ?2', Date.now(), site.id);
+    }
+    expect(tooLong.calls).toHaveLength(allSites);
+    const fresh = await createSite(owner.id);
+    const refused = await call(await signedPdfPath(fresh, 'report', { title: `v1-${++seq}` }), {}, limitsOn(tooLong));
+    expect(refused.status).toBe(429);
+    const error = await errorOf(refused);
+    expect(error).toMatchObject({ code: 'rate_limited', details: { limit: allSites, scope: 'sites' } });
+    expect(error.message).toContain(`The signed PDF links of this account's sites together have had ${allSites} renders today that produced no PDF`);
+    expect(error.message).toContain('POST /v1/pdf is not affected');
+    expect(tooLong.calls).toHaveLength(allSites);
+    expect(await counterOf(`pdffo:${owner.id}:${utcDay()}`)).toBe(allSites);
+    expect((await postPdf(key.secret, invoice(), limitsOn(mockBrowser()))).status).toBe(200);
+  });
+
+  it('one site alone can use at most its own cap: the owner\'s other sites keep their share', () => {
+    expect(PDF.maxFailedSignedRendersPerDay.free).toBeGreaterThanOrEqual(2 * PDF.maxFailedRendersPerDay.free);
+    expect(PDF.maxFailedSignedRendersPerDay.paid).toBeGreaterThanOrEqual(2 * PDF.maxFailedRendersPerDay.paid);
+  });
+});
+
+describe('renders still running take a place, but are not failures (V-LG-2)', () => {
+  it('with the last places held by running renders: 429 for a few seconds that says so, not until 00:00 UTC; a retry renders', async () => {
+    const owner = await createUser('starter');
+    const key = await apiKeyFor(owner.id);
+    const limit = PDF.maxFailedRendersPerDay.paid;
+    await presetCounter(accountBucket(owner.id), limit - 2);
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const slow = mockBrowser(async () => {
+      await gate;
+      return pdfResponse('1-page', 0);
+    });
+    const running = Array.from({ length: 2 }, () => postPdf(key.secret, invoice(), limitsOn(slow)));
+    for (let i = 0; i < 100 && slow.calls.length < 2; i++) await sleep(20);
+    expect(slow.calls).toHaveLength(2);
+    const refused = await postPdf(key.secret, invoice(), limitsOn(slow));
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get('retry-after')).toBe('5');
+    const error = await errorOf(refused);
+    expect(error).toMatchObject({ code: 'rate_limited', details: { limit, scope: 'account', running: 2, retry_after_seconds: 5 } });
+    expect(error.message).toMatch(/^2 PDF renders are still running for this account\./);
+    expect(error.message).not.toContain('produced no PDF (');
+    open();
+    expect((await Promise.all(running)).map((response) => response.status)).toEqual([200, 200]);
+    expect((await postPdf(key.secret, invoice(), limitsOn(slow))).status).toBe(200);
+    expect(await counterOf(accountBucket(owner.id))).toBe(limit - 2);
+  });
+
+  it('HEAD of a signed link does not count a render that is still running', async () => {
+    const owner = await createUser('starter');
+    const site = await createSite(owner.id);
+    await presetCounter(siteBucket(site.id), PDF.maxFailedRendersPerDay.paid - 1);
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const slow = mockBrowser(async () => {
+      await gate;
+      return pdfResponse('1-page', 0);
+    });
+    const running = call(await signedPdfPath(site, 'invoice', { n: `${++seq}` }), {}, limitsOn(slow));
+    for (let i = 0; i < 100 && slow.calls.length < 1; i++) await sleep(20);
+    expect(slow.calls).toHaveLength(1);
+    const head = await call(await signedPdfPath(site, 'invoice', { n: `${++seq}` }), { method: 'HEAD' }, limitsOn(slow));
+    expect(head.status).toBe(200);
+    open();
+    expect((await running).status).toBe(200);
+  });
+
+  it('a render that never ends keeps its place as a failure once its time is up (its browser time is unknown)', async () => {
+    const owner = await createUser('starter');
+    const key = await apiKeyFor(owner.id);
+    const limit = PDF.maxFailedRendersPerDay.paid;
+    await presetCounter(accountBucket(owner.id), limit - 1);
+    // A place left by a request the runtime cut off: alive until a moment ago, never settled.
+    await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, ?2, ?3)', `${accountBucket(owner.id)}:r:cut-off`, Date.now() - 1, (utcDay() + 2) * DAY_MS);
+    const refused = await postPdf(key.secret, invoice(), limitsOn(mockBrowser()));
+    expect(refused.status).toBe(429);
+    expect((await errorOf(refused)).message).toContain(`This account has had ${limit} PDF renders today that produced no PDF`);
+    expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(5);
+  });
+});
+
 describe('the cap is reserved before the browser runs (G3)', () => {
   it('counter at limit - 1: 10 concurrent failing renders reach the browser once', async () => {
     const owner = await createUser('free');
@@ -204,6 +302,30 @@ describe('the free brake counts Free and free-tool browser time only (G5)', () =
       expect(response.status).toBe(200);
     } finally {
       await run(env.DB, "DELETE FROM browser_usage WHERE id IN ('bu_g5_paid1', 'bu_g5_paid2')");
+      resetFreeBrake();
+    }
+  });
+
+  it('counts a render by the plan it was made on: a paid account that moves to Free does not engage it (V-LG-4)', async () => {
+    resetFreeBrake();
+    const paid = await createUser('pro');
+    const paidKey = await apiKeyFor(paid.id);
+    // Browser time well over the brake's threshold, all of it made on Pro.
+    const heavy = mockBrowser(() => pdfResponse('1-page', over));
+    expect((await postPdf(paidKey.secret, invoice(), limitsOn(heavy, withBudget))).status).toBe(200);
+    expect(await all(env.DB, 'SELECT plan FROM browser_usage WHERE user_id = ?1', paid.id)).toEqual([{ plan: 'pro' }]);
+    // The subscription ends (cancellation, failed payment, refund).
+    await run(env.DB, "UPDATE users SET plan = 'free' WHERE id = ?1", paid.id);
+    resetFreeBrake();
+    try {
+      const free = await apiKeyFor((await createUser('free')).id);
+      expect((await postPdf(free.secret, invoice(), limitsOn(mockBrowser(), withBudget))).status).toBe(200);
+      // Its renders from now on are Free renders, and they count.
+      expect((await postPdf(paidKey.secret, invoice(), limitsOn(heavy, withBudget))).status).toBe(200);
+      expect(await all(env.DB, "SELECT plan FROM browser_usage WHERE user_id = ?1 AND plan = 'free'", paid.id)).toHaveLength(1);
+      resetFreeBrake();
+      expect((await postPdf(free.secret, invoice(), limitsOn(mockBrowser(), withBudget))).status).toBe(429);
+    } finally {
       resetFreeBrake();
     }
   });

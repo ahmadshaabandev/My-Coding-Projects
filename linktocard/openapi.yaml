@@ -358,7 +358,11 @@ paths:
         count), and PDFs that need more images than are left (402 after rendering), are capped
         at 20 per UTC day on Free and 200 on Starter and Pro, per account for this endpoint and
         per site for signed PDF links; past the cap the answer is 429 until 00:00 UTC. Failures
-        of Browser Run itself never count. Such a failure is remembered for 10 minutes: the
+        of Browser Run itself never count. The signed links of all of an account's sites
+        together are capped at 40 on Free and 400 on Starter and Pro as well. A render takes its
+        place under a cap before it starts and gives it back when it ends with a PDF; while
+        renders still running hold the last places, the answer is 429 with a Retry-After of a
+        few seconds. A render cut off before it ends counts as a failure. Such a failure is remembered for 10 minutes: the
         identical request gets the same answer without being rendered or counted again (a
         remembered 402 is checked again against what is left now). Of identical requests sent
         at the same time only one renders; the others wait up to 90 seconds for its result.
@@ -489,8 +493,8 @@ paths:
 
         The first request renders, stores and counts the PDF; later requests are served from
         storage and are not counted. Failed renders of a site's signed links count toward a
-        daily cap per site (see POST /v1/pdf), whoever opens them; reaching it stops only that
-        site's new signed PDFs.
+        daily cap per site and one for all of the account's sites together (see POST /v1/pdf),
+        whoever opens them; reaching the site's cap stops only that site's new signed PDFs.
 
         HEAD never renders and never counts. It answers what the GET would answer before
         rendering: 402 when not enough images are left, 429 when the site's daily cap on failed
@@ -1384,7 +1388,10 @@ components:
         rate_limited. Nothing is charged. One of: a rate limit; the daily cap on failed renders
         (20 per UTC day on Free, 200 on Starter and Pro, per account for POST /v1/pdf and per
         site for signed links; Retry-After is the time until 00:00 UTC, details { limit, scope:
-        account or site, period_seconds, retry_after_seconds }); the brake on the Free plan and
+        account, site or sites, period_seconds, retry_after_seconds }; sites: 40 and 400 for the
+        signed links of all of an account's sites together); renders still running that hold the last places
+        under such a cap (Retry-After of a few seconds, details { limit, scope, running,
+        retry_after_seconds }); the brake on the Free plan and
         the free tools while they used far more browser time than usual in the last 24 hours
         (Retry-After 3600; it lifts as that use ages out of the 24-hour window); an identical
         request still making this PDF after 90 seconds (Retry-After until its place can be

@@ -353,6 +353,8 @@ function pdfTokens(): Record<string, string> {
     'pdf.toolTurnstileAfterPdfs': String(PDF.toolTurnstileAfterPdfs),
     'pdf.maxFailedRendersPerDayFree': String(PDF.maxFailedRendersPerDay.free),
     'pdf.maxFailedRendersPerDayPaid': String(PDF.maxFailedRendersPerDay.paid),
+    'pdf.maxFailedSignedRendersPerDayFree': String(PDF.maxFailedSignedRendersPerDay.free),
+    'pdf.maxFailedSignedRendersPerDayPaid': String(PDF.maxFailedSignedRendersPerDay.paid),
     'pdf.browserUsageRetentionDays': String(PDF.browserUsageRetentionDays),
     'pdf.formats': PDF.formats.join(', '),
     'pdf.defaultFormat': PDF.defaultFormat,
@@ -663,7 +665,8 @@ function pdfLimitsTable(): string {
       [
         'Failed renders (the document failed in the browser, or needed more images than were left)',
         `${PDF.maxFailedRendersPerDay.free} per UTC day on ${PLANS.free.name}, ${PDF.maxFailedRendersPerDay.paid} on ${PLANS.starter.name} and ${PLANS.pro.name}, ` +
-          'per account for POST /v1/pdf and per site for signed PDF links; then new PDFs there answer HTTP 429 until 00:00 UTC',
+          'per account for POST /v1/pdf and per site for signed PDF links; then new PDFs there answer HTTP 429 until 00:00 UTC. ' +
+          `Signed PDF links of all of an account's sites together: ${PDF.maxFailedSignedRendersPerDay.free} on ${PLANS.free.name}, ${PDF.maxFailedSignedRendersPerDay.paid} on paid plans`,
       ],
       ['A failed document sent again', `the same answer, without rendering or counting, for ${PDF.failedRenderMemoryMs / 60_000} minutes`],
       ['Request body', `${inUnits(PDF.maxRequestBodyBytes, MB)} MB`],

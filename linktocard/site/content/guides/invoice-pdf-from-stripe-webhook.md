@@ -92,9 +92,10 @@ async function invoicePdf(invoice) {
   });
   const body = await response.json();
   if (!response.ok) {
-    // 429 and 5xx are worth retrying later; any other error needs a change in the data.
+    // 429 and 5xx are worth retrying later, except 504: the document is too slow to print.
+    // Any other error needs a change in the data.
     const error = new Error(body.error?.message ?? `HTTP ${response.status}`);
-    error.retryable = response.status === 429 || response.status >= 500;
+    error.retryable = response.status === 429 || (response.status >= 500 && response.status !== 504);
     throw error;
   }
   return body.url;
@@ -120,7 +121,7 @@ Webhooks can arrive more than once, and your job may retry after a failure. Both
 - The same template, data and file name always give the same PDF. A repeat request is answered from storage with the same `url`, `cached: true` and `credits_used: 0`, so it counts nothing.
 - Storing `pdfUrl` with the invoice, as above, skips the request altogether the second time.
 
-Retry only 429 `rate_limited` (after the seconds in `Retry-After`) and 5xx answers. A 400 or 422 answer fails the same way every time: its `error.message` says which key or value to fix.
+Retry only 429 `rate_limited` and 5xx answers other than 504, after the seconds in `Retry-After`. A 429 can also mean the daily cap on failed renders (`Retry-After` until 00:00 UTC) or the pause of the [[plan.free.name]] plan (an hour); its message says which. A 400 or 422 answer fails the same way every time: its `error.message` says which key or value to fix. A 504 `render_timeout` does too: the document took longer than [[pdf.renderTimeoutSeconds]] seconds to print, so make it smaller or simpler. The same request within [[pdf.failedRenderMemoryMinutes]] minutes gets the same answer without being rendered again, and each retry after that counts toward the [daily cap on failed renders](/docs/pdf#what-counts).
 
 ## Keep your own copy
 

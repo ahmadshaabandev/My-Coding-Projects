@@ -14,7 +14,7 @@ import { creditTopup, currentPeriod, PDF_PENDING_STALE_MS } from '../src/lib/quo
 import { parsePdfRequest } from '../src/pdf/input';
 import { getPdf, pdfCacheKey, pdfR2Key, PDF_DUPLICATE_WAIT_MS, type PdfRequest } from '../src/pdf/service';
 import type { Env, UserRow } from '../src/types';
-import { apiKeyFor, createUser, errorOf, setUsed, usageOf, userRow } from './app-helpers';
+import { apiKeyFor, createSite, createUser, errorOf, setUsed, usageOf, userRow } from './app-helpers';
 import { browserErrorResponse, counterOf, limitsOn, mockBrowser, pdfEnv, pdfResponse, postPdf, slowDb, utcDay } from './pdf-helpers';
 
 afterEach(() => {
@@ -203,6 +203,94 @@ describe('waiting for an identical request that holds the claim', () => {
     expect(browser.calls).toHaveLength(2);
     expect((await usageOf(user.id)).used).toBe(pdfUnits(1));
     expect(await env.BUCKET.head(pdfR2Key(user.id, cacheKey))).not.toBeNull();
+  });
+});
+
+describe('a request that waited', () => {
+  it('claims with the time of its claim, so an identical request cannot take it over as if it had run all its wait too (V-LG-5)', async () => {
+    const user = await createUser('starter');
+    const request = await requestFor(user);
+    const T = Date.now();
+    const cacheKey = await pdfCacheKey(user.id, request.job);
+    await pendingRow(user, cacheKey, T - 10_000);
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const browser = mockBrowser(async () => {
+      await gate;
+      return pdfResponse('1-page', 0);
+    });
+    const b = outcome(getPdf(pdfEnv(browser), background, request, { now: T, withBody: false }));
+    await sleep(600);
+    // The request B waited for ends without a remembered failure: B claims and renders.
+    await run(env.DB, 'DELETE FROM renders WHERE cache_key = ?1', cacheKey);
+    for (let i = 0; i < 100 && browser.calls.length < 1; i++) await sleep(20);
+    expect(browser.calls).toHaveLength(1);
+    const claimed = await first<{ created_at: number }>(env.DB, 'SELECT created_at FROM renders WHERE cache_key = ?1', cacheKey);
+    expect(claimed!.created_at - T).toBeGreaterThanOrEqual(500);
+    // PDF_PENDING_STALE_MS after B's request time, but not after its claim: C waits instead of rendering.
+    const c = await outcome(getPdf(pdfEnv(browser), background, request, { now: T + PDF_PENDING_STALE_MS + 1, withBody: false, maxWaitMs: 200 }));
+    expect(c).toBe('429:rate_limited');
+    open();
+    expect(await b).toBe(`ok:${pdfUnits(1)}`);
+    expect(browser.calls).toHaveLength(1);
+  });
+
+  it('looks at the ledger read-only and sends the claim only when it can be taken (V-LG-7)', async () => {
+    const user = await createUser('starter');
+    const request = await requestFor(user);
+    const now = Date.now();
+    const cacheKey = await pdfCacheKey(user.id, request.job);
+    await pendingRow(user, cacheKey, now - 1000);
+    let claims = 0;
+    const db = new Proxy(env.DB, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target);
+        if (prop === 'batch') {
+          return (statements: D1PreparedStatement[]) => {
+            if (statements.length === 3) claims++;
+            return target.batch(statements);
+          };
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    expect(await outcome(getPdf({ ...pdfEnv(mockBrowser()), DB: db }, background, request, { now, withBody: false, maxWaitMs: 2_000 }))).toBe('429:rate_limited');
+    expect(claims).toBe(1);
+  });
+
+  it('of a signed link is limited by the site\'s render rate limit before it waits (V-LG-7)', async () => {
+    const owner = await createUser('starter');
+    const site = await createSite(owner.id);
+    const { job } = await parsePdfRequest(env.DB, owner, { template: 'report', data: { title: `rl-${++seq}` } });
+    const request: PdfRequest = { user: owner, job, source: 'signed', siteId: site.id, renderRateLimitKey: site.id };
+    const now = Date.now();
+    await pendingRow(owner, await pdfCacheKey(owner.id, job), now - 1000);
+    let consulted = 0;
+    const deny = { limit: () => ((consulted += 1), Promise.resolve({ success: false })) };
+    const started = Date.now();
+    const error = await failureOf(getPdf(limitsOn(mockBrowser(), { RL_KEY: deny }), background, request, { now, withBody: false }));
+    expect(error).toMatchObject({ code: 'rate_limited', status: 429 });
+    expect(error.message).toContain('Too many requests');
+    expect(consulted).toBe(1);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('renders a paid PDF whose object is missing once, however many identical requests find it (V-LG-6)', async () => {
+    const user = await createUser('starter');
+    const browser = mockBrowser(async () => {
+      await sleep(300);
+      return pdfResponse('1-page', 0);
+    });
+    const request = await requestFor(user);
+    const now = Date.now();
+    expect(await outcome(getPdf(pdfEnv(browser), background, request, { now, withBody: false }))).toBe(`ok:${pdfUnits(1)}`);
+    const cacheKey = await pdfCacheKey(user.id, request.job);
+    await env.BUCKET.delete(pdfR2Key(user.id, cacheKey));
+    const results = await Promise.all(Array.from({ length: 8 }, () => outcome(getPdf(pdfEnv(browser), background, request, { now: now + 1000, withBody: false }))));
+    expect(browser.calls).toHaveLength(2);
+    expect(tally(results)).toEqual({ 'ok:0': 1, 'ok:0:cached': 7 });
+    expect((await usageOf(user.id)).used).toBe(pdfUnits(1));
+    expect(await first(env.DB, "SELECT bucket FROM tool_usage WHERE bucket = ?1", `pdfr:${cacheKey}`)).toBeNull();
   });
 });
 

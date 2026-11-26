@@ -9,10 +9,11 @@
  *   2. R2 lookup   hit -> served, quota untouched
  *   3. pre-checks  less than PDF.baseUnits images left in any one place -> 402; the day's failed
  *                  renders used up -> 429; Free while the free brake is on -> 429 (guard.ts)
- *   4. claim       the ledger row of the cache key, 'pending' (claimPdf). Held by an identical
- *                  request -> wait for it and serve its PDF free; its failure remembered -> the
+ *   4. claim       signed links: the site's rate limit (RL_KEY). Then the ledger row of the
+ *                  cache key, 'pending' (claimPdf). Held by an identical request -> wait for it
+ *                  (looking read-only) and serve its PDF free; its failure remembered -> the
  *                  same answer, nothing rendered or counted
- *   5. reserve     one failed-render slot (guard.ts), then the render rate limits
+ *   5. reserve     a place under the failed-render caps (guard.ts), then the Free rate limit
  *   6. prepare     sanitise and fill in the template (template_error before any download)
  *   7. assets      remote images inlined as data: URIs (image_fetch_failed)
  *   8. browser     one quickAction call; a browser_usage row records it whatever happens
@@ -21,8 +22,10 @@
  *                  (402, the PDF is not returned)
  *  11. store       in R2 with its file name, pages and units as metadata
  *
- * Every way out after step 4 settles the claim (paid, or released) and after step 5 the slot
- * (given back unless the document itself failed or the PDF did not fit). The free tools run
+ * Every way out after step 4 settles the claim (paid, or released) and after step 5 the place
+ * (given back, or kept as a failure when the document itself failed or the PDF did not fit). A
+ * request cut off by the runtime settles neither: its claim is taken over after
+ * PDF_PENDING_STALE_MS and its place counts as a failure (src/pdf/guard.ts). The free tools run
  * steps 6-9 only: never stored, never counted against an account.
  */
 import { PLAN_ORDER, formatCount, getPlan } from '../billing/plans';
@@ -454,7 +457,7 @@ export interface PdfRequest {
   job: PdfJob;
   source: 'api' | 'signed';
   siteId: string | null;
-  /** RL_KEY bucket applied only when a render is really needed (signed links: the site id). */
+  /** RL_KEY bucket applied when the PDF is not stored and the pre-checks pass (signed links: the site id). */
   renderRateLimitKey?: string;
 }
 
@@ -482,7 +485,7 @@ const LOST_CLAIM_RETRY_SECONDS = 5;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * A render that holds a claim or a failed-render slot keeps running when the client goes away
+ * A render that holds a claim or a failed-render place keeps running when the client goes away
  * (waitUntil; Cloudflare allows about 30 s more), so it can still settle both instead of leaving
  * a pending row that identical requests wait for until PDF_PENDING_STALE_MS. Its result and
  * error still go to the caller.
@@ -612,7 +615,7 @@ async function renderClaimed(env: Env, background: Background, request: PdfReque
     result = await chargeClaimedPdf(env.DB, claim, { units, bytes: pdf.bytes }, quotaFailureNote(cacheKey, units, now));
     held = false;
   } catch (error) {
-    // Our failure, not the document's: the slot goes back, and the claim unless it was paid.
+    // Our failure, not the document's: the place goes back, and the claim unless it was paid.
     await giveBackFailedRender(env, reservation);
     await release();
     throw error;
