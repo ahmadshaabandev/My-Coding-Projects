@@ -725,11 +725,17 @@ function breakLine(state: PlainState, force: boolean): void {
   state.line = [];
 }
 
-/** The element's box and how it lays out its children, from its name and its style="" display. */
+/**
+ * The element's box and how it lays out its children, from its name and its style="" display.
+ * What a browser would not show (hidden, display:none, visibility:hidden, a closed <dialog>,
+ * <rp>) prints nothing.
+ */
 function plainLayout(name: string, element: Element): { box: PlainBox; flow: PlainFlow } {
   let box: PlainBox = BLOCK_ELEMENTS.has(name) ? 'block' : name === 'td' || name === 'th' ? 'cell' : 'inline';
   let flow: PlainFlow = name === 'tr' ? 'row' : 'normal';
   const style = new Map(parseInlineStyle(element.attribs.style ?? '').map((declaration) => [declaration.name, declaration.value.replace(/!\s*important\s*$/i, '').trim().toLowerCase()]));
+  if ('hidden' in element.attribs || name === 'rp' || (name === 'dialog' && !('open' in element.attribs))) return { box: 'none', flow };
+  if (/^(?:hidden|collapse)$/.test(style.get('visibility') ?? '')) return { box: 'none', flow };
   const display = style.get('display');
   if (display !== undefined) {
     const words = display.split(ASCII_SPACE);

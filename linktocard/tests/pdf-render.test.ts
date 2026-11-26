@@ -7,6 +7,7 @@ import { inlineRemoteAssets, isOwnHost } from '../src/pdf/assets';
 import {
   EMPTY_TEMPLATE,
   FREE_MARK_HTML,
+  PLAIN_TEXT_STYLE,
   contentDisposition,
   headerFooter,
   marginToMm,
@@ -187,19 +188,41 @@ describe('page setup', () => {
 });
 
 describe('free mark', () => {
+  const plainBox = (maxHeight: string, text: string): string => `<div style="${PLAIN_TEXT_STYLE};max-height:${maxHeight}">${text}</div>`;
+
   it(`is "${PDF.freeMark}" in Chrome's footer, below the customer's footer`, () => {
     expect(FREE_MARK_HTML).toContain(`>${PDF.freeMark}</div>`);
     expect(headerFooter(null, null, true)).toEqual({ displayHeaderFooter: true, headerTemplate: EMPTY_TEMPLATE, footerTemplate: FREE_MARK_HTML });
-    // The customer's header and footer each sit in a box they cannot paint outside of, sized
-    // to the margin; the mark is outside the footer's box, after it.
-    const box = (maxHeight: string, html: string): string => `<div style="position:relative;width:100%;max-height:${maxHeight};overflow:hidden;contain:layout paint">${html}</div>`;
-    expect(headerFooter('<b>h</b>', '<i>f</i>', true, { top: '20mm', bottom: '22mm' })).toEqual({
+    // The customer's header and footer arrive as plain text (preparePdfFragment with `mark`) and
+    // each is printed in our own box, sized to its margin; the mark is outside the footer's box,
+    // after it, last in the footer.
+    expect(headerFooter('h', 'f', true, { top: '20mm', bottom: '22mm' })).toEqual({
       displayHeaderFooter: true,
-      headerTemplate: box('16mm', '<b>h</b>'),
-      footerTemplate: `<div style="width:100%">${box('13mm', '<i>f</i>')}${FREE_MARK_HTML}</div>`,
+      headerTemplate: plainBox('16mm', 'h'),
+      footerTemplate: `<div style="width:100%">${plainBox('13mm', 'f')}${FREE_MARK_HTML}</div>`,
     });
     // A margin with no room left for them gives the boxes no height at all, never a negative one.
-    expect(headerFooter('<b>h</b>', '<i>f</i>', true, { top: '0', bottom: `${PDF.freeMarkMinBottomMm}mm` }).headerTemplate).toBe(box('0mm', '<b>h</b>'));
+    expect(headerFooter('h', 'f', true, { top: '0', bottom: `${PDF.freeMarkMinBottomMm}mm` }).headerTemplate).toBe(plainBox('0mm', 'h'));
+    // A header or footer with no text left prints nothing but the mark.
+    expect(headerFooter('', '', true)).toEqual({ displayHeaderFooter: true, headerTemplate: EMPTY_TEMPLATE, footerTemplate: FREE_MARK_HTML });
+  });
+
+  it('prints the header and footer in its own font, size and colour, centred and cut off at the margin', () => {
+    expect(PLAIN_TEXT_STYLE).toContain('width:100%;box-sizing:border-box');
+    expect(PLAIN_TEXT_STYLE).toContain('font-family:sans-serif;font-size:8pt');
+    expect(PLAIN_TEXT_STYLE).toContain('color:#374151;-webkit-print-color-adjust:exact;print-color-adjust:exact');
+    expect(PLAIN_TEXT_STYLE).toContain('text-align:center');
+    expect(PLAIN_TEXT_STYLE).toContain('overflow:hidden');
+  });
+
+  it('lets no markup but its own line breaks and page values reach Chrome next to the mark', () => {
+    // Defence in depth: whatever the caller passes, every other tag is escaped.
+    const footer = '<i>f</i><br><span class="pageNumber"></span><svg><b style="opacity:0"></b></svg>';
+    const { headerTemplate, footerTemplate } = headerFooter('<b>h</b>', footer, true, { top: '20mm', bottom: '22mm' });
+    expect(headerTemplate).toBe(plainBox('16mm', '&lt;b&gt;h&lt;/b&gt;'));
+    expect(footerTemplate).toBe(
+      `<div style="width:100%">${plainBox('13mm', '&lt;i&gt;f&lt;/i&gt;<br><span class="pageNumber"></span>&lt;svg&gt;&lt;b style="opacity:0"&gt;&lt;/b&gt;&lt;/svg&gt;')}${FREE_MARK_HTML}</div>`,
+    );
   });
 
   it('draws the mark on its own white background, so no colour under it can hide it', () => {
@@ -216,6 +239,9 @@ describe('free mark', () => {
   it('is absent without the mark; no header and no footer turns header/footer printing off', () => {
     expect(headerFooter(null, null, false)).toEqual({ displayHeaderFooter: false });
     expect(headerFooter('<b>h</b>', null, false)).toEqual({ displayHeaderFooter: true, headerTemplate: '<b>h</b>', footerTemplate: EMPTY_TEMPLATE });
+    // Paid templates are passed exactly as sanitised: markup and styles included.
+    const styled = '<style>.f{display:flex}</style><div class="f" style="width:100%;padding:0 15mm"><b>ACME</b><span class="pageNumber"></span></div>';
+    expect(headerFooter(styled, styled, false)).toEqual({ displayHeaderFooter: true, headerTemplate: styled, footerTemplate: styled });
   });
 });
 

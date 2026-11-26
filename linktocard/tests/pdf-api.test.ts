@@ -416,11 +416,18 @@ describe('POST /v1/pdf: identical requests racing for the last images', () => {
     const paid = (await (await postPdf(secret, body, bindings)).json()) as PdfJson;
     await env.BUCKET.delete(`r/${userId}/${paid.id}.pdf`);
     await run(env.DB, "UPDATE renders SET charged_to = 'pending', created_at = ?1, expires_at = ?2 WHERE cache_key = ?3", Date.now() + 60_000, Date.now() + 86_400_000, paid.id);
-    const response = await postPdf(secret, body, bindings);
-    expect(response.status).toBe(429);
-    expect(await errorOf(response)).toMatchObject({ code: 'rate_limited' });
-    expect(response.headers.get('retry-after')).toBe('2');
+    // The request waits for the holder: while the row is pending it neither renders nor serves or stores anything.
+    const pending = postPdf(secret, body, bindings);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(browser.calls).toHaveLength(1);
     expect((await env.BUCKET.list({ prefix: `r/${userId}/` })).objects).toEqual([]);
+    // The holder releases the row (its block did not fit): the waiting request charges the PDF itself.
+    await run(env.DB, 'DELETE FROM renders WHERE cache_key = ?1', paid.id);
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as PdfJson).credits_used).toBe(pdfUnits(1));
+    expect(browser.calls).toHaveLength(2);
+    // When the holder never finishes, the wait ends in 429 rate_limited: tests/pdf-ledger.test.ts.
   });
 
   it('takes over a pending row whose request has been gone for minutes, and charges it', async () => {
