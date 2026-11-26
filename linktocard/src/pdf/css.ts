@@ -10,6 +10,9 @@
  *   @page (anywhere, also nested)    dropped with a warning: paper size, orientation and margins
  *                                    come from the request's "pdf" (Chrome would let @page
  *                                    margins override them, and take room from the free mark)
+ *   <!-- and --> before a rule       removed at the top level, where Chrome skips them, so
+ *                                    "<!-- @page" is an @page rule here too; a nested rule that
+ *                                    starts with them is dropped (Chrome ignores it)
  *   url(https://...)                 handed to the asset collector, which inlines it as data:
  *   url(#id), url(data:...)          kept
  *   any other url(...)               the declaration is dropped
@@ -211,6 +214,9 @@ function sanitizeDeclaration(declaration: CssDeclaration, scope: CssScope, conte
   return kept;
 }
 
+/** <!-- and --> (CDO and CDC) with the white space around them, at the start of a rule. */
+const LEADING_CDO_CDC = /^(?:\s*(?:<!--|-->))+\s*/;
+
 function atRuleName(text: string): string | undefined {
   if (!text.startsWith('@')) return undefined;
   if (/^@[^\s({;]*\\/.test(text)) {
@@ -226,15 +232,23 @@ function refuseImport(): never {
   );
 }
 
-function sanitizeNodes(nodes: readonly CssNode[], scope: CssScope, context: AssetContext, fontFace: boolean): CssNode[] {
+function sanitizeNodes(nodes: readonly CssNode[], scope: CssScope, context: AssetContext, fontFace: boolean, topLevel: boolean): CssNode[] {
   const out: CssNode[] = [];
-  for (const node of nodes) {
-    if (node.kind === 'declaration') {
-      const kept = sanitizeDeclaration(node, scope, context, fontFace);
+  for (const raw of nodes) {
+    if (raw.kind === 'declaration') {
+      const kept = sanitizeDeclaration(raw, scope, context, fontFace);
       if (kept) out.push({ kind: 'declaration', ...kept });
       continue;
     }
-    const name = atRuleName(node.kind === 'rule' ? node.prelude : node.text);
+    // Chrome skips <!-- and --> at the top level of a stylesheet: "<!-- @page {...}" is an
+    // @page rule. Anywhere else they make the rule invalid, and Chrome ignores it.
+    const text = raw.kind === 'rule' ? raw.prelude : raw.text;
+    const leading = LEADING_CDO_CDC.exec(text)?.[0] ?? '';
+    if (leading !== '' && !topLevel) continue;
+    const rest = text.slice(leading.length);
+    if (leading !== '' && rest === '') continue;
+    const node: CssNode = raw.kind === 'rule' ? { ...raw, prelude: rest } : { kind: 'statement', text: rest };
+    const name = atRuleName(rest);
     if (name === 'import') refuseImport();
     if (name !== undefined && SILENT_AT_RULES.has(name)) continue;
     if (name !== undefined && DROPPED_AT_RULES.has(name)) {
@@ -249,7 +263,7 @@ function sanitizeNodes(nodes: readonly CssNode[], scope: CssScope, context: Asse
       out.push(node);
       continue;
     }
-    out.push({ ...node, children: sanitizeNodes(node.children, scope, context, fontFace || name === 'font-face') });
+    out.push({ ...node, children: sanitizeNodes(node.children, scope, context, fontFace || name === 'font-face', false) });
   }
   return out;
 }
@@ -265,7 +279,7 @@ export function styleElementText(css: string): string {
 /** A whole stylesheet, sanitised and serialised. Throws ApiError('template_error') for @import, external @font-face and bad strings. */
 export function sanitizeStylesheet(css: string, scope: CssScope): string {
   assertNoBadStrings(css);
-  return styleElementText(serializeCss(sanitizeNodes(parseCss(css), scope, 'sheet', false)));
+  return styleElementText(serializeCss(sanitizeNodes(parseCss(css), scope, 'sheet', false, true)));
 }
 
 /** The value of a style="" attribute, sanitised; '' when nothing is left. */
@@ -280,12 +294,29 @@ export function sanitizeInlineStyle(style: string, scope: CssScope): string {
 }
 
 /**
- * True when an attribute value (not style) contains a url(...) that is not a #fragment. Chrome
- * reads SVG presentation attributes (fill, mask, clip-path, marker-*, cursor) as CSS, where an
- * escape can spell url( ("\\75rl("): a value with a backslash and a "(" counts as one too.
+ * SVG presentation attributes: Chrome reads them as CSS values (lower case). Of these, fill,
+ * stroke, clip-path, mask, filter, marker-* and cursor take url().
  */
-export function hasExternalCssUrl(value: string): boolean {
-  if (value.includes('\\') && value.includes('(')) return true;
+export const SVG_PRESENTATION_ATTRIBUTES: ReadonlySet<string> = new Set([
+  ...['alignment-baseline', 'baseline-shift', 'clip', 'clip-path', 'clip-rule', 'color', 'color-interpolation', 'color-interpolation-filters'],
+  ...['color-rendering', 'cursor', 'cx', 'cy', 'd', 'direction', 'display', 'dominant-baseline', 'fill', 'fill-opacity', 'fill-rule', 'filter'],
+  ...['flood-color', 'flood-opacity', 'font', 'font-family', 'font-size', 'font-size-adjust', 'font-stretch', 'font-style', 'font-variant'],
+  ...['font-weight', 'height', 'image-rendering', 'letter-spacing', 'lighting-color', 'marker', 'marker-end', 'marker-mid', 'marker-start'],
+  ...['mask', 'mask-type', 'opacity', 'overflow', 'paint-order', 'pointer-events', 'r', 'rx', 'ry', 'shape-rendering', 'stop-color'],
+  ...['stop-opacity', 'stroke', 'stroke-dasharray', 'stroke-dashoffset', 'stroke-linecap', 'stroke-linejoin', 'stroke-miterlimit'],
+  ...['stroke-opacity', 'stroke-width', 'text-anchor', 'text-decoration', 'text-overflow', 'text-rendering', 'transform', 'transform-origin'],
+  ...['unicode-bidi', 'vector-effect', 'visibility', 'white-space', 'width', 'word-spacing', 'writing-mode', 'x', 'y'],
+]);
+
+/**
+ * True when an attribute value (not style) contains a url(...) that is not a #fragment.
+ * `css` marks a value Chrome reads as CSS (an SVG presentation attribute on an SVG element):
+ * there an escape can spell url( ("\\75rl("), so a backslash together with a "(" counts as one
+ * too. Other attributes (title, alt, data-*) are never CSS, and a Windows path or a regex in
+ * them is kept.
+ */
+export function hasExternalCssUrl(value: string, css: boolean): boolean {
+  if (css && value.includes('\\') && value.includes('(')) return true;
   if (!/url\(/i.test(value)) return false;
   const targets = cssUrls(value);
   if ((withoutStrings(value).match(URL_FUNCTION) ?? []).length !== targets.length) return true;

@@ -40,7 +40,20 @@ import { parseDocument } from 'htmlparser2';
 import { LIMITS, PDF } from '../config';
 import { ApiError } from '../lib/errors';
 import { codePointLength, isJsonObject } from '../lib/http';
-import { hasExternalCssUrl, noteFontAttribute, remoteUrl, sanitizeInlineStyle, sanitizeStylesheet, type AssetContext, type CssScope, type FontUse, type Warn } from './css';
+import { parseInlineStyle } from '../render/css';
+import {
+  SVG_PRESENTATION_ATTRIBUTES,
+  hasExternalCssUrl,
+  noteFontAttribute,
+  remoteUrl,
+  sanitizeInlineStyle,
+  sanitizeStylesheet,
+  type AssetContext,
+  type CssScope,
+  type FontUse,
+  type Warn,
+} from './css';
+import { PAGE_VALUE_CLASSES, PLAIN_LINE_BREAK, pageValueSpan, type PageValueClass } from './page';
 import type { PdfData, PdfItem } from './templates/types';
 
 export type { PdfData, PdfItem } from './templates/types';
@@ -477,7 +490,7 @@ function bindAttributes(element: TplElement, scope: Scope, state: BindState): At
     } else if (HREF_ATTRIBUTES.has(lower)) {
       const href = linkTarget(element, value, state.css.warn);
       if (href !== undefined) out[name] = href;
-    } else if (hasExternalCssUrl(value)) {
+    } else if (hasExternalCssUrl(value, element.svg && SVG_PRESENTATION_ATTRIBUTES.has(lower))) {
       state.css.warn(`Attribute "${name}" on <${element.name}> referenced a url(...) and was removed.`);
     } else {
       if (element.svg && lower === 'font-family') noteFontAttribute(value, state.css.fonts);
@@ -673,29 +686,190 @@ export function preparePdfDocument(input: PdfDocumentInput, options: PdfBuildOpt
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Plain-text headers and footers (next to the free mark)              */
+/* ------------------------------------------------------------------ */
+
+/** Elements a browser lays out as blocks: they start and end a line. */
+const BLOCK_ELEMENTS = new Set([
+  ...['address', 'article', 'aside', 'blockquote', 'caption', 'center', 'dd', 'details', 'dialog', 'dir', 'div', 'dl', 'dt'],
+  ...['fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr'],
+  ...['legend', 'li', 'listing', 'main', 'menu', 'nav', 'ol', 'p', 'pre', 'section', 'summary', 'table', 'tbody', 'tfoot'],
+  ...['thead', 'tr', 'ul'],
+]);
+/** Elements whose content is not printed as text: graphics, form values, media. */
+const NON_TEXT_ELEMENTS = new Set(['svg', 'math', 'img', 'picture', 'canvas', 'select', 'datalist', 'input', 'meter', 'progress', 'map']);
+/** Elements that plain text reproduces as they would print, when they carry no attributes. */
+const PLAIN_ELEMENTS = new Set(['span', 'div', 'p', 'br']);
+/** Between flex or grid items and table cells, which print side by side: two em spaces. */
+const PLAIN_GAP = '\u2003\u2003';
+const ASCII_SPACE = /[ \t\n\r\f]+/;
+
+type PlainPiece = { kind: 'text'; text: string } | { kind: 'value'; name: PageValueClass } | { kind: 'gap' };
+/** How an element lays out its children: as text, side by side (flex row, grid, table row) or one per line (flex column). */
+type PlainFlow = 'normal' | 'row' | 'column';
+type PlainBox = 'none' | 'block' | 'inline' | 'cell';
+
+interface PlainState {
+  lines: PlainPiece[][];
+  line: PlainPiece[];
+  /** Markup or styles that plain text cannot show were left out. */
+  dropped: boolean;
+}
+
+const isBlank = (text: string): boolean => /^[ \t\n\r\f]*$/.test(text);
+
+/** Ends the current line: always for <br>, otherwise only when it has something in it. */
+function breakLine(state: PlainState, force: boolean): void {
+  if (force || state.line.some((piece) => piece.kind === 'value' || (piece.kind === 'text' && !isBlank(piece.text)))) state.lines.push(state.line);
+  state.line = [];
+}
+
+/** The element's box and how it lays out its children, from its name and its style="" display. */
+function plainLayout(name: string, element: Element): { box: PlainBox; flow: PlainFlow } {
+  let box: PlainBox = BLOCK_ELEMENTS.has(name) ? 'block' : name === 'td' || name === 'th' ? 'cell' : 'inline';
+  let flow: PlainFlow = name === 'tr' ? 'row' : 'normal';
+  const style = new Map(parseInlineStyle(element.attribs.style ?? '').map((declaration) => [declaration.name, declaration.value.replace(/!\s*important\s*$/i, '').trim().toLowerCase()]));
+  const display = style.get('display');
+  if (display !== undefined) {
+    const words = display.split(ASCII_SPACE);
+    if (words.includes('none')) return { box: 'none', flow };
+    box = words.includes('table-cell') ? 'cell' : words.some((word) => word === 'inline' || word.startsWith('inline-') || word === 'contents' || word === 'ruby') ? 'inline' : 'block';
+    const direction = `${style.get('flex-direction') ?? ''} ${style.get('flex-flow') ?? ''}`;
+    if (words.some((word) => /^(?:inline-)?flex$/.test(word))) flow = /column/.test(direction) ? 'column' : 'row';
+    else if (words.some((word) => /^(?:inline-)?grid$/.test(word)) || words.includes('table-row')) flow = 'row';
+    else flow = 'normal';
+  }
+  return { box, flow };
+}
+
+function plainChildren(nodes: readonly ChildNode[], flow: PlainFlow, state: PlainState): void {
+  let items = 0;
+  for (const node of nodes) {
+    if (isText(node)) {
+      // White space between flex items, grid items and table cells is not printed.
+      if (flow !== 'normal' && isBlank(node.data)) continue;
+      if (flow === 'row' && items > 0) state.line.push({ kind: 'gap' });
+      if (flow === 'column') breakLine(state, false);
+      state.line.push({ kind: 'text', text: node.data });
+      items++;
+    } else if (isTag(node) && plainElement(node, flow, items, state)) {
+      items++;
+    }
+  }
+}
+
+/** Adds one element's text; false when it prints nothing at all (display:none, an image). */
+function plainElement(element: Element, flow: PlainFlow, index: number, state: PlainState): boolean {
+  const name = element.name.toLowerCase();
+  const classes = (element.attribs.class ?? '').split(ASCII_SPACE).filter((word) => word !== '');
+  const valueClasses: readonly string[] = PAGE_VALUE_CLASSES;
+  if (!PLAIN_ELEMENTS.has(name) || Object.keys(element.attribs).some((attribute) => attribute !== 'class') || classes.some((word) => !valueClasses.includes(word))) {
+    state.dropped = true;
+  }
+  if (NON_TEXT_ELEMENTS.has(name)) return false;
+  const { box, flow: inner } = plainLayout(name, element);
+  if (box === 'none') return false;
+  if (name === 'br') {
+    breakLine(state, true);
+    return true;
+  }
+  if (flow === 'row') {
+    if (index > 0) state.line.push({ kind: 'gap' });
+  } else if (flow === 'column' || box === 'block') {
+    breakLine(state, false);
+  } else if (box === 'cell') {
+    state.line.push({ kind: 'gap' });
+  }
+  // Chrome replaces the content of these elements with the page value; the last class in its order wins.
+  const value = [...PAGE_VALUE_CLASSES].reverse().find((candidate) => classes.includes(candidate));
+  if (value) state.line.push({ kind: 'value', name: value });
+  else plainChildren(element.children, inner, state);
+  if (flow === 'column' || (flow === 'normal' && box === 'block')) breakLine(state, false);
+  return true;
+}
+
+function escapePlainText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** One line: white space collapsed as a browser would, gaps between items, nothing at its ends. */
+function plainLine(pieces: readonly PlainPiece[]): string {
+  const SPACE = 0;
+  const GAP = 1;
+  const tokens: Array<string | typeof SPACE | typeof GAP> = [];
+  for (const piece of pieces) {
+    if (piece.kind === 'gap') tokens.push(GAP);
+    else if (piece.kind === 'value') tokens.push(pageValueSpan(piece.name));
+    else for (const part of piece.text.split(/([ \t\n\r\f]+)/)) if (part !== '') tokens.push(isBlank(part) ? SPACE : escapePlainText(part));
+  }
+  let out = '';
+  let pending: typeof SPACE | typeof GAP | null = null;
+  for (const token of tokens) {
+    if (typeof token === 'number') {
+      if (out !== '') pending = pending === GAP || token === GAP ? GAP : SPACE;
+      continue;
+    }
+    if (pending !== null) out += pending === GAP ? PLAIN_GAP : ' ';
+    pending = null;
+    out += token;
+  }
+  return out;
+}
+
+/** The text of bound header/footer nodes as plain-text markup (src/pdf/page.ts plainTextOnly). */
+function plainText(nodes: readonly ChildNode[]): { html: string; dropped: boolean } {
+  const state: PlainState = { lines: [], line: [], dropped: false };
+  plainChildren(nodes, 'normal', state);
+  breakLine(state, false);
+  const lines = state.lines.map(plainLine);
+  while (lines.length > 0 && lines[0] === '') lines.shift();
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return { html: lines.join(PLAIN_LINE_BREAK), dropped: state.dropped };
+}
+
+export interface PdfFragmentOptions {
+  /** The PDF carries the free mark (Free plan): the fragment is printed as plain text. */
+  mark?: boolean;
+  /** The older way to say the same: `styles: false` is `mark: true`. */
+  styles?: boolean;
+}
+
 /**
  * A customer header or footer template (Chrome's headerTemplate / footerTemplate) with the
  * same sanitising and placeholders as the document. The browser renders it as a separate small
  * document, so its <style> elements are kept, moved to the top of the fragment. Chrome fills in
  * elements with the classes pageNumber, totalPages, date and title.
  *
- * `styles: false` (a PDF with the free mark) removes the <style> elements instead, with a
- * warning: Chrome renders the header, the footer and the mark in one document, so a stylesheet
- * there could hide the mark. Style attributes stay; src/pdf/page.ts contains what they draw.
+ * With `mark` (a PDF with the free mark) the header, the footer and the mark share one
+ * document in Chrome, so none of the customer's markup goes there. After the data is filled in,
+ * only the text is kept: line breaks for <br> and at the edges of blocks, a gap between flex or
+ * grid items and table cells, and each element with one of Chrome's four classes as our own
+ * empty <span class="...">. Elements with display:none and graphics (<img>, <svg>, <math>)
+ * print nothing. A warning says so when markup or styles were left out. The result is escaped
+ * text and that markup only; src/pdf/page.ts prints it in its own style next to the mark, and
+ * nothing in it is fetched.
  */
-export function preparePdfFragment(source: string, data: PdfData, what: 'header' | 'footer', options: { styles?: boolean } = {}): PreparedPdfHtml {
+export function preparePdfFragment(source: string, data: PdfData, what: 'header' | 'footer', options: PdfFragmentOptions = {}): PreparedPdfHtml {
   assertSourceSize(`The ${what} template`, source, PDF.maxHeaderFooterBytes);
+  const plain = options.mark ?? options.styles === false;
   const warnings = new Set<string>();
   const tokens = new AssetTokens();
   const css = newScope(new Set(), warnings, tokens);
   const parsed = parseTemplate(source, true, css.warn);
   const state: BindState = { css, elements: 0, chars: 0, text: [] };
-  const keepStyles = options.styles ?? true;
-  if (!keepStyles && parsed.styles.some((sheet) => sheet.trim() !== '')) {
-    css.warn(`<style> in the ${what} was removed: on the Free plan, style the header and footer with style="" attributes.`);
-  }
-  const styles = keepStyles ? parsed.styles.map((sheet) => sanitizeStylesheet(sheet, css)).filter((sheet) => sheet !== '') : [];
   const nodes: ChildNode[] = [];
+  if (plain) {
+    bindNodes(parsed.children, { data: validatePdfData(data), item: null }, state, nodes);
+    const { html, dropped } = plainText(nodes);
+    if (dropped || parsed.styles.some((sheet) => sheet.trim() !== '')) {
+      css.warn(
+        `On the Free plan the ${what} is printed as plain text next to the free mark: its markup and styles were not used, only its text, line breaks and the pageNumber, totalPages, date and title classes.`,
+      );
+    }
+    return { remoteUrls: [], warnings: [...warnings], render: () => html, inlinedChars: () => 0 };
+  }
+  const styles = parsed.styles.map((sheet) => sanitizeStylesheet(sheet, css)).filter((sheet) => sheet !== '');
   bindNodes(parsed.children, { data: validatePdfData(data), item: null }, state, nodes);
   const html = `${styles.length > 0 ? `<style>${styles.join('\n')}</style>` : ''}${getOuterHTML(nodes, SERIALIZE)}`;
   return {

@@ -28,10 +28,11 @@
  * between the allowance and a top-up or between two top-ups, so no counter can
  * go past its limit.
  *
- * A PDF's ledger row is claimed as charged_to = 'pending' and becomes 'plan' or
- * 'topup' in the same batch that takes the block, so a row that says it is paid
- * always is. An identical request that finds a pending row must not be served as
- * a duplicate: the block may not fit, and the row may be released a moment later
+ * A PDF's ledger row is claimed as charged_to = 'pending' BEFORE the PDF is
+ * rendered (claimPdf) and becomes 'plan' or 'topup' in the same batch that takes
+ * the block (chargeClaimedPdf), so a row that says it is paid always is. An
+ * identical request that finds a pending row renders nothing and is not served:
+ * the block may not fit, and the row may be released a moment later
  * (src/pdf/service.ts waits for the row to be paid or gone).
  */
 import { effectivePlanId, getPlan, PLANS, TOPUP, type PlanId } from '../billing/plans';
@@ -190,15 +191,28 @@ const NEXT_TOPUP_FOR_BLOCK = `SELECT id FROM topups
   ORDER BY expires_at, created_at, id LIMIT 1`;
 
 /*
- * The PDF ledger row. It is claimed unpaid ('pending'), takes over an expired row or a pending
- * row whose claimant has been gone for PDF_PENDING_STALE_MS, and is labelled 'plan' or 'topup'
+ * The PDF ledger row. It is claimed unpaid ('pending') before the PDF is rendered, so identical
+ * requests wait for that one render instead of making their own (src/pdf/service.ts). A claim
+ * takes over an expired row or a pending row whose claimant has been gone for
+ * PDF_PENDING_STALE_MS, and is refused while the cache key's failure is remembered (a live
+ * tool_usage row with ?14 < bucket < ?15, src/pdf/guard.ts). It is labelled 'plan' or 'topup'
  * inside the batch that takes the block. The counting statements of each batch also require
  * that label, so a block is never taken for a row this request does not hold.
+ *
+ * PDF_PENDING_STALE_MS is measured from the claimant's request time and must be longer than
+ * anything a live claimant does between its claim and its charge: up to 30 remote images
+ * (4 at a time, 4 s each, about 30-50 s), the browser call (at most 75 s, CALL_TIMEOUT_MS in
+ * src/pdf/render.ts) and a few D1 round trips. Taking over a live claimant only costs it its
+ * charge (its batches no longer match), never a double charge.
  */
-export const PDF_PENDING_STALE_MS = 120_000;
+export const PDF_PENDING_STALE_MS = 180_000;
+const PDF_LEDGER_STATE_SQL = 'SELECT charged_to, created_at, expires_at FROM renders WHERE cache_key = ?1';
+const PDF_REMEMBERED_SQL =
+  'SELECT bucket, count, expires_at FROM tool_usage WHERE bucket > ?1 AND bucket < ?2 AND expires_at > ?3 ORDER BY expires_at DESC LIMIT 1';
 const CLAIM_PDF_LEDGER_SQL = `INSERT INTO renders
     (cache_key, user_id, site_id, source, template, width, height, format, bytes, r2_key, charged_to, period_start, created_at, expires_at)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11, ?12, ?13)
+  SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11, ?12, ?13
+  WHERE NOT EXISTS (SELECT 1 FROM tool_usage WHERE bucket > ?14 AND bucket < ?15 AND expires_at > ?12)
   ON CONFLICT (cache_key) DO UPDATE SET
     user_id = excluded.user_id, site_id = excluded.site_id, source = excluded.source, template = excluded.template,
     width = excluded.width, height = excluded.height, format = excluded.format, bytes = excluded.bytes,
@@ -207,12 +221,22 @@ const CLAIM_PDF_LEDGER_SQL = `INSERT INTO renders
   WHERE renders.expires_at <= excluded.created_at
      OR (renders.charged_to = 'pending' AND renders.created_at < excluded.created_at - ${PDF_PENDING_STALE_MS})
   RETURNING cache_key`;
+// Releasing a claim. A row this claim inserted is deleted. A row that replaced an older one is
+// expired instead (expires_at 0): the older row's PDF may still be in R2 at the same r2_key, and
+// the daily cleanup removes the row and that object together. An object is never left behind
+// without a row that points at it.
 const RELEASE_PDF_LEDGER_SQL = "DELETE FROM renders WHERE cache_key = ?1 AND user_id = ?2 AND created_at = ?3 AND charged_to = 'pending'";
+const EXPIRE_PDF_LEDGER_SQL = "UPDATE renders SET expires_at = 0 WHERE cache_key = ?1 AND user_id = ?2 AND created_at = ?3 AND charged_to = 'pending'";
+// Remembers why a PDF failed; written only while this request still holds its claim, in the
+// batch that then releases it, so an identical request sees either the claim or the note.
+const NOTE_PDF_FAILURE_SQL = `INSERT INTO tool_usage (bucket, count, expires_at)
+  SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM renders WHERE cache_key = ?4 AND user_id = ?5 AND created_at = ?6 AND charged_to = 'pending')
+  ON CONFLICT (bucket) DO UPDATE SET count = excluded.count, expires_at = excluded.expires_at`;
 
-// Allowance batch: ?1 user, ?2 period start, ?3 plan monthly images, ?4 units, ?5 cache key, ?6 claim time.
+// Allowance batch: ?1 user, ?2 period start, ?3 plan monthly images, ?4 units, ?5 cache key, ?6 claim time, ?7 bytes.
 const OUR_PDF_ROW = (label: 'plan' | 'topup', key: string, at: string): string =>
   `EXISTS (SELECT 1 FROM renders WHERE cache_key = ${key} AND user_id = ?1 AND created_at = ${at} AND charged_to = '${label}')`;
-const LABEL_PDF_LEDGER_PLAN_SQL = `UPDATE renders SET charged_to = 'plan'
+const LABEL_PDF_LEDGER_PLAN_SQL = `UPDATE renders SET charged_to = 'plan', bytes = ?7
   WHERE cache_key = ?5 AND user_id = ?1 AND created_at = ?6 AND charged_to = 'pending'
     AND EXISTS (SELECT 1 FROM usage_periods WHERE ${PDF_FITS_ALLOWANCE})`;
 const COUNT_PAID_PDF_IN_ALLOWANCE_SQL = `INSERT INTO pdf_usage (user_id, period_start, pdfs, units)
@@ -222,8 +246,8 @@ const TAKE_PAID_BLOCK_FROM_ALLOWANCE_SQL = `UPDATE usage_periods SET used = used
   WHERE ${PDF_FITS_ALLOWANCE} AND ${OUR_PDF_ROW('plan', '?5', '?6')}
   RETURNING used, MAX(0, ?3 + allowance_adjust) AS allowance, notified_90, notified_100`;
 
-// Top-up batch: ?1 user, ?2 now (the claim time), ?3 period start, ?4 units, ?5 cache key.
-const LABEL_PDF_LEDGER_TOPUP_PAID_SQL = `UPDATE renders SET charged_to = 'topup'
+// Top-up batch: ?1 user, ?2 now (the claim time), ?3 period start, ?4 units, ?5 cache key, ?6 bytes.
+const LABEL_PDF_LEDGER_TOPUP_PAID_SQL = `UPDATE renders SET charged_to = 'topup', bytes = ?6
   WHERE cache_key = ?5 AND user_id = ?1 AND created_at = ?2 AND charged_to = 'pending' AND EXISTS (${NEXT_TOPUP_FOR_BLOCK})`;
 const COUNT_PAID_BLOCK_TOPUP_USE_SQL = `UPDATE usage_periods SET topup_used = topup_used + ?4
   WHERE user_id = ?1 AND period_start = ?3 AND EXISTS (${NEXT_TOPUP_FOR_BLOCK}) AND ${OUR_PDF_ROW('topup', '?5', '?2')}`;
@@ -364,27 +388,6 @@ async function claimLedgerRow(db: D1Database, userId: string, period: Period, re
   return claimed !== null;
 }
 
-async function claimPdfLedgerRow(db: D1Database, userId: string, period: Period, render: LedgerEntry, now: number): Promise<boolean> {
-  const claimed = await first<{ cache_key: string }>(
-    db,
-    CLAIM_PDF_LEDGER_SQL,
-    render.cacheKey,
-    userId,
-    render.siteId,
-    render.source,
-    render.template,
-    render.width,
-    render.height,
-    render.format,
-    render.bytes,
-    render.r2Key,
-    period.start,
-    now,
-    now + render.ttlMs,
-  );
-  return claimed !== null;
-}
-
 async function takeFromAllowance(
   db: D1Database,
   userId: string,
@@ -458,58 +461,173 @@ function crossedThresholds(taken: AllowanceRow): { crossed90: boolean; crossed10
   return { crossed90: notified90 < limit && used * 10 >= limit * 9, crossed100: notified100 < limit && used >= limit, limit };
 }
 
-/**
- * Charges a PDF that has just been rendered, as one block of `pdf.units` images (see the
- * module comment). Same results and the same ledger guarantees as chargeRender:
- *
- *   charged         the block was taken from the allowance or from one top-up
- *   duplicate       an unexpired ledger row already covers this cache key: no charge. The row
- *                   may still be 'pending' (another request is charging it right now, and may
- *                   release it): the caller must read it before serving anything.
- *   quota_exceeded  no single place has the whole block left; nothing was taken
- */
-export async function chargePdf(db: D1Database, user: QuotaUser, pdf: PdfCharge, now: number): Promise<ChargeResult> {
-  if (!Number.isInteger(pdf.units) || pdf.units < 1) throw new RangeError('a PDF must be charged a positive whole number of images');
-  const planId = await planInForce(db, user, now);
-  const period = currentPeriod(user, now);
-  const ledger: LedgerEntry = { ...pdf, width: 0, height: 0, format: 'pdf' };
-  if (!(await claimPdfLedgerRow(db, user.id, period, ledger, now))) return { status: 'duplicate' };
+/** What a PDF claim records before the PDF exists; the bytes are filled in when it is paid. */
+export type PdfClaimInput = Omit<PdfCharge, 'bytes' | 'units'> & { bytes?: number };
 
-  const limit = PLANS[planId].monthlyImages;
-  const allowance = await db.batch([
-    db.prepare(OPEN_PERIOD_SQL).bind(user.id, period.start, period.end),
-    db.prepare(LABEL_PDF_LEDGER_PLAN_SQL).bind(user.id, period.start, limit, pdf.units, pdf.cacheKey, now),
-    db.prepare(COUNT_PAID_PDF_IN_ALLOWANCE_SQL).bind(user.id, period.start, limit, pdf.units, pdf.cacheKey, now),
-    db.prepare(TAKE_PAID_BLOCK_FROM_ALLOWANCE_SQL).bind(user.id, period.start, limit, pdf.units, pdf.cacheKey, now),
-    countersStatement(db, user.id, period, now),
-  ]);
-  const taken = rowsOf<AllowanceRow>(allowance, 3)[0];
-  if (taken) {
-    const thresholds = crossedThresholds(taken);
-    const crossed90 = thresholds.crossed90 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period, thresholds.limit));
-    const crossed100 = thresholds.crossed100 && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, user.id, period, thresholds.limit));
-    return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, countersFrom(allowance, 4)), crossed90, crossed100 };
-  }
-
-  const topup = await db.batch([
-    db.prepare(LABEL_PDF_LEDGER_TOPUP_PAID_SQL).bind(user.id, now, period.start, pdf.units, pdf.cacheKey),
-    db.prepare(COUNT_PAID_BLOCK_TOPUP_USE_SQL).bind(user.id, now, period.start, pdf.units, pdf.cacheKey),
-    db.prepare(COUNT_PAID_PDF_FROM_TOPUP_SQL).bind(user.id, now, period.start, pdf.units, pdf.cacheKey),
-    db.prepare(TAKE_PAID_BLOCK_FROM_TOPUP_SQL).bind(user.id, now, period.start, pdf.units, pdf.cacheKey),
-    countersStatement(db, user.id, period, now),
-  ]);
-  const usage = summarize(planId, period, countersFrom(topup, 4));
-  if (topup[3]?.meta.changes === 1) return { status: 'charged', chargedTo: 'topup', usage, crossed90: false, crossed100: false };
-
-  await run(db, RELEASE_PDF_LEDGER_SQL, pdf.cacheKey, user.id, now);
-  return { status: 'quota_exceeded', usage };
+/** A ledger row this request holds 'pending', created at the request's time. */
+export interface PdfClaim {
+  cacheKey: string;
+  userId: string;
+  createdAt: number;
+  planId: PlanId;
+  period: Period;
+  /** The claim replaced an older row (expired, or pending and abandoned): releasing it expires it instead of deleting it. */
+  tookOver: boolean;
 }
 
-/** The ledger row of a PDF as the duplicate path reads it: whether it is paid, and for how long. */
+/** The ledger row of a PDF as a claim sees it: whether it is paid, and for how long. */
 export interface PdfLedgerState {
   charged_to: 'plan' | 'topup' | 'pending';
   created_at: number;
   expires_at: number;
+}
+
+/** A tool_usage row that remembers why a PDF failed (written by releasePdfClaim; meaning in src/pdf/guard.ts). */
+export interface PdfFailureNote {
+  bucket: string;
+  count: number;
+  expiresAt: number;
+}
+
+/** The tool_usage buckets strictly between `from` and `to`: one cache key's remembered failure. */
+export interface PdfFailureRange {
+  from: string;
+  to: string;
+}
+
+export interface PdfRememberedRow {
+  bucket: string;
+  count: number;
+  expires_at: number;
+}
+
+export type PdfClaimResult =
+  | { status: 'claimed'; claim: PdfClaim }
+  /** Another request holds the cache key: the row is paid, or pending and its claimant not gone. */
+  | { status: 'held'; ledger: PdfLedgerState }
+  /** The cache key's failure is remembered (a live row in the range): nothing is claimed while it lasts. */
+  | { status: 'remembered'; row: PdfRememberedRow };
+
+const NO_RANGE: PdfFailureRange = { from: '', to: '' };
+
+/** True when this row keeps a claim at `now` from taking it over (the complement of the claim's ON CONFLICT ... WHERE). */
+function holdsCacheKey(row: PdfLedgerState, now: number): boolean {
+  return row.expires_at > now && (row.charged_to !== 'pending' || row.created_at >= now - PDF_PENDING_STALE_MS);
+}
+
+/**
+ * Claims the ledger row of a PDF before it is rendered (see the module comment). The state
+ * before the claim, the remembered failure and the claim itself are one batch, so they see one
+ * snapshot: an identical request finds either this claim, the PDF paid, or the failure note
+ * that the claimant wrote when it released the row.
+ */
+export async function claimPdf(
+  db: D1Database,
+  user: QuotaUser,
+  pdf: PdfClaimInput,
+  now: number,
+  unlessRemembered: PdfFailureRange = NO_RANGE,
+): Promise<PdfClaimResult> {
+  const planId = await planInForce(db, user, now);
+  const period = currentPeriod(user, now);
+  const { from, to } = unlessRemembered;
+  const results = await db.batch([
+    db.prepare(PDF_LEDGER_STATE_SQL).bind(pdf.cacheKey),
+    db.prepare(PDF_REMEMBERED_SQL).bind(from, to, now),
+    db
+      .prepare(CLAIM_PDF_LEDGER_SQL)
+      .bind(pdf.cacheKey, user.id, pdf.siteId, pdf.source, pdf.template, 0, 0, 'pdf', pdf.bytes ?? 0, pdf.r2Key, period.start, now, now + pdf.ttlMs, from, to),
+  ]);
+  const before = rowsOf<PdfLedgerState>(results, 0)[0] ?? null;
+  const remembered = rowsOf<PdfRememberedRow>(results, 1)[0] ?? null;
+  if (rowsOf(results, 2).length === 1) {
+    return { status: 'claimed', claim: { cacheKey: pdf.cacheKey, userId: user.id, createdAt: now, planId, period, tookOver: before !== null } };
+  }
+  if (before !== null && holdsCacheKey(before, now)) return { status: 'held', ledger: before };
+  if (remembered !== null) return { status: 'remembered', row: remembered };
+  throw new Error(`PDF ledger claim of ${pdf.cacheKey}: neither claimed, held nor remembered`);
+}
+
+/**
+ * Releases a claim that ends without a paid PDF, optionally remembering why (the note is
+ * written only if the claim is still this request's, in the same batch). True when the claim
+ * was still held; false when another request had taken it over.
+ */
+export async function releasePdfClaim(db: D1Database, claim: PdfClaim, note?: PdfFailureNote): Promise<boolean> {
+  const release = db.prepare(claim.tookOver ? EXPIRE_PDF_LEDGER_SQL : RELEASE_PDF_LEDGER_SQL).bind(claim.cacheKey, claim.userId, claim.createdAt);
+  const statements = note
+    ? [db.prepare(NOTE_PDF_FAILURE_SQL).bind(note.bucket, note.count, note.expiresAt, claim.cacheKey, claim.userId, claim.createdAt), release]
+    : [release];
+  const results = await db.batch(statements);
+  return results[statements.length - 1]?.meta.changes === 1;
+}
+
+export type PdfChargeResult = Exclude<ChargeResult, { status: 'duplicate' }> | { status: 'lost' };
+
+/**
+ * Charges a claimed PDF that has just been rendered, as one block of `pdf.units` images (see
+ * the module comment):
+ *
+ *   charged         the block was taken from the allowance or from one top-up; the row is paid
+ *   quota_exceeded  no single place has the whole block left; nothing was taken, the claim is
+ *                   released and `onExceeded` remembered
+ *   lost            the claim had been taken over by another request (this one took longer than
+ *                   PDF_PENDING_STALE_MS); nothing was taken
+ */
+export async function chargeClaimedPdf(
+  db: D1Database,
+  claim: PdfClaim,
+  pdf: { units: number; bytes: number },
+  onExceeded?: PdfFailureNote,
+): Promise<PdfChargeResult> {
+  if (!Number.isInteger(pdf.units) || pdf.units < 1) throw new RangeError('a PDF must be charged a positive whole number of images');
+  const { userId, period, planId, cacheKey, createdAt: now } = claim;
+  const limit = PLANS[planId].monthlyImages;
+  const allowance = await db.batch([
+    db.prepare(OPEN_PERIOD_SQL).bind(userId, period.start, period.end),
+    db.prepare(LABEL_PDF_LEDGER_PLAN_SQL).bind(userId, period.start, limit, pdf.units, cacheKey, now, pdf.bytes),
+    db.prepare(COUNT_PAID_PDF_IN_ALLOWANCE_SQL).bind(userId, period.start, limit, pdf.units, cacheKey, now),
+    db.prepare(TAKE_PAID_BLOCK_FROM_ALLOWANCE_SQL).bind(userId, period.start, limit, pdf.units, cacheKey, now),
+    countersStatement(db, userId, period, now),
+  ]);
+  const taken = rowsOf<AllowanceRow>(allowance, 3)[0];
+  if (taken) {
+    const thresholds = crossedThresholds(taken);
+    const crossed90 = thresholds.crossed90 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, userId, period, thresholds.limit));
+    const crossed100 = thresholds.crossed100 && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, userId, period, thresholds.limit));
+    return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, countersFrom(allowance, 4)), crossed90, crossed100 };
+  }
+
+  const topup = await db.batch([
+    db.prepare(LABEL_PDF_LEDGER_TOPUP_PAID_SQL).bind(userId, now, period.start, pdf.units, cacheKey, pdf.bytes),
+    db.prepare(COUNT_PAID_BLOCK_TOPUP_USE_SQL).bind(userId, now, period.start, pdf.units, cacheKey),
+    db.prepare(COUNT_PAID_PDF_FROM_TOPUP_SQL).bind(userId, now, period.start, pdf.units, cacheKey),
+    db.prepare(TAKE_PAID_BLOCK_FROM_TOPUP_SQL).bind(userId, now, period.start, pdf.units, cacheKey),
+    countersStatement(db, userId, period, now),
+  ]);
+  const usage = summarize(planId, period, countersFrom(topup, 4));
+  if (topup[3]?.meta.changes === 1) return { status: 'charged', chargedTo: 'topup', usage, crossed90: false, crossed100: false };
+
+  return (await releasePdfClaim(db, claim, onExceeded)) ? { status: 'quota_exceeded', usage } : { status: 'lost' };
+}
+
+/**
+ * Claims and charges a PDF in one go, as one block of `pdf.units` images. Same results and the
+ * same ledger guarantees as chargeRender:
+ *
+ *   charged         the block was taken from the allowance or from one top-up
+ *   duplicate       a ledger row already covers this cache key (paid, or another request's
+ *                   pending claim): no charge
+ *   quota_exceeded  no single place has the whole block left; nothing was taken
+ *
+ * src/pdf/service.ts claims before rendering instead (claimPdf, then chargeClaimedPdf).
+ */
+export async function chargePdf(db: D1Database, user: QuotaUser, pdf: PdfCharge, now: number): Promise<ChargeResult> {
+  if (!Number.isInteger(pdf.units) || pdf.units < 1) throw new RangeError('a PDF must be charged a positive whole number of images');
+  const claimed = await claimPdf(db, user, pdf, now);
+  if (claimed.status !== 'claimed') return { status: 'duplicate' };
+  const result = await chargeClaimedPdf(db, claimed.claim, pdf);
+  return result.status === 'lost' ? { status: 'duplicate' } : result;
 }
 
 export function readPdfLedger(db: D1Database, userId: string, cacheKey: string): Promise<PdfLedgerState | null> {

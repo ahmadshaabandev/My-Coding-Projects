@@ -214,8 +214,11 @@ async function recordBrowserUsage(
  */
 const MAX_INLINED_CHARS = Math.ceil((PDF.maxAssetBytes * 4) / 3) + 64 * 1024;
 
-/** Steps 5-7: inline the images, print once, record the browser time. Throws the render's error after recording it. */
-export async function printPrepared(env: Env, prepared: PreparedPdf, attempt: RenderAttempt, now: number): Promise<RenderedPdf> {
+/** One print: the PDF, or the browser's error and whose fault it was (src/pdf/render.ts failureCause). */
+export type PrintAttempt = { rendered: RenderedPdf; error: null; cause: null } | { rendered: null; error: ApiError; cause: FailureCause };
+
+/** Steps 5-7: inline the images, print once, record the browser time. Throws only before the browser runs. */
+async function printAttempt(env: Env, prepared: PreparedPdf, attempt: RenderAttempt, now: number): Promise<PrintAttempt> {
   if (!env.BROWSER) throw new ApiError('not_configured', 'PDF rendering is not enabled yet.');
   const parts = [prepared.document, prepared.header, prepared.footer];
   const urls = [...new Set(parts.flatMap((part) => part?.remoteUrls ?? []))];
@@ -244,12 +247,15 @@ export async function printPrepared(env: Env, prepared: PreparedPdf, attempt: Re
   };
   const outcome = await printPdf(env.BROWSER, request);
   await recordBrowserUsage(env.DB, attempt, outcome, now);
-  if (outcome.error) {
-    // A busy renderer (429) did no work for us; anything else used browser time for nothing.
-    if (attempt.userId !== null && outcome.status !== 429) await noteUnchargedRender(env, attempt.userId, now);
-    throw outcome.error;
-  }
-  return { bytes: outcome.bytes!, pages: outcome.pages!, browserMs: outcome.browserMs, warnings: prepared.warnings };
+  if (outcome.error) return { rendered: null, error: outcome.error, cause: outcome.cause ?? 'provider' };
+  return { rendered: { bytes: outcome.bytes!, pages: outcome.pages!, browserMs: outcome.browserMs, warnings: prepared.warnings }, error: null, cause: null };
+}
+
+/** Steps 5-7 for a caller that only needs the PDF (the free tools): the browser's error is thrown after it is recorded. */
+export async function printPrepared(env: Env, prepared: PreparedPdf, attempt: RenderAttempt, now: number): Promise<RenderedPdf> {
+  const result = await printAttempt(env, prepared, attempt, now);
+  if (result.error) throw result.error;
+  return result.rendered;
 }
 
 /* ------------------------------------------------------------------ */
@@ -403,7 +409,7 @@ function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: Usage
 }
 
 /* ------------------------------------------------------------------ */
-/* Account PDFs: cache, quota, render, charge, store                   */
+/* Account PDFs: cache, quota, claim, render, charge, store            */
 /* ------------------------------------------------------------------ */
 
 export interface PdfRequest {
@@ -420,30 +426,122 @@ export interface PdfResult {
   cached: boolean;
   /** A stream for a stored PDF, bytes for a fresh one, null when only metadata was asked for. */
   body: ReadableStream | Uint8Array | null;
-  /** Images charged by this request: 0 for a cache hit or a duplicate. */
+  /** Images charged by this request: 0 for a cache hit or a PDF another request paid for. */
   creditsUsed: number;
   warnings: string[];
   /** Usage right after the charge; null when nothing was charged. */
   usage: UsageSummary | null;
 }
 
-/** Waits (ms) between reads of a ledger row that an identical request holds unpaid. */
-const PENDING_WAITS_MS = [0, 50, 100, 150, 200, 300, 400, 500];
-const PENDING_RETRY_SECONDS = 2;
+/** CALL_TIMEOUT_MS in src/pdf/render.ts: the longest one browser call is waited for. */
+const RENDER_DEADLINE_MS = 2 * PDF.renderTimeoutMs + 15_000;
+/** How long a request waits for an identical request that is making the same PDF. */
+export const PDF_DUPLICATE_WAIT_MS = RENDER_DEADLINE_MS + 15_000;
+/** Pauses between looks at that request's ledger row: from about 250 ms, growing to 2 s. */
+const WAIT_FIRST_MS = 250;
+const WAIT_LONGEST_MS = 2_000;
+/** A paid row whose PDF is still not in R2 after this much waiting lost its object: it is rendered again, free. */
+const PAID_OBJECT_GRACE_MS = 2_000;
+const LOST_CLAIM_RETRY_SECONDS = 5;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function renderAndCharge(env: Env, background: Background, request: PdfRequest, cacheKey: string, now: number): Promise<PdfResult> {
-  const { user, job } = request;
-  const capacity = await pdfCapacity(env.DB, user, now);
-  if (capacity.largestBlock < PDF.baseUnits) throw pdfQuotaError(env, capacity.usage, PDF.baseUnits, true);
-  await assertFailedRenderAllowance(env, user.id, capacity.usage.plan, now);
-  if (capacity.usage.plan === 'free') await assertFreeBrowserCapacity(env, now);
-  if (request.renderRateLimitKey) await enforceRateLimit(env, 'RL_KEY', request.renderRateLimitKey);
-  if (capacity.usage.plan === 'free') await enforceRateLimit(env, 'RL_PDF_FREE', user.id);
+/** The account for POST /v1/pdf, the site for its signed links (src/pdf/guard.ts). */
+function failureScope(request: PdfRequest): FailureScope {
+  return request.source === 'signed' && request.siteId !== null ? { kind: 'site', id: request.siteId } : { kind: 'account', id: request.user.id };
+}
 
-  // Throws on any failure: from here to chargePdf nothing has been stored or counted.
-  const rendered = await printPrepared(env, preparePdf(job), { userId: user.id, source: request.source }, now);
+function storedResult(stored: { pdf: StoredPdf; body: ReadableStream | null }): PdfResult {
+  return { pdf: stored.pdf, cached: true, body: stored.body, creditsUsed: 0, warnings: [], usage: null };
+}
+
+/**
+ * The answer to a remembered failure: the document's error, or for a 402 the quota error with
+ * what is left now. Returns (and, when `forget`, forgets the failure) when a remembered 402 fits
+ * now, i.e. a top-up or an upgrade arrived: the PDF is then rendered normally.
+ */
+async function answerRemembered(env: Env, request: PdfRequest, failure: RememberedFailure | null, cacheKey: string, now: number, forget: boolean): Promise<void> {
+  if (failure?.kind === 'document') throw failure.error;
+  if (failure?.kind === 'quota') {
+    const capacity = await pdfCapacity(env.DB, request.user, now);
+    if (capacity.largestBlock < failure.units) throw pdfQuotaError(env, capacity.usage, failure.units, false);
+  }
+  // A 402 that fits now, or a row this code cannot read.
+  if (forget) await forgetFailure(env.DB, cacheKey);
+}
+
+/** The checks every render passes before it claims anything: 402, the failed-render cap, the free brake. */
+async function preRenderChecks(env: Env, request: PdfRequest, now: number): Promise<UsageSummary['plan']> {
+  const capacity = await pdfCapacity(env.DB, request.user, now);
+  if (capacity.largestBlock < PDF.baseUnits) throw pdfQuotaError(env, capacity.usage, PDF.baseUnits, true);
+  const plan = capacity.usage.plan;
+  await assertFailedRenderAllowance(env, failureScope(request), plan, now);
+  if (plan === 'free') await assertFreeBrowserCapacity(env, now);
+  return plan;
+}
+
+/**
+ * HEAD of a signed link: what a GET would be refused with before it reaches the browser (402,
+ * the site's failed-render cap, the free brake, a remembered failure). Never renders, counts
+ * or reserves anything.
+ */
+export async function assertPdfWouldRender(env: Env, request: PdfRequest, cacheKey: string, now: number): Promise<void> {
+  await preRenderChecks(env, request, now);
+  await answerRemembered(env, request, await readRememberedFailure(env.DB, cacheKey, now), cacheKey, now, false);
+}
+
+/**
+ * Reserves a failed-render slot, applies the render rate limits and prints. On a browser error
+ * the slot is kept for a document failure and given back otherwise, and `release` is called
+ * with the failure to remember (if any); any other exception gives the slot back and calls
+ * `release` without one. Either way the error is rethrown.
+ */
+async function reserveAndPrint(
+  env: Env,
+  request: PdfRequest,
+  cacheKey: string,
+  plan: UsageSummary['plan'],
+  now: number,
+  release: (note?: PdfFailureNote) => Promise<void>,
+): Promise<{ rendered: RenderedPdf; reservation: FailedRenderReservation }> {
+  const { user, job } = request;
+  let reservation: FailedRenderReservation = null;
+  let settled = false;
+  try {
+    reservation = await reserveFailedRender(env, failureScope(request), plan, now);
+    if (request.renderRateLimitKey) await enforceRateLimit(env, 'RL_KEY', request.renderRateLimitKey);
+    if (plan === 'free') await enforceRateLimit(env, 'RL_PDF_FREE', user.id);
+    const print = await printAttempt(env, preparePdf(job), { userId: user.id, source: request.source }, now);
+    if (print.error === null) return { rendered: print.rendered, reservation };
+    settled = true;
+    // Only the document's own failures count and are remembered; Browser Run failing or busy is not the customer's doing.
+    if (print.cause === 'document') {
+      await release(documentFailureNote(cacheKey, print.error, now));
+    } else {
+      await giveBackFailedRender(env, reservation);
+      await release();
+    }
+    throw print.error;
+  } catch (error) {
+    if (!settled) {
+      await giveBackFailedRender(env, reservation);
+      await release();
+    }
+    throw error;
+  }
+}
+
+async function renderClaimed(env: Env, background: Background, request: PdfRequest, claim: PdfClaim, plan: UsageSummary['plan'], now: number): Promise<PdfResult> {
+  const { user, job } = request;
+  const { cacheKey } = claim;
+  let held = true;
+  const release = async (note?: PdfFailureNote): Promise<void> => {
+    if (!held) return;
+    held = false;
+    await releasePdfClaim(env.DB, claim, note).catch((error: unknown) => console.error(`releasing the PDF claim of ${cacheKey} failed:`, error));
+  };
+
+  const { rendered, reservation } = await reserveAndPrint(env, request, cacheKey, plan, now, release);
   const units = pdfUnits(rendered.pages);
   const ttlMs = getPlan(user.plan).cacheDays * DAY_MS;
   const pdf: StoredPdf = {
@@ -457,57 +555,135 @@ async function renderAndCharge(env: Env, background: Background, request: PdfReq
     createdAt: now,
     expiresAt: now + ttlMs,
   };
-  const charge = (): Promise<ChargeResult> =>
-    chargePdf(
-      env.DB,
-      user,
-      { cacheKey, siteId: request.siteId, source: request.source, template: job.template.label, bytes: pdf.bytes, r2Key: pdfR2Key(user.id, cacheKey), ttlMs, units },
-      now,
-    );
-
-  // A failed write must not fail a PDF that was paid for: the next request finds no object,
-  // renders again and is told "duplicate" by the ledger.
-  const store = (): Promise<void> => storePdf(env.BUCKET, pdf, rendered.bytes).catch((error: unknown) => console.error(`storing ${cacheKey}.pdf failed:`, error));
-  const fresh = { pdf, cached: false, body: rendered.bytes, warnings: rendered.warnings };
-  const settle = async (result: Exclude<ChargeResult, { status: 'duplicate' }>): Promise<PdfResult> => {
-    if (result.status === 'quota_exceeded') {
-      // The browser time is already recorded; the PDF is not handed out.
-      await noteUnchargedRender(env, user.id, now);
-      throw pdfQuotaError(env, result.usage, units, false);
-    }
-    await store();
-    const percent = result.crossed100 ? 100 : result.crossed90 ? 90 : null;
-    if (percent !== null) background(sendQuotaEmail(env, user, percent, result.usage));
-    return { ...fresh, creditsUsed: units, usage: result.usage };
-  };
-
-  const initial = await charge();
-  if (initial.status !== 'duplicate') return settle(initial);
-
-  // duplicate: a ledger row already exists for this PDF. Only a PAID row may be served: a
-  // pending one belongs to an identical request that is charging right now and may find that
-  // the block does not fit (then it releases the row, and this request charges for itself).
-  for (const wait of PENDING_WAITS_MS) {
-    if (wait > 0) await sleep(wait);
-    const ledger = await readPdfLedger(env.DB, user.id, cacheKey);
-    const live = ledger !== null && ledger.expires_at > now;
-    if (live && ledger.charged_to !== 'pending') {
-      // Paid by a concurrent request, or by an earlier one whose object never reached R2.
-      pdf.createdAt = ledger.created_at;
-      pdf.expiresAt = ledger.expires_at;
-      if (!(await readStoredPdf(env.BUCKET, user.id, cacheKey, now, false))) await store();
-      return { ...fresh, creditsUsed: 0, usage: null };
-    }
-    if (!live || ledger.created_at < now - PDF_PENDING_STALE_MS) {
-      // Released, expired or abandoned: this request charges the PDF itself.
-      const again = await charge();
-      if (again.status !== 'duplicate') return settle(again);
-    }
+  let result: PdfChargeResult;
+  try {
+    result = await chargeClaimedPdf(env.DB, claim, { units, bytes: pdf.bytes }, quotaFailureNote(cacheKey, units, now));
+    held = false;
+  } catch (error) {
+    // Our failure, not the document's: the slot goes back, and the claim unless it was paid.
+    await giveBackFailedRender(env, reservation);
+    await release();
+    throw error;
   }
-  throw new ApiError('rate_limited', 'An identical PDF is being made by another request right now. Retry in a few seconds.', {
-    headers: { 'retry-after': String(PENDING_RETRY_SECONDS) },
-    details: { retry_after_seconds: PENDING_RETRY_SECONDS },
-  });
+
+  if (result.status === 'quota_exceeded') {
+    // Released and remembered by chargeClaimedPdf; the browser time is recorded and the slot kept.
+    throw pdfQuotaError(env, result.usage, units, false);
+  }
+  await giveBackFailedRender(env, reservation);
+  // A failed write must not fail a PDF that was paid for: the next request finds the paid row
+  // without an object and renders it again, free.
+  const store = (target: StoredPdf): Promise<void> =>
+    storePdf(env.BUCKET, target, rendered.bytes).catch((error: unknown) => console.error(`storing ${cacheKey}.pdf failed:`, error));
+
+  if (result.status === 'lost') {
+    // Another request took the claim over (this one ran past PDF_PENDING_STALE_MS).
+    const ledger = await readPdfLedger(env.DB, user.id, cacheKey);
+    if (ledger !== null && ledger.expires_at > now && ledger.charged_to !== 'pending') {
+      const paid = { ...pdf, createdAt: ledger.created_at, expiresAt: ledger.expires_at };
+      if (!(await readStoredPdf(env.BUCKET, user.id, cacheKey, now, false))) await store(paid);
+      return { pdf: paid, cached: false, body: rendered.bytes, creditsUsed: 0, warnings: rendered.warnings, usage: null };
+    }
+    throw new ApiError('rate_limited', 'An identical request took this PDF over while it was being made, because this one took unusually long. Nothing was charged. Retry in a few seconds.', {
+      headers: { 'retry-after': String(LOST_CLAIM_RETRY_SECONDS) },
+      details: { retry_after_seconds: LOST_CLAIM_RETRY_SECONDS },
+    });
+  }
+
+  await store(pdf);
+  const percent = result.crossed100 ? 100 : result.crossed90 ? 90 : null;
+  if (percent !== null) background(sendQuotaEmail(env, user, percent, result.usage));
+  return { pdf, cached: false, body: rendered.bytes, creditsUsed: units, warnings: rendered.warnings, usage: result.usage };
+}
+
+/** A paid PDF whose R2 object is gone (a failed write): rendered again, stored, never charged again. */
+async function renderPaidAgain(env: Env, request: PdfRequest, ledger: PdfLedgerState, cacheKey: string, plan: UsageSummary['plan'], now: number): Promise<PdfResult> {
+  const { user, job } = request;
+  const { rendered, reservation } = await reserveAndPrint(env, request, cacheKey, plan, now, async () => undefined);
+  await giveBackFailedRender(env, reservation);
+  const pdf: StoredPdf = {
+    cacheKey,
+    userId: user.id,
+    bytes: rendered.bytes.byteLength,
+    pages: rendered.pages,
+    units: pdfUnits(rendered.pages),
+    filename: job.filename,
+    template: job.template.label,
+    createdAt: ledger.created_at,
+    expiresAt: ledger.expires_at,
+  };
+  await storePdf(env.BUCKET, pdf, rendered.bytes).catch((error: unknown) => console.error(`storing ${cacheKey}.pdf failed:`, error));
+  return { pdf, cached: false, body: rendered.bytes, creditsUsed: 0, warnings: rendered.warnings, usage: null };
+}
+
+/** The wait for an identical request ran out: 402 if no PDF can fit, otherwise 429 saying what is going on. */
+async function waitedTooLong(env: Env, request: PdfRequest, ledger: PdfLedgerState, now: number, waitedMs: number): Promise<never> {
+  const capacity = await pdfCapacity(env.DB, request.user, now);
+  if (capacity.largestBlock < PDF.baseUnits) throw pdfQuotaError(env, capacity.usage, PDF.baseUnits, true);
+  // Seconds until that request's claim can be taken over, if it is still not done by then.
+  const age = Math.max(0, now + waitedMs - ledger.created_at);
+  const retryAfter = Math.min(PDF_PENDING_STALE_MS / 1000, Math.max(LOST_CLAIM_RETRY_SECONDS, Math.ceil((PDF_PENDING_STALE_MS - age) / 1000)));
+  throw new ApiError(
+    'rate_limited',
+    `An identical request started making this PDF ${Math.round(age / 1000)} s ago and has not finished; this request waited ${Math.round(waitedMs / 1000)} s for it and charged nothing. ` +
+      `Retry in ${retryAfter} s: the PDF is then served if it was made, and otherwise the retry makes it.`,
+    { headers: { 'retry-after': String(retryAfter) }, details: { retry_after_seconds: retryAfter } },
+  );
+}
+
+/**
+ * Steps 3-9 for a PDF that is not in R2. The ledger row is claimed before anything is rendered:
+ * of several identical requests exactly one renders and the others wait for its result (the
+ * stored PDF, the remembered failure, or the row released so that one of them renders). A
+ * remembered failure is answered without rendering.
+ */
+async function renderAndCharge(
+  env: Env,
+  background: Background,
+  request: PdfRequest,
+  cacheKey: string,
+  now: number,
+  options: { withBody: boolean; maxWaitMs: number },
+): Promise<PdfResult> {
+  const { user, job } = request;
+  const plan = await preRenderChecks(env, request, now);
+  const range = failureRange(cacheKey);
+  const ttlMs = getPlan(user.plan).cacheDays * DAY_MS;
+  const claim = (): Promise<PdfClaimResult> =>
+    claimPdf(env.DB, user, { cacheKey, siteId: request.siteId, source: request.source, template: job.template.label, r2Key: pdfR2Key(user.id, cacheKey), ttlMs }, now, range);
+
+  const started = performance.now();
+  let slept = 0;
+  let pause = WAIT_FIRST_MS;
+  let paidMissingSince: number | null = null;
+  let attempt = await claim();
+  for (;;) {
+    if (attempt.status === 'claimed') return renderClaimed(env, background, request, attempt.claim, plan, now);
+    if (attempt.status === 'remembered') {
+      // Throws the remembered answer; returns only when a remembered 402 fits now (and is forgotten).
+      await answerRemembered(env, request, recallFailure(cacheKey, attempt.row), cacheKey, now, true);
+      attempt = await claim();
+      if (attempt.status === 'remembered') {
+        // Remembered again at once: another identical request just failed. Look again after a pause.
+      } else continue;
+    } else if (attempt.ledger.charged_to !== 'pending') {
+      // Paid: by the request we waited for (its object follows right after), or long ago.
+      const stored = await readStoredPdf(env.BUCKET, user.id, cacheKey, now, options.withBody);
+      if (stored) return storedResult(stored);
+      paidMissingSince ??= slept;
+      if (slept - paidMissingSince >= PAID_OBJECT_GRACE_MS) return renderPaidAgain(env, request, attempt.ledger, cacheKey, plan, now);
+    }
+    const waited = Math.max(slept, performance.now() - started);
+    if (waited >= options.maxWaitMs) {
+      const ledger = attempt.status === 'held' ? attempt.ledger : { charged_to: 'pending' as const, created_at: now, expires_at: now };
+      return waitedTooLong(env, request, ledger, now, waited);
+    }
+    const step = Math.min(pause, options.maxWaitMs - slept);
+    await sleep(step);
+    slept += step;
+    pause = Math.min(pause * 2, WAIT_LONGEST_MS);
+    attempt = await claim();
+  }
 }
 
 /** The PDF for a request: from R2 when it is stored, otherwise rendered, charged and stored. */
@@ -515,10 +691,10 @@ export async function getPdf(
   env: Env,
   background: Background,
   request: PdfRequest,
-  options: { now: number; withBody: boolean; cacheKey?: string },
+  options: { now: number; withBody: boolean; cacheKey?: string; maxWaitMs?: number },
 ): Promise<PdfResult> {
   const cacheKey = options.cacheKey ?? (await pdfCacheKey(request.user.id, request.job));
   const stored = await readStoredPdf(env.BUCKET, request.user.id, cacheKey, options.now, options.withBody);
-  if (stored) return { pdf: stored.pdf, cached: true, body: stored.body, creditsUsed: 0, warnings: [], usage: null };
-  return renderAndCharge(env, background, request, cacheKey, options.now);
+  if (stored) return storedResult(stored);
+  return renderAndCharge(env, background, request, cacheKey, options.now, { withBody: options.withBody, maxWaitMs: options.maxWaitMs ?? PDF_DUPLICATE_WAIT_MS });
 }
