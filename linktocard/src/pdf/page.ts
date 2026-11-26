@@ -138,18 +138,25 @@ export function plainTextOnly(html: string): string {
   return out + escape(html.slice(last));
 }
 
+/** Plain-text headers and footers: 8 pt at a line height of 1.3, so one line is 10.4 pt. */
+const PLAIN_FONT_PT = 8;
+const PLAIN_LINE_HEIGHT = 1.3;
+const PT_PER_MM = 72 / 25.4;
+
 /**
  * How a header or footer prints next to the free mark: our own box, laid out like Chrome's
  * own #header and #footer (full width, centred), in our font, size and colour, slightly
- * stronger than the mark. It holds only plain text and Chrome's page values, and is cut off at
- * the height the margin leaves it.
+ * stronger than the mark. It holds only plain text and Chrome's page values.
  */
 export const PLAIN_TEXT_STYLE =
-  'width:100%;box-sizing:border-box;padding:0 10mm;font-family:sans-serif;font-size:8pt;line-height:1.3;color:#374151;' +
+  `width:100%;box-sizing:border-box;padding:0 10mm;font-family:sans-serif;font-size:${PLAIN_FONT_PT}pt;line-height:${PLAIN_LINE_HEIGHT};color:#374151;` +
   '-webkit-print-color-adjust:exact;print-color-adjust:exact;text-align:center;overflow-wrap:anywhere;overflow:hidden';
 
+/** The box, cut off after the last whole line that fits in `maxHeightMm` (none when no line fits). */
 function plainTextBox(text: string, maxHeightMm: number): string {
-  return `<div style="${PLAIN_TEXT_STYLE};max-height:${mm(Math.max(0, maxHeightMm))}">${plainTextOnly(text)}</div>`;
+  const linePt = PLAIN_FONT_PT * PLAIN_LINE_HEIGHT;
+  const lines = Math.max(0, Math.floor((maxHeightMm * PT_PER_MM) / linePt + 1e-9));
+  return `<div style="${PLAIN_TEXT_STYLE};max-height:${round(lines * linePt)}pt">${plainTextOnly(text)}</div>`;
 }
 
 /**

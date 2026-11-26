@@ -196,18 +196,24 @@ describe('free mark', () => {
     // The customer's header and footer arrive as plain text (preparePdfFragment with `mark`) and
     // each is printed in our own box, sized to its margin; the mark is outside the footer's box,
     // after it, last in the footer.
+    // Each box is cut off after the last whole line (8pt x 1.3 = 10.4pt) that fits: 16 mm above
+    // Chrome's edge padding is 4 lines, the 13 mm left above the mark 3.
     expect(headerFooter('h', 'f', true, { top: '20mm', bottom: '22mm' })).toEqual({
       displayHeaderFooter: true,
-      headerTemplate: plainBox('16mm', 'h'),
-      footerTemplate: `<div style="width:100%">${plainBox('13mm', 'f')}${FREE_MARK_HTML}</div>`,
+      headerTemplate: plainBox('41.6pt', 'h'),
+      footerTemplate: `<div style="width:100%">${plainBox('31.2pt', 'f')}${FREE_MARK_HTML}</div>`,
     });
-    // A margin with no room left for them gives the boxes no height at all, never a negative one.
-    expect(headerFooter('h', 'f', true, { top: '0', bottom: `${PDF.freeMarkMinBottomMm}mm` }).headerTemplate).toBe(plainBox('0mm', 'h'));
+    // The smallest Free bottom margin leaves one line; a margin with no room left gives the box
+    // no height at all, never a negative one.
+    expect(headerFooter('h', 'f', true, { top: '0', bottom: `${PDF.freeMarkMinBottomMm}mm` })).toMatchObject({
+      headerTemplate: plainBox('0pt', 'h'),
+      footerTemplate: `<div style="width:100%">${plainBox('10.4pt', 'f')}${FREE_MARK_HTML}</div>`,
+    });
     // A header or footer with no text left prints nothing but the mark.
     expect(headerFooter('', '', true)).toEqual({ displayHeaderFooter: true, headerTemplate: EMPTY_TEMPLATE, footerTemplate: FREE_MARK_HTML });
   });
 
-  it('prints the header and footer in its own font, size and colour, centred and cut off at the margin', () => {
+  it('prints the header and footer in its own font, size and colour, centred, cut off at the margin', () => {
     expect(PLAIN_TEXT_STYLE).toContain('width:100%;box-sizing:border-box');
     expect(PLAIN_TEXT_STYLE).toContain('font-family:sans-serif;font-size:8pt');
     expect(PLAIN_TEXT_STYLE).toContain('color:#374151;-webkit-print-color-adjust:exact;print-color-adjust:exact');
@@ -219,9 +225,9 @@ describe('free mark', () => {
     // Defence in depth: whatever the caller passes, every other tag is escaped.
     const footer = '<i>f</i><br><span class="pageNumber"></span><svg><b style="opacity:0"></b></svg>';
     const { headerTemplate, footerTemplate } = headerFooter('<b>h</b>', footer, true, { top: '20mm', bottom: '22mm' });
-    expect(headerTemplate).toBe(plainBox('16mm', '&lt;b&gt;h&lt;/b&gt;'));
+    expect(headerTemplate).toBe(plainBox('41.6pt', '&lt;b&gt;h&lt;/b&gt;'));
     expect(footerTemplate).toBe(
-      `<div style="width:100%">${plainBox('13mm', '&lt;i&gt;f&lt;/i&gt;<br><span class="pageNumber"></span>&lt;svg&gt;&lt;b style="opacity:0"&gt;&lt;/b&gt;&lt;/svg&gt;')}${FREE_MARK_HTML}</div>`,
+      `<div style="width:100%">${plainBox('31.2pt', '&lt;i&gt;f&lt;/i&gt;<br><span class="pageNumber"></span>&lt;svg&gt;&lt;b style="opacity:0"&gt;&lt;/b&gt;&lt;/svg&gt;')}${FREE_MARK_HTML}</div>`,
     );
   });
 

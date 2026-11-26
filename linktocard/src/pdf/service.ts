@@ -479,6 +479,20 @@ const LOST_CLAIM_RETRY_SECONDS = 5;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * A render that holds a claim or a failed-render slot keeps running when the client goes away
+ * (waitUntil; Cloudflare allows about 30 s more), so it can still settle both instead of leaving
+ * a pending row that identical requests wait for until PDF_PENDING_STALE_MS. Its result and
+ * error still go to the caller.
+ */
+function untilSettled<T>(background: Background, work: Promise<T>): Promise<T> {
+  background(work.then(
+    () => undefined,
+    () => undefined,
+  ));
+  return work;
+}
+
 /** The account for POST /v1/pdf, the site for its signed links (src/pdf/guard.ts). */
 function failureScope(request: PdfRequest): FailureScope {
   return request.source === 'signed' && request.siteId !== null ? { kind: 'site', id: request.siteId } : { kind: 'account', id: request.user.id };
@@ -691,7 +705,7 @@ async function renderAndCharge(
   let paidMissingSince: number | null = null;
   let attempt = await claim();
   for (;;) {
-    if (attempt.status === 'claimed') return renderClaimed(env, background, request, attempt.claim, plan, now);
+    if (attempt.status === 'claimed') return untilSettled(background, renderClaimed(env, background, request, attempt.claim, plan, now));
     if (attempt.status === 'remembered') {
       // Throws the remembered answer; returns only when a remembered 402 fits now (and is forgotten).
       await answerRemembered(env, request, recallFailure(cacheKey, attempt.row), cacheKey, now, true);
@@ -703,7 +717,7 @@ async function renderAndCharge(
       const stored = await readStoredPdf(env.BUCKET, user.id, cacheKey, now, options.withBody);
       if (stored) return storedResult(stored);
       paidMissingSince ??= slept;
-      if (slept - paidMissingSince >= PAID_OBJECT_GRACE_MS) return renderPaidAgain(env, request, attempt.ledger, cacheKey, plan, now);
+      if (slept - paidMissingSince >= PAID_OBJECT_GRACE_MS) return untilSettled(background, renderPaidAgain(env, request, attempt.ledger, cacheKey, plan, now));
     }
     const waited = Math.max(slept, performance.now() - started);
     if (waited >= options.maxWaitMs) {

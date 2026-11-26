@@ -141,15 +141,15 @@ describe('the cap is reserved before the browser runs (G3)', () => {
 
 describe('only the document\'s failures count (G4)', () => {
   it.each([
-    ['Browser Run 503', () => browserErrorResponse(503, 'Service unavailable', null), 500, 0],
-    ['Browser Run 500', () => browserErrorResponse(500, 'Internal error', null), 500, 0],
-    ['Browser Run 400', () => browserErrorResponse(400, 'Bad request', 0), 500, 0],
-    ['an unreachable binding', () => Promise.reject(new Error('network connection lost')), 500, 0],
-    ['Browser Run busy (429)', () => browserErrorResponse(429, 'Too many requests', null), 429, 0],
-    ['a browser 422', () => browserErrorResponse(422, 'Printing failed', 0), 422, 1],
-    ['a timeout reported as 500', () => browserErrorResponse(500, 'Navigation timeout of 30000 ms exceeded', null), 504, 1],
-    ['more than 50 pages', () => pdfResponse('51-pages', 0), 422, 1],
-  ] as const)('%s -> HTTP %i, counted %i', async (_label, respond, status, counted) => {
+    ['Browser Run 503', 500, 0, () => browserErrorResponse(503, 'Service unavailable', null)],
+    ['Browser Run 500', 500, 0, () => browserErrorResponse(500, 'Internal error', null)],
+    ['Browser Run 400', 500, 0, () => browserErrorResponse(400, 'Bad request', 0)],
+    ['an unreachable binding', 500, 0, () => Promise.reject(new Error('network connection lost'))],
+    ['Browser Run busy (429)', 429, 0, () => browserErrorResponse(429, 'Too many requests', null)],
+    ['a browser 422', 422, 1, () => browserErrorResponse(422, 'Printing failed', 0)],
+    ['a timeout reported as 500', 504, 1, () => browserErrorResponse(500, 'Navigation timeout of 30000 ms exceeded', null)],
+    ['more than 50 pages', 422, 1, () => pdfResponse('51-pages', 0)],
+  ] as const)('%s -> HTTP %i, counted %i', async (_label, status, counted, respond) => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const owner = await createUser('pro');
     const key = await apiKeyFor(owner.id);

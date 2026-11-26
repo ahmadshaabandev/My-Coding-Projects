@@ -26,8 +26,13 @@ const PAGE_N_OF_M = 'Page <span class="pageNumber"></span> of <span class="total
 const DOCS_FOOTER = `<div style="width:100%;font-size:9px;text-align:center;color:#666">{{title}} &middot; ${PAGE_N_OF_M}</div>`;
 const GAP = '  ';
 
-const plainBox = (text: string, maxHeight: string): string => `<div style="${PLAIN_TEXT_STYLE};max-height:${maxHeight}">${text}</div>`;
-const markedFooter = (text: string, maxHeight: string): string => `<div style="width:100%">${plainBox(text, maxHeight)}${FREE_MARK_HTML}</div>`;
+/** Room in mm -> the box's height: the whole lines of 10.4 pt (8 pt x 1.3) that fit. */
+const lines = (mm: number): string => `${Math.round(Math.floor((mm * 72) / 25.4 / 10.4) * 10.4 * 100) / 100}pt`;
+const plainBox = (text: string, roomMm: number): string => `<div style="${PLAIN_TEXT_STYLE};max-height:${lines(roomMm)}">${text}</div>`;
+const markedFooter = (text: string, roomMm: number): string => `<div style="width:100%">${plainBox(text, roomMm)}${FREE_MARK_HTML}</div>`;
+/** Room for the footer's text: the bottom margin less Chrome's edge padding (4 mm) and the mark's line (5 mm). */
+const footerRoom = (bottomMm: number): number => bottomMm - 9;
+const DEFAULT_BOTTOM_MM = Math.max(PDF.defaultMarginMm, PDF.freeMarkMinBottomMm);
 const plain = (source: string, data: PdfData = {}, what: 'header' | 'footer' = 'footer') => preparePdfFragment(source, data, what, { mark: true });
 const plainOf = (source: string, data: PdfData = {}): string => plain(source, data).render(() => undefined);
 
@@ -63,14 +68,14 @@ function inspect(template: string): { elements: string[]; markAncestors: string[
 const MARK_OUTER_STYLE = /^<div style="([^"]+)">/.exec(FREE_MARK_HTML)![1]!;
 const MARK_INNER_STYLE = /<div style="([^"]+)">[^<]+<\/div><\/div>$/.exec(FREE_MARK_HTML)![1]!;
 const OUR_ELEMENT = new RegExp(
-  `^(?:br|span\\[class=(?:pageNumber|totalPages|date|title)\\]|div\\[style=width:100%\\]|div\\[style=${PLAIN_TEXT_STYLE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')};max-height:[\\d.]+mm\\]|div\\[style=${MARK_OUTER_STYLE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]|div\\[style=${MARK_INNER_STYLE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\])$`,
+  `^(?:br|span\\[class=(?:pageNumber|totalPages|date|title)\\]|div\\[style=width:100%\\]|div\\[style=${PLAIN_TEXT_STYLE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')};max-height:[\\d.]+pt\\]|div\\[style=${MARK_OUTER_STYLE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]|div\\[style=${MARK_INNER_STYLE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\])$`,
 );
 
 describe('Free header and footer: plain text next to the mark', () => {
   it('print the /docs/pdf example footer as its text, with Chrome\'s page numbers, on its own line above the mark', async () => {
     const body = { template: 'report', data: { title: 'Customer Support Review, Q3 2026' }, pdf: { margin: { top: '22mm', bottom: '22mm' }, footer: DOCS_FOOTER } };
     const free = await templatesFor(FREE, body);
-    expect(free.footerTemplate).toBe(markedFooter(`Customer Support Review, Q3 2026 · ${PAGE_N_OF_M}`, '13mm'));
+    expect(free.footerTemplate).toBe(markedFooter(`Customer Support Review, Q3 2026 · ${PAGE_N_OF_M}`, footerRoom(22)));
     expect(free.headerTemplate).toBe(EMPTY_TEMPLATE);
     expect(free.warnings).toEqual([PLAIN_WARNING('footer')]);
     // Paid plans print it exactly as written, without the mark.
@@ -85,7 +90,7 @@ describe('Free header and footer: plain text next to the mark', () => {
     expect(paid.headerTemplate).toBe(header);
     // On Free both sides are kept as text, with a gap where the flex items were.
     const free = await templatesFor(FREE, { html: '<p>x</p>', pdf: { margin: { top: '20mm' }, header } });
-    expect(free.headerTemplate).toBe(plainBox(`ACME Ltd${GAP}${PAGE_N_OF_M}`, '16mm'));
+    expect(free.headerTemplate).toBe(plainBox(`ACME Ltd${GAP}${PAGE_N_OF_M}`, 20 - 4));
     expect(free.footerTemplate).toBe(FREE_MARK_HTML);
   });
 
@@ -108,8 +113,8 @@ describe('Free header and footer: plain text next to the mark', () => {
     ['class names of Chrome\'s own template', '<div class="text left grow">F</div>', 'F'],
   ])('leave no customer element, attribute, style or class next to the mark: %s', async (_label, footer, text) => {
     const { footerTemplate, headerTemplate, warnings } = await templatesFor(FREE, { html: '<p>x</p>', pdf: { margin: { bottom: '22mm' }, footer, header: footer } });
-    expect(footerTemplate).toBe(text === '' ? FREE_MARK_HTML : markedFooter(text, '13mm'));
-    expect(headerTemplate).toBe(text === '' ? EMPTY_TEMPLATE : plainBox(text, `${PDF.defaultMarginMm - 4}mm`));
+    expect(footerTemplate).toBe(text === '' ? FREE_MARK_HTML : markedFooter(text, footerRoom(22)));
+    expect(headerTemplate).toBe(text === '' ? EMPTY_TEMPLATE : plainBox(text, PDF.defaultMarginMm - 4));
     for (const template of [footerTemplate!, headerTemplate!].filter((template) => template !== EMPTY_TEMPLATE)) {
       for (const element of inspect(template).elements) expect(element).toMatch(OUR_ELEMENT);
     }
@@ -123,7 +128,7 @@ describe('Free header and footer: plain text next to the mark', () => {
     const value = '</div><div style="position:fixed;inset:0;background:#fff">x</div><svg><b>';
     const text = plainOf('{{v}} &amp; {{w}}', { v: value, w: 'Fernhill <Studio>' });
     expect(text).toBe('&lt;/div&gt;&lt;div style="position:fixed;inset:0;background:#fff"&gt;x&lt;/div&gt;&lt;svg&gt;&lt;b&gt; &amp; Fernhill &lt;Studio&gt;');
-    expect(headerFooter(null, text, true).footerTemplate).toBe(markedFooter(text, '5mm'));
+    expect(headerFooter(null, text, true).footerTemplate).toBe(markedFooter(text, footerRoom(PDF.freeMarkMinBottomMm)));
   });
 
   it.each([
@@ -162,7 +167,7 @@ describe('Free header and footer: plain text next to the mark', () => {
     const footer = '<img src="https://cdn.example.com/logo.png"><span style="background:url(https://cdn.example.com/bg.png)">Acme</span>';
     const free = await templatesFor(FREE, { html: '<p>x</p>', pdf: { footer } });
     expect(free.remoteUrls).toEqual([]);
-    expect(free.footerTemplate).toBe(markedFooter('Acme', `${Math.max(PDF.defaultMarginMm, PDF.freeMarkMinBottomMm) - 9}mm`));
+    expect(free.footerTemplate).toBe(markedFooter('Acme', footerRoom(DEFAULT_BOTTOM_MM)));
     expect((await templatesFor(PAID, { html: '<p>x</p>', pdf: { footer } })).remoteUrls).toEqual(['https://cdn.example.com/logo.png', 'https://cdn.example.com/bg.png']);
   });
 

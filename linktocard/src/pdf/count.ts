@@ -13,6 +13,14 @@
  * object that is not where the table says, a /Count that disagrees with the tree) returns null.
  * The caller treats that as a failed render (500 render_failed, not charged), never as zero
  * pages.
+ *
+ * The file is never turned into one string: a PDF can be tens of MB of image data the count
+ * does not need. Only the parts the parse reads are decoded (one character per byte): the last
+ * TAIL_BYTES for `startxref`, each cross-reference section from its offset, and each object
+ * from its offset. Such a window starts small and is doubled only while the parse runs into its
+ * end, so the result is the same as parsing the whole file, up to MAX_XREF_WINDOW for a section
+ * and MAX_OBJECT_WINDOW for an object; a structure longer than that is not believed (null).
+ * Memory is O(table + objects read), time O(table + objects read), whatever the file's size.
  */
 
 /** Upper bound for a believable count; Chrome is asked for at most PDF.maxPages + 1 pages. */
@@ -23,6 +31,22 @@ const MAX_TREE_DEPTH = 32;
 const MAX_NESTING = 64;
 /** `startxref` sits in the last bytes of the file. */
 const TAIL_BYTES = 2048;
+/**
+ * Decoded window for a cross-reference section (table + trailer): 20 bytes per object, so the
+ * first window holds about 3,000 objects and the largest about 400,000.
+ */
+const XREF_WINDOW = 64 * 1024;
+const MAX_XREF_WINDOW = 8 * 1024 * 1024;
+/**
+ * Decoded window for one object: Chrome's catalog, /Pages nodes and /Page dictionaries are a few
+ * hundred bytes; a page with many links carries one reference per link in /Annots.
+ */
+const OBJECT_WINDOW = 1024;
+const MAX_OBJECT_WINDOW = 4 * 1024 * 1024;
+/** Characters decoded per String.fromCharCode call (argument-count limit). */
+const DECODE_CHUNK = 0x8000;
+/** Generation numbers have five digits: an entry is stored as offset * GEN_LIMIT + generation. */
+const GEN_LIMIT = 100_000;
 
 type PdfValue =
   | { kind: 'dict'; entries: Map<string, PdfValue> }
@@ -38,29 +62,49 @@ const fail = (): never => {
   throw new Unreadable();
 };
 
-/** Bytes as a binary string (one char per byte), in chunks to stay under argument limits. */
+/** Bytes as a binary string (one char per byte). Only ever called on a bounded window of the file. */
 function latin1(bytes: Uint8Array): string {
-  let out = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) out += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  return out;
+  if (bytes.length <= DECODE_CHUNK) return String.fromCharCode.apply(null, bytes as unknown as number[]);
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += DECODE_CHUNK) {
+    parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + DECODE_CHUNK) as unknown as number[]));
+  }
+  return parts.join('');
 }
 
 const isWhite = (ch: string | undefined): boolean => ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t' || ch === '\f' || ch === '\0';
 const isDelimiter = (ch: string | undefined): boolean => ch !== undefined && '()<>[]{}/%'.includes(ch);
 
-/** A reader of PDF values from a position in the file. */
+/** One cross-reference entry: `nnnnnnnnnn ggggg n` and its end of line (at most 20 characters). */
+const XREF_ENTRY = /(\d{10}) (\d{5}) ([nf])(?:\r\n| \r| \n|\r|\n)/y;
+const XREF_ENTRY_CHARS = 20;
+
+/**
+ * A reader of PDF values from a position in a decoded window of the file. Every character is
+ * read through `at`, which notes when a read reached the end of the window (`hitEnd`): what
+ * follows in the file could then change the result, and the caller decodes a larger window.
+ */
 class Reader {
+  hitEnd = false;
+
   constructor(
     private readonly text: string,
     public pos: number,
   ) {}
 
+  private at(index: number): string | undefined {
+    if (index >= this.text.length) {
+      this.hitEnd = true;
+      return undefined;
+    }
+    return this.text[index];
+  }
+
   skipWhite(): void {
     for (;;) {
-      const ch = this.text[this.pos];
+      const ch = this.at(this.pos);
       if (isWhite(ch)) this.pos++;
-      else if (ch === '%') while (this.pos < this.text.length && this.text[this.pos] !== '\n' && this.text[this.pos] !== '\r') this.pos++;
+      else if (ch === '%') for (let c = ch; c !== undefined && c !== '\n' && c !== '\r'; c = this.at(++this.pos));
       else return;
     }
   }
@@ -69,7 +113,7 @@ class Reader {
   peekToken(): string {
     this.skipWhite();
     let end = this.pos;
-    while (end < this.text.length && !isWhite(this.text[end]) && !isDelimiter(this.text[end])) end++;
+    for (let ch = this.at(end); ch !== undefined && !isWhite(ch) && !isDelimiter(ch); ch = this.at(++end));
     return this.text.slice(this.pos, end);
   }
 
@@ -85,24 +129,33 @@ class Reader {
     return Number(token);
   }
 
+  /** The cross-reference entry at the position (no white space skipped), or null. */
+  xrefEntry(): RegExpExecArray | null {
+    if (this.pos + XREF_ENTRY_CHARS > this.text.length) this.hitEnd = true;
+    XREF_ENTRY.lastIndex = this.pos;
+    const match = XREF_ENTRY.exec(this.text);
+    if (match) this.pos = XREF_ENTRY.lastIndex;
+    return match;
+  }
+
   value(depth = 0): PdfValue {
     if (depth > MAX_NESTING) fail();
     this.skipWhite();
-    const ch = this.text[this.pos];
+    const ch = this.at(this.pos);
     if (ch === undefined) fail();
     if (ch === '/') {
       let end = this.pos + 1;
-      while (end < this.text.length && !isWhite(this.text[end]) && !isDelimiter(this.text[end])) end++;
+      for (let c = this.at(end); c !== undefined && !isWhite(c) && !isDelimiter(c); c = this.at(++end));
       const value = this.text.slice(this.pos + 1, end);
       this.pos = end;
       return { kind: 'name', value };
     }
-    if (ch === '<' && this.text[this.pos + 1] === '<') {
+    if (ch === '<' && this.at(this.pos + 1) === '<') {
       this.pos += 2;
       const entries = new Map<string, PdfValue>();
       for (;;) {
         this.skipWhite();
-        if (this.text.startsWith('>>', this.pos)) {
+        if (this.at(this.pos) === '>' && this.at(this.pos + 1) === '>') {
           this.pos += 2;
           return { kind: 'dict', entries };
         }
@@ -117,7 +170,7 @@ class Reader {
       const items: PdfValue[] = [];
       for (;;) {
         this.skipWhite();
-        if (this.text[this.pos] === ']') {
+        if (this.at(this.pos) === ']') {
           this.pos++;
           return { kind: 'array', items };
         }
@@ -127,8 +180,7 @@ class Reader {
     if (ch === '(') {
       // A literal string: balanced parentheses, backslash escapes.
       let level = 0;
-      for (; this.pos < this.text.length; this.pos++) {
-        const c = this.text[this.pos];
+      for (let c = this.at(this.pos); c !== undefined; c = this.at(++this.pos)) {
         if (c === '\\') this.pos++;
         else if (c === '(') level++;
         else if (c === ')' && --level === 0) {
@@ -140,7 +192,10 @@ class Reader {
     }
     if (ch === '<') {
       const end = this.text.indexOf('>', this.pos);
-      if (end < 0) fail();
+      if (end < 0) {
+        this.hitEnd = true;
+        fail();
+      }
       this.pos = end + 1;
       return { kind: 'other' };
     }
@@ -171,48 +226,85 @@ class Reader {
   }
 }
 
+/**
+ * Runs `parse` on the file from byte `start`, decoded `size` bytes at a time: when the parse
+ * read up to the end of the window and the file goes on, the window is doubled and the parse
+ * run again, up to `max` bytes. The parse must not change anything outside its own result.
+ */
+function inWindow<T>(bytes: Uint8Array, start: number, size: number, max: number, parse: (reader: Reader) => T): T {
+  for (;;) {
+    const end = Math.min(bytes.length, start + size);
+    const reader = new Reader(latin1(bytes.subarray(start, end)), 0);
+    let result: { value: T } | null = null;
+    let failure: Unreadable | null = null;
+    try {
+      result = { value: parse(reader) };
+    } catch (error) {
+      if (!(error instanceof Unreadable)) throw error;
+      failure = error;
+    }
+    if (!reader.hitEnd || end >= bytes.length) {
+      if (result) return result.value;
+      throw failure;
+    }
+    if (size >= max) fail();
+    size = Math.min(max, size * 2);
+  }
+}
+
 function dictOf(value: PdfValue): Map<string, PdfValue> {
   if (value.kind !== 'dict') fail();
   return (value as { entries: Map<string, PdfValue> }).entries;
 }
 
+/** Object number -> offset * GEN_LIMIT + generation, for the objects in use. */
+type Offsets = Map<number, number>;
+
+/**
+ * One cross-reference section at the start of the reader: its entries in order, as pairs of
+ * object number and offset * GEN_LIMIT + generation (-1 for a free entry), and its trailer.
+ */
+function readSection(reader: Reader): { entries: number[]; trailer: Map<string, PdfValue> } {
+  // A cross-reference stream ("12 0 obj << /Type /XRef ...") is not what Chrome writes.
+  reader.keyword('xref');
+  const entries: number[] = [];
+  for (;;) {
+    if (reader.peekToken() === 'trailer') break;
+    const first = reader.integer();
+    const count = reader.integer();
+    reader.skipWhite();
+    for (let i = 0; i < count; i++) {
+      const match = reader.xrefEntry();
+      if (!match) fail();
+      entries.push(first + i, match![3] === 'n' ? Number(match![1]) * GEN_LIMIT + Number(match![2]) : -1);
+    }
+  }
+  reader.keyword('trailer');
+  return { entries, trailer: dictOf(reader.value()) };
+}
+
 /** The offsets of the objects in use, following /Prev; the newest section wins. And the newest trailer. */
-function readXref(text: string): { offsets: Map<string, number>; trailer: Map<string, PdfValue> } {
-  const tail = text.slice(Math.max(0, text.length - TAIL_BYTES));
+function readXref(bytes: Uint8Array): { offsets: Offsets; trailer: Map<string, PdfValue> } {
+  const tail = latin1(bytes.subarray(Math.max(0, bytes.length - TAIL_BYTES)));
   const at = tail.lastIndexOf('startxref');
   if (at < 0) fail();
   const start = new Reader(tail, at + 'startxref'.length).integer();
-  const offsets = new Map<string, number>();
+  const offsets: Offsets = new Map();
   /** Object numbers a newer section already defined (in use or freed): older entries do not count. */
   const defined = new Set<number>();
   let newest: Map<string, PdfValue> | null = null;
   const seen = new Set<number>();
   let next: number | null = start;
   while (next !== null) {
-    if (seen.has(next) || seen.size >= MAX_XREF_SECTIONS || next >= text.length) fail();
+    if (next < 0 || seen.has(next) || seen.size >= MAX_XREF_SECTIONS || next >= bytes.length) fail();
     seen.add(next);
-    const reader = new Reader(text, next);
-    // A cross-reference stream ("12 0 obj << /Type /XRef ...") is not what Chrome writes.
-    reader.keyword('xref');
-    for (;;) {
-      if (reader.peekToken() === 'trailer') break;
-      const first = reader.integer();
-      const count = reader.integer();
-      reader.skipWhite();
-      const entry = /(\d{10}) (\d{5}) ([nf])(?:\r\n| \r| \n|\r|\n)/y;
-      for (let i = 0; i < count; i++) {
-        entry.lastIndex = reader.pos;
-        const match = entry.exec(text);
-        if (!match) fail();
-        reader.pos = entry.lastIndex;
-        const id = first + i;
-        if (defined.has(id)) continue;
-        defined.add(id);
-        if (match![3] === 'n') offsets.set(`${id} ${Number(match![2])}`, Number(match![1]));
-      }
+    const { entries, trailer } = inWindow(bytes, next, XREF_WINDOW, MAX_XREF_WINDOW, readSection);
+    for (let i = 0; i < entries.length; i += 2) {
+      const id = entries[i]!;
+      if (defined.has(id)) continue;
+      defined.add(id);
+      if (entries[i + 1]! >= 0) offsets.set(id, entries[i + 1]!);
     }
-    reader.keyword('trailer');
-    const trailer = dictOf(reader.value());
     newest ??= trailer;
     const prev = trailer.get('Prev');
     next = prev === undefined ? null : prev.kind === 'number' && Number.isInteger(prev.value) ? prev.value : fail();
@@ -221,15 +313,18 @@ function readXref(text: string): { offsets: Map<string, number>; trailer: Map<st
 }
 
 /** The value of indirect object `ref`, read at the offset the cross-reference table gives for it. */
-function objectAt(text: string, offsets: Map<string, number>, ref: PdfValue): PdfValue {
+function objectAt(bytes: Uint8Array, offsets: Offsets, ref: PdfValue): PdfValue {
   if (ref.kind !== 'ref') fail();
   const { id, gen } = ref as { id: number; gen: number };
-  const offset = offsets.get(`${id} ${gen}`);
-  if (offset === undefined || offset >= text.length) fail();
-  const reader = new Reader(text, offset!);
-  if (reader.integer() !== id || reader.integer() !== gen) fail();
-  reader.keyword('obj');
-  return reader.value();
+  const entry = offsets.get(id);
+  if (entry === undefined || entry % GEN_LIMIT !== gen) fail();
+  const offset = (entry! - gen) / GEN_LIMIT;
+  if (offset >= bytes.length) fail();
+  return inWindow(bytes, offset, OBJECT_WINDOW, MAX_OBJECT_WINDOW, (reader) => {
+    if (reader.integer() !== id || reader.integer() !== gen) fail();
+    reader.keyword('obj');
+    return reader.value();
+  });
 }
 
 function nameOf(entries: Map<string, PdfValue>, key: string): string | undefined {
@@ -238,12 +333,12 @@ function nameOf(entries: Map<string, PdfValue>, key: string): string | undefined
 }
 
 /** Leaves under a page tree node; every /Pages node's /Count must match them. */
-function leavesUnder(text: string, offsets: Map<string, number>, ref: PdfValue, depth: number, visited: Set<string>): number {
+function leavesUnder(bytes: Uint8Array, offsets: Offsets, ref: PdfValue, depth: number, visited: Set<string>): number {
   if (ref.kind !== 'ref' || depth > MAX_TREE_DEPTH) fail();
   const key = `${(ref as { id: number }).id} ${(ref as { gen: number }).gen}`;
   if (visited.has(key)) fail();
   visited.add(key);
-  const node = dictOf(objectAt(text, offsets, ref));
+  const node = dictOf(objectAt(bytes, offsets, ref));
   const type = nameOf(node, 'Type');
   if (type === 'Page') return 1;
   if (type !== 'Pages') fail();
@@ -252,7 +347,7 @@ function leavesUnder(text: string, offsets: Map<string, number>, ref: PdfValue, 
   if (kids?.kind !== 'array' || count?.kind !== 'number' || !Number.isInteger(count.value)) fail();
   let leaves = 0;
   for (const kid of (kids as { items: PdfValue[] }).items) {
-    leaves += leavesUnder(text, offsets, kid, depth + 1, visited);
+    leaves += leavesUnder(bytes, offsets, kid, depth + 1, visited);
     if (leaves > MAX_BELIEVABLE_PAGES) fail();
   }
   if (leaves !== (count as { value: number }).value) fail();
@@ -262,15 +357,14 @@ function leavesUnder(text: string, offsets: Map<string, number>, ref: PdfValue, 
 /** Number of pages, or null when the bytes are not a PDF whose page count can be read. */
 export function countPdfPages(bytes: Uint8Array): number | null {
   if (bytes.byteLength < 8) return null;
-  const text = latin1(bytes);
-  if (!text.startsWith('%PDF-')) return null;
+  if (latin1(bytes.subarray(0, 5)) !== '%PDF-') return null;
   try {
-    const { offsets, trailer } = readXref(text);
+    const { offsets, trailer } = readXref(bytes);
     const root = trailer.get('Root');
-    const catalog = dictOf(objectAt(text, offsets, root ?? fail()));
+    const catalog = dictOf(objectAt(bytes, offsets, root ?? fail()));
     if (nameOf(catalog, 'Type') !== 'Catalog') fail();
     const pages = catalog.get('Pages') ?? fail();
-    const count = leavesUnder(text, offsets, pages, 0, new Set());
+    const count = leavesUnder(bytes, offsets, pages, 0, new Set());
     return count >= 1 && count <= MAX_BELIEVABLE_PAGES ? count : null;
   } catch (error) {
     if (error instanceof Unreadable || error instanceof RangeError) return null;
