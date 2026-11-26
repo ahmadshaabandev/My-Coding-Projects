@@ -285,6 +285,17 @@ describe('inlineRemoteAssets', () => {
     },
   );
 
+  it('words the pixel limit for PDFs, not for cards', async () => {
+    const big = PNG.slice();
+    new DataView(big.buffer).setUint32(16, 3000);
+    new DataView(big.buffer).setUint32(20, 3000);
+    mockNetwork({ 'https://cdn.example.com/big.png': () => new Response(big, { headers: { 'content-type': 'image/png' } }) });
+    const error = await inlineRemoteAssets(['https://cdn.example.com/big.png'], { appUrl: 'https://linktocard.test' }).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: 'image_fetch_failed', details: { reason: 'too_many_pixels' } });
+    expect((error as Error).message).toContain('Resize it before using it in a PDF.');
+    expect((error as Error).message).not.toContain('card');
+  });
+
   it('refuses a redirect to our own host', async () => {
     mockNetwork({ 'https://cdn.example.com/r.png': () => new Response(null, { status: 302, headers: { location: 'https://linktocard.com/i/u/k.png' } }) });
     const error = await inlineRemoteAssets(['https://cdn.example.com/r.png'], { appUrl: 'https://linktocard.test' }).catch((caught: unknown) => caught);

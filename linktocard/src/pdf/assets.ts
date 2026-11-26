@@ -52,6 +52,13 @@ function ownHostError(url: string): ApiError {
   );
 }
 
+/** The shared fetcher's pixel message ends with a hint about card sizes, which is wrong for a PDF. */
+function forPdf(error: unknown): unknown {
+  if (!(error instanceof ApiError) || error.details?.reason !== 'too_many_pixels') return error;
+  const message = error.message.replace(/ Resize it \(a card is at most [^)]*\)\.$/, ' Resize it before using it in a PDF.');
+  return new ApiError(error.code, message, { details: error.details });
+}
+
 function totalTooLarge(): ApiError {
   return new ApiError(
     'template_error',
@@ -83,7 +90,10 @@ export async function inlineRemoteAssets(urls: readonly string[], options: Asset
   // as a method of another object); tests replace it with vi.spyOn.
   const base = options.fetchOptions?.fetchImpl ?? ((input, init) => fetch(input, init));
   const fetchImpl = refusingOwnHosts(options.appUrl, base);
-  const fetchOne = (url: string, maxBytes: number) => fetchRemoteImage(url, { ...options.fetchOptions, fetchImpl, maxBytes });
+  const fetchOne = (url: string, maxBytes: number) =>
+    fetchRemoteImage(url, { ...options.fetchOptions, fetchImpl, maxBytes }).catch((error: unknown) => {
+      throw forPdf(error);
+    });
   const tooLarge = (error: unknown): boolean => error instanceof ApiError && error.details?.reason === 'too_large';
   let next = 0;
   /** Bytes of the images downloaded so far. */

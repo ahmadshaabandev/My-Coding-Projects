@@ -371,11 +371,16 @@ it if it is wrong.
   and tool PDFs only; a `<script>` and an `onerror` handler had no effect. Browser Run sends
   `X-Browser-Ms-Used: 0` for PDF quick actions, so the alarm and the brake count the measured
   length of each call (about 0.23-1.2 s per PDF on staging); what Cloudflare actually bills is
-  only visible in the dashboard. Still not checked: the real error statuses and messages (a
-  timeout must mention "timeout" to become 504 `render_timeout`); the request size limit with
-  large inlined images; that the browser makes no request of its own for a remote `<img>` or CSS
-  `url()` (GO-LIVE section 10 has the check); that Chrome repeats table header rows on every
-  page; the docs' page-number footer; and the daily alarm email through Resend.
+  only visible in the dashboard. Also checked on 2026-11-26: remote images are fetched by the
+  Worker and inlined (27 images, just under the 10 MB image cap, printed as 15 pages, so Browser
+  Run takes a request that large); a print that cannot finish comes back from Browser Run as 422
+  after about 61 s, mentions "timeout" and answers 504 `render_timeout`, recorded at its measured
+  length and counted as a failed render; the daily alarm finds an over-budget day and calls
+  Resend (run locally; the send itself could not leave the build container). Still not checked:
+  that the browser makes no request of its own for a remote `<img>` or CSS `url()` (GO-LIVE
+  section 10 has the check; by design the browser only ever receives data: URLs); that Chrome
+  repeats table header rows on every page; the docs' page-number footer; and the alarm email
+  arriving in the SUPPORT_EMAIL inbox.
 
 ## Changelog
 
