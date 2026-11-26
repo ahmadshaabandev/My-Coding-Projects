@@ -663,9 +663,8 @@ async function renderAndCharge(
       // Throws the remembered answer; returns only when a remembered 402 fits now (and is forgotten).
       await answerRemembered(env, request, recallFailure(cacheKey, attempt.row), cacheKey, now, true);
       attempt = await claim();
-      if (attempt.status === 'remembered') {
-        // Remembered again at once: another identical request just failed. Look again after a pause.
-      } else continue;
+      // Remembered again straight away (an identical request has just failed): look again after a pause.
+      if (attempt.status !== 'remembered') continue;
     } else if (attempt.ledger.charged_to !== 'pending') {
       // Paid: by the request we waited for (its object follows right after), or long ago.
       const stored = await readStoredPdf(env.BUCKET, user.id, cacheKey, now, options.withBody);
