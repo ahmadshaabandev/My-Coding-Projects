@@ -4,11 +4,12 @@
 import { createExecutionContext, createScheduledController, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { describe, expect, it, vi } from 'vitest';
-import { DAY_MS } from '../src/config';
+import { BATCH, DAY_MS } from '../src/config';
 import { first, run } from '../src/db/client';
 import worker from '../src/index';
 import { CLEANUP_LIMITS, runCleanup } from '../src/lib/cleanup';
 import { apiKeyFor, bearer, call, createSite, createUser, sessionCookieFor } from './app-helpers';
+import { storeBatch } from './batch-helpers';
 
 const NOW = Date.UTC(2027, 8, 1, 3, 17);
 
@@ -149,6 +150,35 @@ describe('runCleanup', () => {
     const secondRun = await runCleanup(env, NOW);
     expect(secondRun).toMatchObject({ sessions: 20, renders: 50 });
     expect(await runCleanup(env, NOW)).toEqual({ loginTokens: 0, sessions: 0, renders: 0, playgroundImages: 0, webhookEvents: 0, deletedAccounts: 0 });
+    vi.restoreAllMocks();
+  });
+
+  it('fails stranded batch rows, deletes expired batches and old revoked certificate records', async () => {
+    const day = (n: number): number => NOW - n * DAY_MS;
+    // Unfinished and older than BATCH.staleAfterDays: its queue messages cannot arrive any more.
+    const stale = await storeBatch({ template: 'invoice', rows: [{}, {}] }, { now: day(BATCH.staleAfterDays + 1) });
+    const recent = await storeBatch({ template: 'invoice', rows: [{}] }, { now: day(1) });
+    // Finished, and its newest PDF expired.
+    const expired = await storeBatch({ template: 'invoice', rows: [{}] }, { now: day(60) });
+    await run(env.DB, "UPDATE batches SET status = 'done', finished_at = ?2, expires_at = ?3 WHERE id = ?1", expired.batch.id, day(59), day(2));
+    const user = await createUser('pro');
+    const insert = 'INSERT INTO certificates (id, user_id, batch_id, row_index, created_at, revoked_at) VALUES (?1, ?2, NULL, NULL, ?3, ?4)';
+    await run(env.DB, insert, 'crt_cleanupoldrevoked00', user.id, day(400), day(BATCH.revokedRetentionDays + 1));
+    await run(env.DB, insert, 'crt_cleanupnewrevoked00', user.id, day(400), day(BATCH.revokedRetentionDays - 1));
+    await run(env.DB, insert, 'crt_cleanupvalidrecord0', user.id, day(400), null);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const report = await runCleanup(env, NOW);
+    expect(report.staleBatchRows).toBeGreaterThanOrEqual(2);
+    expect(report.batches).toBeGreaterThanOrEqual(1);
+    expect(report.revokedCertificates).toBeGreaterThanOrEqual(1);
+    expect(await count("SELECT COUNT(*) AS n FROM batch_rows WHERE batch_id = ?1 AND status = 'failed'", stale.batch.id)).toBe(2);
+    expect(await count("SELECT COUNT(*) AS n FROM batch_rows WHERE batch_id = ?1 AND status = 'queued'", recent.batch.id)).toBe(1);
+    expect(await exists('batches', 'id', expired.batch.id)).toBe(false);
+    expect(await count('SELECT COUNT(*) AS n FROM batch_rows WHERE batch_id = ?1', expired.batch.id)).toBe(0);
+    expect(await exists('certificates', 'id', 'crt_cleanupoldrevoked00')).toBe(false);
+    expect(await exists('certificates', 'id', 'crt_cleanupnewrevoked00')).toBe(true);
+    expect(await exists('certificates', 'id', 'crt_cleanupvalidrecord0')).toBe(true);
     vi.restoreAllMocks();
   });
 

@@ -1,0 +1,91 @@
+/*
+ * Link To Card - the dashboard's Bulk tab (assets/js/dashboard/bulk.js). Loaded by that
+ * module the first time the tab opens, after site.css and dashboard.css, and built on their
+ * tokens and components (cards, fields, .check, .segmented, .meter, .badge, tables). Nothing
+ * here redefines a component; it only adds the tab's own layouts.
+ *
+ * INDEX
+ *   1  Steps     .bulk-steps .bulk-step .bulk-step-title .bulk-num .bulk-verify
+ *   2  Columns   .bulk-sample .bulk-required .bulk-list .bulk-problems .bulk-summary
+ *   3  Batch     .bulk-progress .bulk-progress-text .bulk-status .bulk-row-error .bulk-cert
+ *                .bulk-doc .bulk-filename .bulk-zips .bulk-zip-list .bulk-zip .bulk-zip-detail
+ *   4  History   .bulk-history .bulk-history-main .bulk-history-status
+ *   5  Small screens
+ */
+
+/* ---------------------------------------------------------------- 1 Steps */
+.bulk-steps { display: grid; gap: var(--space-5); }
+.bulk-step > * + * { margin-top: var(--space-4); }
+.bulk-step[hidden] { display: none; }
+.bulk-step-title { display: flex; align-items: center; gap: var(--space-3); font: 900 var(--text-xl)/1.15 var(--font-display); letter-spacing: -0.01em; }
+.bulk-num {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  font: 900 1.25rem/1 var(--font-display);
+  color: var(--on-accent);
+  background: var(--accent);
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 2px 2px 0 var(--shadow-ink);
+}
+.bulk-step .field { max-width: 32rem; }
+.bulk-verify { display: grid; gap: var(--space-2); max-width: 46rem; }
+.bulk-verify code { overflow-wrap: anywhere; }
+.bulk-verify-note:empty { display: none; }
+.bulk-file-summary { overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------- 2 Columns */
+.bulk .table-wrap .select { min-width: 12rem; max-width: 100%; }
+/* Row 1's value: long text (an address, a JSON list) stays three lines tall. */
+.bulk-sample {
+  display: -webkit-box;
+  max-width: 24rem;
+  overflow: hidden;
+  font: 400 var(--text-sm)/1.45 var(--font-mono);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.bulk-required { margin-left: var(--space-2); vertical-align: 0.1em; }
+.bulk-list { margin-top: var(--space-1); padding-left: 1.2em; }
+.bulk-list li + li { margin-top: 0.2rem; }
+.bulk-problems { overflow-wrap: anywhere; }
+.bulk-summary > * + * { margin-top: var(--space-2); }
+
+/* ---------------------------------------------------------------- 3 Batch */
+.bulk-progress > * + * { margin-top: var(--space-4); }
+.bulk-progress .meter { height: 1.25rem; }
+.bulk-progress-text { font: 400 var(--text-sm)/1.5 var(--font-mono); color: var(--text-muted); }
+.bulk-status { display: grid; gap: var(--space-1); justify-items: start; }
+.bulk-row-error { font-size: var(--text-sm); color: var(--danger); overflow-wrap: anywhere; }
+.bulk-cert { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.bulk-cert code { font-size: var(--text-xs); overflow-wrap: anywhere; }
+.bulk-doc { display: grid; gap: 0.1rem; }
+/* A file name stays on one line (the column would otherwise shrink to break it at every hyphen); a long one is cut short, the full name in its title. */
+.bulk-filename { max-width: 22rem; overflow: hidden; font: 400 var(--text-xs)/1.4 var(--font-mono); color: var(--text-muted); white-space: nowrap; text-overflow: ellipsis; }
+/* ZIP parts (one button per part of at most a few hundred PDFs): buttons wrap, each with its count and size. */
+.bulk-zips > * + * { margin-top: var(--space-3); }
+.bulk-zip-list { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); padding: 0; list-style: none; }
+.bulk-zip { display: grid; gap: var(--space-1); justify-items: start; }
+.bulk-zip-detail { font: 400 var(--text-xs)/1.4 var(--font-mono); color: var(--text-muted); }
+
+/* ---------------------------------------------------------------- 4 History */
+.bulk-history-main { display: grid; gap: var(--space-1); min-width: 0; }
+.bulk-history-main code { overflow-wrap: anywhere; }
+.bulk-history-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+/* ---------------------------------------------------------------- 5 Small screens */
+@media (max-width: 40rem) {
+  .bulk-step-title { font-size: var(--text-lg); }
+  .bulk .table-wrap .select { min-width: 0; width: 100%; }
+  .bulk-sample { max-width: none; }
+  /* A narrower label column, so a certificate ID (24 characters) fits on one line beside it. */
+  .dash .bulk .table-wrap td { grid-template-columns: 7.5rem minmax(0, 1fr); }
+  .bulk-zip-list { display: grid; }
+  .bulk-zip .btn { width: 100%; justify-content: center; }
+}

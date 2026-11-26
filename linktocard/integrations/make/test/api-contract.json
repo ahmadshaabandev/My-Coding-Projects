@@ -1,0 +1,69 @@
+{
+    "$comment": "The part of the Link To Card API this Make app calls, by OpenAPI operationId (openapi.yaml; the build v3 paths come from the contract of POST /v1/batches, GET /v1/batches/{batch_id}, GET /v1/batches/{batch_id}/zip with ?part=N (decision D9: ZIP parts of up to 500 files and 2 GiB) and POST /v1/cards/from-url). body lists every top-level key the API accepts (it refuses unknown keys), required the keys it cannot do without, page the keys it accepts inside \"pdf\". test/contract.test.ts checks every module against this file; tests/node/make-connector-sync.test.ts in the Worker checks this file against openapi.yaml and the Worker's own field lists.",
+    "baseUrl": "https://linktocard.com",
+    "operations": {
+        "getUsage": {
+            "method": "GET",
+            "path": "/v1/usage"
+        },
+        "listTemplates": {
+            "method": "GET",
+            "path": "/v1/templates"
+        },
+        "createImage": {
+            "method": "POST",
+            "path": "/v1/images",
+            "body": ["template", "html", "css", "data", "size", "width", "height", "format", "response"],
+            "required": ["template"]
+        },
+        "createPdf": {
+            "method": "POST",
+            "path": "/v1/pdf",
+            "body": ["template", "html", "css", "data", "pdf", "filename", "response"],
+            "required": ["template"],
+            "page": ["format", "landscape", "margin", "header", "footer"]
+        },
+        "createCardFromUrl": {
+            "method": "POST",
+            "path": "/v1/cards/from-url",
+            "body": ["url", "template", "data", "size", "width", "height", "format", "response"],
+            "required": ["url"]
+        },
+        "createBatch": {
+            "method": "POST",
+            "path": "/v1/batches",
+            "body": ["template", "rows", "pdf", "filename", "verify"],
+            "required": ["template", "rows"],
+            "page": ["format", "landscape"]
+        },
+        "getBatch": {
+            "method": "GET",
+            "path": "/v1/batches/{batch_id}"
+        },
+        "getBatchZip": {
+            "method": "GET",
+            "path": "/v1/batches/{batch_id}/zip",
+            "query": ["part"]
+        },
+        "inspectPage": {
+            "method": "GET",
+            "path": "/v1/inspect",
+            "query": ["url"],
+            "required": ["url"]
+        }
+    },
+    "connection": "getUsage",
+    "rpcs": {
+        "listCardTemplates": "listTemplates",
+        "listOwnTemplates": "listTemplates"
+    },
+    "modules": {
+        "createCardImage": ["createImage", "download"],
+        "createPdf": ["createPdf", "download"],
+        "cardFromLink": ["createCardFromUrl", "download"],
+        "startBulkPdfs": ["createBatch"],
+        "getBatch": ["getBatch", "getBatchZip"],
+        "checkLinkPreview": ["inspectPage"],
+        "makeApiCall": ["universal"]
+    }
+}

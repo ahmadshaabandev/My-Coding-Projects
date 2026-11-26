@@ -13,5 +13,5 @@
     "esModuleInterop": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["scripts/**/*.ts", "redirect/**/*.ts", "tests/node/**/*.ts", "vitest.config.ts", "vitest.node.config.ts", "site/**/*.ts"]
+  "include": ["scripts/**/*.ts", "scripts/build-browser-bundles.mts", "redirect/**/*.ts", "tests/node/**/*.ts", "vitest.config.ts", "vitest.node.config.ts", "site/**/*.ts"]
 }

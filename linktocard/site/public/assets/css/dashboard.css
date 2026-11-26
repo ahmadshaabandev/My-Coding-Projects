@@ -10,7 +10,7 @@
  *                 .section-row .row-list .row-card .kv .secret .more-body .inline-form .seg-field
  *   3  Guide      .guide .guide-steps .guide-step (is-open | is-done | is-todo) .guide-done
  *   4  Plan       .usage .usage-figure .usage-line .billing
- *   5  Builder    .builder .builder-fields .builder-shape .preview .preview-frame
+ *   5  Builder    .builder .builder-fields .builder-shape .preview .preview-frame .open-fields .open-fields-list
  *   6  Templates  .starter-grid .starter .editor .editor-bar
  *   7  Keys/fonts .secret-once .secret-line .font-form
  *   8  Small screens (one column; tables restack as labelled rows)
@@ -185,6 +185,8 @@
 .preview-card:has([data-size='portrait']) { max-width: 22rem; }
 .preview-frame[data-size='square'] { aspect-ratio: 1; }
 .preview-frame[data-size='portrait'] { aspect-ratio: 1080 / 1350; }
+/* The email banner size (1200 x 400): a wide strip, not a link card. */
+.preview-frame[data-size='email'] { aspect-ratio: 1200 / 400; }
 .preview-note {
   padding: 0.4rem 0.75rem;
   font: 400 0.6875rem/1.5 var(--font-mono);
@@ -195,6 +197,9 @@
 }
 .preview-error:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
 .preview-warnings ul { margin-top: var(--space-1); padding-left: 1.2em; }
+/* Open fields (shown only while /api/config switches them on): one checkbox per text field. */
+.open-fields-list { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); }
+.open-fields-list code { font-size: var(--text-xs); }
 
 /* ---------------------------------------------------------------- 6 Templates */
 .starter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr)); gap: var(--space-5); padding: 0; list-style: none; }

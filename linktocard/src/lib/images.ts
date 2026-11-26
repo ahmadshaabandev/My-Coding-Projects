@@ -35,6 +35,7 @@ import { createImageFetcher } from '../render/proxy';
 import { getStarterTemplate, type StarterTemplate } from '../render/templates';
 import type { Env, RenderDeps, TemplateData, TemplateRow, UsageSummary, UserRow, WatermarkMode } from '../types';
 import { sha256Hex } from './crypto';
+import { featureEnabled } from './features';
 import { sendEmail, quotaWarningEmail } from './email';
 import { ApiError } from './errors';
 import { createFontLoader, fontsEnabled } from './fonts-store';
@@ -139,13 +140,22 @@ export interface ResolvedTemplate {
   css: string;
 }
 
+/** Which starters a request may name: the email starters only while the email images tool is on. */
+export interface TemplateOptions {
+  emailTemplates?: boolean;
+}
+
+export function templateOptions(env: Partial<Pick<Env, 'EMAIL_FIELDS_ENABLED'>>): TemplateOptions {
+  return { emailTemplates: featureEnabled(env, 'emailfields') };
+}
+
 /**
  * A starter template, or a custom one the account owns. Someone else's
  * template is null exactly like a missing one, so ids cannot be probed.
  */
-export async function resolveTemplate(db: D1Database, userId: string, id: unknown): Promise<ResolvedTemplate | null> {
+export async function resolveTemplate(db: D1Database, userId: string, id: unknown, options: TemplateOptions = {}): Promise<ResolvedTemplate | null> {
   if (typeof id !== 'string' || !TEMPLATE_ID_RE.test(id)) return null;
-  const starter = getStarterTemplate(id);
+  const starter = getStarterTemplate(id, { email: options.emailTemplates === true });
   // A starter's identity has no content hash on purpose: a redesign must not re-bill existing URLs.
   if (starter) return { label: starter.id, identity: `starter:${starter.id}`, html: starter.html, css: starter.css };
   const row = await first<TemplateRow>(
@@ -197,7 +207,7 @@ function invalid(message: string): ApiError {
 }
 
 /** Validates the card part of a JSON body and resolves its template for this account. */
-export async function parseCardInput(db: D1Database, userId: string, body: JsonObject): Promise<CardInput> {
+export async function parseCardInput(db: D1Database, userId: string, body: JsonObject, options: TemplateOptions = {}): Promise<CardInput> {
   const { template: templateId, html, css } = body;
   if ((templateId === undefined) === (html === undefined)) {
     throw invalid('Send exactly one of "template" (a template id) or "html" (an inline template).');
@@ -214,7 +224,7 @@ export async function parseCardInput(db: D1Database, userId: string, body: JsonO
   const format = parseFormat(body.format);
 
   if (typeof html === 'string') return { template: await inlineTemplate(html, typeof css === 'string' ? css : ''), data, size, format };
-  const template = await resolveTemplate(db, userId, templateId);
+  const template = await resolveTemplate(db, userId, templateId, options);
   if (!template) throw templateNotFound();
   return { template, data, size, format };
 }

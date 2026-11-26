@@ -9,15 +9,27 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PLANS, PLAN_ORDER } from '../../src/billing/plans';
 import { PDF, RATE_LIMITS, type RateLimitName } from '../../src/config';
-import { applyFeatureBlocks, buildSite, isPdfRateLimit, renderSite, siteFeatures, type RenderedSite } from '../../scripts/build-site';
+import { FEATURES, applyFeatureBlocks, buildSite, isPdfRateLimit, rateLimitFeature, renderSite, siteFeatures, type Feature, type RenderedSite } from '../../scripts/build-site';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-11-25T12:00:00Z');
 const temp = mkdtempSync(join(tmpdir(), 'ltc-features-'));
 afterAll(() => rmSync(temp, { recursive: true, force: true }));
 
-const ON = { pdf: true };
-const OFF = { pdf: false };
+/** The seven site features, with exactly `on` switched on. */
+const only = (...on: Feature[]): Record<Feature, boolean> => Object.fromEntries(FEATURES.map((feature) => [feature, on.includes(feature)])) as Record<Feature, boolean>;
+const ON = only('pdf');
+const OFF = only();
+
+/** Every page that exists only with the "previews" feature (the tool hub and the five one-app pages). */
+const PREVIEWS_PAGES = [
+  'tools.html',
+  'tools/discord-embed-preview.html',
+  'tools/linkedin-post-preview.html',
+  'tools/slack-link-preview.html',
+  'tools/whatsapp-link-preview.html',
+  'tools/x-card-validator.html',
+] as const;
 
 /** Every page that exists only with SITE_PDF=on. The test below proves the list matches the front matter. */
 const PDF_PAGES = [
@@ -98,12 +110,22 @@ describe('applyFeatureBlocks', () => {
   });
 
   it('switches only on SITE_PDF=on, and refuses any value but on and off', () => {
-    expect(siteFeatures({ SITE_PDF: 'on' })).toEqual({ pdf: true });
-    expect(siteFeatures({ SITE_PDF: ' on ' })).toEqual({ pdf: true });
-    expect(siteFeatures({ SITE_PDF: 'off' })).toEqual({ pdf: false });
-    expect(siteFeatures({ SITE_PDF: '' })).toEqual({ pdf: false });
-    expect(siteFeatures({})).toEqual({ pdf: false });
+    expect(siteFeatures({ SITE_PDF: 'on' })).toEqual(ON);
+    expect(siteFeatures({ SITE_PDF: ' on ' })).toEqual(ON);
+    expect(siteFeatures({ SITE_PDF: 'off' })).toEqual(OFF);
+    expect(siteFeatures({ SITE_PDF: '' })).toEqual(OFF);
+    expect(siteFeatures({})).toEqual(OFF);
     for (const value of ['true', '1', 'yes', 'ON']) expect(() => siteFeatures({ SITE_PDF: value })).toThrow(/SITE_PDF must be "on" or "off"/);
+  });
+
+  it('takes a comma list of known features in SITE_FEATURES, with SITE_PDF=on as another way to say "pdf"', () => {
+    expect(FEATURES).toEqual(['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations']);
+    expect(siteFeatures({ SITE_FEATURES: 'toolkit' })).toEqual(only('toolkit'));
+    expect(siteFeatures({ SITE_FEATURES: ' pdf , toolkit ' })).toEqual(only('pdf', 'toolkit'));
+    expect(siteFeatures({ SITE_FEATURES: 'toolkit', SITE_PDF: 'on' })).toEqual(only('pdf', 'toolkit'));
+    expect(siteFeatures({ SITE_FEATURES: FEATURES.join(',') })).toEqual(only(...FEATURES));
+    expect(siteFeatures({ SITE_FEATURES: '', SITE_PDF: 'off' })).toEqual(OFF);
+    expect(() => siteFeatures({ SITE_FEATURES: 'pdf,tooklit' })).toThrow(/SITE_FEATURES names an unknown feature "tooklit"/);
   });
 });
 
@@ -131,8 +153,8 @@ describe('the two builds', () => {
   });
 
   it('builds the PDF pages only with SITE_PDF=on, and lists them in sitemap.xml only then', () => {
-    expect(off.features).toEqual({ pdf: false });
-    expect(on.features).toEqual({ pdf: true });
+    expect(off.features).toEqual(OFF);
+    expect(on.features).toEqual(ON);
     for (const file of PDF_PAGES) {
       expect(offFiles, file).not.toContain(file);
       expect(onFiles, file).toContain(file);
@@ -252,15 +274,36 @@ describe('the two builds', () => {
   it('keeps the PDF rate limits out of the tables without PDFs, and lists them with', () => {
     const pdfScopes = (Object.keys(RATE_LIMITS) as RateLimitName[]).filter(isPdfRateLimit).map((name) => RATE_LIMITS[name].scope);
     expect(pdfScopes.length).toBeGreaterThan(0);
-    for (const name of Object.keys(RATE_LIMITS) as RateLimitName[]) expect(isPdfRateLimit(name), name).toBe(/pdf/i.test(RATE_LIMITS[name].scope));
+    // Every limiter about PDFs belongs to a feature: the PDF toolkit's to "toolkit", the others to "pdf".
+    for (const name of Object.keys(RATE_LIMITS) as RateLimitName[]) expect(rateLimitFeature(name) !== null, name).toBe(/pdf/i.test(RATE_LIMITS[name].scope));
+    expect(rateLimitFeature('RL_PDF_TOOLS')).toBe('toolkit');
+    const cellOf = (scope: string): string => `<th scope="row">${scope.charAt(0).toUpperCase()}${scope.slice(1)}</th>`.replace(/&/g, '&amp;');
+    const toolkit = renderSite({ env: { SITE_FEATURES: 'toolkit' }, now: NOW });
     for (const outPath of ['docs/limits.html', 'docs/api.html']) {
       for (const scope of pdfScopes) {
-        const cell = `<th scope="row">${scope.charAt(0).toUpperCase()}${scope.slice(1)}</th>`.replace(/&/g, '&amp;');
-        expect(page(off, outPath), outPath).not.toContain(cell);
-        expect(page(on, outPath), outPath).toContain(cell);
+        expect(page(off, outPath), outPath).not.toContain(cellOf(scope));
+        expect(page(on, outPath), outPath).toContain(cellOf(scope));
       }
+      const toolkitCell = cellOf(RATE_LIMITS.RL_PDF_TOOLS.scope);
+      expect(page(off, outPath), outPath).not.toContain(toolkitCell);
+      expect(page(on, outPath), outPath).not.toContain(toolkitCell);
+      expect(page(toolkit, outPath), outPath).toContain(toolkitCell);
     }
     expect(page(on, 'docs/limits.html')).toContain(`<td>${RATE_LIMITS.RL_PDF_KEY.limit} requests per ${RATE_LIMITS.RL_PDF_KEY.periodSeconds} seconds</td>`);
+  });
+
+  it('builds the tool hub and the one-app preview pages only with "previews", and links the hub from the footer then', () => {
+    const previews = renderSite({ env: { SITE_FEATURES: 'previews' }, now: NOW });
+    const outPaths = (site: RenderedSite): string[] => site.pages.map((built) => built.outPath);
+    for (const file of PREVIEWS_PAGES) {
+      expect(outPaths(off), file).not.toContain(file);
+      expect(outPaths(on), file).not.toContain(file);
+      expect(outPaths(previews), file).toContain(file);
+      expect(previews.sitemap).toContain(`<loc>${previews.config.url}/${file.replace(/\.html$/, '')}</loc>`);
+    }
+    expect(outPaths(previews).filter((p) => !(PREVIEWS_PAGES as readonly string[]).includes(p)).sort()).toEqual(outPaths(off).sort());
+    for (const built of off.pages) expect(footerOf(built.html), built.outPath).not.toContain('href="/tools"');
+    for (const built of previews.pages) expect(footerOf(built.html), built.outPath).toContain('<li><a href="/tools">All free tools</a></li>');
   });
 
   it('states on the pricing page how a PDF counts, and what each plan\'s PDFs look like, only when on', () => {
@@ -328,17 +371,18 @@ describe('deploy scripts and the command line', () => {
     const result = spawnSync(process.execPath, [join(ROOT, 'node_modules/tsx/dist/cli.mjs'), 'scripts/build-site.ts', ...args], {
       cwd: ROOT,
       encoding: 'utf8',
-      env: { ...process.env, SITE_PDF: '', ...env },
+      env: { ...process.env, SITE_PDF: '', SITE_FEATURES: '', ...env },
     });
     return { status: result.status, output: `${result.stdout}${result.stderr}` };
   };
 
-  it('builds staging with SITE_PDF=on and production with it off', () => {
-    expect(pkg.scripts['deploy:staging']).toBe('SITE_PDF=on npm run build:site && wrangler deploy --env staging');
-    // Off in so many words: a SITE_PDF=on left exported in the shell must not publish the PDF
-    // pages on production, where PDF_ENABLED is "false".
-    expect(pkg.scripts['deploy:production']).toBe('npm run check:golive && SITE_PDF=off npm run build:site && wrangler deploy --env production');
+  it('builds staging with every feature and production with none of them', () => {
+    expect(pkg.scripts['deploy:staging']).toBe(`SITE_FEATURES=${FEATURES.join(',')} SITE_PDF=on npm run build:site && wrangler deploy --env staging`);
+    // Off in so many words: a SITE_PDF=on or SITE_FEATURES=... left exported in the shell must not
+    // publish those pages on production, where PDF_ENABLED and the v3 switches are "false".
+    expect(pkg.scripts['deploy:production']).toBe('npm run check:golive && SITE_FEATURES= SITE_PDF=off npm run build:site && wrangler deploy --env production');
     expect(pkg.scripts['build:site']).not.toContain('SITE_PDF');
+    expect(pkg.scripts['build:site']).not.toContain('SITE_FEATURES');
   });
 
   it('stops the build on a SITE_PDF value it does not know', () => {

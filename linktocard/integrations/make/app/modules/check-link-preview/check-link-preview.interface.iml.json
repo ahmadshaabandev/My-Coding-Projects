@@ -1,0 +1,306 @@
+[
+    {
+        "name": "id",
+        "type": "text",
+        "label": "Check ID"
+    },
+    {
+        "name": "fail_count",
+        "type": "uinteger",
+        "label": "Failed checks"
+    },
+    {
+        "name": "warn_count",
+        "type": "uinteger",
+        "label": "Warnings"
+    },
+    {
+        "name": "url",
+        "type": "url",
+        "label": "Page URL"
+    },
+    {
+        "name": "final_url",
+        "type": "url",
+        "label": "Page URL after redirects"
+    },
+    {
+        "name": "status",
+        "type": "uinteger",
+        "label": "HTTP status"
+    },
+    {
+        "name": "fetched_at",
+        "type": "date",
+        "label": "Checked at"
+    },
+    {
+        "name": "response_ms",
+        "type": "uinteger",
+        "label": "Response time (ms)"
+    },
+    {
+        "name": "cached",
+        "type": "boolean",
+        "label": "Result from cache"
+    },
+    {
+        "name": "expires_at",
+        "type": "date",
+        "label": "Cached until"
+    },
+    {
+        "name": "page",
+        "type": "collection",
+        "label": "Page",
+        "spec": [
+            {
+                "name": "title",
+                "type": "text",
+                "label": "Title"
+            },
+            {
+                "name": "description",
+                "type": "text",
+                "label": "Description"
+            },
+            {
+                "name": "canonical",
+                "type": "text",
+                "label": "Canonical"
+            },
+            {
+                "name": "favicon",
+                "type": "text",
+                "label": "Favicon"
+            },
+            {
+                "name": "theme_color",
+                "type": "text",
+                "label": "Theme color"
+            }
+        ]
+    },
+    {
+        "name": "og",
+        "type": "collection",
+        "label": "Open Graph tags",
+        "spec": [
+            {
+                "name": "title",
+                "type": "text",
+                "label": "og:title"
+            },
+            {
+                "name": "description",
+                "type": "text",
+                "label": "og:description"
+            },
+            {
+                "name": "image",
+                "type": "text",
+                "label": "og:image"
+            },
+            {
+                "name": "image_alt",
+                "type": "text",
+                "label": "og:image_alt"
+            },
+            {
+                "name": "image_width",
+                "type": "text",
+                "label": "og:image_width"
+            },
+            {
+                "name": "image_height",
+                "type": "text",
+                "label": "og:image_height"
+            },
+            {
+                "name": "url",
+                "type": "text",
+                "label": "og:url"
+            },
+            {
+                "name": "type",
+                "type": "text",
+                "label": "og:type"
+            },
+            {
+                "name": "site_name",
+                "type": "text",
+                "label": "og:site_name"
+            }
+        ]
+    },
+    {
+        "name": "twitter",
+        "type": "collection",
+        "label": "Twitter card tags",
+        "spec": [
+            {
+                "name": "card",
+                "type": "text",
+                "label": "twitter:card"
+            },
+            {
+                "name": "title",
+                "type": "text",
+                "label": "twitter:title"
+            },
+            {
+                "name": "description",
+                "type": "text",
+                "label": "twitter:description"
+            },
+            {
+                "name": "image",
+                "type": "text",
+                "label": "twitter:image"
+            },
+            {
+                "name": "site",
+                "type": "text",
+                "label": "twitter:site"
+            }
+        ]
+    },
+    {
+        "name": "image",
+        "type": "collection",
+        "label": "Preview image",
+        "spec": [
+            {
+                "name": "url",
+                "type": "url",
+                "label": "URL"
+            },
+            {
+                "name": "status",
+                "type": "uinteger",
+                "label": "HTTP status"
+            },
+            {
+                "name": "content_type",
+                "type": "text",
+                "label": "Content type"
+            },
+            {
+                "name": "bytes",
+                "type": "uinteger",
+                "label": "Size (bytes)"
+            },
+            {
+                "name": "width",
+                "type": "uinteger",
+                "label": "Width (px)"
+            },
+            {
+                "name": "height",
+                "type": "uinteger",
+                "label": "Height (px)"
+            },
+            {
+                "name": "aspect_ratio",
+                "type": "number",
+                "label": "Aspect ratio"
+            },
+            {
+                "name": "response_ms",
+                "type": "uinteger",
+                "label": "Response time (ms)"
+            }
+        ]
+    },
+    {
+        "name": "robots",
+        "type": "collection",
+        "label": "robots.txt",
+        "spec": [
+            {
+                "name": "checked",
+                "type": "boolean",
+                "label": "Checked"
+            },
+            {
+                "name": "allowed",
+                "type": "boolean",
+                "label": "Allowed"
+            },
+            {
+                "name": "note",
+                "type": "text",
+                "label": "Note"
+            }
+        ]
+    },
+    {
+        "name": "checks",
+        "type": "array",
+        "label": "Checks",
+        "spec": [
+            {
+                "name": "id",
+                "type": "text",
+                "label": "Check"
+            },
+            {
+                "name": "status",
+                "type": "text",
+                "label": "Result (pass, warn or fail)"
+            },
+            {
+                "name": "title",
+                "type": "text",
+                "label": "Title"
+            },
+            {
+                "name": "detail",
+                "type": "text",
+                "label": "Detail"
+            },
+            {
+                "name": "fix",
+                "type": "text",
+                "label": "How to fix it"
+            }
+        ]
+    },
+    {
+        "name": "preview",
+        "type": "collection",
+        "label": "Preview",
+        "spec": [
+            {
+                "name": "title",
+                "type": "text",
+                "label": "Title"
+            },
+            {
+                "name": "description",
+                "type": "text",
+                "label": "Description"
+            },
+            {
+                "name": "domain",
+                "type": "text",
+                "label": "Domain"
+            },
+            {
+                "name": "site_name",
+                "type": "text",
+                "label": "Site name"
+            },
+            {
+                "name": "image",
+                "type": "text",
+                "label": "Image"
+            },
+            {
+                "name": "favicon",
+                "type": "text",
+                "label": "Favicon"
+            }
+        ]
+    }
+]

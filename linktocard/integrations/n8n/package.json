@@ -1,0 +1,60 @@
+{
+  "name": "n8n-nodes-linktocard",
+  "version": "0.1.0",
+  "description": "n8n community node for Link To Card: card images, PDF documents, cards made from a link, bulk PDFs and link preview checks.",
+  "license": "MIT",
+  "homepage": "https://linktocard.com",
+  "keywords": [
+    "n8n-community-node-package",
+    "link to card",
+    "open graph",
+    "og image",
+    "pdf"
+  ],
+  "author": {
+    "name": "Ahmad Shaaban",
+    "email": "support@linktocard.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ahmadshaabandev/n8n-nodes-linktocard.git"
+  },
+  "scripts": {
+    "build": "n8n-node build",
+    "build:watch": "tsc --watch",
+    "dev": "n8n-node dev",
+    "lint": "n8n-node lint",
+    "lint:fix": "n8n-node lint --fix",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "check:engine": "node scripts/engine-check.cjs",
+    "release": "n8n-node release",
+    "prepublishOnly": "n8n-node prerelease"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "strict": true,
+    "credentials": [
+      "dist/credentials/LinkToCardApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/LinkToCard/LinkToCard.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@n8n/node-cli": "0.58.7",
+    "@types/node": "22.20.5",
+    "eslint": "9.39.4",
+    "n8n-workflow": "2.49.5",
+    "prettier": "3.8.3",
+    "release-it": "20.2.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

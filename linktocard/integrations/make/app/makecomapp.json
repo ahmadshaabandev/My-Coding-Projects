@@ -1,0 +1,143 @@
+{
+    "fileVersion": 1,
+    "generalCodeFiles": {
+        "base": "general/base.iml.json",
+        "common": null,
+        "readme": "README.md",
+        "groups": "modules/groups.json"
+    },
+    "components": {
+        "connection": {
+            "apiKey": {
+                "label": "Link To Card",
+                "connectionType": "basic",
+                "codeFiles": {
+                    "communication": "connections/api-key/api-key.communication.iml.json",
+                    "params": "connections/api-key/api-key.params.iml.json",
+                    "common": null
+                }
+            }
+        },
+        "webhook": {},
+        "module": {
+            "createCardImage": {
+                "label": "Create a card image",
+                "description": "Renders a card image, such as an Open Graph image, from a template and your data. The same card again is served from storage and counts nothing while it is stored.",
+                "moduleType": "action",
+                "actionCrud": "create",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "modules/create-card-image/create-card-image.communication.iml.json",
+                    "staticParams": "modules/create-card-image/create-card-image.static-params.iml.json",
+                    "mappableParams": "modules/create-card-image/create-card-image.mappable-params.iml.json",
+                    "interface": "modules/create-card-image/create-card-image.interface.iml.json",
+                    "samples": "modules/create-card-image/create-card-image.samples.iml.json"
+                }
+            },
+            "createPdf": {
+                "label": "Create a PDF",
+                "description": "Makes a PDF from a PDF starter template (invoice, receipt, quote, certificate, report) or one of your own templates. Returns its link, its page count and the images it counted, and the file.",
+                "moduleType": "action",
+                "actionCrud": "create",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "modules/create-pdf/create-pdf.communication.iml.json",
+                    "staticParams": "modules/create-pdf/create-pdf.static-params.iml.json",
+                    "mappableParams": "modules/create-pdf/create-pdf.mappable-params.iml.json",
+                    "interface": "modules/create-pdf/create-pdf.interface.iml.json",
+                    "samples": "modules/create-pdf/create-pdf.samples.iml.json"
+                }
+            },
+            "cardFromLink": {
+                "label": "Create a card from a link",
+                "description": "Makes a card image from a web page's own title, description, site name and icon. Returns its link, and the file if you ask for it.",
+                "moduleType": "action",
+                "actionCrud": "create",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "modules/card-from-link/card-from-link.communication.iml.json",
+                    "staticParams": "modules/card-from-link/card-from-link.static-params.iml.json",
+                    "mappableParams": "modules/card-from-link/card-from-link.mappable-params.iml.json",
+                    "interface": "modules/card-from-link/card-from-link.interface.iml.json",
+                    "samples": "modules/card-from-link/card-from-link.samples.iml.json"
+                }
+            },
+            "startBulkPdfs": {
+                "label": "Start bulk PDFs",
+                "description": "Starts a batch that makes one PDF for every row, for example every row of a spreadsheet, with the same template. The PDFs are made in the background: follow the batch with Get a batch.",
+                "moduleType": "action",
+                "actionCrud": "create",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "modules/start-bulk-pdfs/start-bulk-pdfs.communication.iml.json",
+                    "staticParams": "modules/start-bulk-pdfs/start-bulk-pdfs.static-params.iml.json",
+                    "mappableParams": "modules/start-bulk-pdfs/start-bulk-pdfs.mappable-params.iml.json",
+                    "interface": "modules/start-bulk-pdfs/start-bulk-pdfs.interface.iml.json",
+                    "samples": "modules/start-bulk-pdfs/start-bulk-pdfs.samples.iml.json"
+                }
+            },
+            "getBatch": {
+                "label": "Get a batch",
+                "description": "Gets a batch from Start bulk PDFs by its ID: its status, how many documents are done, and each document's link. Can also output every finished document as one zip file.",
+                "moduleType": "action",
+                "actionCrud": "read",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "modules/get-batch/get-batch.communication.iml.json",
+                    "staticParams": "modules/get-batch/get-batch.static-params.iml.json",
+                    "mappableParams": "modules/get-batch/get-batch.mappable-params.iml.json",
+                    "interface": "modules/get-batch/get-batch.interface.iml.json",
+                    "samples": "modules/get-batch/get-batch.samples.iml.json"
+                }
+            },
+            "checkLinkPreview": {
+                "label": "Check a link preview",
+                "description": "Checks a page's link-preview tags (Open Graph and Twitter card) and its preview image, with a fix for each problem it finds. Counts no images.",
+                "moduleType": "action",
+                "actionCrud": "read",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "modules/check-link-preview/check-link-preview.communication.iml.json",
+                    "staticParams": "modules/check-link-preview/check-link-preview.static-params.iml.json",
+                    "mappableParams": "modules/check-link-preview/check-link-preview.mappable-params.iml.json",
+                    "interface": "modules/check-link-preview/check-link-preview.interface.iml.json",
+                    "samples": "modules/check-link-preview/check-link-preview.samples.iml.json"
+                }
+            },
+            "makeApiCall": {
+                "label": "Make an API call",
+                "description": "Sends any request to the Link To Card API with this connection's API key.",
+                "moduleType": "universal",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "modules/make-api-call/make-api-call.communication.iml.json",
+                    "staticParams": "modules/make-api-call/make-api-call.static-params.iml.json",
+                    "mappableParams": "modules/make-api-call/make-api-call.mappable-params.iml.json",
+                    "interface": "modules/make-api-call/make-api-call.interface.iml.json",
+                    "samples": "modules/make-api-call/make-api-call.samples.iml.json"
+                }
+            }
+        },
+        "rpc": {
+            "listCardTemplates": {
+                "label": "List card templates",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "rpcs/list-card-templates/list-card-templates.communication.iml.json",
+                    "params": "rpcs/list-card-templates/list-card-templates.params.iml.json"
+                }
+            },
+            "listOwnTemplates": {
+                "label": "List own templates",
+                "connection": "apiKey",
+                "codeFiles": {
+                    "communication": "rpcs/list-own-templates/list-own-templates.communication.iml.json",
+                    "params": "rpcs/list-own-templates/list-own-templates.params.iml.json"
+                }
+            }
+        },
+        "function": {},
+        "endpoint": {}
+    },
+    "origins": []
+}

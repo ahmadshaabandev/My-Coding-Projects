@@ -20,6 +20,18 @@ Base URL: `[[site.url]]`
 
 PDF documents have their own page: [`POST /v1/pdf`, signed PDF links and stored PDFs](/docs/pdf#api-reference).
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+
+Bulk documents have their own page: [`POST /v1/batches`, ZIP downloads and certificate verification](/docs/bulk#api-reference).
+<!-- /feature:batch -->
+<!-- feature:toolkit -->
+
+The PDF toolkit has its own page: [`POST /v1/pdf-tools/{operation}`](/docs/pdf-tools#api-reference).
+<!-- /feature:toolkit -->
+<!-- feature:linkcards -->
+
+Cards from links have their own page: [`POST /v1/cards/from-url` and signed `/v1/link/...` URLs](/docs/link-cards).
+<!-- /feature:linkcards -->
 
 ## Conventions
 
@@ -64,8 +76,8 @@ Renders one card and stores it, or returns the stored one if the same card was r
 | `html` | string | An inline template: HTML, at most [[limit.maxHtmlKb]] KB. |
 | `css` | string | CSS for the inline template, at most [[limit.maxCssKb]] KB. Only together with `html`. |
 | `data` | object | Values for the template's placeholders: a flat object of strings. At most [[limit.maxDataKeys]] keys; each value at most [[limit.maxDataValueChars]] characters. Send numbers and booleans as text. |
-| `size` | string | `og` (default), `square` or `portrait`. |
-| `width`, `height` | number | Instead of `size`: both together, and equal to one of the three sizes ([[size.og.width]] and [[size.og.height]], [[size.square.width]] and [[size.square.height]], [[size.portrait.width]] and [[size.portrait.height]]). |
+| `size` | string | `og` (default), `square`, `portrait` or `email`. |
+| `width`, `height` | number | Instead of `size`: both together, and equal to one of the four sizes ([[size.og.width]] and [[size.og.height]], [[size.square.width]] and [[size.square.height]], [[size.portrait.width]] and [[size.portrait.height]], [[size.email.width]] and [[size.email.height]]). |
 | `format` | string | `png` (default), `jpeg` or `webp`. `jpg` is accepted for `jpeg`. |
 | `response` | string | `json` (default) or `binary`. |
 
@@ -496,21 +508,41 @@ Every error has the same shape, with an HTTP status that matches the code:
 | Status | Code | Meaning |
 | --- | --- | --- |
 | 400 | `invalid_request` | The body or a parameter is malformed: not JSON, an unknown field, a bad data key, a value that is not a string or is too long. The message names the problem. |
-| 400 | `unsupported_size` | The size is not `og`, `square` or `portrait` (or `width` and `height` do not equal one of them). |
+| 400 | `unsupported_size` | The size is not `og`, `square`, `portrait` or `email` (or `width` and `height` do not equal one of them). |
 | 400 | `unsupported_format` | The format is not `png`, `jpeg` or `webp`. |
 | 401 | `unauthorized` | Not signed in. Returned by the dashboard's own endpoints, not by the endpoints on this page. |
 | 401 | `invalid_api_key` | The `Authorization` header is missing, or the key is wrong or revoked. |
 | 402 | `quota_exceeded` | The allowance for this period is used up and the card is not in the cache. `details.usage` is the usage object. See [Limits](/docs/limits#at-the-limit). |
 | 403 | `invalid_signature` | A signed URL did not verify. `details.reason` says why; see [every 403 and its fix](/docs/signed-urls#every-403-and-its-fix). |
 | 403 | `account_suspended` | The account is suspended. Contact [[site.supportEmail]]. |
+<!-- feature:no-batch -->
 | 403 | `plan_required` | The feature needs a paid plan. Returned by the dashboard for custom fonts on [[plan.free.name]]. |
+<!-- /feature:no-batch -->
+<!-- feature:batch -->
+| 403 | `plan_required` | The feature needs a paid plan, or a higher one: the dashboard answers it for custom fonts on [[plan.free.name]], and `POST /v1/batches` for more rows than your plan takes in one batch. |
+<!-- /feature:batch -->
+<!-- feature:no-linkcards -->
 | 403 | `forbidden` | A dashboard request was refused (for example one sent from another site), or `GET /v1/inspect` was given an address that is not on the public internet. |
+<!-- /feature:no-linkcards -->
+<!-- feature:linkcards -->
+| 403 | `forbidden` | A dashboard request was refused (for example one sent from another site), or `GET /v1/inspect` or a card from a link was given an address that is not on the public internet. |
+<!-- /feature:linkcards -->
 | 403 | `verification_required` | A free tool on the website asks for a quick human check before more requests this hour. `details.site_key` names the widget. Not returned by the endpoints on this page. |
 | 404 | `not_found` | Unknown path, site, template or image, or an image whose cache period has ended. |
+<!-- feature:no-batch -->
 | 409 | `conflict` | A per-account maximum is reached or the item already exists. Returned by the dashboard, for example for more than [[limit.maxSites]] sites or [[limit.maxApiKeys]] API keys. |
+<!-- /feature:no-batch -->
+<!-- feature:batch -->
+| 409 | `conflict` | A per-account maximum is reached or the item already exists: in the dashboard, for example, more than [[limit.maxSites]] sites or [[limit.maxApiKeys]] API keys, and for `POST /v1/batches` [[batch.maxActive]] batches already waiting or running. |
+<!-- /feature:batch -->
 | 410 | `gone` | Reserved. No endpoint returns it today. |
 | 413 | `payload_too_large` | The request body is over [[limit.maxRequestBodyKb]] KB, or the template HTML or CSS is over its limit. |
+<!-- feature:no-toolkit -->
 | 415 | `unsupported_media_type` | A font upload in the dashboard had the wrong `Content-Type`. |
+<!-- /feature:no-toolkit -->
+<!-- feature:toolkit -->
+| 415 | `unsupported_media_type` | A font upload in the dashboard had the wrong `Content-Type`, or a file sent to the PDF toolkit is not a PDF, or not a PNG or JPEG image. |
+<!-- /feature:toolkit -->
 | 422 | `template_error` | The template cannot be rendered as written: too many elements, a relative image URL, a shadow over the limit, and so on. The message says what to change. |
 | 422 | `image_fetch_failed` | An image the template refers to could not be loaded. `details.reason` and `details.url` say which and why. |
 | 422 | `page_fetch_failed` | `GET /v1/inspect` could not read the page: DNS, connection, timeout, redirects, an HTTP error or a response that is not HTML. `details.reason` says which. |

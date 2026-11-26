@@ -1,0 +1,23 @@
+[
+    {
+        "name": "apiKey",
+        "type": "password",
+        "label": "API key",
+        "required": true,
+        "help": "An API key from your Link To Card dashboard (API keys). It starts with ltc_. Create one key for Make, so that you can revoke it without touching your other keys.",
+        "validate": {
+            "pattern": "^ltc_"
+        }
+    },
+    {
+        "name": "apiUrl",
+        "type": "url",
+        "label": "API address",
+        "advanced": true,
+        "default": "https://linktocard.com",
+        "help": "Leave it as it is: https://linktocard.com. Only for testing this app against a Link To Card test server.",
+        "validate": {
+            "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+        }
+    }
+]

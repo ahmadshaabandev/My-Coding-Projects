@@ -28,7 +28,29 @@ tags:
       Rendered by Cloudflare Browser Run with JavaScript off and no network access. Card
       images are still rendered without a browser. Human documentation:
       https://linktocard.com/docs/pdf
+
   # /feature:pdf
+  # feature:batch
+  - name: Bulk documents
+    description: |
+      One PDF for every row of your data (POST /v1/batches), made in the background through a queue
+      and counted like POST /v1/pdf, with a zip download and optional certificate verification
+      records (GET /v/{id}). Human documentation: https://linktocard.com/docs/bulk
+  # /feature:batch
+  # feature:toolkit
+  - name: PDF toolkit
+    description: |
+      Operations on existing PDFs without a browser: merge, split, stamp, fill, fields, from-images
+      and protect. The body is JSON, or multipart/form-data with the files as uploads. Every
+      request that succeeds counts (results are not served again from storage); fields counts
+      nothing. Human documentation: https://linktocard.com/docs/pdf-tools
+  # /feature:toolkit
+  # feature:linkcards
+  - name: Link cards
+    description: |
+      Cards made from a page's own metadata: POST /v1/cards/from-url and signed /v1/link/... URLs.
+      Human documentation: https://linktocard.com/docs/link-cards
+  # /feature:linkcards
 paths:
   /v1/images:
     post:
@@ -675,6 +697,888 @@ paths:
         "503":
           $ref: "#/components/responses/PdfNotConfigured"
   # /feature:pdf
+  # feature:batch
+  /v1/batches:
+    post:
+      tags: [Bulk documents]
+      operationId: createBatch
+      summary: Start a batch, one PDF per row.
+      description: |
+        Checks the whole request, then accepts it (202) and makes one PDF per row in the background.
+        Each row is rendered and counted exactly like a POST /v1/pdf request with that row as data.
+
+        Before a batch is accepted, the monthly allowance and top-ups together must have at least
+        2 images for every row (the least a PDF counts), and the account may have at most 2
+        batches queued or running. Rows per batch by plan: Free 25, Starter 500, Pro 2000. More
+        rows than the plan takes answer 403 plan_required while a higher plan takes that many, and
+        400 above every plan. An unknown template answers 404, like POST /v1/pdf.
+
+        Without "filename", the documents are named "<template>-{{n}}.pdf" after a starter
+        template (certificate-1.pdf, certificate-2.pdf, ...) and "document-{{n}}.pdf" after one of
+        your own templates. Names are unique within a batch, ignoring case: a repeated name gets
+        " (2)", " (3)" and so on.
+
+        A document whose render fails because the renderer was busy or failed is tried again, at most
+        3 times in all. When the images run out during the batch, the remaining rows fail with
+        quota_exceeded and the batch ends as "partial".
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchRequest"
+            examples:
+              certificates:
+                summary: Certificates with verification records
+                value:
+                  template: certificate
+                  rows:
+                    - title: Certificate of Completion
+                      recipient_name: Amara Nwosu
+                      achievement: for completing the Advanced TypeScript workshop.
+                      issuer_name: Lanternworks Training
+                      date: November 25, 2026
+                  filename: "certificate-{{recipient_name}}.pdf"
+                  verify: true
+      responses:
+        "202":
+          description: Accepted. The batch without rows, every row "queued"; zip_parts is empty.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Batch"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/BatchQuotaExceeded"
+        "403":
+          $ref: "#/components/responses/BatchForbidden"
+        "404":
+          $ref: "#/components/responses/BatchTemplateNotFound"
+        "409":
+          $ref: "#/components/responses/BatchConflict"
+        "413":
+          $ref: "#/components/responses/BatchPayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/BatchNotConfigured"
+    get:
+      tags: [Bulk documents]
+      operationId: listBatches
+      summary: The account's batches, newest first.
+      description: |
+        One page of batches, each as POST /v1/batches answers it but without zip_parts. When more
+        follow, next_before is the id to send as "before" for the next page; on the last page it is
+        null. A batch is listed until it has finished and the storage time of its last PDF has
+        ended; the daily clean-up then deletes it (its certificate records stay).
+      security:
+        - apiKey: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Batches per page, from 1 to 100 (default 20).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: before
+          in: query
+          required: false
+          description: The next_before of the previous page, the id of one of your batches.
+          schema:
+            type: string
+            pattern: "^bat_[a-z0-9]+$"
+      responses:
+        "200":
+          description: One page of batches.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/BatchNotConfigured"
+  /v1/batches/{batch_id}:
+    get:
+      tags: [Bulk documents]
+      operationId: getBatch
+      summary: A batch's progress and its documents.
+      security:
+        - apiKey: []
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          description: The batch id that POST /v1/batches answered with.
+          schema:
+            type: string
+            pattern: "^bat_[A-Za-z0-9]+$"
+          example: bat_m4q8x2k7v1c9d3e6
+      responses:
+        "200":
+          description: The batch, with one entry per row and its ZIP parts.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Batch"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/BatchNotConfigured"
+  /v1/batches/{batch_id}/zip:
+    get:
+      tags: [Bulk documents]
+      operationId: getBatchZip
+      summary: One part of the documents made so far, as a ZIP.
+      description: |
+        The documents that are made and still stored are packed into parts in row order, each part
+        at most 500 files and 2 GB; the batch's zip_parts lists them, with the exact size of each.
+        This streams one part: each PDF under its row's file name (unique across all parts), stored,
+        not compressed again, with data descriptors. While a batch runs, or as its PDFs expire, the
+        parts can change: read zip_parts again before downloading. A batch with no stored document
+        has no part.
+      security:
+        - apiKey: []
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          description: The batch id that POST /v1/batches answered with.
+          schema:
+            type: string
+            pattern: "^bat_[A-Za-z0-9]+$"
+          example: bat_m4q8x2k7v1c9d3e6
+        - name: part
+          in: query
+          required: false
+          description: The part, from 1, as zip_parts lists it. Without it, part 1.
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+      responses:
+        "200":
+          description: The ZIP of that part.
+          headers:
+            Content-Disposition:
+              description: attachment; filename="<batch id>.zip", or "<batch id>-part-<n>-of-<parts>.zip" when there are several parts.
+              schema:
+                type: string
+            Content-Length:
+              description: The exact size, the bytes of the part in zip_parts.
+              schema:
+                type: integer
+            X-LTC-Zip-Part:
+              description: The part sent.
+              schema:
+                type: integer
+            X-LTC-Zip-Parts:
+              description: How many parts the batch has now.
+              schema:
+                type: integer
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/BatchZipNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/BatchNotConfigured"
+  /v1/batches/{batch_id}/cancel:
+    post:
+      tags: [Bulk documents]
+      operationId: cancelBatch
+      summary: Cancel the rows that have not started.
+      description: Rows still queued are cancelled and count nothing. A document being made at that moment is finished, counted and kept, like the documents already made. Cancelling a finished batch changes nothing.
+      security:
+        - apiKey: []
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          description: The batch id that POST /v1/batches answered with.
+          schema:
+            type: string
+            pattern: "^bat_[A-Za-z0-9]+$"
+          example: bat_m4q8x2k7v1c9d3e6
+      responses:
+        "200":
+          description: The batch after cancelling, with its rows and ZIP parts.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Batch"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/BatchNotConfigured"
+  /v1/certificates/{certificate_id}/revoke:
+    post:
+      tags: [Bulk documents]
+      operationId: revokeCertificate
+      summary: Revoke one of the account's certificates.
+      description: |
+        From then on the verification page shows the certificate as revoked. Revoking again changes
+        nothing, and a revocation cannot be undone. A revoked record is kept for 90 days after the
+        revocation, then deleted. An id of another account answers 404, like an unknown one.
+      security:
+        - apiKey: []
+      parameters:
+        - name: certificate_id
+          in: path
+          required: true
+          description: '"crt_" and 20 characters of lower-case base32 (Crockford: no i, l, o or u). Upper case, and i or l for 1 and o for 0, are read too.'
+          schema:
+            type: string
+          example: crt_8w3k5q0m2r7t9v4x6z1b
+      responses:
+        "200":
+          description: The record, with status "revoked".
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Certificate"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/BatchNotConfigured"
+  /v/{certificate_id}:
+    get:
+      tags: [Bulk documents]
+      operationId: getCertificatePage
+      summary: The public verification page of a certificate.
+      description: |
+        Public HTML page: Valid or Revoked, the facts as the issuer entered them, the issuing account
+        as the domain of its sign-in email address ("an account with a personal email address" for
+        public email providers), and a fixed disclaimer. Never cached; noindex.
+      security: []
+      parameters:
+        - name: certificate_id
+          in: path
+          required: true
+          description: '"crt_" and 20 characters of lower-case base32 (Crockford: no i, l, o or u). Upper case, and i or l for 1 and o for 0, are read too.'
+          schema:
+            type: string
+          example: crt_8w3k5q0m2r7t9v4x6z1b
+      responses:
+        "200":
+          $ref: "#/components/responses/CertificatePage"
+        "404":
+          description: No record to show (unknown id, revoked more than 90 days ago, or the account is suspended or being deleted). An HTML page.
+          content:
+            text/html:
+              schema:
+                type: string
+        "503":
+          description: Verification is switched off on this deployment. An HTML page.
+          content:
+            text/html:
+              schema:
+                type: string
+  /v/{certificate_id}.json:
+    get:
+      tags: [Bulk documents]
+      operationId: getCertificate
+      summary: The same record as JSON.
+      description: Public, never cached, readable from any website (Access-Control-Allow-Origin is *).
+      security: []
+      parameters:
+        - name: certificate_id
+          in: path
+          required: true
+          description: '"crt_" and 20 characters of lower-case base32 (Crockford: no i, l, o or u). Upper case, and i or l for 1 and o for 0, are read too.'
+          schema:
+            type: string
+          example: crt_8w3k5q0m2r7t9v4x6z1b
+      responses:
+        "200":
+          description: The record.
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                enum: ["*"]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Certificate"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/BatchNotConfigured"
+  # /feature:batch
+  # feature:toolkit
+  /v1/pdf-tools/merge:
+    post:
+      tags: [PDF toolkit]
+      operationId: mergePdfs
+      summary: Several PDFs, or chosen pages of each, into one.
+      description: |
+        Files are joined in the order given; "pages" on a file takes those pages in the order
+        written. Bookmarks, attachments, metadata and the form's field list are not carried over.
+        The result counts 1 image for each started block of 10 pages, at least 1.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergeRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ToolkitMultipart"
+      responses:
+        "200":
+          $ref: "#/components/responses/ToolkitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/ToolkitNotFound"
+        "413":
+          $ref: "#/components/responses/ToolkitPayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/ToolkitUnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ToolkitFetchFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ToolkitNotConfigured"
+  /v1/pdf-tools/split:
+    post:
+      tags: [PDF toolkit]
+      operationId: splitPdf
+      summary: One PDF into several.
+      description: |
+        "ranges" makes one file per range (ranges may overlap); "every" a new file every n pages.
+        At most 20 files, and at most 500 pages in all of them together. Each file counts on its own
+        pages; credits_used is the sum. Always answers JSON.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SplitRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ToolkitMultipart"
+      responses:
+        "200":
+          description: The files made.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolkitSplitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/ToolkitNotFound"
+        "413":
+          $ref: "#/components/responses/ToolkitPayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/ToolkitUnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ToolkitFetchFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ToolkitNotConfigured"
+  /v1/pdf-tools/stamp:
+    post:
+      tags: [PDF toolkit]
+      operationId: stampPdf
+      summary: A text or image watermark on chosen pages.
+      description: |
+        Send "text" or "image", not both. Text uses the standard PDF fonts (Latin characters only,
+        Windows-1252), one line of at most 2000 characters.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/StampTextRequest"
+                - $ref: "#/components/schemas/StampImageRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ToolkitMultipart"
+      responses:
+        "200":
+          $ref: "#/components/responses/ToolkitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/ToolkitNotFound"
+        "413":
+          $ref: "#/components/responses/ToolkitPayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/ToolkitUnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ToolkitFetchFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ToolkitNotConfigured"
+  /v1/pdf-tools/fill:
+    post:
+      tags: [PDF toolkit]
+      operationId: fillPdfForm
+      summary: Fill a PDF form's fields by name.
+      description: |
+        Every name and value is checked before anything changes; one wrong entry fails the whole
+        request and names it (details.valid_fields lists the form's names). "flatten" turns the form
+        into ordinary page content. XFA forms are refused.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FillRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ToolkitMultipart"
+      responses:
+        "200":
+          $ref: "#/components/responses/ToolkitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/ToolkitNotFound"
+        "413":
+          $ref: "#/components/responses/ToolkitPayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/ToolkitUnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ToolkitFetchFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ToolkitNotConfigured"
+  /v1/pdf-tools/fields:
+    post:
+      tags: [PDF toolkit]
+      operationId: listPdfFormFields
+      summary: List a PDF form's fields.
+      description: Writes no file and counts nothing (credits_used is 0). Always answers JSON.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FieldsRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ToolkitMultipart"
+      responses:
+        "200":
+          description: The form's fields.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PdfFormFields"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/ToolkitNotFound"
+        "413":
+          $ref: "#/components/responses/ToolkitPayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/ToolkitUnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ToolkitFetchFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ToolkitNotConfigured"
+  /v1/pdf-tools/from-images:
+    post:
+      tags: [PDF toolkit]
+      operationId: imagesToPdf
+      summary: PNG and JPEG images to a PDF, one image per page.
+      description: JPEG photos are drawn upright, following their EXIF orientation. "pdf_id" is not accepted here.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FromImagesRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ToolkitMultipart"
+      responses:
+        "200":
+          $ref: "#/components/responses/ToolkitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "413":
+          $ref: "#/components/responses/ToolkitPayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/ToolkitUnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ToolkitFetchFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ToolkitNotConfigured"
+  /v1/pdf-tools/protect:
+    post:
+      tags: [PDF toolkit]
+      operationId: protectPdf
+      summary: Password protection with AES-256.
+      description: |
+        user_password is needed to open the file. Restricted permissions need an owner_password that
+        differs from user_password. Permissions are honoured by PDF readers, not enforced by the
+        encryption. Passwords are 1 to 127 printable ASCII characters.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProtectRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ToolkitMultipart"
+      responses:
+        "200":
+          $ref: "#/components/responses/ToolkitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "404":
+          $ref: "#/components/responses/ToolkitNotFound"
+        "413":
+          $ref: "#/components/responses/ToolkitPayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/ToolkitUnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ToolkitFetchFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ToolkitNotConfigured"
+  # /feature:toolkit
+  # feature:linkcards
+  /v1/cards/from-url:
+    post:
+      tags: [Link cards]
+      operationId: createCardFromUrl
+      summary: A card made from a page's own metadata.
+      description: |
+        Reads the page with the OG checker's rules (https only, 5 seconds, 2 MB, at most 3
+        redirects; a result is reused for 10 minutes), puts its title, description, site name, icon
+        and theme colour into the template's fields, and renders the card like POST /v1/images: 1
+        image for a new card, nothing for a stored one. An uncached page read counts against the API
+        key's daily page checks (the GET /v1/inspect allowance, UTC day): Free 100, Starter 1000,
+        Pro 5000. "data" wins over the page's values.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardFromUrlRequest"
+            examples:
+              blog:
+                summary: The blog template with a fixed tag
+                value:
+                  url: https://example.com/blog/launch-week
+                  template: blog
+                  data:
+                    tag: Launch week
+      responses:
+        "200":
+          description: JSON by default; the image bytes with "response" "binary" (headers as for POST /v1/images).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkCard"
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/LinkForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/LinkUnprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/LinkCardsNotConfigured"
+        "504":
+          $ref: "#/components/responses/RenderTimeout"
+  /v1/link/{site_id}/{template}.{ext}:
+    get:
+      tags: [Link cards]
+      operationId: getSignedLinkCard
+      summary: A signed link card URL, for og:image.
+      description: |
+        Public. Signed exactly like a card URL, over the path (e.g. /v1/link/s_4k2j9x0q1m7c8d5e/blog.png),
+        the sorted parameter names joined with ",", and one "name=value" line per parameter with
+        decoded values, joined with "\n". "url" (the page) is required and signed like every other
+        parameter; "size" chooses the size; "open" is refused; every other parameter is template
+        data that wins over the page's values. The page address, like any value, is at most 1000
+        characters, and path and query together at most 4096 characters.
+
+        The first request reads the page and makes the card (1 image). Later requests are served from
+        storage until the card is due for a refresh; then the page is read again, and a new card is
+        made and counted only when the page has changed. When the page cannot be read at a refresh,
+        the last card is served with X-LTC-Cache "stale". Page reads behind one site's links count
+        against a daily allowance per site, by plan: Free 100, Starter 1000, Pro 5000. HEAD never
+        reads the page, never renders and never counts.
+      security: []
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          description: Site id from the dashboard.
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9_-]{1,64}$"
+          example: s_4k2j9x0q1m7c8d5e
+        - name: template
+          in: path
+          required: true
+          description: A starter template id (blog, dark, quote, launch, docs) or the id of a template owned by the site's account.
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9_-]{1,64}$"
+          example: blog
+        - name: ext
+          in: path
+          required: true
+          description: File extension; chooses the output format. jpg and jpeg both give JPEG.
+          schema:
+            type: string
+            enum: [png, jpg, jpeg, webp]
+        - name: url
+          in: query
+          required: true
+          description: The page, a public https:// URL. Signed like every other parameter.
+          schema:
+            type: string
+            format: uri
+            maxLength: 1000
+          example: https://example.com/blog/launch-week
+        - name: sig
+          in: query
+          required: true
+          description: The signature, 64 hexadecimal characters.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: size
+          in: query
+          required: false
+          description: Output size. Signed like any other parameter.
+          schema:
+            $ref: "#/components/schemas/Size"
+        - name: data
+          in: query
+          required: false
+          description: Template data that wins over the page's values, one query parameter per key (for example tag=Launch+week).
+          style: form
+          explode: true
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+              maxLength: 1000
+        - name: If-None-Match
+          in: header
+          required: false
+          description: An ETag from an earlier response; a match answers 304.
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/LinkImageFile"
+        "304":
+          description: Not modified (If-None-Match matched).
+        "400":
+          description: invalid_request (the page address is not a public https:// URL on the default port) or unsupported_size.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          description: |
+            invalid_signature (details.reason is one of missing_sig, malformed_sig, bad_param_name,
+            duplicate_param, bad_value, too_many_params, url_too_long, signature_mismatch, missing_url,
+            open_not_supported), forbidden (the page is not on the public internet) or
+            account_suspended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/LinkUnprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/LinkCardsNotConfigured"
+        "504":
+          $ref: "#/components/responses/RenderTimeout"
+  # /feature:linkcards
 components:
   securitySchemes:
     apiKey:
@@ -702,8 +1606,8 @@ components:
   schemas:
     Size:
       type: string
-      description: og is 1200x630, square is 1080x1080, portrait is 1080x1350.
-      enum: [og, square, portrait]
+      description: og is 1200x630, square is 1080x1080, portrait is 1080x1350, email is 1200x400.
+      enum: [og, square, portrait, email]
       default: og
     Format:
       type: string
@@ -740,7 +1644,7 @@ components:
           $ref: "#/components/schemas/Size"
         width:
           type: integer
-          description: Instead of "size", together with "height". Must equal one of the three sizes.
+          description: Instead of "size", together with "height". Must equal one of the four sizes.
           enum: [1200, 1080]
         height:
           type: integer
@@ -1130,6 +2034,749 @@ components:
         usage:
           $ref: "#/components/schemas/Usage"
     # /feature:pdf
+    # feature:batch
+    BatchRequest:
+      type: object
+      description: Unknown fields are refused.
+      additionalProperties: false
+      required: [template, rows]
+      properties:
+        template:
+          type: string
+          description: A PDF starter template (invoice, receipt, quote, certificate, report) or the id of one of your own templates (t_...).
+        rows:
+          type: array
+          description: One data object per document, with the rules of PdfData. At most Free 25, Starter 500, Pro 2000 rows.
+          minItems: 1
+          maxItems: 2000
+          items:
+            $ref: "#/components/schemas/PdfData"
+        pdf:
+          type: object
+          description: Page setup for every document. Default the template's own.
+          additionalProperties: false
+          properties:
+            format:
+              $ref: "#/components/schemas/PdfFormat"
+            landscape:
+              type: boolean
+        filename:
+          type: string
+          description: 'File name pattern; {{key}} is the row''s value, {{n}} the row''s number from 1. Cleaned like the filename of POST /v1/pdf. Default "<template>-{{n}}.pdf" for a starter template (certificate-1.pdf), "document-{{n}}.pdf" for one of your own.'
+          example: "certificate-{{recipient_name}}.pdf"
+        verify:
+          type: boolean
+          description: Make a verification record per document; each row gains certificate_id, verify_url and verify_qr after its data was checked (so the data value limits do not apply to them), and may not bring its own. Default true for the certificate template, false for the others.
+    BatchStatus:
+      type: string
+      description: queued and running change; done, partial (some failed), failed (none made) and cancelled are final.
+      enum: [queued, running, done, partial, failed, cancelled]
+    BatchRowStatus:
+      type: string
+      enum: [queued, running, done, failed, cancelled]
+    BatchCounts:
+      type: object
+      description: Rows per status.
+      required: [queued, running, done, failed, cancelled]
+      properties:
+        queued:
+          type: integer
+        running:
+          type: integer
+        done:
+          type: integer
+        failed:
+          type: integer
+        cancelled:
+          type: integer
+    BatchRow:
+      type: object
+      required: [index, status, filename, pages, credits_used, url, error, certificate_id, verify_url]
+      properties:
+        index:
+          type: integer
+          description: Position in "rows", from 0.
+        status:
+          $ref: "#/components/schemas/BatchRowStatus"
+        filename:
+          type: string
+          description: The document's file name, unique within the batch.
+        pages:
+          type: [integer, "null"]
+        credits_used:
+          type: [integer, "null"]
+          description: Images this document counted (0 when it was already stored); null while it is not made, and for a document that failed. The rare exception is a document that was made and counted but could not be recorded in the batch (internal_error, whose message says so); it shows what it counted, also while it waits to be recorded again.
+        url:
+          type: [string, "null"]
+          format: uri
+          description: The stored PDF, public until the plan's cache period ends; null before and after.
+        error:
+          description: Why the document failed (an error code and message as in Error), why its last attempt failed while it is queued again, or null.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [code, message]
+              properties:
+                code:
+                  $ref: "#/components/schemas/ErrorCode"
+                message:
+                  type: string
+        certificate_id:
+          type: [string, "null"]
+          description: Null unless the document is done (a record is written only when its document is made).
+        verify_url:
+          type: [string, "null"]
+          format: uri
+    BatchZipPart:
+      type: object
+      required: [part, entries, bytes, url]
+      properties:
+        part:
+          type: integer
+          description: From 1.
+        entries:
+          type: integer
+          description: PDFs in this part, at most 500.
+        bytes:
+          type: integer
+          description: The exact size of the download, at most 2 GB.
+        url:
+          type: string
+          format: uri
+          description: GET /v1/batches/{batch_id}/zip?part=N.
+    Batch:
+      type: object
+      required: [id, status, template, verify, total, counts, pages, credits_used, created_at, started_at, finished_at, cancelled_at, zip_url]
+      properties:
+        id:
+          type: string
+          example: bat_m4q8x2k7v1c9d3e6
+        status:
+          $ref: "#/components/schemas/BatchStatus"
+        template:
+          type: string
+        verify:
+          type: boolean
+        total:
+          type: integer
+        counts:
+          $ref: "#/components/schemas/BatchCounts"
+        pages:
+          type: integer
+          description: Pages of every document made so far.
+        credits_used:
+          type: integer
+          description: Images the documents made so far used together.
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the first document started.
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        cancelled_at:
+          type: [string, "null"]
+          format: date-time
+        zip_url:
+          type: string
+          format: uri
+          description: GET /v1/batches/{batch_id}/zip, part 1. It answers 404 while the batch has no stored document.
+        rows:
+          type: array
+          description: One entry per row, in the order of the request. Present in GET /v1/batches/{batch_id} and after cancelling.
+          items:
+            $ref: "#/components/schemas/BatchRow"
+        zip_parts:
+          type: array
+          description: The ZIP downloads, in row order. Present in every answer about one batch (empty until a document is made), not in the listing.
+          items:
+            $ref: "#/components/schemas/BatchZipPart"
+    BatchList:
+      type: object
+      required: [batches, next_before]
+      properties:
+        batches:
+          type: array
+          items:
+            $ref: "#/components/schemas/Batch"
+        next_before:
+          type: [string, "null"]
+          description: The "before" of the next page; null on the last page.
+    Certificate:
+      type: object
+      required: [id, status, verify_url, recipient_name, title, achievement, issuer_name, date, issued_at, revoked_at, issued_by, disclaimer]
+      properties:
+        id:
+          type: string
+          example: crt_8w3k5q0m2r7t9v4x6z1b
+        status:
+          type: string
+          enum: [valid, revoked]
+        verify_url:
+          type: string
+          format: uri
+        recipient_name:
+          type: [string, "null"]
+          description: As the issuer entered it in the row.
+        title:
+          type: [string, "null"]
+        achievement:
+          type: [string, "null"]
+        issuer_name:
+          type: [string, "null"]
+          description: As the issuer entered it; not checked by anyone.
+        date:
+          type: [string, "null"]
+          description: The row's "date", as written on the document.
+        issued_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+        issued_by:
+          type: object
+          required: [kind, email_domain, statement]
+          properties:
+            kind:
+              type: string
+              description: domain (an organisation's own email domain), personal (a public email provider) or unknown.
+              enum: [domain, personal, unknown]
+            email_domain:
+              type: [string, "null"]
+              description: The domain of the issuing account's sign-in email, in ASCII (punycode) form; null unless kind is domain.
+            statement:
+              type: string
+        disclaimer:
+          type: string
+          description: Link To Card confirms that this record was created by that account. It does not verify the issuer's identity, accreditation or the facts stated.
+    # /feature:batch
+    # feature:toolkit
+    ToolkitFile:
+      type: object
+      description: 'Exactly one of url (a public http or https address, fetched like card images), base64 (a data: prefix is allowed) or pdf_id (the id of a PDF stored on your account).'
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+        base64:
+          type: string
+        pdf_id:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+      oneOf:
+        - required: [url]
+        - required: [base64]
+        - required: [pdf_id]
+    ToolkitImageFile:
+      type: object
+      description: A PNG or JPEG image, at most 10 MB (a PNG at most 4 megapixels). Exactly one of url and base64.
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+        base64:
+          type: string
+      oneOf:
+        - required: [url]
+        - required: [base64]
+    MergeFile:
+      type: object
+      description: A file as in ToolkitFile, with the pages to take from it (default every page, in order).
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+        base64:
+          type: string
+        pdf_id:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        pages:
+          $ref: "#/components/schemas/PageRanges"
+      oneOf:
+        - required: [url]
+        - required: [base64]
+        - required: [pdf_id]
+    PageRanges:
+      type: string
+      description: 'Pages from 1: "5", "1-3", "8-" (to the last page), comma separated, or "all". A page the document does not have is an error.'
+      example: "1-3,5,8-"
+    ToolkitResponse:
+      type: string
+      description: url (default) answers JSON with the stored result; binary answers the PDF.
+      enum: [url, binary]
+      default: url
+    ToolkitFilename:
+      type: string
+      description: Download name, cleaned like the filename of POST /v1/pdf. Default "<operation>.pdf".
+    MergeRequest:
+      type: object
+      description: 'All files together at most 20 MB and the result at most 500 pages. Unknown fields are refused.'
+      additionalProperties: false
+      required: [files]
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/MergeFile"
+        filename:
+          $ref: "#/components/schemas/ToolkitFilename"
+        response:
+          $ref: "#/components/schemas/ToolkitResponse"
+    SplitRequest:
+      type: object
+      description: Exactly one of ranges and every. Unknown fields are refused.
+      additionalProperties: false
+      required: [files]
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/ToolkitFile"
+        ranges:
+          $ref: "#/components/schemas/PageRanges"
+        every:
+          type: integer
+          minimum: 1
+          description: A new file every this many pages.
+        filename:
+          $ref: "#/components/schemas/ToolkitFilename"
+      oneOf:
+        - required: [ranges]
+        - required: [every]
+    StampLayout:
+      type: object
+      properties:
+        opacity:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.35
+        rotation:
+          type: number
+          description: Degrees, counter-clockwise.
+          minimum: -360
+          maximum: 360
+          default: 0
+        position:
+          type: string
+          enum: [center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right]
+          default: center
+        margin:
+          type: number
+          description: Points (1/72 inch) from the page edges.
+          minimum: 0
+          default: 36
+        pages:
+          $ref: "#/components/schemas/PageRanges"
+    StampTextRequest:
+      type: object
+      description: Unknown fields are refused.
+      unevaluatedProperties: false
+      required: [files, text]
+      allOf:
+        - $ref: "#/components/schemas/StampLayout"
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/ToolkitFile"
+        text:
+          type: string
+          description: One line, at most 2000 characters, Latin characters only (Windows-1252).
+          maxLength: 2000
+        font:
+          type: string
+          enum: [helvetica, helvetica-bold, times, times-bold, courier, courier-bold]
+          default: helvetica-bold
+        font_size:
+          type: number
+          description: Points.
+          exclusiveMinimum: 0
+          default: 48
+        color:
+          type: string
+          pattern: "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
+          default: "#6b7280"
+        filename:
+          $ref: "#/components/schemas/ToolkitFilename"
+        response:
+          $ref: "#/components/schemas/ToolkitResponse"
+    StampImageRequest:
+      type: object
+      description: Unknown fields are refused.
+      unevaluatedProperties: false
+      required: [files, image]
+      allOf:
+        - $ref: "#/components/schemas/StampLayout"
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/ToolkitFile"
+        image:
+          $ref: "#/components/schemas/ToolkitImageFile"
+        width:
+          type: number
+          description: Points; the height follows the image. Default the image at one point per pixel, made smaller to fit inside the margins.
+          exclusiveMinimum: 0
+        filename:
+          $ref: "#/components/schemas/ToolkitFilename"
+        response:
+          $ref: "#/components/schemas/ToolkitResponse"
+    FillRequest:
+      type: object
+      description: Unknown fields are refused.
+      additionalProperties: false
+      required: [files, values]
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/ToolkitFile"
+        values:
+          type: object
+          description: |
+            Field full names and values: text for text fields (null empties), true or false for
+            checkboxes ("true", "false", "yes", "no", "on", "off" too), one option for radio groups
+            and dropdowns, a list of options for multi-select fields. Text values at most 2000
+            characters and within the field's own maximum length.
+          additionalProperties:
+            type: [string, boolean, array, "null"]
+            items:
+              type: string
+        flatten:
+          type: boolean
+          default: false
+          description: Turn the form into ordinary page content that can no longer be edited.
+        filename:
+          $ref: "#/components/schemas/ToolkitFilename"
+        response:
+          $ref: "#/components/schemas/ToolkitResponse"
+    FieldsRequest:
+      type: object
+      description: Unknown fields are refused.
+      additionalProperties: false
+      required: [files]
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/ToolkitFile"
+    FromImagesRequest:
+      type: object
+      description: All images together at most 20 MB. Unknown fields are refused.
+      additionalProperties: false
+      required: [files]
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/ToolkitImageFile"
+        page_size:
+          type: string
+          description: A paper size, or auto (the page is the image, one point per pixel).
+          enum: [a4, letter, a5, auto]
+          default: a4
+        fit:
+          type: string
+          description: fit shows the whole image inside the margins; fill covers the page and crops the image.
+          enum: [fit, fill]
+          default: fit
+        orientation:
+          type: string
+          enum: [auto, portrait, landscape]
+          default: auto
+        margin:
+          type: number
+          description: Points around a "fit" image.
+          minimum: 0
+          default: 0
+        filename:
+          $ref: "#/components/schemas/ToolkitFilename"
+        response:
+          $ref: "#/components/schemas/ToolkitResponse"
+    ProtectRequest:
+      type: object
+      description: Set user_password, or restrict a permission (which needs owner_password), or both. Unknown fields are refused.
+      additionalProperties: false
+      required: [files]
+      properties:
+        files:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/ToolkitFile"
+        user_password:
+          type: string
+          pattern: "^[\\x20-\\x7e]{1,127}$"
+        owner_password:
+          type: string
+          pattern: "^[\\x20-\\x7e]{1,127}$"
+        permissions:
+          type: object
+          additionalProperties: false
+          properties:
+            printing:
+              type: string
+              enum: [high, low, none]
+              default: high
+            modifying:
+              type: boolean
+              default: true
+            copying:
+              type: boolean
+              default: true
+            annotating:
+              type: boolean
+              default: true
+            filling_forms:
+              type: boolean
+              default: true
+            content_accessibility:
+              type: boolean
+              default: true
+            document_assembly:
+              type: boolean
+              default: true
+        filename:
+          $ref: "#/components/schemas/ToolkitFilename"
+        response:
+          $ref: "#/components/schemas/ToolkitResponse"
+    ToolkitMultipart:
+      type: object
+      description: |
+        The same request with the files as uploads: one "files" part per input file, in order, an
+        "image" part for a stamp image, and one "options" text part holding the operation's other
+        fields as a JSON object (without uploads it may hold "files" as url or pdf_id entries;
+        pages per merge file need those). The limits of a JSON body apply. Any other part name is
+        refused.
+      properties:
+        files:
+          type: array
+          items:
+            type: string
+            format: binary
+        image:
+          type: string
+          format: binary
+        options:
+          type: string
+          description: 'A JSON object, for example {"ranges": "1-3"}.'
+    ToolkitPdf:
+      type: object
+      description: One result. It counts 1 image for each started block of 10 pages, at least 1.
+      required: [op, id, url, pages, bytes, credits_used, filename, created_at, expires_at, usage]
+      properties:
+        op:
+          type: string
+          enum: [merge, stamp, fill, from-images, protect]
+        id:
+          type: string
+          description: 64 hexadecimal characters; usable as pdf_id in a later toolkit request while the result is stored.
+        url:
+          type: string
+          format: uri
+          description: Public URL of the stored result. Works until expires_at.
+        pages:
+          type: integer
+        bytes:
+          type: integer
+        credits_used:
+          type: integer
+        filename:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        usage:
+          $ref: "#/components/schemas/Usage"
+    ToolkitSplitResult:
+      type: object
+      required: [op, files, pages, credits_used, created_at, expires_at, usage]
+      properties:
+        op:
+          type: string
+          enum: [split]
+        files:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            required: [range, id, url, pages, bytes, credits_used, filename]
+            properties:
+              range:
+                type: string
+                description: The pages of the input this file holds, e.g. "1-4".
+              id:
+                type: string
+              url:
+                type: string
+                format: uri
+              pages:
+                type: integer
+              bytes:
+                type: integer
+              credits_used:
+                type: integer
+              filename:
+                type: string
+        pages:
+          type: integer
+        credits_used:
+          type: integer
+          description: The sum of the files' credits_used.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Every file is stored until then.
+        usage:
+          $ref: "#/components/schemas/Usage"
+    PdfFormField:
+      type: object
+      required: [name, type, value, required, read_only, pages]
+      properties:
+        name:
+          type: string
+          description: The field's full name, as fill takes it.
+        type:
+          type: string
+          enum: [text, checkbox, radio, dropdown, option_list, button, signature, unknown]
+        value:
+          description: text a string, checkbox a boolean, radio and single dropdown a string or null, multi-select and option list a list.
+          type: [string, boolean, array, "null"]
+          items:
+            type: string
+        options:
+          type: array
+          items:
+            type: string
+        required:
+          type: boolean
+        read_only:
+          type: boolean
+        pages:
+          type: array
+          description: Pages, from 1, that the field appears on.
+          items:
+            type: integer
+        max_length:
+          type: integer
+        multiline:
+          type: boolean
+        multiselect:
+          type: boolean
+        editable:
+          type: boolean
+    PdfFormFields:
+      type: object
+      required: [op, fields, pages, credits_used]
+      properties:
+        op:
+          type: string
+          enum: [fields]
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/PdfFormField"
+        pages:
+          type: integer
+        credits_used:
+          type: integer
+          enum: [0]
+    # /feature:toolkit
+    # feature:linkcards
+    CardFromUrlRequest:
+      type: object
+      description: No html or css; a link card uses a starter template or one of your own. Unknown fields are refused.
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: The page, a public https:// URL of at most 2048 characters.
+          maxLength: 2048
+        template:
+          type: string
+          description: A starter template id (blog, dark, quote, launch, docs) or the id of one of your own templates (t_...). Default blog.
+          default: blog
+        data:
+          $ref: "#/components/schemas/Data"
+        size:
+          $ref: "#/components/schemas/Size"
+        width:
+          type: integer
+          description: Instead of "size", together with "height". Must equal one of the sizes.
+        height:
+          type: integer
+        format:
+          type: string
+          description: jpg is accepted for jpeg.
+          enum: [png, jpeg, jpg, webp]
+          default: png
+        response:
+          type: string
+          enum: [json, binary]
+          default: json
+    LinkCard:
+      description: The card, as POST /v1/images answers it, plus "link".
+      allOf:
+        - $ref: "#/components/schemas/Image"
+        - type: object
+          required: [link]
+          properties:
+            link:
+              type: object
+              required: [url, final_url, check_id, check_cached, data]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                final_url:
+                  type: string
+                  format: uri
+                  description: The page after redirects.
+                check_id:
+                  type: string
+                  description: The page check's id (chk_...).
+                check_cached:
+                  type: boolean
+                  description: true when a stored check was used and no page check was counted.
+                data:
+                  type: object
+                  description: The data the card was made from, the page's values with "data" on top.
+                  additionalProperties:
+                    type: string
+    # /feature:linkcards
     ErrorCode:
       type: string
       description: |
@@ -1141,10 +2788,8 @@ components:
         payload_too_large 413, unsupported_media_type 415, template_error 422,
         image_fetch_failed 422, page_fetch_failed 422, rate_limited 429,
         render_failed 500, internal_error 500, not_configured 503, render_timeout 504.
-        unauthorized, plan_required, conflict and unsupported_media_type are returned only
-        by the dashboard's own endpoints; forbidden by the dashboard and by GET /v1/inspect
-        for an address that is not on the public internet; verification_required only by
-        the free tools on the website; gone is reserved.
+        unauthorized is returned only by the dashboard's own endpoints, verification_required
+        only by the free tools on the website, and gone is reserved.
       enum:
         - invalid_request
         - unsupported_size
@@ -1414,3 +3059,180 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     # /feature:pdf
+    # feature:batch
+    BatchQuotaExceeded:
+      description: quota_exceeded. The monthly allowance and top-ups together do not have 2 images for every row. Nothing was started. details.usage is the Usage object.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BatchForbidden:
+      description: account_suspended, or plan_required (details rows, max_rows and plan) when the batch has more rows than the plan takes and a higher plan takes that many.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BatchTemplateNotFound:
+      description: not_found. The template does not exist on this account.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BatchZipNotFound:
+      description: not_found. No batch with this id on your account, or no such part (details.parts says how many there are; 0 while no document is stored).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BatchConflict:
+      description: conflict. The account already has 2 batches queued or running.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BatchPayloadTooLarge:
+      description: payload_too_large. The request body is over 4 MB.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BatchNotConfigured:
+      description: 'not_configured. Bulk documents are not enabled on this deployment ("Bulk documents are not enabled yet."), or PDF rendering is off ("PDF rendering is not enabled yet.").'
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    CertificatePage:
+      description: The verification page.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum: [no-store]
+        X-Robots-Tag:
+          schema:
+            type: string
+            enum: [noindex]
+        Content-Security-Policy:
+          description: No script, no form, no frame; styles, images and fonts from the same origin only.
+          schema:
+            type: string
+      content:
+        text/html:
+          schema:
+            type: string
+    # /feature:batch
+    # feature:toolkit
+    ToolkitResult:
+      description: JSON by default; the PDF itself when the request has "response" "binary".
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/X-Request-Id"
+        Content-Disposition:
+          description: Binary responses only. inline; filename="<the cleaned file name>".
+          schema:
+            type: string
+        X-LTC-Pages:
+          description: Binary responses only. Pages in the result.
+          schema:
+            type: integer
+        X-LTC-Credits-Used:
+          description: Binary responses only. Images this request counted.
+          schema:
+            type: integer
+        X-LTC-Pdf-Url:
+          description: Binary responses only. The public URL of the stored result.
+          schema:
+            type: string
+            format: uri
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ToolkitPdf"
+        application/pdf:
+          schema:
+            type: string
+            format: binary
+    ToolkitNotFound:
+      description: not_found. A pdf_id is not one of your stored PDFs, or its storage time has ended.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ToolkitPayloadTooLarge:
+      description: |
+        payload_too_large. The body is over 28 MB, the files together over 20 MB, an image over
+        10 MB, a PNG over 4 megapixels, a file or the result over 500 pages, or a file too complex
+        to open (details.reason too_complex). details names the limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ToolkitUnsupportedMediaType:
+      description: unsupported_media_type. A file is not a PDF (details.reason not_pdf), or an image is not a PNG or JPEG (not_image).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ToolkitFetchFailed:
+      description: image_fetch_failed. A url file could not be downloaded. details.url and details.reason say which and why.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ToolkitNotConfigured:
+      description: 'not_configured. The PDF toolkit is not enabled on this deployment ("The PDF toolkit is not enabled yet.").'
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    # /feature:toolkit
+    # feature:linkcards
+    LinkImageFile:
+      description: The card.
+      headers:
+        Cache-Control:
+          description: public, with a max-age that ends when the card is due for a refresh or leaves storage, whichever is first.
+          schema:
+            type: string
+        ETag:
+          $ref: "#/components/headers/ETag"
+        X-LTC-Cache:
+          description: miss when this request made (and counted) the card, hit when it was served from storage, stale when the page could not be read at a refresh and the last card was served.
+          schema:
+            type: string
+            enum: [hit, miss, stale]
+        X-Request-Id:
+          $ref: "#/components/headers/X-Request-Id"
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+        image/jpeg:
+          schema:
+            type: string
+            format: binary
+        image/webp:
+          schema:
+            type: string
+            format: binary
+    LinkForbidden:
+      description: forbidden (the page, or an address it redirects to, is not on the public internet) or account_suspended.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    LinkUnprocessable:
+      description: page_fetch_failed (the page could not be read; details.reason as for GET /v1/inspect), template_error or image_fetch_failed. Nothing is counted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    LinkCardsNotConfigured:
+      description: 'not_configured. Cards from links are not enabled on this deployment ("Cards from links are not enabled yet.").'
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    # /feature:linkcards

@@ -1,5 +1,6 @@
 /**
- * The PDF service behind POST /v1/pdf, signed PDF links and the free PDF tools.
+ * The PDF service behind POST /v1/pdf, signed PDF links, bulk-document rows (source 'batch',
+ * src/batch/consumer.ts) and the free PDF tools.
  *
  * Order of operations for one PDF, and why quota can be neither charged for nothing nor
  * bypassed (the same shape as images, src/lib/images.ts):
@@ -14,6 +15,7 @@
  *                  (looking read-only) and serve its PDF free; its failure remembered -> the
  *                  same answer, nothing rendered or counted
  *   5. reserve     a place under the failed-render caps (guard.ts), then the Free rate limit
+ *                  (RL_PDF_FREE; not for batch rows, see reserveAndPrint)
  *   6. prepare     sanitise and fill in the template (template_error before any download)
  *   7. assets      remote images inlined as data: URIs (image_fetch_failed)
  *   8. browser     one quickAction call; a browser_usage row records it whatever happens
@@ -109,6 +111,12 @@ export interface PdfJob {
   mark: boolean;
   /** Sanitised download name. */
   filename: string;
+  /**
+   * Values Link To Card sets itself (a verified bulk document's certificate_id, verify_url and
+   * verify_qr): added to the document after `data` is validated, outside the data limits
+   * (PdfDocumentInput.trusted). Not used by headers and footers.
+   */
+  trusted?: Readonly<Record<string, string>>;
 }
 
 export function pdfTemplateNotFound(): ApiError {
@@ -174,7 +182,8 @@ export async function pdfCacheKey(userId: string, job: PdfJob): Promise<string> 
       PDF_CACHE_KEY_VERSION,
       userId,
       job.template.identity,
-      canonicalData(job.data),
+      // Trusted values decide the bytes like data; a job without them keeps its key unchanged.
+      canonicalData(job.trusted ? { ...job.data, ...job.trusted } : job.data),
       job.setup.format,
       job.setup.landscape,
       [margin.top, margin.right, margin.bottom, margin.left],
@@ -208,14 +217,14 @@ export interface RenderedPdf {
 /** Who a browser call is recorded for in browser_usage. */
 export interface RenderAttempt {
   userId: string | null;
-  source: 'api' | 'signed' | 'tool';
+  source: 'api' | 'signed' | 'tool' | 'batch';
   /** The account's plan in force for this render (browser_usage.plan); none for the free tools. */
   plan?: UsageSummary['plan'] | null;
 }
 
 /** Steps 4 of the module comment: pure, throws template_error / invalid_request before anything is downloaded. */
 export function preparePdf(job: PdfJob): PreparedPdf {
-  const document = preparePdfDocument({ html: job.template.html, css: job.template.css, data: job.data }, { fontFaces: bundledFontFaces });
+  const document = preparePdfDocument({ html: job.template.html, css: job.template.css, data: job.data, trusted: job.trusted }, { fontFaces: bundledFontFaces });
   // Next to the free mark, the header and footer are printed as plain text (src/pdf/template.ts, src/pdf/page.ts headerFooter).
   const header = job.header === null ? null : preparePdfFragment(job.header, job.data, 'header', { mark: job.mark });
   const footer = job.footer === null ? null : preparePdfFragment(job.footer, job.data, 'footer', { mark: job.mark });
@@ -455,7 +464,7 @@ function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: Usage
 export interface PdfRequest {
   user: UserRow;
   job: PdfJob;
-  source: 'api' | 'signed';
+  source: 'api' | 'signed' | 'batch';
   siteId: string | null;
   /** RL_KEY bucket applied when the PDF is not stored and the pre-checks pass (signed links: the site id). */
   renderRateLimitKey?: string;
@@ -498,7 +507,7 @@ function untilSettled<T>(background: Background, work: Promise<T>): Promise<T> {
   return work;
 }
 
-/** The account for POST /v1/pdf; for signed links the site, and all sites of its owner together (src/pdf/guard.ts). */
+/** The account for POST /v1/pdf and batch rows; for signed links the site, and all sites of its owner together (src/pdf/guard.ts). */
 function failureScope(request: PdfRequest): FailureScope {
   return request.source === 'signed' && request.siteId !== null
     ? { kind: 'site', id: request.siteId, ownerId: request.user.id }
@@ -563,7 +572,11 @@ async function reserveAndPrint(
   let settled = false;
   try {
     reservation = await reserveFailedRender(env, failureScope(request), plan, now);
-    if (plan === 'free') await enforceRateLimit(env, 'RL_PDF_FREE', user.id);
+    // Batch rows skip RL_PDF_FREE (decision D12): a Free batch is bounded by BATCH.maxRows.free,
+    // BATCH.maxActivePerAccount, the allowance checked before it is accepted, the failed-render
+    // cap and the free brake, and the queue consumer paces rows itself and honours Retry-After
+    // when the browser is busy.
+    if (plan === 'free' && request.source !== 'batch') await enforceRateLimit(env, 'RL_PDF_FREE', user.id);
     const print = await printAttempt(env, preparePdf(job), { userId: user.id, source: request.source, plan }, now);
     if (print.error === null) return { rendered: print.rendered, reservation };
     settled = true;

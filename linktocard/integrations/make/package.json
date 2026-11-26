@@ -1,0 +1,24 @@
+{
+  "name": "linktocard-make",
+  "version": "1.0.0",
+  "description": "Make (make.com) custom app for Link To Card, as source files in the layout of Make's Apps Editor for VS Code: card images, PDF documents, cards made from a link, bulk PDFs and link preview checks.",
+  "private": true,
+  "homepage": "https://linktocard.com",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@makehq/forman-schema": "2.3.0",
+    "@types/node": "22.20.5",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

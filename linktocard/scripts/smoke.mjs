@@ -9,9 +9,15 @@
 //   npm run smoke          builds the site, uses a fresh throw-away D1/R2 directory,
 //                          starts wrangler dev on port 8799, prints one line per check,
 //                          stops the server it started and exits non-zero on the first failure.
+//
+// wrangler dev is started three times, one after another, on the same port and data directory:
+//   1. as configured (every build v3 switch "true", as in wrangler.toml's top-level [vars]);
+//   2. with APP_URL on an https origin, so a card can be made from one of the Worker's own
+//      static pages (the inspector reads its own site from the static assets, as in production);
+//   3. with the four build v3 switches "false", as in production: every new route answers 503.
 import { spawn, spawnSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,8 +54,8 @@ function check(label, condition, detail = '') {
   console.log(`ok   ${label}`)
 }
 
-function runTool(label, command, args) {
-  const result = spawnSync(command, args, { cwd: root, env: TOOL_ENV, encoding: 'utf8' })
+function runTool(label, command, args, env = {}) {
+  const result = spawnSync(command, args, { cwd: root, env: { ...TOOL_ENV, ...env }, encoding: 'utf8' })
   if (result.status !== 0) throw new Error(`${label} failed:\n${result.stdout}\n${result.stderr}`)
 }
 
@@ -62,8 +68,8 @@ async function listening() {
   }
 }
 
-async function startServer(persistDir) {
-  const vars = Object.entries(VARS).flatMap(([name, value]) => ['--var', `${name}:${value}`])
+async function startServer(persistDir, overrides = {}) {
+  const vars = Object.entries({ ...VARS, ...overrides }).flatMap(([name, value]) => ['--var', `${name}:${value}`])
   const child = spawn(process.execPath, [wranglerBin, 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--persist-to', persistDir, ...vars], {
     cwd: root,
     detached: true, // own process group, so workerd is stopped together with wrangler
@@ -121,6 +127,65 @@ async function http(method, pathOrUrl, { headers = {}, json, body } = {}) {
 }
 
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
+
+/** A blank one-page PDF, base64, for the PDF toolkit check. */
+async function onePagePdfBase64() {
+  const { PDFDocument } = await import('@cantoo/pdf-lib')
+  const doc = await PDFDocument.create()
+  doc.addPage([200, 200])
+  return Buffer.from(await doc.save({ useObjectStreams: false })).toString('base64')
+}
+
+/** A file of tests/fixtures/pdftools (the toolkit's own test fixtures), base64. */
+const fixture = (name) => readFileSync(path.join(root, 'tests/fixtures/pdftools', name)).toString('base64')
+
+/** Pages of a PDF, read with the same library the Worker uses; null when it does not load. */
+async function pdfPages(bytes) {
+  const { PDFDocument } = await import('@cantoo/pdf-lib')
+  try {
+    return (await PDFDocument.load(bytes)).getPageCount()
+  } catch {
+    return null
+  }
+}
+
+const isPdf = (b) => b.subarray(0, 5).toString('latin1') === '%PDF-'
+/** Toolkit units for an output of this many pages (src/config.ts PDF_TOOLKIT.pagesPerUnit is 10). */
+const toolkitUnits = (pages) => Math.max(1, Math.ceil(pages / 10))
+
+/** How a customer signs a link-card URL (docs/link-cards.md): HMAC-SHA256 of path, names, name=value lines. */
+function signLinkUrl(origin, siteId, siteSecret, template, params) {
+  const pathname = `/v1/link/${siteId}/${template}`
+  const entries = Object.entries(params).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const canonical = [pathname, entries.map(([name]) => name).join(','), ...entries.map(([name, value]) => `${name}=${value}`)].join('\n')
+  const sig = createHmac('sha256', siteSecret).update(canonical).digest('hex')
+  return `${origin}${pathname}?${new URLSearchParams([...entries, ['sig', sig]])}`
+}
+
+/** A fresh Free account: session cookie, API key header and one site. `origin` is sent as Origin (null: none). */
+async function newAccount(label, origin) {
+  const headers = origin ? { origin } : {}
+  const email = `smoke-${label}-${Date.now()}@example.com`
+  const link = await http('POST', '/auth/magic-link', { headers, json: { email } })
+  const devLink = link.status === 200 ? link.json().dev_link : undefined
+  if (typeof devLink !== 'string') throw new Error(`${label}: sign-in link: ${link.brief()}`)
+  const verify = await http('POST', '/auth/verify', { headers, json: { token: new URL(devLink).searchParams.get('token') } })
+  const cookie = verify.res.headers.getSetCookie().map((value) => value.split(';')[0]).find((pair) => pair.startsWith('ltc_session='))
+  if (verify.status !== 200 || !cookie) throw new Error(`${label}: sign-in: ${verify.brief()}`)
+  const session = { ...headers, cookie }
+  const createdKey = await http('POST', '/api/keys', { headers: session, json: { name: `smoke ${label}` } })
+  if (createdKey.status !== 201) throw new Error(`${label}: API key: ${createdKey.brief()}`)
+  const site = await http('POST', '/api/sites', { headers: session, json: { name: `smoke ${label}` } })
+  if (site.status !== 201) throw new Error(`${label}: site: ${site.brief()}`)
+  const auth = { authorization: `Bearer ${createdKey.json().secret}` }
+  return {
+    session,
+    auth,
+    siteId: site.json().site.id,
+    siteSecret: site.json().secret,
+    usage: async () => (await http('GET', '/v1/usage', { headers: auth })).json().used,
+  }
+}
 
 async function smoke() {
   /* ---- static site: served as assets, the Worker is not involved ---- */
@@ -216,6 +281,78 @@ async function smoke() {
 
   check('usage equals the number of unique renders', (await usage()) === uniqueRenders, `used ${await usage()}, expected ${uniqueRenders}`)
 
+  /* ---- build v3 (wrangler dev reads the top-level [vars]: every v3 kill switch is "true") ---- */
+  const emailSigned = await http('POST', '/api/sign', { headers: session, json: { site_id: site.json().site.id, template: 'email-banner', size: 'email', data: { title: 'Smoke banner', greeting: 'Hi', name_default: 'there' }, open: ['name'] } })
+  const emailUrl = emailSigned.status === 200 ? emailSigned.json().url : ''
+  check('POST /api/sign with open fields -> a URL ending in &name=', emailUrl.startsWith(`${base}/v1/og/`) && emailUrl.endsWith('&name=') && emailUrl.includes('size=email'), emailSigned.brief())
+  const emailCard = await http('GET', `${emailUrl}Maya`)
+  check('the open-field URL with a value -> 1200x400 PNG (size preset "email")', emailCard.status === 200 && isPng(emailCard.bytes) && pngSize(emailCard.bytes) === '1200x400', emailCard.brief())
+  uniqueRenders += 1
+  const certificatePage = await http('GET', '/v/crt_00000000000000000000')
+  const verifyCsp = certificatePage.res.headers.get('content-security-policy') ?? ''
+  check('GET /v/{unknown id} -> 404 HTML, noindex, with its own CSP', certificatePage.status === 404 && certificatePage.res.headers.get('content-type')?.startsWith('text/html') === true && certificatePage.res.headers.get('x-robots-tag') === 'noindex' && verifyCsp.includes("default-src 'none'"), certificatePage.brief())
+  const certificateJson = await http('GET', '/v/crt_00000000000000000000.json')
+  check('GET /v/{unknown id}.json -> JSON 404', certificateJson.status === 404 && certificateJson.json().error.code === 'not_found', certificateJson.brief())
+  const linkCard = await http('GET', `/v1/link/${site.json().site.id}/blog.png?url=${encodeURIComponent('https://example.com/')}&sig=${'0'.repeat(64)}`)
+  check('GET /v1/link/... with a wrong signature -> 403 invalid_signature (nothing fetched)', linkCard.status === 403 && linkCard.json().error.code === 'invalid_signature', linkCard.brief())
+  const notInBuild = (r, message) => r.status === 503 && r.json().error.code === 'not_configured' && r.json().error.message === message
+  const batches = await http('POST', '/v1/batches', { headers: auth, json: { template: 'certificate', rows: [{}] } })
+  // Bulk documents are on in wrangler dev, but they also need PDF rendering, which has no Browser Run binding here.
+  check('POST /v1/batches -> 503 not_configured (needs PDF rendering)', notInBuild(batches, 'PDF rendering is not enabled yet.'), batches.brief())
+  const toolkitEmpty = await http('POST', '/v1/pdf-tools/merge', { headers: auth, json: { files: [] } })
+  check('POST /v1/pdf-tools/merge without files -> 400 invalid_request (toolkit on, nothing counted)', toolkitEmpty.status === 400 && toolkitEmpty.json().error.code === 'invalid_request', toolkitEmpty.brief())
+  check('usage counts the one email image', (await usage()) === uniqueRenders, `used ${await usage()}, expected ${uniqueRenders}`)
+  // The toolkit needs no browser: pdf-lib runs in plain workerd. Binary, because GET /i/....pdf needs PDF rendering on.
+  const onePage = await onePagePdfBase64()
+  const merged = await http('POST', '/v1/pdf-tools/merge', { headers: auth, json: { files: [{ base64: onePage }, { base64: onePage }], response: 'binary' } })
+  if (merged.status === 200) uniqueRenders += 1
+  const mergedHeaders = (name) => merged.res.headers.get(name)
+  check(
+    'POST /v1/pdf-tools/merge of two one-page PDFs -> a 2-page PDF, 1 image',
+    merged.status === 200 && mergedHeaders('content-type') === 'application/pdf' && merged.bytes.subarray(0, 5).toString('latin1') === '%PDF-' && mergedHeaders('x-ltc-pages') === '2' && mergedHeaders('x-ltc-credits-used') === '1' && /\/i\/u_[^/]+\/[0-9a-f]{64}\.pdf$/.test(mergedHeaders('x-ltc-pdf-url') ?? ''),
+    merged.brief(),
+  )
+  check('usage counts the toolkit result', (await usage()) === uniqueRenders, `used ${await usage()}, expected ${uniqueRenders}`)
+
+  // The toolkit on its own test fixtures: a merge kept on the account (JSON), a text stamp on that
+  // result by pdf_id, an image stamp, and the free "fields" listing of a form.
+  const multiPage = fixture('multi-page.pdf')
+  const rotated = fixture('rotated.pdf')
+  const fixturePages = (await pdfPages(Buffer.from(multiPage, 'base64'))) + (await pdfPages(Buffer.from(rotated, 'base64')))
+  const fixtureMerge = await http('POST', '/v1/pdf-tools/merge', { headers: auth, json: { files: [{ base64: multiPage }, { base64: rotated }], filename: 'smoke-merge.pdf' } })
+  const mergeResult = fixtureMerge.status === 200 ? fixtureMerge.json() : {}
+  check(
+    `merge of multi-page.pdf and rotated.pdf (JSON) -> ${fixturePages} pages, ${toolkitUnits(fixturePages)} image(s), stored with an id`,
+    mergeResult.op === 'merge' && mergeResult.pages === fixturePages && mergeResult.credits_used === toolkitUnits(fixturePages) && /^[0-9a-f]{64}$/.test(mergeResult.id ?? '') && mergeResult.filename === 'smoke-merge.pdf',
+    fixtureMerge.brief(),
+  )
+  uniqueRenders += mergeResult.credits_used ?? 0
+  const textStamp = await http('POST', '/v1/pdf-tools/stamp', { headers: auth, json: { files: [{ pdf_id: mergeResult.id }], text: 'PAID', color: '#15803d', rotation: 30, opacity: 0.3, response: 'binary' } })
+  const textStampPages = textStamp.status === 200 ? await pdfPages(textStamp.bytes) : null
+  check(
+    `stamp "PAID" on the merged result by pdf_id (binary) -> a valid ${fixturePages}-page PDF, ${toolkitUnits(fixturePages)} image(s)`,
+    textStamp.status === 200 && isPdf(textStamp.bytes) && textStampPages === fixturePages && textStamp.res.headers.get('x-ltc-pages') === String(fixturePages) && textStamp.res.headers.get('x-ltc-credits-used') === String(toolkitUnits(fixturePages)),
+    textStamp.brief(),
+  )
+  uniqueRenders += Number(textStamp.res.headers.get('x-ltc-credits-used') ?? 0)
+  const rotatedPages = await pdfPages(Buffer.from(rotated, 'base64'))
+  const imageStamp = await http('POST', '/v1/pdf-tools/stamp', { headers: auth, json: { files: [{ base64: rotated }], image: { base64: fixture('logo.png') }, width: 48, position: 'top-right', pages: '1', response: 'binary' } })
+  check(
+    `stamp logo.png on page 1 of rotated.pdf (binary) -> a valid ${rotatedPages}-page PDF`,
+    imageStamp.status === 200 && isPdf(imageStamp.bytes) && (await pdfPages(imageStamp.bytes)) === rotatedPages && imageStamp.res.headers.get('x-ltc-credits-used') === String(toolkitUnits(rotatedPages)),
+    imageStamp.brief(),
+  )
+  uniqueRenders += Number(imageStamp.res.headers.get('x-ltc-credits-used') ?? 0)
+  const formFields = await http('POST', '/v1/pdf-tools/fields', { headers: auth, json: { files: [{ base64: fixture('form.pdf') }] } })
+  check(
+    'fields of form.pdf -> its form fields, 0 images',
+    formFields.status === 200 && formFields.json().op === 'fields' && formFields.json().credits_used === 0 && Array.isArray(formFields.json().fields) && formFields.json().fields.length > 0,
+    formFields.brief(),
+  )
+  const encrypted = await http('POST', '/v1/pdf-tools/merge', { headers: auth, json: { files: [{ base64: fixture('encrypted-user.pdf') }, { base64: multiPage }] } })
+  check('merge with an encrypted fixture -> refused (4xx), nothing counted', encrypted.status >= 400 && encrypted.status < 500 && typeof encrypted.json().error?.code === 'string', encrypted.brief())
+  check('usage counts every toolkit result by its pages', (await usage()) === uniqueRenders, `used ${await usage()}, expected ${uniqueRenders}`)
+
   /* ---- warm render timings (dashboard preview: always rendered, never stored or counted) ---- */
   const timings = []
   for (const { format, type } of FORMATS) {
@@ -264,15 +401,153 @@ async function smoke() {
   console.log(`warm render, 1200x630 "blog" card, median of 3 over HTTP: ${timings.join(', ')}`)
 }
 
+/**
+ * Run 2: APP_URL and the site's own URL (SITE_URL, so og:image and every absolute link on the
+ * pages) are an https origin on an IPv6 literal from 3ffe::/16, a block returned to IANA and
+ * assigned to no one. The page checker reads APP_URL's own pages and images from the static
+ * assets instead of the network (src/inspect/fetch.ts ownSiteFetch, the path production uses for
+ * linktocard.com), and an address literal needs no DNS lookup. The cards use a template of the
+ * account with no image field, so the renderer downloads nothing: no request leaves the machine.
+ * Requests still go to 127.0.0.1.
+ */
+const LOCAL_PAGE_ORIGIN = 'https://[3ffe::1]'
+/** Every field it prints is text, so no page image is drawn (fields a template lacks are ignored). */
+const TEXT_ONLY_TEMPLATE = {
+  name: 'smoke link card',
+  html: '<div class="card"><div class="title">{{title}}</div><div class="text">{{description}}</div><div class="text">{{site}}</div></div>',
+  css: '.card { display: flex; flex-direction: column; justify-content: center; width: 100%; height: 100%; padding: 80px; background: #0f172a; color: #f8fafc; } .title { font-size: 72px; font-weight: 700; } .text { font-size: 32px; margin-top: 24px; }',
+}
+
+/** A URL the Worker built from APP_URL, as a path on the local server. */
+const onLocalServer = (url) => {
+  const parsed = new URL(url)
+  return `${parsed.pathname}${parsed.search}`
+}
+
+/** og:title of a built page, the title the checker should read. */
+function builtTitle(page) {
+  const html = readFileSync(path.join(root, 'site/dist', `${page}.html`), 'utf8')
+  return /<meta property="og:title" content="([^"]*)">/.exec(html)?.[1]?.replace(/&amp;/g, '&') ?? null
+}
+
+async function linkCardsFromLocalPage() {
+  const account = await newAccount('link', null)
+  const created = await http('POST', '/api/templates', { headers: account.session, json: TEXT_ONLY_TEMPLATE })
+  check('POST /api/templates creates a text-only card template', created.status === 201 && /^t_/.test(created.json().template?.id ?? ''), created.brief())
+  const template = created.json().template.id
+  const page = `${LOCAL_PAGE_ORIGIN}/pricing`
+  const title = builtTitle('pricing')
+  const made = await http('POST', '/v1/cards/from-url', { headers: account.auth, json: { url: page, template } })
+  const card = made.status === 200 ? made.json() : {}
+  check(
+    `POST /v1/cards/from-url of the local /pricing page -> a 1200x630 card titled "${title}", not cached`,
+    card.width === 1200 && card.height === 630 && card.cached === false && card.link?.final_url === page && card.link?.check_cached === false && typeof title === 'string' && card.link?.data?.title === title,
+    made.brief(),
+  )
+  const image = await http('GET', onLocalServer(card.url ?? `${LOCAL_PAGE_ORIGIN}/`))
+  check('GET the link card url -> PNG 1200x630', image.status === 200 && isPng(image.bytes) && pngSize(image.bytes) === '1200x630' && image.bytes.length === card.bytes, image.brief())
+  check('the link card counts one image', (await account.usage()) === 1, `used ${await account.usage()}`)
+  const again = await http('POST', '/v1/cards/from-url', { headers: account.auth, json: { url: page, template } })
+  check('the same link card again -> cached card from the cached page check, not counted', again.status === 200 && again.json().cached === true && again.json().link.check_cached === true && (await account.usage()) === 1, again.brief())
+
+  // Starter templates: the preview leaves the page's images out on purpose, so it fetches nothing.
+  const preview = await http('GET', `/playground/from-check/${card.link?.check_id}/dark.png`)
+  check('GET /playground/from-check/{check id}/dark.png -> watermarked 1200x630 PNG from the stored check, not counted', preview.status === 200 && isPng(preview.bytes) && pngSize(preview.bytes) === '1200x630' && (await account.usage()) === 1, preview.brief())
+  const unknownCheck = await http('GET', '/playground/from-check/chk_0000000000000000/blog.png')
+  check('GET /playground/from-check/{unknown id}/blog.png -> 404', unknownCheck.status === 404 && unknownCheck.json().error.code === 'not_found', unknownCheck.brief())
+
+  const signedLink = signLinkUrl(LOCAL_PAGE_ORIGIN, account.siteId, account.siteSecret, `${template}.png`, { url: page, site: 'Smoke' })
+  const linkCard = await http('GET', onLocalServer(signedLink))
+  check('signed GET /v1/link/{site}/{template}.png?url=<local page> -> PNG 1200x630, counted once', linkCard.status === 200 && isPng(linkCard.bytes) && pngSize(linkCard.bytes) === '1200x630' && (await account.usage()) === 2, linkCard.brief())
+  const linkAgain = await http('GET', onLocalServer(signedLink))
+  check('the signed link URL again -> the same image, not counted', linkAgain.status === 200 && linkAgain.bytes.equals(linkCard.bytes) && (await account.usage()) === 2, linkAgain.brief())
+  const otherPage = await http('GET', onLocalServer(signedLink).replace('%2Fpricing', '%2Fterms'))
+  check('the signed link URL pointed at another page -> 403 invalid_signature', otherPage.status === 403 && otherPage.json().error.code === 'invalid_signature', otherPage.brief())
+}
+
+/** Run 3: the four build v3 switches "false", as in production. */
+const OFF_SWITCHES = { BATCH_ENABLED: 'false', PDF_TOOLKIT_ENABLED: 'false', LINK_CARDS_ENABLED: 'false', EMAIL_FIELDS_ENABLED: 'false' }
+
+async function switchedOff() {
+  const account = await newAccount('off', base)
+  const certificate = 'crt_00000000000000000000'
+  const off = (label, r, message) => check(`${label} -> 503 "${message}"`, r.status === 503 && r.json().error.code === 'not_configured' && r.json().error.message === message, r.brief())
+
+  const batches = 'Bulk documents are not enabled yet.'
+  off('POST /v1/batches', await http('POST', '/v1/batches', { headers: account.auth, json: { template: 'certificate', rows: [{}] } }), batches)
+  off('GET /v1/batches', await http('GET', '/v1/batches', { headers: account.auth }), batches)
+  off('GET /v1/batches/{id}', await http('GET', '/v1/batches/bat_00000000000000000000', { headers: account.auth }), batches)
+  off('GET /v1/batches/{id}/zip?part=1', await http('GET', '/v1/batches/bat_00000000000000000000/zip?part=1', { headers: account.auth }), batches)
+  off('POST /v1/batches/{id}/cancel', await http('POST', '/v1/batches/bat_00000000000000000000/cancel', { headers: account.auth }), batches)
+  off('GET /api/batches/templates', await http('GET', '/api/batches/templates', { headers: account.session }), batches)
+  off('POST /api/batches', await http('POST', '/api/batches', { headers: account.session, json: { template: 'certificate', rows: [{}] } }), batches)
+  off('GET /api/batches', await http('GET', '/api/batches', { headers: account.session }), batches)
+  off('POST /v1/certificates/{id}/revoke', await http('POST', `/v1/certificates/${certificate}/revoke`, { headers: account.auth }), batches)
+  off('POST /api/certificates/{id}/revoke', await http('POST', `/api/certificates/${certificate}/revoke`, { headers: account.session }), batches)
+  off('GET /v/{id}.json', await http('GET', `/v/${certificate}.json`), batches)
+  const verifyPage = await http('GET', `/v/${certificate}`)
+  check(
+    'GET /v/{id} -> 503 HTML page, noindex, with its own CSP',
+    verifyPage.status === 503 && verifyPage.res.headers.get('content-type')?.startsWith('text/html') === true && verifyPage.res.headers.get('x-robots-tag') === 'noindex' && (verifyPage.res.headers.get('content-security-policy') ?? '').includes("default-src 'none'"),
+    verifyPage.brief(),
+  )
+  const config = await http('GET', '/api/config', { headers: account.session })
+  check('GET /api/config -> batch.enabled false', config.status === 200 && config.json().batch?.enabled === false, config.brief())
+
+  const toolkit = 'The PDF toolkit is not enabled yet.'
+  const onePage = await onePagePdfBase64()
+  off('POST /v1/pdf-tools/merge', await http('POST', '/v1/pdf-tools/merge', { headers: account.auth, json: { files: [{ base64: onePage }, { base64: onePage }] } }), toolkit)
+  off('POST /v1/pdf-tools/stamp', await http('POST', '/v1/pdf-tools/stamp', { headers: account.auth, json: { files: [{ base64: onePage }], text: 'PAID' } }), toolkit)
+  off('POST /v1/pdf-tools/fields', await http('POST', '/v1/pdf-tools/fields', { headers: account.auth, json: { files: [{ base64: onePage }] } }), toolkit)
+
+  const linkCards = 'Cards from links are not enabled yet.'
+  off('POST /v1/cards/from-url', await http('POST', '/v1/cards/from-url', { headers: account.auth, json: { url: 'https://example.com/' } }), linkCards)
+  const signedLink = signLinkUrl(base, account.siteId, account.siteSecret, 'blog.png', { url: 'https://example.com/' })
+  off('a correctly signed GET /v1/link/...', await http('GET', signedLink), linkCards)
+  off('GET /playground/from-check/{id}/blog.png', await http('GET', '/playground/from-check/chk_0000000000000000/blog.png'), linkCards)
+
+  const emailFields = 'Open fields for email images are not enabled yet.'
+  off('POST /api/sign with open fields', await http('POST', '/api/sign', { headers: account.session, json: { site_id: account.siteId, template: 'email-banner', size: 'email', data: { title: 'Off' }, open: ['name'] } }), emailFields)
+
+  // What existed before build v3 keeps working with every switch off.
+  const signed = await http('POST', '/api/sign', { headers: account.session, json: { site_id: account.siteId, template: 'blog', data: { title: 'Switched off', author: 'smoke.mjs' } } })
+  const signedCard = signed.status === 200 ? await http('GET', signed.json().url) : signed
+  check('with every switch off, a signed card URL still renders a 1200x630 PNG', signedCard.status === 200 && isPng(signedCard.bytes) && pngSize(signedCard.bytes) === '1200x630', signedCard.brief())
+  const image = await http('POST', '/v1/images', { headers: account.auth, json: { template: 'dark', data: { title: 'Switched off' } } })
+  check('with every switch off, POST /v1/images still renders', image.status === 200 && image.json().width === 1200, image.brief())
+  check('nothing but the two cards was counted', (await account.usage()) === 2, `used ${await account.usage()}`)
+}
+
+/** Stops one server and waits until the port is free for the next run. */
+async function stopServer(running) {
+  await running.stop()
+  const deadline = Date.now() + 15_000
+  while ((await listening()) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 250))
+}
+
 let failed = false
 let server
+let siteBuiltForLocalOrigin = false
 const persistDir = mkdtempSync(path.join(os.tmpdir(), 'linktocard-smoke-'))
+const buildSite = (label, env) => runTool(label, process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', '--silent', 'build:site'], env)
 try {
   if (await listening()) throw new Error(`port ${PORT} is already in use; stop that server first (this script only stops what it started)`)
-  runTool('site build', process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', '--silent', 'build:site'])
+  buildSite('site build')
   runTool('D1 migrations', process.execPath, [wranglerBin, 'd1', 'migrations', 'apply', 'DB', '--local', '--persist-to', persistDir])
   server = await startServer(persistDir)
   await smoke()
+  await stopServer(server)
+  console.log(`--- wrangler dev again, APP_URL and SITE_URL ${LOCAL_PAGE_ORIGIN}: link cards from the Worker's own page ---`)
+  siteBuiltForLocalOrigin = true
+  buildSite(`site build with SITE_URL ${LOCAL_PAGE_ORIGIN}`, { SITE_URL: LOCAL_PAGE_ORIGIN })
+  server = await startServer(persistDir, { APP_URL: LOCAL_PAGE_ORIGIN })
+  await linkCardsFromLocalPage()
+  await stopServer(server)
+  buildSite('site build (again, as configured)', { SITE_URL: '' })
+  siteBuiltForLocalOrigin = false
+  console.log(`--- wrangler dev again, ${Object.keys(OFF_SWITCHES).join(', ')} "false" (as in production) ---`)
+  server = await startServer(persistDir, OFF_SWITCHES)
+  await switchedOff()
   console.log(`smoke: OK (${passed} checks)`)
 } catch (error) {
   failed = true
@@ -281,5 +556,14 @@ try {
 } finally {
   await server?.stop()
   rmSync(persistDir, { recursive: true, force: true })
+  // Never leave site/dist pointing at the throw-away origin of run 2.
+  if (siteBuiltForLocalOrigin) {
+    try {
+      buildSite('site build (restoring the configured SITE_URL)', { SITE_URL: '' })
+    } catch (error) {
+      console.error(error)
+      failed = true
+    }
+  }
 }
 process.exit(failed ? 1 : 0)

@@ -1,0 +1,10 @@
+[
+    {
+        "name": "downloadZip",
+        "type": "boolean",
+        "label": "Download the zip file",
+        "required": true,
+        "default": false,
+        "help": "Yes: the module also outputs one part of the zip of every finished document (File name and Data): part 1 unless you set Zip part. Use it once the status is done or partial."
+    }
+]

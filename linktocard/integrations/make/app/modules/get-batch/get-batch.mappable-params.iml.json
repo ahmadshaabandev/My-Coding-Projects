@@ -1,0 +1,22 @@
+[
+    {
+        "name": "id",
+        "type": "text",
+        "label": "Batch ID",
+        "required": true,
+        "help": "The ID that Start bulk PDFs returned, for example bat_m4q8x2k7v1c9d3e6.",
+        "validate": {
+            "pattern": "^bat_[A-Za-z0-9]+$"
+        }
+    },
+    {
+        "name": "zipPart",
+        "type": "uinteger",
+        "label": "Zip part",
+        "default": 1,
+        "help": "Only with Download the zip file: which part of the zip to download, from 1. Link To Card packs up to 500 documents into one part, so most batches have one; Zip parts lists them.",
+        "validate": {
+            "min": 1
+        }
+    }
+]

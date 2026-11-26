@@ -27,7 +27,7 @@ directory = "./site/dist"
 binding = "ASSETS"
 html_handling = "auto-trailing-slash"   # /terms -> site/dist/terms.html, HTTP 200, no redirect
 not_found_handling = "404-page"
-run_worker_first = ["/v1/*", "/api/*", "/auth/*", "/webhooks/*", "/i/*", "/playground/*", "/healthz"]
+run_worker_first = ["/v1/*", "/api/*", "/auth/*", "/webhooks/*", "/i/*", "/playground/*", "/v/*", "/healthz"]
 
 # .wasm is imported as a precompiled WebAssembly.Module (workerd forbids compiling
 # WebAssembly from bytes at runtime); fonts are imported as ArrayBuffer.
@@ -56,6 +56,11 @@ PADDLE_PRICE_TOPUP = ""
 # PDF documents: on, but without a BROWSER binding here the PDF routes answer 503 not_configured
 # (tests inject a mock binding). Browser Run is bound for staging and production only.
 PDF_ENABLED = "true"
+# Build v3 kill switches (src/lib/features.ts): "true" turns each tool on. Off in production.
+EMAIL_FIELDS_ENABLED = "true"
+BATCH_ENABLED = "true"
+PDF_TOOLKIT_ENABLED = "true"
+LINK_CARDS_ENABLED = "true"
 
 [[d1_databases]]
 binding = "DB"
@@ -109,6 +114,26 @@ name = "RL_TOOLS_PDF"
 namespace_id = "1008"
 simple = { limit = 3, period = 60 }
 
+[[ratelimits]]
+name = "RL_PDF_TOOLS"
+namespace_id = "1009"
+simple = { limit = 30, period = 60 }
+
+# Bulk documents (POST /v1/batches): this Worker produces and consumes its own queue. The
+# consumer numbers are BATCH in src/config.ts (tests/node/wrangler-v3.test.ts compares them).
+# Each environment's queue must exist before its first deploy: npx wrangler queues create <name>.
+[[queues.producers]]
+binding = "BATCH_QUEUE"
+queue = "linktocard-batch-dev"
+
+[[queues.consumers]]
+queue = "linktocard-batch-dev"
+max_batch_size = 5
+max_batch_timeout = 2
+max_retries = 5
+max_concurrency = 5
+retry_delay = 30
+
 # ---------------------------------------------------------------- staging (Paddle sandbox)
 [env.staging]
 workers_dev = true
@@ -131,6 +156,11 @@ PADDLE_PRICE_STARTER = "pri_01m82bzchs8tna3fz949myr8fm"
 PADDLE_PRICE_PRO = "pri_01m82bzcsrnsf4143bxmahcqpx"
 PADDLE_PRICE_TOPUP = "pri_01m82bzd1t7wfsswxz18b9e81z"
 PDF_ENABLED = "true"
+# Build v3 kill switches (src/lib/features.ts): "true" turns each tool on. Off in production.
+EMAIL_FIELDS_ENABLED = "true"
+BATCH_ENABLED = "true"
+PDF_TOOLKIT_ENABLED = "true"
+LINK_CARDS_ENABLED = "true"
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -182,6 +212,23 @@ name = "RL_TOOLS_PDF"
 namespace_id = "2008"
 simple = { limit = 3, period = 60 }
 
+[[env.staging.ratelimits]]
+name = "RL_PDF_TOOLS"
+namespace_id = "2009"
+simple = { limit = 30, period = 60 }
+
+[[env.staging.queues.producers]]
+binding = "BATCH_QUEUE"
+queue = "linktocard-batch-staging"
+
+[[env.staging.queues.consumers]]
+queue = "linktocard-batch-staging"
+max_batch_size = 5
+max_batch_timeout = 2
+max_retries = 5
+max_concurrency = 5
+retry_delay = 30
+
 # Cloudflare Browser Run renders PDF documents (quickAction('pdf', ...)). Not at the top level:
 # the test pool and `wrangler dev` must start without a network connection.
 [env.staging.browser]
@@ -213,6 +260,11 @@ PADDLE_PRICE_PRO = "pri_01m84q5s5x5bwwdkj1rca0dc5d"
 PADDLE_PRICE_TOPUP = "pri_01m84q5se0b8mmt14heam77enr"
 # PDF documents stay off in production until Ahmad approves them: every PDF endpoint answers 503.
 PDF_ENABLED = "false"
+# Build v3 kill switches (src/lib/features.ts): all off in production until each is approved.
+EMAIL_FIELDS_ENABLED = "false"
+BATCH_ENABLED = "false"
+PDF_TOOLKIT_ENABLED = "false"
+LINK_CARDS_ENABLED = "false"
 
 [[env.production.d1_databases]]
 binding = "DB"
@@ -263,6 +315,23 @@ simple = { limit = 10, period = 60 }
 name = "RL_TOOLS_PDF"
 namespace_id = "3008"
 simple = { limit = 3, period = 60 }
+
+[[env.production.ratelimits]]
+name = "RL_PDF_TOOLS"
+namespace_id = "3009"
+simple = { limit = 30, period = 60 }
+
+[[env.production.queues.producers]]
+binding = "BATCH_QUEUE"
+queue = "linktocard-batch-production"
+
+[[env.production.queues.consumers]]
+queue = "linktocard-batch-production"
+max_batch_size = 5
+max_batch_timeout = 2
+max_retries = 5
+max_concurrency = 5
+retry_delay = 30
 
 [env.production.browser]
 binding = "BROWSER"

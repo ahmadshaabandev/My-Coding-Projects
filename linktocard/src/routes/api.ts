@@ -10,12 +10,14 @@
  */
 import { Hono } from 'hono';
 import { requireApiKey } from '../auth/middleware';
+import { fromUrlHandler, requireLinkCards } from '../cards/handlers';
+import { LINK_CARDS } from '../config';
 import { all } from '../db/client';
 import { ApiError } from '../lib/errors';
 import { defaultInspectDeps, inspectUrl, normaliseInputUrl } from '../inspect/check';
 import { enforceInspectLimit } from '../inspect/limits';
 import { assertKnownFields, backgroundFor, iso, readJsonObject, usageJson } from '../lib/http';
-import { CARD_FIELDS, getCard, imageUrl, parseCardInput, starterTemplateJson, storedImageHeaders, warningsHeader } from '../lib/images';
+import { CARD_FIELDS, getCard, imageUrl, parseCardInput, starterTemplateJson, templateOptions, storedImageHeaders, warningsHeader } from '../lib/images';
 import { getUsage } from '../lib/quota';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
 import { STARTER_TEMPLATES } from '../render/templates';
@@ -41,7 +43,7 @@ apiRouter.post('/images', requireApiKey, async (c) => {
   assertKnownFields(body, IMAGE_FIELDS);
   const mode = RESPONSE_MODES.find((candidate) => candidate === (body.response ?? 'json'));
   if (!mode) throw new ApiError('invalid_request', '"response" must be "json" (default) or "binary".');
-  const input = await parseCardInput(c.env.DB, user.id, body);
+  const input = await parseCardInput(c.env.DB, user.id, body, templateOptions(c.env));
 
   const now = Date.now();
   const card = await getCard(
@@ -74,6 +76,8 @@ apiRouter.post('/images', requireApiKey, async (c) => {
     usage: usageJson(card.usage ?? (await getUsage(c.env.DB, user, now))),
   });
 });
+
+apiRouter.post('/cards/from-url', requireLinkCards, requireApiKey, fromUrlHandler(LINK_CARDS));
 
 apiRouter.get('/usage', requireApiKey, async (c) => c.json(usageJson(await getUsage(c.env.DB, c.var.user, Date.now()))));
 

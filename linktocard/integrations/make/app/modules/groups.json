@@ -1,0 +1,29 @@
+[
+    {
+        "label": "Cards",
+        "modules": [
+            "createCardImage",
+            "cardFromLink"
+        ]
+    },
+    {
+        "label": "PDF documents",
+        "modules": [
+            "createPdf",
+            "startBulkPdfs",
+            "getBatch"
+        ]
+    },
+    {
+        "label": "Link previews",
+        "modules": [
+            "checkLinkPreview"
+        ]
+    },
+    {
+        "label": "Other",
+        "modules": [
+            "makeApiCall"
+        ]
+    }
+]

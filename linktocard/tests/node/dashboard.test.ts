@@ -192,6 +192,7 @@ describe('formatting', () => {
       { value: 'og', label: 'Link preview', detail: '1200 × 630' },
       { value: 'square', label: 'Square', detail: '1080 × 1080' },
       { value: 'portrait', label: 'Portrait', detail: '1080 × 1350' },
+      { value: 'email', label: 'Email', detail: '1200 × 400' },
     ]);
     expect(helpers.sizeOption({ id: 'banner', width: 1500, height: 500 }).label).toBe('banner');
   });

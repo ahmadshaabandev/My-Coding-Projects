@@ -1,0 +1,11 @@
+{
+    "body": {
+        "plan": "starter",
+        "limit": 2000,
+        "used": 412
+    },
+    "headers": {
+        "content-type": "application/json"
+    },
+    "statusCode": 200
+}

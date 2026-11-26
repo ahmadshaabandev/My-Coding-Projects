@@ -29,4 +29,28 @@
 <dd>A PDF of 1 to [[pdf.basePages]] pages counts as [[pdf.baseUnits]] images, and each further [[pdf.extraPagesPerUnit]] pages started add one more, up to [[pdf.maxUnits]] images for the longest PDF of [[pdf.maxPages]] pages. It is taken as one block, from the monthly allowance or from one top-up, never split between them. Failed renders and stored PDFs served again count nothing, as for images. <a href="/docs/pdf#what-counts">How PDFs are counted</a></dd>
 </div>
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+<div class="rule-wide" id="batch-counting">
+<dt>Bulk documents count document by document <span class="rule-tag">per document</span></dt>
+<dd>A batch makes one PDF per row, and each is counted like a PDF of its own pages when it is made. A batch starts only when at least [[pdf.baseUnits]] images per row are left. Documents that fail or are cancelled before they start count nothing. <a href="/docs/bulk#what-counts">How batches are counted</a></dd>
+</div>
+<!-- /feature:batch -->
+<!-- feature:toolkit -->
+<div class="rule-wide" id="toolkit-counting">
+<dt>The PDF toolkit counts by the pages it delivers <span class="rule-tag">counts 1 per [[toolkit.pagesPerUnit]] pages</span></dt>
+<dd>A merge, split, stamp, fill, image-to-PDF or protect request counts one image for each started block of [[toolkit.pagesPerUnit]] pages of its result, at least one, taken as one block; a split counts each new file on its own pages. Reading a form's fields counts nothing. Every request that succeeds counts, also the same request again. <a href="/docs/pdf-tools#what-counts">How the toolkit is counted</a></dd>
+</div>
+<!-- /feature:toolkit -->
+<!-- feature:linkcards -->
+<div>
+<dt>A card from a link is a card <span class="rule-tag">counts 1</span></dt>
+<dd>A card made from a page's own title and description counts one image, and the same card again counts nothing while it is stored. Reading the page never counts as an image. <a href="/docs/link-cards#what-counts">Details</a></dd>
+</div>
+<!-- /feature:linkcards -->
+<!-- feature:email -->
+<div>
+<dt>Email images count once per distinct value <span class="rule-tag">counts 1</span></dt>
+<dd>Each distinct reader value, such as a first name, is one card: rendered and counted once, then served from storage to everyone with that value. <a href="/docs/email-images#caching-and-what-counts">Details</a></dd>
+</div>
+<!-- /feature:email -->
 </dl>

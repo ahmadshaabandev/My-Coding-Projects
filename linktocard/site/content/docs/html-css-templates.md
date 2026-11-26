@@ -29,7 +29,7 @@ html
 
 - Your HTML can be a fragment (`<div class="card">...</div>`) or a full document. `<html>`, `<head>` and `<body>` wrappers are unwrapped; `class`, `id`, `style`, `dir` and `lang` on your `<html>` and `<body>` are kept.
 - `<style>` elements anywhere in your HTML are collected in document order and placed before the separate `css` text.
-- The canvas is the output size: [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`) or [[size.portrait.width]] x [[size.portrait.height]] (`portrait`). `html` and `body` fill it. Content outside it is clipped.
+- The canvas is the output size: [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`), [[size.portrait.width]] x [[size.portrait.height]] (`portrait`) or [[size.email.width]] x [[size.email.height]] (`email`, a wide image for the top of an email). `html` and `body` fill it. Content outside it is clipped.
 - The output is always opaque. Anything you leave transparent is white.
 
 ## Placeholders
@@ -55,7 +55,7 @@ Before rendering, classes are added to `<body>` so that plain CSS can adapt the 
 
 ### Size
 
-One of `size-og`, `size-square`, `size-portrait`.
+One of `size-og`, `size-square`, `size-portrait`, `size-email`.
 
 ```css
 .card { padding: 64px 72px; }

@@ -1,13 +1,18 @@
 /**
  * Daily housekeeping (cron trigger). Every step is bounded, so one run costs a
  * handful of statements however much has piled up; the next run continues.
- * Stored PDFs have ledger rows like images and expire with them.
+ * Stored PDFs have ledger rows like images and expire with them. Bulk documents: rows whose
+ * queue message can no longer arrive are failed, finished batches go once their PDFs expired,
+ * and certificate records BATCH.revokedRetentionDays after they were revoked. A deleted
+ * account's batches, batch rows and certificate records go with it (in bounded steps first).
  *
  * Nothing here is needed for correctness - expired sessions, tokens and images
  * are already ignored by the code that reads them - it only keeps D1 and R2
  * from growing forever.
  */
-import { DAY_MS, PDF } from '../config';
+import { purgeRevokedCertificates } from '../batch/certificates';
+import { failStaleRows, purgeExpiredBatches } from '../batch/store';
+import { BATCH, DAY_MS, PDF } from '../config';
 import { all, isMissingTableError, run } from '../db/client';
 import type { Env } from '../types';
 
@@ -38,6 +43,16 @@ export const CLEANUP_LIMITS = {
   toolRowDeletesPerRun: 20_000,
   /** browser_usage rows older than PDF.browserUsageRetentionDays deleted per run (one row per PDF render attempt). */
   browserUsageDeletesPerRun: 20_000,
+  /** Unfinished batches older than BATCH.staleAfterDays whose leftover rows are failed per run. */
+  staleBatchesPerRun: 50,
+  /** Expired batches deleted per statement: each takes up to BATCH.maxRows.pro rows with it (ON DELETE CASCADE). */
+  batchesPerStatement: 20,
+  /** Expired batches deleted per run. */
+  batchDeletesPerRun: 500,
+  /** Certificate records revoked more than BATCH.revokedRetentionDays ago deleted per run. */
+  revokedCertificateDeletesPerRun: 20_000,
+  /** Certificate records of deleted accounts deleted per run (their batches count against batchDeletesPerRun). */
+  accountCertificateDeletesPerRun: 20_000,
 } as const;
 
 const LOGIN_TOKEN_KEEP_MS = DAY_MS;
@@ -63,6 +78,12 @@ export interface CleanupReport {
   toolUsage?: number;
   /** PDF browser-time rows past their retention; present only when some were deleted. */
   browserUsage?: number;
+  /** Batch rows failed because their queue message can no longer arrive; present only when some were. */
+  staleBatchRows?: number;
+  /** Finished batches whose PDFs expired, deleted with their rows; present only when some were. */
+  batches?: number;
+  /** Certificate records past their retention after revocation; present only when some were deleted. */
+  revokedCertificates?: number;
 }
 
 /** R2 prefixes that hold one account's files: rendered images and uploaded fonts. */
@@ -85,12 +106,48 @@ async function deleteAccountObjects(bucket: R2Bucket, userId: string, budget: { 
   return true;
 }
 
+interface BatchBudget {
+  batches: number;
+  certificates: number;
+}
+
+/** Deletes `table` rows of one account, `step` per statement, until none is left (true) or the budget is spent (false). */
+async function deleteAccountRows(db: D1Database, table: 'batches' | 'certificates', userId: string, budget: BatchBudget, key: keyof BatchBudget, step: number): Promise<boolean> {
+  for (;;) {
+    if (budget[key] <= 0) return false;
+    const limit = Math.min(step, budget[key]);
+    const changes = await run(db, `DELETE FROM ${table} WHERE id IN (SELECT id FROM ${table} WHERE user_id = ?1 LIMIT ?2)`, userId, limit);
+    budget[key] -= changes;
+    if (changes < limit) return true;
+  }
+}
+
+/**
+ * One account's bulk documents before its users row goes: its batches (each takes up to
+ * BATCH.maxRows.pro batch rows with it, ON DELETE CASCADE) and its certificate records, in
+ * bounded statements, so the final cascade from users never has to delete them all in one
+ * statement. True when none is left. The PDFs are ordinary stored PDFs, deleted with the
+ * account's other files. A database without the batches migration has none.
+ */
+async function deleteAccountBatches(db: D1Database, userId: string, budget: BatchBudget): Promise<boolean> {
+  try {
+    return (
+      (await deleteAccountRows(db, 'batches', userId, budget, 'batches', CLEANUP_LIMITS.batchesPerStatement)) &&
+      (await deleteAccountRows(db, 'certificates', userId, budget, 'certificates', CLEANUP_LIMITS.rowsPerStatement))
+    );
+  } catch (error) {
+    if (!isMissingTableError(error)) throw error;
+    return true;
+  }
+}
+
 /**
  * Accounts the operator marked for deletion (users.deletion_requested_at; the
  * same command suspends them, so they already serve nothing). Files go first,
- * rows last: every table that references users cascades, and sign-in requests
- * and the webhook log, which do not, are deleted by email and id. An account
- * with more files than this run's budget is finished by the next run.
+ * then bulk documents, rows last: every table that references users cascades,
+ * and sign-in requests and the webhook log, which do not, are deleted by email
+ * and id. An account with more files or batches than this run's budget is
+ * finished by the next run.
  */
 async function purgeDeletedAccounts(env: Pick<Env, 'DB' | 'BUCKET'>): Promise<number> {
   const accounts = await all<{ id: string; email: string }>(
@@ -99,9 +156,11 @@ async function purgeDeletedAccounts(env: Pick<Env, 'DB' | 'BUCKET'>): Promise<nu
     CLEANUP_LIMITS.accountDeletionsPerRun,
   );
   const budget = { left: CLEANUP_LIMITS.r2DeletesPerRun };
+  const batchBudget: BatchBudget = { batches: CLEANUP_LIMITS.batchDeletesPerRun, certificates: CLEANUP_LIMITS.accountCertificateDeletesPerRun };
   let purged = 0;
   for (const account of accounts) {
     if (!(await deleteAccountObjects(env.BUCKET, account.id, budget))) break;
+    if (!(await deleteAccountBatches(env.DB, account.id, batchBudget))) break;
     await env.DB.batch([
       env.DB.prepare('DELETE FROM login_tokens WHERE email = ?1').bind(account.email),
       env.DB.prepare('DELETE FROM webhook_events WHERE user_id = ?1').bind(account.id),
@@ -240,6 +299,9 @@ export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): 
   const ogChecks = await deleteExpiredRows(env.DB, 'og_checks', 'id', now, limit);
   const toolUsage = await deleteExpiredRows(env.DB, 'tool_usage', 'bucket', now, limit);
   const browserUsage = await deleteOldBrowserUsage(env.DB, now, limit);
+  const staleBatchRows = await failStaleRows(env.DB, now - BATCH.staleAfterDays * DAY_MS, now, CLEANUP_LIMITS.staleBatchesPerRun);
+  const batches = await purgeExpiredBatches(env.DB, now, CLEANUP_LIMITS.batchesPerStatement, CLEANUP_LIMITS.batchDeletesPerRun);
+  const revokedCertificates = await purgeRevokedCertificates(env.DB, now, limit, CLEANUP_LIMITS.revokedCertificateDeletesPerRun);
   return {
     loginTokens,
     sessions,
@@ -250,5 +312,8 @@ export async function runCleanup(env: Pick<Env, 'DB' | 'BUCKET'>, now: number): 
     ...(ogChecks > 0 ? { ogChecks } : {}),
     ...(toolUsage > 0 ? { toolUsage } : {}),
     ...(browserUsage > 0 ? { browserUsage } : {}),
+    ...(staleBatchRows > 0 ? { staleBatchRows } : {}),
+    ...(batches > 0 ? { batches } : {}),
+    ...(revokedCertificates > 0 ? { revokedCertificates } : {}),
   };
 }

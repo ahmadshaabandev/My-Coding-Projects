@@ -10,12 +10,36 @@ export const TABS = [
   { id: 'renders', label: 'Renders' },
 ];
 
-/** '#templates/t_1' -> { tab: 'templates', param: 't_1' }. Anything unknown opens the overview. */
-export function routeFromHash(hash) {
+/**
+ * Tabs that only appear while a switch in GET /api/config is on, each placed right after the
+ * tab named in `after`. Their modules are imported only when opened (dashboard.js): a site
+ * built without the feature does not publish them.
+ */
+export const FEATURE_TABS = [{ id: 'bulk', label: 'Bulk documents', after: 'templates', flag: 'batch' }];
+
+/** True when /api/config says the feature behind a FEATURE_TABS entry is on: `config[flag].enabled`. */
+const tabSwitchedOn = (tab, config) => config?.[tab.flag]?.enabled === true;
+
+/** The tabs this account sees, in order: TABS, plus each feature tab whose switch is on. */
+export function dashboardTabs(config) {
+  const tabs = TABS.map(({ id, label }) => ({ id, label }));
+  for (const tab of FEATURE_TABS) {
+    if (!tabSwitchedOn(tab, config)) continue;
+    const at = tabs.findIndex((candidate) => candidate.id === tab.after);
+    tabs.splice(at === -1 ? tabs.length : at + 1, 0, { id: tab.id, label: tab.label });
+  }
+  return tabs;
+}
+
+/**
+ * '#templates/t_1' -> { tab: 'templates', param: 't_1' }. Anything unknown opens the overview,
+ * and so does a feature tab that is not in `tabs` (switched off).
+ */
+export function routeFromHash(hash, tabs = TABS) {
   const [name = '', ...rest] = String(hash).replace(/^#\/?/, '').split('/');
   // The pricing page sends paid accounts to /dashboard#billing; billing lives on the overview.
   if (name === 'billing') return { tab: 'overview', param: 'billing' };
-  const known = TABS.some((tab) => tab.id === name);
+  const known = tabs.some((tab) => tab.id === name);
   return { tab: known ? name : 'overview', param: known ? rest.join('/') : '' };
 }
 
@@ -99,6 +123,74 @@ export function cardData(values) {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => typeof value === 'string' && value !== ''));
 }
 
+/* ------------------------------------------------------------------ */
+/* Open fields (personalised email images)                             */
+/* ------------------------------------------------------------------ */
+
+/** `<field>_default` holds an open field's signed fallback (src/lib/open-fields.ts DEFAULT_SUFFIX). */
+export const OPEN_DEFAULT_SUFFIX = '_default';
+
+const positiveInteger = (value) => (Number.isInteger(value) && value > 0 ? value : null);
+
+/**
+ * The open-fields switch from GET /api/config, or null while it is off (or the server does not
+ * say): { email_fields: { enabled, max_open_fields, max_value_chars, max_unique_renders_per_day } }.
+ * A boolean `email_fields_enabled` is read too. Limits the server leaves out are null: the
+ * server checks them anyway.
+ */
+export function openFieldsSettings(config) {
+  const block = config?.email_fields;
+  const on = (block && typeof block === 'object' && block.enabled === true) || config?.email_fields_enabled === true;
+  if (!on) return null;
+  const perDay = block?.max_unique_renders_per_day;
+  return {
+    maxOpenFields: positiveInteger(block?.max_open_fields),
+    maxValueChars: positiveInteger(block?.max_value_chars),
+    maxUniqueRendersPerDay: perDay && typeof perDay === 'object' ? perDay : null,
+  };
+}
+
+/**
+ * The fields of a card template that can be open: text the template prints. Not `theme` (a
+ * switch), not a field holding an image or a link (an open value can never be a URL, so it
+ * would always show its default), and not a name that is reserved or ends in `_default`.
+ */
+export function openFieldCandidates(specs) {
+  return specs
+    .map((spec) => spec.name)
+    .filter((name) => name !== 'theme' && name !== 'open' && name !== 'size' && name !== 'sig' && !name.endsWith(OPEN_DEFAULT_SUFFIX) && !URL_FIELD.test(name));
+}
+
+/**
+ * The body of POST /api/sign. With open fields, each one's typed value is sent as its
+ * `<field>_default` (shown when a reader's value is missing or unusable) and never as the field
+ * itself: the server refuses a signed value for an open field. `open` only when there are some.
+ */
+export function signRequest({ siteId, template, format, size, values, open = [] }) {
+  const data = cardData(values ?? {});
+  const body = { site_id: siteId, template, format, size, data };
+  if (open.length === 0) return body;
+  for (const name of open) {
+    const fallback = data[name];
+    delete data[name];
+    if (fallback !== undefined) data[name + OPEN_DEFAULT_SUFFIX] = fallback;
+  }
+  body.open = [...open];
+  return body;
+}
+
+const escapeAttribute = (value) => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * An <img> tag for an email, at half the image's pixel size so it stays sharp on high-density
+ * screens (a 1200 × 400 image fills a 600 × 200 slot).
+ */
+export function emailImageTag(url, size, alt = '') {
+  const width = Math.round(size.width / 2);
+  const height = Math.round(size.height / 2);
+  return `<img src="${escapeAttribute(url)}" width="${width}" height="${height}" alt="${escapeAttribute(alt)}">`;
+}
+
 /** X-LTC-Warnings is encodeURIComponent(JSON array of strings). Anything else reads as no warnings. */
 export function parseWarnings(header) {
   if (!header) return [];
@@ -150,6 +242,9 @@ export const formatCount = (count) => COUNT.format(count);
 export function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+  // A bulk ZIP part can reach gigabytes ("1.8 GB", not "1812.0 MB").
+  const gigabytes = bytes / (1024 * 1024 * 1024);
+  if (gigabytes >= 1) return `${Number.isInteger(gigabytes) ? gigabytes : gigabytes.toFixed(1)} GB`;
   const megabytes = bytes / (1024 * 1024);
   return `${Number.isInteger(megabytes) ? megabytes : megabytes.toFixed(1)} MB`;
 }
@@ -164,7 +259,7 @@ export function formatDateTime(iso, timeZone) {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(new Date(iso));
 }
 
-const SIZE_NAMES = { og: 'Link preview', square: 'Square', portrait: 'Portrait' };
+const SIZE_NAMES = { og: 'Link preview', square: 'Square', portrait: 'Portrait', email: 'Email' };
 
 /** { id: 'og', width: 1200, height: 630 } -> { value: 'og', label: 'Link preview', detail: '1200 × 630' } */
 export function sizeOption(size) {

@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd } from '../../src/billing/plans';
 import { INSPECT, LIMITS, RATE_LIMITS, type RateLimitName } from '../../src/config';
-import { buildSite, findPlaceholders, isPdfRateLimit, listTokens, renderSite, type RenderedSite } from '../../scripts/build-site';
+import { buildSite, findPlaceholders, listTokens, rateLimitFeature, renderSite, type RenderedSite } from '../../scripts/build-site';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NOW = new Date('2026-11-22T12:00:00Z');
@@ -527,10 +527,10 @@ describe('content pipeline', () => {
     );
     expect(html).toMatch(/<div class="table-wrap"><table>\s*<thead>/);
     expect(html).toContain('<div class="alert">Raw <b>HTML</b></div>');
-    // Without SITE_PDF=on the PDF limiters stay out of the table (tests/node/site-features.test.ts checks them with it on).
+    // Without their features the PDF and PDF toolkit limiters stay out of the table (tests/node/site-features.test.ts checks them with them on).
     for (const [name, rule] of Object.entries(RATE_LIMITS) as Array<[RateLimitName, (typeof RATE_LIMITS)[RateLimitName]]>) {
       const row = `<td>${formatCount(rule.limit)} requests per ${rule.periodSeconds === 60 ? 'minute' : `${rule.periodSeconds} seconds`}</td>`;
-      if (isPdfRateLimit(name)) expect(html, name).not.toContain(rule.scope.charAt(0).toUpperCase() + rule.scope.slice(1));
+      if (rateLimitFeature(name) !== null) expect(html, name).not.toContain(rule.scope.charAt(0).toUpperCase() + rule.scope.slice(1));
       else expect(html, name).toContain(row);
     }
   });

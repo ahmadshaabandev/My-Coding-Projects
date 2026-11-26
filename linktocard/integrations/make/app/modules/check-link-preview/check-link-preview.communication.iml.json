@@ -1,0 +1,28 @@
+{
+    "url": "/v1/inspect",
+    "method": "GET",
+    "qs": {
+        "url": "{{parameters.url}}"
+    },
+    "response": {
+        "output": {
+            "id": "{{body.id}}",
+            "url": "{{body.url}}",
+            "final_url": "{{body.final_url}}",
+            "status": "{{body.status}}",
+            "fetched_at": "{{body.fetched_at}}",
+            "response_ms": "{{body.response_ms}}",
+            "cached": "{{body.cached}}",
+            "expires_at": "{{body.expires_at}}",
+            "page": "{{body.page}}",
+            "og": "{{body.og}}",
+            "twitter": "{{body.twitter}}",
+            "image": "{{body.image}}",
+            "robots": "{{body.robots}}",
+            "checks": "{{body.checks}}",
+            "preview": "{{body.preview}}",
+            "fail_count": "{{length(map(body.checks, 'id', 'status', 'fail'))}}",
+            "warn_count": "{{length(map(body.checks, 'id', 'status', 'warn'))}}"
+        }
+    }
+}

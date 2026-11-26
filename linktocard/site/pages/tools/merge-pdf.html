@@ -1,0 +1,152 @@
+---
+title: Merge PDF files free, in your browser, without uploading them
+description: Combine PDF files into one for free. This page merges them in your browser, so your files stay on your device. Drag them into order and download. No sign-up, no watermark.
+scripts: merge-pdf
+feature: toolkit
+---
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Merge PDF files.</h1>
+<p>Add your PDFs, put them in order and download one file. <strong>Your files stay on your device:</strong> this page merges them in your browser and uploads nothing. No account, no watermark.</p>
+</div>
+<form class="card card-pop local-form" id="local-form" data-tool="merge-pdf" data-max-files="[[localPdf.raw.maxFiles]]" data-max-bytes="[[localPdf.raw.maxTotalBytes]]" data-max-pages="[[localPdf.raw.maxPages]]" novalidate>
+<div class="drop-zone" id="drop-zone">
+<input class="visually-hidden" id="file-input" type="file" accept="application/pdf,.pdf" multiple>
+<label class="drop-label" for="file-input">
+<span class="drop-title">Drop PDF files here</span>
+<span class="btn btn-secondary">Choose PDF files</span>
+<span class="hint">Up to [[localPdf.maxFiles]] files and [[localPdf.maxTotalMb]] MB together, [[localPdf.maxPages]] pages in the merged PDF.</span>
+</label>
+</div>
+<ol class="file-list" id="file-list" aria-label="PDF files, in the order they are merged" hidden></ol>
+<div class="local-actions">
+<p class="local-summary" id="file-summary">No PDFs yet.</p>
+<button class="btn btn-ghost btn-sm" type="button" data-sort disabled>Sort by name</button>
+<button class="btn btn-ghost btn-sm" type="button" data-clear disabled>Remove all</button>
+<button class="btn btn-primary" id="local-submit" type="submit" disabled>Merge PDFs</button>
+</div>
+<div class="alert alert-danger" id="local-error" role="alert" tabindex="-1" hidden></div>
+<div class="alert alert-ok local-result" id="local-result" hidden>
+<p id="local-result-text"></p>
+<a class="btn btn-secondary btn-sm" id="local-download" download="merged.pdf">Download</a>
+</div>
+<noscript><p class="alert alert-warn">This page needs JavaScript: the PDFs are merged by your browser. <a href="/docs/pdf-tools">POST /v1/pdf-tools/merge</a> does the same from a script.</p></noscript>
+</form>
+<p class="visually-hidden" id="local-status" role="status" aria-live="polite"></p>
+<p class="local-api"><a class="link-arrow" href="#api">Automate this with the API</a></p>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About the tool</p>
+<h2>What it does, and what it does not.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>What it does</h3>
+<ul>
+<li>Copies every page of every file into one PDF, in the order of the list. Drag a file to move it, or use Up and Down; Sort by name puts &ldquo;page 2&rdquo; before &ldquo;page 10&rdquo;.</li>
+<li>Keeps each page as it is: its text, images, fonts and size. Nothing is added to your pages.</li>
+<li>Runs in your browser. The page loads its PDF code from [[site.host]] once, like any part of a web page; your files are read and merged on your device and are never sent to us or anyone else.</li>
+<li>Uses the open-source library <a href="https://github.com/Hopding/pdf-lib">pdf-lib</a>. Its licence travels with the code, in <a href="/assets/js/vendor/pdf-local.js">pdf-local.js</a>.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What it does not do</h3>
+<ul>
+<li>It does not open password-protected (encrypted) PDFs, including ones that open without a password but restrict printing or changes. Remove the protection first.</li>
+<li>It does not copy XFA forms. Print or export such a form to a new PDF first.</li>
+<li>It does not carry over bookmarks, attachments or the document&rsquo;s title and author, and a fillable form may stop working as a form.</li>
+<li>It does not compress, split or reorder the pages inside a file. <a href="/docs/pdf-tools">The PDF toolkit API</a> merges chosen pages of each file.</li>
+</ul>
+</div>
+</div>
+
+<div class="tool-columns">
+<div class="prose">
+<h3>Your files stay on your device</h3>
+<p>Merging happens in this browser tab, with the memory and processor of your computer or phone. Your PDFs are not uploaded, so we never see them, their names or their contents, and nothing about them is counted or logged. The page keeps nothing after you close it; the merged PDF is wherever your browser saved the download.</p>
+<p>Because it all happens on your device, the limits are about memory, not money: up to [[localPdf.maxFiles]] files, [[localPdf.maxTotalMb]] MB together and [[localPdf.maxPages]] pages per merge. Very large jobs can make a phone&rsquo;s browser slow; merge them in smaller groups.</p>
+</div>
+<div class="prose">
+<h3 id="api">Automate this with the API</h3>
+<p>To merge documents from your own app, send their addresses to <code>POST /v1/pdf-tools/merge</code> with an API key from your dashboard. <code>"pages"</code> takes some pages of a file, in the order you write them.</p>
+<div class="code-block" data-lang="shell"><button class="copy-btn" type="button" data-copy>Copy</button><pre><code class="language-shell">curl [[site.url]]/v1/pdf-tools/merge \
+  -H "Authorization: Bearer ltc_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "files": [
+      { "url": "https://example.com/cover.pdf" },
+      { "url": "https://example.com/report.pdf", "pages": "1-3" }
+    ],
+    "response": "binary"
+  }' \
+  -o merged.pdf</code></pre></div>
+<p>Each started block of [[toolkit.pagesPerUnit]] pages of the result counts as one image of your plan. On the Free plan, every page of an API result carries a small &ldquo;[[pdf.freeMark]]&rdquo; line. <a class="link-arrow" href="/docs/pdf-tools">Read the PDF toolkit docs</a></p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about merging PDFs.</h2>
+<p>Short answers about privacy, limits and what carries over.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>Are my files uploaded?</summary>
+<div>
+<p>No. The page reads the files you choose in your browser and makes the merged PDF there. The download comes from your browser&rsquo;s memory, not from our server. We never receive the files, so we cannot keep, read or share them.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>How many files can I merge?</summary>
+<div>
+<p>Up to [[localPdf.maxFiles]] files at a time, [[localPdf.maxTotalMb]] MB together, with up to [[localPdf.maxPages]] pages in the merged PDF. For more, merge in groups and then merge the results.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Why is my PDF refused?</summary>
+<div>
+<p>The message says why. Usually the file is password-protected, is an XFA form, or is damaged or not a PDF. A file that opens in your PDF viewer but is refused here can often be fixed by printing it to a new PDF.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>What happens to links, bookmarks and forms?</summary>
+<div>
+<p>Each page keeps what is drawn on it and its annotations. Bookmarks, attachments and the document&rsquo;s title and author belong to the whole file, not to a page, so they are not carried over. A fillable form may stop working as a form, so fill it in before you merge it.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is there a watermark?</summary>
+<div>
+<p>No. Nothing is added to your pages, and there is no sign-up.</p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Documents from your own app.</h2>
+<p>[[site.name]] turns one HTML template and your data into a PDF for every order, booking or report, and merges, stamps and fills PDFs through the same API.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs/pdf-tools">Read the PDF toolkit docs</a>
+</div>
+</div>
+</section>
+
+</main>

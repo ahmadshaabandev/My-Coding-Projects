@@ -1,0 +1,40 @@
+{
+    "baseUrl": "{{ifempty(connection.apiUrl, 'https://linktocard.com')}}",
+    "headers": {
+        "authorization": "Bearer {{connection.apiKey}}"
+    },
+    "response": {
+        "error": {
+            "400": {
+                "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})",
+                "type": "DataError"
+            },
+            "401": {
+                "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})",
+                "type": "InvalidAccessTokenError"
+            },
+            "404": {
+                "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})",
+                "type": "DataError"
+            },
+            "413": {
+                "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})",
+                "type": "DataError"
+            },
+            "422": {
+                "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})",
+                "type": "DataError"
+            },
+            "429": {
+                "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})",
+                "type": "RateLimitError"
+            },
+            "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})"
+        }
+    },
+    "log": {
+        "sanitize": [
+            "request.headers.authorization"
+        ]
+    }
+}

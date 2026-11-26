@@ -1,0 +1,31 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"definitions": {
+		"oauth-request": {
+			"$id": "#oauth-request",
+			"type": "object",
+			"properties": {
+				"preauthorize": {
+					"$ref": "api.json#/definitions/request"
+				},
+				"authorize": {
+					"$ref": "api.json#/definitions/request"
+				},
+				"token": {
+					"$ref": "api.json#/definitions/request"
+				},
+				"info": {
+					"$ref": "api.json#/definitions/request"
+				},
+				"refresh": {
+					"$ref": "api.json#/definitions/request"
+				},
+				"invalidate": {
+					"$ref": "api.json#/definitions/request"
+				}
+			},
+			"additionalProperties": false
+		}
+	},
+	"$ref": "#/definitions/oauth-request"
+}

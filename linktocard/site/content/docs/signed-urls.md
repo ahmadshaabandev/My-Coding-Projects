@@ -209,7 +209,12 @@ For any other language: build the message as described above, compute HMAC-SHA25
 | Value length | At most [[limit.maxDataValueChars]] characters per value, counted in Unicode code points. An empty value is allowed. |
 | Control characters | Not allowed in values: no line breaks, no tabs, nothing in U+0000 to U+001F, and not U+007F. |
 | URL length | Path and query together are at most [[limit.maxSignedUrlChars]] characters. |
-| Reserved names | `sig` carries the signature. `size` chooses the output size. Neither reaches the template as data. |
+<!-- feature:no-email -->
+| Reserved names | `sig` carries the signature. `size` chooses the output size. Neither reaches the template as data. `open` is reserved as well: the dashboard's URL builder refuses it as a parameter name. Leave it out of the URLs your own code signs, because a later version of the service reads `open` as a list of parameter names. |
+<!-- /feature:no-email -->
+<!-- feature:email -->
+| Reserved names | `sig` carries the signature. `size` chooses the output size. `open` lists the open fields of a [personalized email image](/docs/email-images), and `<field>_default` holds the default of an open field. None of them reaches the template as data under its own name. A URL without `open` verifies exactly as described on this page. |
+<!-- /feature:email -->
 | Path | Site id and template id contain only letters, digits, `_` and `-`. The path is signed, so the template and the format cannot be changed without re-signing. |
 
 Parameters that the template does not use are accepted. They change nothing in the picture, but they are part of the signature and of the cache key.
@@ -222,7 +227,7 @@ Replace control characters with a space before signing, and send the replaced va
 
 ### The size parameter
 
-`size` is `og` ([[size.og.width]] x [[size.og.height]], the default), `square` ([[size.square.width]] x [[size.square.height]]) or `portrait` ([[size.portrait.width]] x [[size.portrait.height]]). Sign it like any other parameter. Leave it out for `og`. Any other value answers 400 `unsupported_size`.
+`size` is `og` ([[size.og.width]] x [[size.og.height]], the default), `square` ([[size.square.width]] x [[size.square.height]]), `portrait` ([[size.portrait.width]] x [[size.portrait.height]]) or `email` ([[size.email.width]] x [[size.email.height]]). Sign it like any other parameter. Leave it out for `og`. Any other value answers 400 `unsupported_size`.
 
 ### Formats
 
@@ -306,7 +311,7 @@ A signed URL can also answer:
 
 | Status | Code | When |
 | --- | --- | --- |
-| 400 | `unsupported_size` | `size` is not `og`, `square` or `portrait`. |
+| 400 | `unsupported_size` | `size` is not `og`, `square`, `portrait` or `email`. |
 | 402 | `quota_exceeded` | The allowance is used up and this card is not stored. See [Limits](/docs/limits#at-the-limit). |
 | 403 | `account_suspended` | The account that owns the site is suspended. |
 | 404 | `not_found` | The path is not a card URL, the site id does not exist, or the template does not exist. |

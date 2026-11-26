@@ -72,7 +72,7 @@ export interface RenderCharge {
 export interface PdfCharge {
   cacheKey: string;
   siteId: string | null;
-  source: 'api' | 'signed';
+  source: 'api' | 'signed' | 'batch' | 'toolkit';
   template: string;
   bytes: number;
   r2Key: string;
@@ -257,6 +257,24 @@ const COUNT_PAID_PDF_FROM_TOPUP_SQL = `INSERT INTO pdf_usage (user_id, period_st
   ON CONFLICT (user_id, period_start) DO UPDATE SET pdfs = pdfs + 1, units = units + excluded.units`;
 const TAKE_PAID_BLOCK_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - ?4
   WHERE id = (${NEXT_TOPUP_FOR_BLOCK}) AND ${OUR_PDF_ROW('topup', '?5', '?2')}`;
+
+/*
+ * The further files of one PDF result that is paid as one block: a PDF toolkit split makes
+ * several files and charges them all on the claim of the first (src/routes/pdf-toolkit.ts). Each
+ * further file has a ledger row of its own, so the daily cleanup removes its R2 object and pdf_id
+ * finds it. The rows are claimed 'pending' with the paying claim's time and period, and take the
+ * paying row's label once it is paid; they never move a counter themselves.
+ */
+// ?1 cache key, ?2 user, ?3 source, ?4 template, ?5 bytes, ?6 r2 key, ?7 period start, ?8 claim time, ?9 expiry.
+const CLAIM_PDF_PART_SQL = `INSERT INTO renders
+    (cache_key, user_id, site_id, source, template, width, height, format, bytes, r2_key, charged_to, period_start, created_at, expires_at)
+  VALUES (?1, ?2, NULL, ?3, ?4, 0, 0, 'pdf', ?5, ?6, 'pending', ?7, ?8, ?9)
+  ON CONFLICT (cache_key) DO NOTHING
+  RETURNING cache_key`;
+// ?1 user, ?2 claim time, ?3 the paying row's cache key, ?4 this file's cache key.
+const LABEL_PDF_PART_SQL = `UPDATE renders SET charged_to = (SELECT charged_to FROM renders WHERE cache_key = ?3 AND user_id = ?1 AND created_at = ?2)
+  WHERE cache_key = ?4 AND user_id = ?1 AND created_at = ?2 AND charged_to = 'pending'
+    AND EXISTS (SELECT 1 FROM renders WHERE cache_key = ?3 AND user_id = ?1 AND created_at = ?2 AND charged_to IN ('plan', 'topup'))`;
 
 const LARGEST_TOPUP_SQL = `SELECT COALESCE(MAX(remaining), 0) AS largest FROM topups WHERE ${USABLE_TOPUP}`;
 
@@ -648,6 +666,40 @@ export async function chargePdf(db: D1Database, user: QuotaUser, pdf: PdfCharge,
   if (claimed.status !== 'claimed') return { status: 'duplicate' };
   const result = await chargeClaimedPdf(db, claimed.claim, pdf);
   return result.status === 'lost' ? { status: 'duplicate' } : result;
+}
+
+/** A further file of a result paid on another claim (see CLAIM_PDF_PART_SQL). */
+export type PdfPart = Pick<PdfCharge, 'cacheKey' | 'source' | 'template' | 'bytes' | 'r2Key' | 'ttlMs'>;
+
+/**
+ * Claims the ledger rows of the further files of `claim`'s result, 'pending', in one batch.
+ * Throws when a row of that cache key exists already (the rows that were inserted stay pending
+ * for releasePdfParts).
+ */
+export async function claimPdfParts(db: D1Database, claim: PdfClaim, parts: readonly PdfPart[]): Promise<void> {
+  if (parts.length === 0) return;
+  const results = await db.batch(
+    parts.map((part) =>
+      db
+        .prepare(CLAIM_PDF_PART_SQL)
+        .bind(part.cacheKey, claim.userId, part.source, part.template, part.bytes, part.r2Key, claim.period.start, claim.createdAt, claim.createdAt + part.ttlMs),
+    ),
+  );
+  const claimed = results.filter((result) => (result.results ?? []).length === 1).length;
+  if (claimed !== parts.length) throw new Error(`PDF ledger: ${parts.length - claimed} of ${parts.length} further files of ${claim.cacheKey} were not claimed`);
+}
+
+/** After `claim` was paid: its further files take its label. Returns how many did (none when it is not paid). */
+export async function labelPdfParts(db: D1Database, claim: PdfClaim, cacheKeys: readonly string[]): Promise<number> {
+  if (cacheKeys.length === 0) return 0;
+  const results = await db.batch(cacheKeys.map((key) => db.prepare(LABEL_PDF_PART_SQL).bind(claim.userId, claim.createdAt, claim.cacheKey, key)));
+  return results.reduce((total, result) => total + (result.meta.changes ?? 0), 0);
+}
+
+/** Deletes the still-pending rows of further files whose result was not paid. */
+export async function releasePdfParts(db: D1Database, claim: PdfClaim, cacheKeys: readonly string[]): Promise<void> {
+  if (cacheKeys.length === 0) return;
+  await db.batch(cacheKeys.map((key) => db.prepare(RELEASE_PDF_LEDGER_SQL).bind(key, claim.userId, claim.createdAt)));
 }
 
 export function readPdfLedger(db: D1Database, userId: string, cacheKey: string): Promise<PdfLedgerState | null> {

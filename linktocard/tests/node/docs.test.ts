@@ -406,11 +406,25 @@ describe('openapi.yaml', () => {
     expect(openapi).toContain('scheme: bearer');
   });
 
-  it('describes the six public paths, and the three PDF paths that are published only with SITE_PDF=on', () => {
+  it('describes the six public paths, and the PDF and build v3 paths that are published only with their features', () => {
     const pathsOf = (text: string): string[] => [...text.matchAll(/^ {2}(\/\S+):$/gm)].map((match) => match[1] ?? '');
     const published = ['/v1/images', '/v1/usage', '/v1/templates', '/v1/inspect', '/v1/og/{site_id}/{template}.{ext}', '/i/{account_id}/{id}.{ext}'];
+    // feature:batch, feature:toolkit and feature:linkcards, in that order after the PDF paths.
+    const v3 = [
+      '/v1/batches',
+      '/v1/batches/{batch_id}',
+      '/v1/batches/{batch_id}/zip',
+      '/v1/batches/{batch_id}/cancel',
+      '/v1/certificates/{certificate_id}/revoke',
+      '/v/{certificate_id}',
+      '/v/{certificate_id}.json',
+      ...['merge', 'split', 'stamp', 'fill', 'fields', 'from-images', 'protect'].map((op) => `/v1/pdf-tools/${op}`),
+      '/v1/cards/from-url',
+      '/v1/link/{site_id}/{template}.{ext}',
+    ];
+    expect(v3).toHaveLength(16);
     expect(pathsOf(site.openapi)).toEqual(published);
-    expect(pathsOf(openapi)).toEqual([...published.slice(0, 5), '/v1/pdf', '/v1/pdf/{site_id}/{template}.pdf', published[5], '/i/{account_id}/{id}.pdf']);
+    expect(pathsOf(openapi)).toEqual([...published.slice(0, 5), '/v1/pdf', '/v1/pdf/{site_id}/{template}.pdf', published[5], '/i/{account_id}/{id}.pdf', ...v3]);
   });
 
   it('names the real site and refers only to components it defines', () => {

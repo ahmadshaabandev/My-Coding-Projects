@@ -1,0 +1,7 @@
+node_modules/
+coverage/
+*.log
+# Make's Apps Editor for VS Code keeps the Make API key here (origins[].apikeyFile in
+# app/makecomapp.json points at ../.secrets/apikey) and adds the folder to the workspace's
+# .gitignore itself; this line keeps it out of git even when the workspace root is elsewhere.
+.secrets/

@@ -1,0 +1,49 @@
+# CI for the n8n-nodes-linktocard repository. Based on n8n-nodes-starter's ci.yml
+# (https://github.com/n8n-io/n8n-nodes-starter/blob/master/.github/workflows/ci.yml), plus the
+# typecheck and unit tests of this package.
+#
+# GitHub only runs workflows from .github/workflows at the root of a repository. Inside the
+# Link To Card monorepo (integrations/n8n) this file does nothing; it runs once this folder is
+# the root of its own public repository (README.md, "Publishing and verification").
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+
+      # --ignore-scripts: nothing here needs an install script, and n8n-workflow's
+      # isolated-vm dependency would otherwise try to compile itself.
+      - name: Install dependencies
+        run: 'npm ci --ignore-scripts'
+
+      - name: Run lint
+        run: 'npm run lint'
+
+      - name: Run typecheck
+        run: 'npm run typecheck'
+
+      - name: Run tests
+        run: 'npm test'
+
+      - name: Run build
+        run: 'npm run build'

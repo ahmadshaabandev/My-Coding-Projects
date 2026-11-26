@@ -1,0 +1,583 @@
+[
+    {
+        "name": "template",
+        "type": "select",
+        "label": "Template",
+        "required": true,
+        "help": "A PDF starter template shows its fields under Rows. For one of your own templates, pick \"One of my own templates\".",
+        "options": [
+            {
+                "label": "Invoice",
+                "value": "invoice",
+                "nested": [
+                    {
+                        "name": "rows",
+                        "type": "array",
+                        "label": "Rows",
+                        "required": true,
+                        "help": "One item per document. Map an array from an earlier module, for example an Array aggregator with this field as its target structure, or add the items here.",
+                        "spec": [
+                            {
+                                "name": "seller_name",
+                                "type": "text",
+                                "label": "Seller name",
+                                "required": true
+                            },
+                            {
+                                "name": "seller_address",
+                                "type": "text",
+                                "label": "Seller address",
+                                "multiline": true
+                            },
+                            {
+                                "name": "seller_email",
+                                "type": "text",
+                                "label": "Seller email"
+                            },
+                            {
+                                "name": "seller_tax_id",
+                                "type": "text",
+                                "label": "Seller tax ID"
+                            },
+                            {
+                                "name": "logo_url",
+                                "type": "text",
+                                "label": "Logo URL"
+                            },
+                            {
+                                "name": "buyer_name",
+                                "type": "text",
+                                "label": "Buyer name",
+                                "required": true
+                            },
+                            {
+                                "name": "buyer_address",
+                                "type": "text",
+                                "label": "Buyer address",
+                                "multiline": true
+                            },
+                            {
+                                "name": "buyer_email",
+                                "type": "text",
+                                "label": "Buyer email"
+                            },
+                            {
+                                "name": "invoice_number",
+                                "type": "text",
+                                "label": "Invoice number",
+                                "required": true
+                            },
+                            {
+                                "name": "issue_date",
+                                "type": "text",
+                                "label": "Issue date",
+                                "required": true
+                            },
+                            {
+                                "name": "due_date",
+                                "type": "text",
+                                "label": "Due date"
+                            },
+                            {
+                                "name": "currency",
+                                "type": "text",
+                                "label": "Currency"
+                            },
+                            {
+                                "name": "items",
+                                "type": "array",
+                                "label": "Line items",
+                                "required": true,
+                                "spec": [
+                                    {
+                                        "name": "description",
+                                        "type": "text",
+                                        "label": "Description"
+                                    },
+                                    {
+                                        "name": "quantity",
+                                        "type": "text",
+                                        "label": "Quantity"
+                                    },
+                                    {
+                                        "name": "unit_price",
+                                        "type": "text",
+                                        "label": "Unit price"
+                                    },
+                                    {
+                                        "name": "amount",
+                                        "type": "text",
+                                        "label": "Amount"
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "subtotal",
+                                "type": "text",
+                                "label": "Subtotal"
+                            },
+                            {
+                                "name": "tax_label",
+                                "type": "text",
+                                "label": "Tax label"
+                            },
+                            {
+                                "name": "tax",
+                                "type": "text",
+                                "label": "Tax"
+                            },
+                            {
+                                "name": "total",
+                                "type": "text",
+                                "label": "Total",
+                                "required": true
+                            },
+                            {
+                                "name": "payment_terms",
+                                "type": "text",
+                                "label": "Payment terms",
+                                "multiline": true
+                            },
+                            {
+                                "name": "notes",
+                                "type": "text",
+                                "label": "Notes",
+                                "multiline": true
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "label": "Receipt",
+                "value": "receipt",
+                "nested": [
+                    {
+                        "name": "rows",
+                        "type": "array",
+                        "label": "Rows",
+                        "required": true,
+                        "help": "One item per document. Map an array from an earlier module, for example an Array aggregator with this field as its target structure, or add the items here.",
+                        "spec": [
+                            {
+                                "name": "seller_name",
+                                "type": "text",
+                                "label": "Seller name",
+                                "required": true
+                            },
+                            {
+                                "name": "seller_address",
+                                "type": "text",
+                                "label": "Seller address",
+                                "multiline": true
+                            },
+                            {
+                                "name": "seller_email",
+                                "type": "text",
+                                "label": "Seller email"
+                            },
+                            {
+                                "name": "logo_url",
+                                "type": "text",
+                                "label": "Logo URL"
+                            },
+                            {
+                                "name": "receipt_number",
+                                "type": "text",
+                                "label": "Receipt number",
+                                "required": true
+                            },
+                            {
+                                "name": "date",
+                                "type": "text",
+                                "label": "Date",
+                                "required": true
+                            },
+                            {
+                                "name": "buyer_name",
+                                "type": "text",
+                                "label": "Paid by"
+                            },
+                            {
+                                "name": "payment_method",
+                                "type": "text",
+                                "label": "Payment method"
+                            },
+                            {
+                                "name": "currency",
+                                "type": "text",
+                                "label": "Currency"
+                            },
+                            {
+                                "name": "items",
+                                "type": "array",
+                                "label": "Items",
+                                "required": true,
+                                "spec": [
+                                    {
+                                        "name": "description",
+                                        "type": "text",
+                                        "label": "Description"
+                                    },
+                                    {
+                                        "name": "quantity",
+                                        "type": "text",
+                                        "label": "Quantity"
+                                    },
+                                    {
+                                        "name": "amount",
+                                        "type": "text",
+                                        "label": "Amount"
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "subtotal",
+                                "type": "text",
+                                "label": "Subtotal"
+                            },
+                            {
+                                "name": "tax_label",
+                                "type": "text",
+                                "label": "Tax label"
+                            },
+                            {
+                                "name": "tax",
+                                "type": "text",
+                                "label": "Tax"
+                            },
+                            {
+                                "name": "total",
+                                "type": "text",
+                                "label": "Total paid",
+                                "required": true
+                            },
+                            {
+                                "name": "notes",
+                                "type": "text",
+                                "label": "Notes",
+                                "multiline": true
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "label": "Quote (estimate)",
+                "value": "quote",
+                "nested": [
+                    {
+                        "name": "rows",
+                        "type": "array",
+                        "label": "Rows",
+                        "required": true,
+                        "help": "One item per document. Map an array from an earlier module, for example an Array aggregator with this field as its target structure, or add the items here.",
+                        "spec": [
+                            {
+                                "name": "seller_name",
+                                "type": "text",
+                                "label": "Seller name",
+                                "required": true
+                            },
+                            {
+                                "name": "seller_address",
+                                "type": "text",
+                                "label": "Seller address",
+                                "multiline": true
+                            },
+                            {
+                                "name": "seller_email",
+                                "type": "text",
+                                "label": "Seller email"
+                            },
+                            {
+                                "name": "logo_url",
+                                "type": "text",
+                                "label": "Logo URL"
+                            },
+                            {
+                                "name": "buyer_name",
+                                "type": "text",
+                                "label": "Prepared for",
+                                "required": true
+                            },
+                            {
+                                "name": "buyer_address",
+                                "type": "text",
+                                "label": "Buyer address",
+                                "multiline": true
+                            },
+                            {
+                                "name": "quote_number",
+                                "type": "text",
+                                "label": "Quote number",
+                                "required": true
+                            },
+                            {
+                                "name": "issue_date",
+                                "type": "text",
+                                "label": "Issue date",
+                                "required": true
+                            },
+                            {
+                                "name": "valid_until",
+                                "type": "text",
+                                "label": "Valid until"
+                            },
+                            {
+                                "name": "currency",
+                                "type": "text",
+                                "label": "Currency"
+                            },
+                            {
+                                "name": "items",
+                                "type": "array",
+                                "label": "Line items",
+                                "required": true,
+                                "spec": [
+                                    {
+                                        "name": "description",
+                                        "type": "text",
+                                        "label": "Description"
+                                    },
+                                    {
+                                        "name": "quantity",
+                                        "type": "text",
+                                        "label": "Quantity"
+                                    },
+                                    {
+                                        "name": "unit_price",
+                                        "type": "text",
+                                        "label": "Unit price"
+                                    },
+                                    {
+                                        "name": "amount",
+                                        "type": "text",
+                                        "label": "Amount"
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "subtotal",
+                                "type": "text",
+                                "label": "Subtotal"
+                            },
+                            {
+                                "name": "tax_label",
+                                "type": "text",
+                                "label": "Tax label"
+                            },
+                            {
+                                "name": "tax",
+                                "type": "text",
+                                "label": "Tax"
+                            },
+                            {
+                                "name": "total",
+                                "type": "text",
+                                "label": "Total",
+                                "required": true
+                            },
+                            {
+                                "name": "terms",
+                                "type": "text",
+                                "label": "Terms",
+                                "multiline": true
+                            },
+                            {
+                                "name": "notes",
+                                "type": "text",
+                                "label": "Notes",
+                                "multiline": true
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "label": "Certificate of completion",
+                "value": "certificate",
+                "nested": [
+                    {
+                        "name": "rows",
+                        "type": "array",
+                        "label": "Rows",
+                        "required": true,
+                        "help": "One item per document. Map an array from an earlier module, for example an Array aggregator with this field as its target structure, or add the items here.",
+                        "spec": [
+                            {
+                                "name": "title",
+                                "type": "text",
+                                "label": "Title",
+                                "required": true
+                            },
+                            {
+                                "name": "recipient_name",
+                                "type": "text",
+                                "label": "Recipient name",
+                                "required": true
+                            },
+                            {
+                                "name": "achievement",
+                                "type": "text",
+                                "label": "Achievement",
+                                "required": true,
+                                "multiline": true
+                            },
+                            {
+                                "name": "issuer_name",
+                                "type": "text",
+                                "label": "Issuer name",
+                                "required": true
+                            },
+                            {
+                                "name": "date",
+                                "type": "text",
+                                "label": "Date",
+                                "required": true
+                            },
+                            {
+                                "name": "signer_name",
+                                "type": "text",
+                                "label": "Signer name"
+                            },
+                            {
+                                "name": "signer_title",
+                                "type": "text",
+                                "label": "Signer title"
+                            },
+                            {
+                                "name": "logo_url",
+                                "type": "text",
+                                "label": "Logo URL"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "label": "Report",
+                "value": "report",
+                "nested": [
+                    {
+                        "name": "rows",
+                        "type": "array",
+                        "label": "Rows",
+                        "required": true,
+                        "help": "One item per document. Map an array from an earlier module, for example an Array aggregator with this field as its target structure, or add the items here.",
+                        "spec": [
+                            {
+                                "name": "title",
+                                "type": "text",
+                                "label": "Title",
+                                "required": true
+                            },
+                            {
+                                "name": "subtitle",
+                                "type": "text",
+                                "label": "Subtitle"
+                            },
+                            {
+                                "name": "author",
+                                "type": "text",
+                                "label": "Author"
+                            },
+                            {
+                                "name": "date",
+                                "type": "text",
+                                "label": "Date"
+                            },
+                            {
+                                "name": "summary",
+                                "type": "text",
+                                "label": "Summary",
+                                "multiline": true
+                            },
+                            {
+                                "name": "items",
+                                "type": "array",
+                                "label": "Sections",
+                                "spec": [
+                                    {
+                                        "name": "heading",
+                                        "type": "text",
+                                        "label": "Heading"
+                                    },
+                                    {
+                                        "name": "body",
+                                        "type": "text",
+                                        "label": "Body"
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "footer_note",
+                                "type": "text",
+                                "label": "Footer note"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "label": "One of my own templates",
+                "value": "own",
+                "nested": [
+                    {
+                        "name": "ownTemplate",
+                        "type": "select",
+                        "label": "Your template",
+                        "required": true,
+                        "options": "rpc://listOwnTemplates",
+                        "help": "One of the templates you saved in the Link To Card dashboard."
+                    },
+                    {
+                        "name": "rows",
+                        "type": "array",
+                        "label": "Rows",
+                        "required": true,
+                        "help": "One collection per document, with your template's placeholders as keys. Map an array of collections from an earlier module, for example an Array aggregator."
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "name": "verify",
+        "type": "boolean",
+        "label": "Certificate verification",
+        "help": "Yes: every document gets a certificate ID and a public page that confirms it. Leave empty for the default: on for the certificate template, off for the others."
+    },
+    {
+        "name": "filename",
+        "type": "text",
+        "label": "File name pattern",
+        "help": "The download name of each PDF. Write a row's value as [key] and the row's number as [n], for example certificate-[recipient_name].pdf. Leave empty for the template and the row number: certificate-1.pdf, certificate-2.pdf, ... for a starter template, document-1.pdf, ... for your own."
+    },
+    {
+        "name": "pageFormat",
+        "type": "select",
+        "label": "Page size",
+        "help": "Leave empty for the template's own page size.",
+        "options": [
+            {
+                "label": "A4",
+                "value": "a4"
+            },
+            {
+                "label": "US Letter",
+                "value": "letter"
+            },
+            {
+                "label": "A5",
+                "value": "a5"
+            }
+        ]
+    },
+    {
+        "name": "landscape",
+        "type": "boolean",
+        "label": "Landscape",
+        "help": "Leave empty for the template's own orientation."
+    }
+]

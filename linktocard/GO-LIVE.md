@@ -139,6 +139,13 @@ domain.
 > off (and degrades to zero PDF usage without them); the column of `0007` is used only while
 > PDFs render (without it the browser time is still recorded, without the plan, and the error log
 > names the migration). They only create tables, indexes and that column. `npx wrangler d1 migrations list DB --env production --remote` shows what is pending.
+>
+> Since build v3 (2026-11-26), two more things come first, whatever the deploy is for: the
+> migration `0008_batches.sql` (tables `batches`, `batch_rows`, `certificates`; the routes use them
+> only while `BATCH_ENABLED` is `"true"`, and the daily cleanup skips them while they are missing), and
+> the production queue, which `wrangler.toml` binds as `BATCH_QUEUE`:
+> `npx wrangler queues create linktocard-batch-production`. Without the queue, `npm run deploy:production`
+> fails. Section 11 has the details.
 
 **Done on 2026-11-23**, with checkout off until live Paddle is approved:
 
@@ -296,7 +303,8 @@ npx wrangler d1 execute DB --env production --remote --command "UPDATE users SET
 - [ ] The next daily cleanup (03:17 UTC) deletes the account's rendered images and fonts from R2,
       then every database row of the account: sites, keys, templates, fonts, usage, top-ups,
       rendered-image and stored-PDF records, PDF counts, sessions, sign-in requests and its
-      webhook log entries. Its rows of PDF browser time stay, without the account id, until they
+      webhook log entries, and (since build v3) its batches, their rows and its certificate
+      records, whose verification pages answer 404 from then on. Its rows of PDF browser time stay, without the account id, until they
       age out (`PDF.browserUsageRetentionDays`). An account
       with more than 6,000 stored images takes one more day per 6,000.
 - [ ] Confirm the next day that the row is gone, then reply to the customer:
@@ -435,3 +443,128 @@ Production, only when you approve PDFs:
         stored PDFs (`/i/...pdf`) and every signed `/v1/pdf` link, including PDFs customers
         have already paid for and invoice links already emailed, answer 503 until it is
         switched back.
+
+## 11. Build v3 tools (staging first; production feature by feature)
+
+Built and tested locally on 2026-11-26 (README.md, "Build v3 tools" and "Not verified"); nothing of
+it has run on Cloudflare. Each tool has a Worker switch in `wrangler.toml` and a site feature in
+`SITE_FEATURES`; production has every switch `"false"` and `deploy:production` builds the site with
+`SITE_FEATURES= SITE_PDF=off`. Turning a tool on in production is your approval, one tool at a time.
+
+### 11a. Before the next deploy of each environment (whatever it is for)
+
+- [ ] Create the queue the environment's `wrangler.toml` section binds, once per environment, or
+      `wrangler deploy` fails:
+
+```sh
+npx wrangler queues create linktocard-batch-staging
+npx wrangler queues create linktocard-batch-production
+```
+
+- [ ] Apply the migrations, so `0008_batches.sql` is in place before code that uses it:
+
+```sh
+npx wrangler d1 migrations apply DB --env staging --remote
+npx wrangler d1 migrations apply DB --env production --remote
+```
+
+- [ ] Know what goes live with any production deploy, switches or not: the `email` size (1200 x 400)
+      in the API, the size lists of the docs and the dashboard's size picker; `/api/sign` refusing
+      `open` as a data name; `/v/*` reaching the Worker, which answers a "not available" page (503)
+      while `BATCH_ENABLED` is `"false"`. The two email starter templates do not: they answer 404
+      everywhere while `EMAIL_FIELDS_ENABLED` is `"false"`, and the free playground never offers them. The bundle is about
+      3.2 MB gzipped (README.md, "Deploying").
+
+### 11b. Staging
+
+- [ ] 11a for staging, then `npm run deploy:staging` (every site feature and `SITE_PDF=on`; all four
+      switches are `"true"` under `[env.staging.vars]`).
+- [ ] `/api/config` on staging reports `"pdf_enabled": true` and a `batch` block with `"enabled": true`.
+- [ ] **Bulk documents:** in the dashboard's **Bulk documents** tab, upload a CSV of a few
+      certificates, preview row 1, start the batch, follow it to Finished, download the ZIP, open
+      a verification page, revoke one and check `/v/{id}.json` says revoked. Repeat with the
+      `POST /v1/batches` quickstart of `/docs/bulk`. Print one certificate and scan its QR code with
+      a phone. Make one verified certificate on a Free account: the free mark and the QR code must
+      both be readable. Watch `npx wrangler tail --env staging`, and
+      `npx wrangler d1 execute DB --env staging --remote --command "SELECT source, status, wall_ms FROM browser_usage ORDER BY created_at DESC LIMIT 10"`
+      should show `batch` rows.
+- [ ] **PDF toolkit:** run each operation of `/docs/pdf-tools` once, with a `url`, a `pdf_id` and an
+      upload; open a result's `url`; a Free account's result carries the mark on every page. Try a
+      `url` file near the input limit: a download must finish within the image fetcher's timeout
+      (`LIMITS.imageFetchTimeoutMs`); if large files time out, give the toolkit its own timeout in
+      `src/config.ts`.
+- [ ] **Cards from links:** `POST /v1/cards/from-url` for one of your own pages, and a signed
+      `/v1/link/...` URL in a page's `og:image`, checked with the OG checker.
+- [ ] **Email images:** sign the worked example of `/docs/email-images` with your staging site's
+      secret, put it into a test email of your email platform with its merge tag, and send it to a
+      contact named `Zoë & Jo`.
+- [ ] **Free pages:** `/tools`, the five one-app preview pages, `/tools/merge-pdf` and
+      `/tools/image-to-pdf` in Chrome, Firefox and Safari and on a phone.
+- [ ] **Connectors:** test each one against staging with a staging API key, as
+      `integrations/README.md` ("Before any of them") describes.
+- [ ] Emergency brakes on staging, once: `BATCH_ENABLED = "false"` and a deploy makes rows that
+      arrive fail with `not_configured`, uncharged; `npx wrangler queues pause-delivery linktocard-batch-staging`
+      holds the queue's messages without failing them (`resume-delivery` continues). Both are
+      listed by the installed Wrangler's `wrangler queues --help`.
+
+### 11c. Production, one tool at a time
+
+For each tool you approve, in one change:
+
+1. `wrangler.toml`, `[env.production.vars]`: its switch to `"true"`.
+2. `package.json`, `deploy:production`: add its site feature to `SITE_FEATURES=` (for example
+   `SITE_FEATURES=batch`), and update the test in `tests/node/site-features.test.ts` that pins
+   that script.
+3. `site/site.config.json`: set `legalUpdated` to the launch day when the tool has text in the terms
+   or the privacy policy (bulk documents, the PDF toolkit, cards from links, email images). That text
+   goes live with the tool's site feature, and the date tells readers that the pages changed.
+4. 11a done for production; then `npm test` and `npm run deploy:production`.
+
+| Tool | Needs first | Switch | Site feature | Then check |
+| --- | --- | --- | --- | --- |
+| Bulk documents | PDFs on in production (section 10), 11a | `BATCH_ENABLED` | `batch` | `/api/config` has `"batch": {"enabled": true, ...}`; one small batch |
+| PDF toolkit | PDFs on as well: its results are served under `/i/...pdf`, which answers 503 while `PDF_ENABLED` is off | `PDF_TOOLKIT_ENABLED` | `toolkit` | one merge, and its `url` opens |
+| Cards from links | nothing | `LINK_CARDS_ENABLED` | `linkcards` | one card from your own page |
+| Email images | nothing | `EMAIL_FIELDS_ENABLED` | `email` | one open-field URL in a test email |
+| One-app preview pages and `/tools` | nothing (site only) | none | `previews` | the six pages load |
+| Connectors page | the connectors published (below) or still "being prepared" | none | `integrations` | the page's status line matches reality |
+
+- **Connectors.** Publishing them is your work in your own accounts; the steps, the accounts each
+  platform needs and what could not be tested here are in `integrations/README.md` ("Publishing:
+  what Ahmad does"). A step whose tool is off in production stops with "... is not enabled yet.", so
+  switch the tool on first or leave the step out of that version. `/docs/integrations` says the
+  connectors are being prepared for listing; when one is listed, change that text and the test in
+  `tests/node/v3-docs-draft.test.ts` that forbids saying so.
+- **Cost.** A batch's documents are PDFs: Browser Run time, the daily alarm and the free brake
+  (section 10) cover them, the failed-render cap counts them per account like `POST /v1/pdf`, and
+  each environment's queue consumer renders at most `BATCH.maxConsumerConcurrency` rows at a time,
+  each at least `BATCH.minRowMs`. The toolkit runs in the Worker (CPU, no browser) behind `RL_PDF_TOOLS`
+  per key; link cards behind the daily page checks per key or site; email images behind
+  `EMAIL_FIELDS.maxUniqueRendersPerDay` per site.
+- **Before turning email images on in production:** a URL that a customer's own code signed with a
+  parameter named `open` (allowed while the switch is off, though `/api/sign` refuses it) is read
+  differently once it is on. When its value is not a list of field names (`open=Mon-Fri 8-18`) it
+  keeps working as before; when it is one (`open=daily`), the field it names becomes unsigned and
+  `{{open}}` renders empty. Look for custom templates that use it:
+  `npx wrangler d1 execute DB --env production --remote --command "SELECT id, user_id FROM templates WHERE deleted_at IS NULL AND (html LIKE '%{{open}}%' OR html LIKE '%{{ open }}%')"`,
+  and tell their owners to rename the parameter first.
+- **Stopping a tool:** its switch to `"false"` and a deploy. What that does to things customers
+  already have, not only to new requests:
+  - **Bulk documents** (`BATCH_ENABLED`): rows still queued fail with `not_configured`, uncharged.
+    `GET /v1/batches`, a batch's status and its ZIP downloads answer 503, finished and paid batches
+    included; each document's own `/i/...pdf` link keeps working while `PDF_ENABLED` is on.
+    Verification pages answer a "not available" page; printed QR codes work again once it is back
+    on. To hold rows instead, `npx wrangler queues pause-delivery linktocard-batch-production`
+    keeps their messages, but only for the queue's message retention (4 days by default, up to 14
+    when configured, per Cloudflare's Queues limits page; `src/config.ts` BATCH assumes 4): messages older than
+    that are deleted, and the daily cleanup fails the rows of batches older than
+    `BATCH.staleAfterDays` (5) days, uncharged. Resume within that time.
+  - **PDF toolkit** (`PDF_TOOLKIT_ENABLED`): new requests answer 503; stored results stay under
+    `/i/...pdf` while `PDF_ENABLED` is on.
+  - **Cards from links** (`LINK_CARDS_ENABLED`): every `/v1/link/...` URL answers 503, stored cards
+    included, so the `og:image` of every page that uses one breaks until it is back on.
+  - **Email images** (`EMAIL_FIELDS_ENABLED`): every open-field image in emails already sent
+    answers 403 `invalid_signature` (values already rendered and paid for included) once the edge
+    and the mail providers' image caches let the request through, so readers see broken images. The
+    email starters answer 404 for any URL that names them. Turn it off only when a broken image is
+    better than what it stops.

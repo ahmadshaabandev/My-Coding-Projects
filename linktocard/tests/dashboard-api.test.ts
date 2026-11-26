@@ -162,6 +162,7 @@ describe('GET /api/config and /api/me', () => {
         { id: 'og', width: 1200, height: 630 },
         { id: 'square', width: 1080, height: 1080 },
         { id: 'portrait', width: 1080, height: 1350 },
+        { id: 'email', width: 1200, height: 400 },
       ],
       formats: ['png', 'jpeg', 'webp'],
     });

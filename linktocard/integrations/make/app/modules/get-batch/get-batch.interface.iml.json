@@ -1,0 +1,196 @@
+[
+    {
+        "name": "id",
+        "type": "text",
+        "label": "Batch ID"
+    },
+    {
+        "name": "status",
+        "type": "text",
+        "label": "Status",
+        "help": "queued or running while it works; done, partial (some failed), failed or cancelled once it has finished."
+    },
+    {
+        "name": "template",
+        "type": "text",
+        "label": "Template"
+    },
+    {
+        "name": "verify",
+        "type": "boolean",
+        "label": "Certificate verification"
+    },
+    {
+        "name": "total",
+        "type": "uinteger",
+        "label": "Documents"
+    },
+    {
+        "name": "counts",
+        "type": "collection",
+        "label": "Documents by status",
+        "spec": [
+            {
+                "name": "queued",
+                "type": "uinteger",
+                "label": "Queued"
+            },
+            {
+                "name": "running",
+                "type": "uinteger",
+                "label": "Running"
+            },
+            {
+                "name": "done",
+                "type": "uinteger",
+                "label": "Done"
+            },
+            {
+                "name": "failed",
+                "type": "uinteger",
+                "label": "Failed"
+            },
+            {
+                "name": "cancelled",
+                "type": "uinteger",
+                "label": "Cancelled"
+            }
+        ]
+    },
+    {
+        "name": "pages",
+        "type": "uinteger",
+        "label": "Pages made"
+    },
+    {
+        "name": "credits_used",
+        "type": "uinteger",
+        "label": "Images counted"
+    },
+    {
+        "name": "created_at",
+        "type": "date",
+        "label": "Created at"
+    },
+    {
+        "name": "started_at",
+        "type": "date",
+        "label": "Started at"
+    },
+    {
+        "name": "finished_at",
+        "type": "date",
+        "label": "Finished at"
+    },
+    {
+        "name": "cancelled_at",
+        "type": "date",
+        "label": "Cancelled at"
+    },
+    {
+        "name": "rows",
+        "type": "array",
+        "label": "Documents",
+        "spec": [
+            {
+                "name": "index",
+                "type": "uinteger",
+                "label": "Row (from 0)"
+            },
+            {
+                "name": "status",
+                "type": "text",
+                "label": "Status"
+            },
+            {
+                "name": "filename",
+                "type": "text",
+                "label": "File name"
+            },
+            {
+                "name": "pages",
+                "type": "uinteger",
+                "label": "Pages"
+            },
+            {
+                "name": "credits_used",
+                "type": "uinteger",
+                "label": "Images counted"
+            },
+            {
+                "name": "url",
+                "type": "url",
+                "label": "PDF URL"
+            },
+            {
+                "name": "error",
+                "type": "collection",
+                "label": "Error",
+                "spec": [
+                    {
+                        "name": "code",
+                        "type": "text",
+                        "label": "Code"
+                    },
+                    {
+                        "name": "message",
+                        "type": "text",
+                        "label": "Message"
+                    }
+                ]
+            },
+            {
+                "name": "certificate_id",
+                "type": "text",
+                "label": "Certificate ID"
+            },
+            {
+                "name": "verify_url",
+                "type": "url",
+                "label": "Verification page"
+            }
+        ]
+    },
+    {
+        "name": "zip_parts",
+        "type": "array",
+        "label": "Zip parts",
+        "help": "The finished documents in zip files of up to 500 documents each, in row order. Download one with Download the zip file and its part number.",
+        "spec": [
+            {
+                "name": "part",
+                "type": "uinteger",
+                "label": "Part"
+            },
+            {
+                "name": "entries",
+                "type": "uinteger",
+                "label": "Documents in this part"
+            },
+            {
+                "name": "bytes",
+                "type": "uinteger",
+                "label": "Zip size (bytes)"
+            },
+            {
+                "name": "url",
+                "type": "url",
+                "label": "Zip URL (needs the API key)"
+            }
+        ]
+    },
+    {
+        "name": "fileName",
+        "type": "filename",
+        "label": "File name",
+        "semantic": "file:name",
+        "help": "Only with Download the zip file."
+    },
+    {
+        "name": "data",
+        "type": "buffer",
+        "label": "Zip file (data)",
+        "semantic": "file:data",
+        "help": "Only with Download the zip file."
+    }
+]

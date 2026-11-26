@@ -1,0 +1,15 @@
+{
+    "id": "bat_m4q8x2k7v1c9d3e6",
+    "status": "queued",
+    "template": "certificate",
+    "verify": true,
+    "total": 3,
+    "counts": {
+        "queued": 3,
+        "running": 0,
+        "done": 0,
+        "failed": 0,
+        "cancelled": 0
+    },
+    "created_at": "2026-11-26T09:12:44.031Z"
+}

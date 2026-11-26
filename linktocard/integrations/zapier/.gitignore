@@ -1,0 +1,16 @@
+# `zapier-platform push` uploads this folder as source.zip, minus what is listed here
+# (packages/cli/src/utils/ignore.js in github.com/zapier/zapier-platform). Without this file
+# node_modules and any local .env would be uploaded too.
+node_modules/
+build/
+dist/
+coverage/
+*.zip
+*.log
+.env
+.env.*
+.environment
+# Written by `zapier-platform build` while it runs and deleted when it succeeds; a failed build
+# (for example without a connection to zapier.com) leaves them behind.
+definition.json
+zapierwrapper.js

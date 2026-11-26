@@ -5,8 +5,10 @@
  * enforced ones.
  */
 
+import { PLANS, type PlanId } from './billing/plans';
+
 export type ImageFormat = 'png' | 'jpeg' | 'webp';
-export type SizeId = 'og' | 'square' | 'portrait';
+export type SizeId = 'og' | 'square' | 'portrait' | 'email';
 
 export interface SizePreset {
   id: SizeId;
@@ -20,6 +22,8 @@ export const SIZES: Record<SizeId, SizePreset> = {
   og: { id: 'og', label: 'Open Graph', width: 1200, height: 630 },
   square: { id: 'square', label: 'Square', width: 1080, height: 1080 },
   portrait: { id: 'portrait', label: 'Portrait', width: 1080, height: 1350 },
+  /** A 600 x 200 email slot at twice the pixels (the email-banner starter is laid out for it). */
+  email: { id: 'email', label: 'Email', width: 1200, height: 400 },
 };
 
 export const DEFAULT_SIZE: SizeId = 'og';
@@ -116,6 +120,7 @@ export const RATE_LIMITS = {
   RL_PDF_KEY: { limit: 20, periodSeconds: 10, scope: 'per API key, POST /v1/pdf' },
   RL_PDF_FREE: { limit: 10, periodSeconds: 60, scope: 'per Free account, PDF renders (POST /v1/pdf and uncached signed PDF links)' },
   RL_TOOLS_PDF: { limit: 3, periodSeconds: 60, scope: 'per IP address (IPv6: per /64 network), free PDF tools' },
+  RL_PDF_TOOLS: { limit: 30, periodSeconds: 60, scope: 'per API key, PDF toolkit (POST /v1/pdf-tools/{op})' },
 } as const;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;
@@ -297,9 +302,157 @@ export const HTTP_CACHE = {
  * run_worker_first in wrangler.toml (checked by tests/node/forbidden-deps.test.ts).
  * A trailing slash means "everything below".
  */
-export const WORKER_PATHS: readonly string[] = ['/v1/', '/api/', '/auth/', '/webhooks/', '/i/', '/playground/', '/healthz'];
+export const WORKER_PATHS: readonly string[] = ['/v1/', '/api/', '/auth/', '/webhooks/', '/i/', '/playground/', '/v/', '/healthz'];
 
 export const API_KEY_PREFIX = 'ltc_';
 export const SITE_SECRET_PREFIX = 'ltcs_';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
+
+/*
+ * Build v3 tools (owner decision 2026-11-26). Each spends the existing image units; no new Paddle
+ * product. Each has its own kill switch (src/lib/features.ts): "true" turns it on.
+ */
+
+/** Bulk documents from a spreadsheet: POST /v1/batches, rendered row by row through a Queue. */
+export const BATCH = {
+  /** Rows one batch may hold, by plan. */
+  maxRows: { free: 25, starter: 500, pro: 2000 },
+  /** Queued or running batches per account at once. */
+  maxActivePerAccount: 2,
+  /** Rows a queue message carries; the consumer renders them one after another. */
+  rowsPerMessage: 1,
+  /** Queue consumer concurrency, kept well under Browser Run's 30 quick actions per second. */
+  maxConsumerConcurrency: 5,
+  /** Attempts for a row whose failure was the provider's or a busy browser, never the document's. */
+  maxRowAttempts: 3,
+  /** Largest JSON body of POST /v1/batches. */
+  maxRequestBodyBytes: 4 * 1024 * 1024,
+  /** Certificate verification records stay this long after they are revoked. */
+  revokedRetentionDays: 90,
+  /** Messages per consumer invocation (wrangler.toml max_batch_size): CPU per invocation stays well under limits.cpu_ms. */
+  queueMaxBatchSize: 5,
+  /** Seconds a consumer waits to fill a batch (wrangler.toml max_batch_timeout). */
+  queueMaxBatchTimeoutSeconds: 2,
+  /** wrangler.toml max_retries; at least maxRowAttempts, so the consumer gives up on a row before Queues deletes it. */
+  queueMaxRetries: 5,
+  /** Base delay of a retried row (wrangler.toml retry_delay); attempt n waits n times this. */
+  retryDelaySeconds: 30,
+  /** Least wall time per rendered row: maxConsumerConcurrency rows per second, under Browser Run's 30 quick actions/s. */
+  minRowMs: 1000,
+  /** A row claim older than this is dead: a consumer invocation lasts at most 15 minutes. */
+  claimTimeoutMinutes: 15,
+  /** Messages per sendBatch call (the Queues limit is 100). */
+  sendBatchChunk: 100,
+  /** Rows still unfinished this many days after their batch was made are failed by the daily cleanup (queue retention 4 days + margin). */
+  staleAfterDays: 5,
+  /** Most CSV columns the dashboard Bulk tab reads. */
+  maxCsvColumns: 200,
+  /**
+   * ZIP downloads come in parts (GET /v1/batches/{id}/zip?part=N): the finished PDFs in row
+   * order, packed greedily into parts of at most this many files (each file is one R2 read of
+   * the download request) ...
+   */
+  zipPartMaxEntries: 500,
+  /** ... and at most this many archive bytes (2 GiB; a ZIP without ZIP64 holds less than 4 GiB). */
+  zipPartMaxBytes: 2 * 1024 * 1024 * 1024,
+  /** Batches per page of GET /v1/batches, when the request does not say, and at most. */
+  listDefaultLimit: 20,
+  listMaxLimit: 100,
+} as const;
+
+/** PDF toolkit without a browser: POST /v1/pdf-tools/{op}. */
+export const PDF_TOOLKIT = {
+  ops: ['merge', 'split', 'stamp', 'fill', 'fields', 'from-images', 'protect'] as const,
+  maxInputBytes: 20 * 1024 * 1024,
+  maxFiles: 20,
+  maxPages: 500,
+  maxImageBytes: 10 * 1024 * 1024,
+  /** One image unit per started block of this many output pages (minimum one); "fields" is free. */
+  pagesPerUnit: 10,
+  maxRequestBodyBytes: 28 * 1024 * 1024,
+  /** Structure tokens a PDF may hold before pdf-lib parses it (src/pdftools/budget.ts): about 48 B of heap each, so about 50 MB. */
+  maxStructureTokens: 1_000_000,
+  /**
+   * Bytes of one request's results together (every file of a split; the one file of the other
+   * operations). A split copies resources its pages share (a background image, fonts) into every
+   * file, so without this 20 files of an 18.9 MB input came to 377 MB, all held in memory at once
+   * (security review SEC-4). The input limit plus 5 MB for the structure pdf-lib writes: merging
+   * files that use object streams, or re-compressing PNGs, makes a result a little larger than its inputs.
+   */
+  maxOutputBytes: 25 * 1024 * 1024,
+  /**
+   * Nodes of a form's field tree (every field and every widget), walked before pdf-lib reads the
+   * form (src/pdftools/document.ts). Large real forms have a few hundred to a few thousand.
+   */
+  maxFormFields: 5_000,
+  /**
+   * Structural JSON tokens ("[", "{", ",", ":" outside strings) a JSON request body may hold,
+   * counted before JSON.parse (src/routes/pdf-toolkit.ts). The files are base64 strings, which
+   * hold none; a fill with values for every field of the largest form allowed needs about 2 x maxFormFields.
+   */
+  maxJsonTokens: 50_000,
+} as const;
+export type PdfToolkitOp = (typeof PDF_TOOLKIT.ops)[number];
+
+export function pdfToolkitUnits(op: PdfToolkitOp, outputPages: number): number {
+  if (op === 'fields') return 0;
+  if (!Number.isInteger(outputPages) || outputPages < 1) throw new RangeError(`pdfToolkitUnits: pages must be a positive integer, got ${outputPages}`);
+  return Math.ceil(outputPages / PDF_TOOLKIT.pagesPerUnit);
+}
+
+/** Link in, card out: a card built from a page's own metadata (POST /v1/cards/from-url, /v1/link/...). */
+export const LINK_CARDS = {
+  defaultTemplate: 'blog',
+  /** Page text is cut to this many characters (code points) per field: the playground's limits. */
+  maxChars: { title: 120, description: 200, site: 60 },
+  /** A signed link card reads its page again once its last check is this old; until then its stored card answers. */
+  refreshAfterMs: DAY_MS,
+} as const;
+
+/**
+ * Unique open-field renders a site may make per UTC day: a quarter of the plan's monthly images.
+ * Open values are unsigned, so anyone holding one email image URL can ask for new values, each
+ * costing the owner an image; the cap slows such a drain to a quarter of the allowance a day. At
+ * the earlier 200 / 2,000 / 10,000 it equalled or exceeded the whole month (review BQ-1).
+ */
+const openRendersPerDay = (plan: PlanId): number => Math.floor(PLANS[plan].monthlyImages / 4);
+
+/** Personalized email images: signed card URLs whose "open" fields an email platform fills in. */
+export const EMAIL_FIELDS = {
+  maxOpenFields: 3,
+  maxValueChars: 40,
+  /** Unique renders with open fields per site per UTC day, by plan: openRendersPerDay above. */
+  maxUniqueRendersPerDay: { free: openRendersPerDay('free'), starter: openRendersPerDay('starter'), pro: openRendersPerDay('pro') },
+  /** Cache lifetime sent to email clients' image proxies. */
+  maxAgeSeconds: 30 * 24 * 60 * 60,
+} as const;
+
+/** Kill switches of the v3 tools (env var names). */
+export const FEATURE_FLAGS = {
+  batch: 'BATCH_ENABLED',
+  toolkit: 'PDF_TOOLKIT_ENABLED',
+  linkcards: 'LINK_CARDS_ENABLED',
+  emailfields: 'EMAIL_FIELDS_ENABLED',
+} as const;
+export type FeatureName = keyof typeof FEATURE_FLAGS;
+
+/**
+ * The free in-browser PDF tools, /tools/merge-pdf and /tools/image-to-pdf. They run in the
+ * visitor's browser (site/src-browser/pdf-local.ts): no request carries the files and nothing is
+ * charged or counted, so these are not cost limits. They keep a phone's browser tab within its
+ * memory, and the pages print them.
+ */
+export const LOCAL_PDF = {
+  /** Files in one list. */
+  maxFiles: 50,
+  /** All files of one list together. */
+  maxTotalBytes: 100 * 1024 * 1024,
+  /** Pages of one PDF, and of the merged PDF. */
+  maxPages: 1000,
+  /**
+   * Pixels of a PNG, WebP or GIF: these are decoded in memory (4 bytes a pixel, held several
+   * times over while pdf-lib compresses them again). JPEGs are embedded without decoding.
+   */
+  maxImagePixels: 30_000_000,
+} as const;

@@ -1,0 +1,53 @@
+{
+    "id": "chk_7q2m9x4k1v8c3d6e",
+    "fail_count": 1,
+    "warn_count": 0,
+    "url": "https://fieldnotes.example/design-for-the-first-glance",
+    "final_url": "https://fieldnotes.example/design-for-the-first-glance",
+    "status": 200,
+    "fetched_at": "2026-11-26T09:12:44.031Z",
+    "response_ms": 412,
+    "cached": false,
+    "expires_at": "2026-11-26T09:22:44.031Z",
+    "page": {
+        "title": "Design for the first glance | Field Notes",
+        "description": "What people notice before they read a single word.",
+        "canonical": "https://fieldnotes.example/design-for-the-first-glance",
+        "favicon": "https://fieldnotes.example/favicon.png",
+        "theme_color": "#1f6feb"
+    },
+    "og": {
+        "title": "Design for the first glance",
+        "description": "What people notice before they read a single word.",
+        "url": "https://fieldnotes.example/design-for-the-first-glance",
+        "type": "article",
+        "site_name": "Field Notes"
+    },
+    "twitter": {},
+    "robots": {
+        "checked": true,
+        "allowed": true
+    },
+    "checks": [
+        {
+            "id": "og_image",
+            "status": "fail",
+            "title": "og:image is missing",
+            "detail": "The page has no og:image tag.",
+            "fix": "Add <meta property=\"og:image\" content=\"https://example.com/card.png\"> to the page <head>, pointing at a 1200x630 PNG or JPEG."
+        },
+        {
+            "id": "og_title",
+            "status": "pass",
+            "title": "og:title is set",
+            "detail": "og:title is 27 characters."
+        }
+    ],
+    "preview": {
+        "title": "Design for the first glance",
+        "description": "What people notice before they read a single word.",
+        "domain": "fieldnotes.example",
+        "site_name": "Field Notes",
+        "favicon": "https://fieldnotes.example/favicon.png"
+    }
+}

@@ -6,7 +6,8 @@
   "description": "Link To Card - HTML/CSS templates to Open Graph images on Cloudflare Workers (Satori + resvg-wasm)",
   "scripts": {
     "dev": "npm run build:site && wrangler dev",
-    "build:site": "tsx scripts/build-site.ts",
+    "build:browser": "tsx scripts/build-browser-bundles.mts",
+    "build:site": "npm run build:browser && tsx scripts/build-site.ts",
     "test": "npm run build:site && vitest run && vitest run -c vitest.node.config.ts",
     "test:workers": "vitest run",
     "test:node": "vitest run -c vitest.node.config.ts",
@@ -17,12 +18,13 @@
     "probes": "PROBES=1 vitest run --silent=false",
     "build:dry": "npm run build:site && wrangler deploy --dry-run --outdir dist",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "deploy:staging": "SITE_PDF=on npm run build:site && wrangler deploy --env staging",
-    "deploy:production": "npm run check:golive && SITE_PDF=off npm run build:site && wrangler deploy --env production",
+    "deploy:staging": "SITE_FEATURES=pdf,batch,toolkit,linkcards,email,previews,integrations SITE_PDF=on npm run build:site && wrangler deploy --env staging",
+    "deploy:production": "npm run check:golive && SITE_FEATURES= SITE_PDF=off npm run build:site && wrangler deploy --env production",
     "check:golive": "tsx scripts/build-site.ts --check-golive",
     "deploy:www": "wrangler deploy -c redirect/wrangler.toml"
   },
   "dependencies": {
+    "@cantoo/pdf-lib": "2.11.1",
     "@jsquash/jpeg": "1.6.0",
     "@jsquash/webp": "1.5.0",
     "@resvg/resvg-wasm": "2.6.2",
@@ -31,7 +33,8 @@
     "harfbuzzjs": "0.10.0",
     "hono": "4.13.19",
     "htmlparser2": "12.0.0",
-    "satori": "0.63.2"
+    "satori": "0.63.2",
+    "uqr": "0.1.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.9.0",
@@ -41,7 +44,9 @@
     "@fontsource/source-serif-4": "5.3.1",
     "@twemoji/svg": "15.0.0",
     "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
     "marked": "18.2.1",
+    "pdf-lib": "1.17.1",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.1.1",

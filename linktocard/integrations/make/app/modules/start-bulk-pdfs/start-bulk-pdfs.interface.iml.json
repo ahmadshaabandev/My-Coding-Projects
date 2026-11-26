@@ -1,0 +1,65 @@
+[
+    {
+        "name": "id",
+        "type": "text",
+        "label": "Batch ID"
+    },
+    {
+        "name": "status",
+        "type": "text",
+        "label": "Status",
+        "help": "queued: the batch was accepted; follow it with Get a batch."
+    },
+    {
+        "name": "template",
+        "type": "text",
+        "label": "Template"
+    },
+    {
+        "name": "verify",
+        "type": "boolean",
+        "label": "Certificate verification"
+    },
+    {
+        "name": "total",
+        "type": "uinteger",
+        "label": "Documents"
+    },
+    {
+        "name": "counts",
+        "type": "collection",
+        "label": "Documents by status",
+        "spec": [
+            {
+                "name": "queued",
+                "type": "uinteger",
+                "label": "Queued"
+            },
+            {
+                "name": "running",
+                "type": "uinteger",
+                "label": "Running"
+            },
+            {
+                "name": "done",
+                "type": "uinteger",
+                "label": "Done"
+            },
+            {
+                "name": "failed",
+                "type": "uinteger",
+                "label": "Failed"
+            },
+            {
+                "name": "cancelled",
+                "type": "uinteger",
+                "label": "Cancelled"
+            }
+        ]
+    },
+    {
+        "name": "created_at",
+        "type": "date",
+        "label": "Created at"
+    }
+]

@@ -1,0 +1,49 @@
+[
+    {
+        "url": "/v1/cards/from-url",
+        "method": "POST",
+        "body": {
+            "url": "{{parameters.url}}",
+            "template": "{{ifempty(parameters.template, undefined)}}",
+            "data": "{{toCollection(ifempty(parameters.overrides, emptyarray), 'key', 'value')}}",
+            "size": "{{ifempty(parameters.size, undefined)}}",
+            "format": "{{ifempty(parameters.format, undefined)}}"
+        },
+        "response": {
+            "temp": {
+                "card": "{{body}}"
+            }
+        }
+    },
+    {
+        "condition": {
+            "condition": "{{parameters.downloadFile}}",
+            "default": "{{temp.card}}"
+        },
+        "url": "{{temp.card.url}}",
+        "method": "GET",
+        "response": {
+            "type": {
+                "200": "binary",
+                "*": "json"
+            },
+            "output": {
+                "id": "{{temp.card.id}}",
+                "url": "{{temp.card.url}}",
+                "width": "{{temp.card.width}}",
+                "height": "{{temp.card.height}}",
+                "format": "{{temp.card.format}}",
+                "bytes": "{{temp.card.bytes}}",
+                "cached": "{{temp.card.cached}}",
+                "template": "{{temp.card.template}}",
+                "created_at": "{{temp.card.created_at}}",
+                "expires_at": "{{temp.card.expires_at}}",
+                "warnings": "{{temp.card.warnings}}",
+                "usage": "{{temp.card.usage}}",
+                "link": "{{temp.card.link}}",
+                "fileName": "{{temp.card.id}}.{{temp.card.format}}",
+                "data": "{{body}}"
+            }
+        }
+    }
+]

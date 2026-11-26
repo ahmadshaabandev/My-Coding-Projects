@@ -2,9 +2,26 @@
 // get the signed URL with its meta tags. The first-run guide and the Sites tab
 // both use it. Signing renders nothing and counts nothing, so the output simply
 // follows the form.
+//
+// While GET /api/config switches open fields on (email_fields), the Sites tab's builder also
+// offers them: chosen fields are left out of the signature for an email platform to fill in,
+// and the output is an <img> tag for an email instead of meta tags.
 import { api } from './client.js';
 import { button, clear, codeBlock, copyButton, errorSlot, field, h, memory, segmented, showError, withBusy } from './dom.js';
-import { cardData, customTemplateFields, fieldLabel, initialValues, sampleValue, sizeOption, starterValues } from './helpers.js';
+import {
+  cardData,
+  customTemplateFields,
+  emailImageTag,
+  fieldLabel,
+  formatCount,
+  initialValues,
+  openFieldCandidates,
+  openFieldsSettings,
+  sampleValue,
+  signRequest,
+  sizeOption,
+  starterValues,
+} from './helpers.js';
 import { createPreview, debounce } from './preview.js';
 
 /** Where the template editor keeps the sample data typed for a custom template. */
@@ -40,14 +57,19 @@ export function fieldControl(spec, value, { name, lightValue, onchange }) {
  * @param sites      the account's sites (at least one)
  * @param templates  GET /api/templates
  * @param options    compact: tuck size and format away; oncopied: after the meta tags were copied;
- *                   prefill: starting values for fields the template has, e.g. { title } from the OG checker
+ *                   prefill: starting values for fields the template has, e.g. { title } from the OG checker;
+ *                   outputTitle: the caller's heading over the output, renamed while open fields are chosen
  * @returns { form, output, destroy }: two nodes, so a caller can lay them out as two steps
  */
-export function createBuilder(ctx, { sites, templates, compact = false, oncopied, prefill = {} }) {
+export function createBuilder(ctx, { sites, templates, compact = false, oncopied, prefill = {}, outputTitle = null }) {
   const uid = `builder-${++builders}`;
   const everyTemplate = [...templates.starter, ...templates.custom];
-  const state = { siteId: sites[0].id, templateId: everyTemplate[0].id, size: 'og', format: 'png', values: {} };
+  // open: per template, the fields left for an email platform to fill in (empty: an ordinary card URL).
+  const state = { siteId: sites[0].id, templateId: everyTemplate[0].id, size: 'og', format: 'png', values: {}, open: {} };
   const preview = createPreview();
+  // Open fields belong to the Sites tab's full builder, and only while the server switches them on.
+  const openSettings = compact ? null : openFieldsSettings(ctx.config);
+  const openNow = () => state.open[state.templateId] ?? [];
 
   /* ---- output: meta tags, the URL, the plain rule about counting ---- */
   const meta = codeBlock('', 'html');
@@ -93,35 +115,143 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
           ),
         ),
   );
+  /* ---- output for an email: the <img> tag, with the open fields left empty at the end ---- */
+  const emailTag = codeBlock('', 'html');
+  const emailUrl = codeBlock('', 'url');
+  const emailSlots = h('p', { class: 'hint' });
+  const emailOpen = h('a', { class: 'btn btn-secondary btn-sm', target: '_blank', rel: 'noopener' }, 'Open the image with the defaults');
+  const perDay = openSettings?.maxUniqueRendersPerDay?.[ctx.me.user.plan];
+  const emailResult = openSettings
+    ? h(
+        'div',
+        { class: 'stack', hidden: true },
+        h('p', { class: 'hint' }, 'Put this tag into the HTML of your email. It shows the image at half its size, so it stays sharp on high-density screens.'),
+        emailTag.block,
+        h('div', { class: 'cluster' }, copyButton('Copy the image tag', () => emailTag.code.textContent, { variant: 'primary', small: false }), emailSlots),
+        h(
+          'p',
+          { class: 'alert alert-info' },
+          h('strong', {}, 'Nothing has been rendered or counted yet. '),
+          'Each different set of values is rendered the first time an email app loads the image, and counts as one image; the same values again come from the cache.',
+          Number.isInteger(perDay)
+            ? ` Each site renders up to ${formatCount(perDay)} new sets of values a day on your plan. After that, a new value gets the defaults until 00:00 UTC.`
+            : '',
+        ),
+        h(
+          'details',
+          { class: 'more' },
+          h('summary', {}, 'The image URL on its own'),
+          h('div', { class: 'stack more-body' }, emailUrl.block, h('div', { class: 'cluster' }, emailOpen, h('span', { class: 'hint' }, 'Opening it renders the defaults and counts one image the first time.'))),
+        ),
+      )
+    : null;
+
   const pending = h('p', { class: 'hint' }, 'Preparing your meta tags…');
-  const output = h('div', { class: 'builder-output stack' }, pending, signError, result);
+  const output = h('div', { class: 'builder-output stack' }, pending, signError, result, emailResult);
 
   let signRun = 0;
   async function refresh() {
-    const data = cardData(state.values[state.templateId] ?? {});
+    const values = state.values[state.templateId] ?? {};
+    const data = cardData(values);
+    // The preview shows what a reader whose value is missing sees: every open field at its default.
     preview.show({ template: state.templateId, data, size: state.size, format: state.format });
+    const openFields = openSettings ? openNow() : [];
     const run = ++signRun;
     try {
-      const signed = await api.post('/api/sign', { site_id: state.siteId, template: state.templateId, format: state.format, size: state.size, data });
+      const signed = await api.post('/api/sign', signRequest({ siteId: state.siteId, template: state.templateId, format: state.format, size: state.size, values, open: openFields }));
       if (run !== signRun) return;
-      meta.code.textContent = signed.meta_tags;
-      url.code.textContent = signed.url;
-      canonical.code.textContent = signed.canonical;
-      open.href = signed.url;
+      if (openFields.length > 0) {
+        const size = ctx.config.sizes.find((candidate) => candidate.id === state.size) ?? ctx.config.sizes[0];
+        emailTag.code.textContent = emailImageTag(signed.url, size, data.title ?? '');
+        emailUrl.code.textContent = signed.url;
+        emailOpen.href = signed.url;
+        emailSlots.replaceChildren(
+          'In your email platform, put the merge tag for ',
+          ...openFields.flatMap((name, index) => [index === 0 ? '' : index === openFields.length - 1 ? ' and ' : ', ', h('code', {}, name), ' right after ', h('code', {}, `&${name}=`)]),
+          ' at the end of the URL.',
+        );
+        result.hidden = true;
+        emailResult.hidden = false;
+        if (outputTitle) outputTitle.textContent = 'Your email image';
+      } else {
+        meta.code.textContent = signed.meta_tags;
+        url.code.textContent = signed.url;
+        canonical.code.textContent = signed.canonical;
+        open.href = signed.url;
+        if (emailResult) emailResult.hidden = true;
+        result.hidden = false;
+        if (outputTitle) outputTitle.textContent = 'Your meta tags';
+      }
       signError.hidden = true;
-      result.hidden = false;
     } catch (failure) {
       if (run !== signRun) return;
       showError(signError, failure);
       result.hidden = true;
+      if (emailResult) emailResult.hidden = true;
     }
     pending.hidden = true;
   }
   const refreshSoon = debounce(refresh);
 
-  /* ---- form: site, template, fields, size, format ---- */
+  /* ---- form: site, template, fields, open fields, size, format ---- */
   const fields = h('div', { class: 'builder-fields' });
   const fieldsError = errorSlot();
+  const openChoices = h('div', { class: 'open-fields-list' });
+  const openNote = h('p', { class: 'hint' });
+  const openBox = openSettings
+    ? h(
+        'details',
+        { class: 'more open-fields' },
+        h('summary', {}, 'Personalize for email: open fields'),
+        h(
+          'div',
+          { class: 'stack more-body' },
+          h(
+            'p',
+            { class: 'hint' },
+            'An open field is left out of the signature, so your email platform can fill in each reader\'s own value, such as a first name, when it sends. What you typed in that field above becomes its default: the image shows it when a reader\'s value is missing or cannot be used.',
+          ),
+          openChoices,
+          openNote,
+        ),
+      )
+    : null;
+
+  /** The open-field checkboxes for the template's fields; at most maxOpenFields can be ticked. */
+  function renderOpenChoices(specs) {
+    if (!openSettings) return;
+    const candidates = openFieldCandidates(specs);
+    const chosen = (state.open[state.templateId] ??= []).filter((name) => candidates.includes(name));
+    state.open[state.templateId] = chosen;
+    const max = openSettings.maxOpenFields;
+    const boxes = candidates.map((name) => {
+      const box = h('input', {
+        type: 'checkbox',
+        checked: chosen.includes(name),
+        onchange: () => {
+          const list = state.open[state.templateId];
+          if (box.checked && !list.includes(name)) list.push(name);
+          if (!box.checked) list.splice(list.indexOf(name), 1);
+          limit();
+          refresh();
+        },
+      });
+      return { name, box, node: h('label', { class: 'check' }, box, h('span', {}, fieldLabel(name), ' ', h('code', {}, name))) };
+    });
+    const limit = () => {
+      const full = max !== null && state.open[state.templateId].length >= max;
+      for (const { box } of boxes) box.disabled = full && !box.checked;
+    };
+    clear(openChoices).append(...boxes.map(({ node }) => node));
+    if (boxes.length === 0) openChoices.append(h('p', { class: 'hint' }, 'This template has no text field that can be open.'));
+    const limits = [];
+    if (max !== null) limits.push(`Choose up to ${formatCount(max)}.`);
+    if (openSettings.maxValueChars !== null) {
+      limits.push(`A reader's value can have up to ${formatCount(openSettings.maxValueChars)} characters: letters, digits, spaces and . , ' - ! ? & @ #. Anything else shows the default.`);
+    }
+    openNote.textContent = limits.join(' ');
+    limit();
+  }
 
   async function fieldSpecs(templateId) {
     const starter = templates.starter.find((template) => template.id === templateId);
@@ -152,6 +282,7 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
         ),
       );
       if (specs.length === 0) fields.append(h('p', { class: 'hint' }, 'This template has no {{placeholders}}, so there is nothing to fill in.'));
+      renderOpenChoices(specs);
       refresh();
     } catch (failure) {
       showError(fieldsError, failure);
@@ -233,6 +364,7 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
       templatePicker,
       fields,
       fieldsError,
+      openBox,
       compact ? h('details', { class: 'more' }, h('summary', {}, 'Size and format'), h('div', { class: 'more-body' }, shape)) : shape,
     ),
     preview.node,

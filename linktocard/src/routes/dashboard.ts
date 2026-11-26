@@ -12,13 +12,15 @@ import { createApiKey, listApiKeys, revokeApiKey, type ApiKeySummary } from '../
 import { requireSameOrigin, requireSession, requireSessionAllowSuspended } from '../auth/middleware';
 import { changeSubscriptionPlan, createPortalSession, paddleClientConfig, upgradeAddsImages, type PaidPlanId } from '../billing/paddle';
 import { PLANS, PLAN_ORDER, TOPUP, getPlan } from '../billing/plans';
-import { FORMATS, FORMAT_TO_EXTENSION, LIMITS, SIZES } from '../config';
+import { BATCH, FORMATS, FORMAT_TO_EXTENSION, LIMITS, PDF, SIZES } from '../config';
 import { all, first, normalizeEmail, run } from '../db/client';
 import { randomId } from '../lib/crypto';
 import { contactFormEmail, sendEmail } from '../lib/email';
 import { ApiError } from '../lib/errors';
+import { assertFeatureEnabled, featureEnabled } from '../lib/features';
 import { cleanName, codePointLength, iso, isoOrNull, readJsonObject, usageJson } from '../lib/http';
-import { imageUrl, parseFormat, parseSize, resolveTemplate, templateNotFound, validateData } from '../lib/images';
+import { imageUrl, parseFormat, parseSize, resolveTemplate, templateNotFound, templateOptions, validateData } from '../lib/images';
+import { OPEN_RESERVED_PARAMS, buildOpenFieldsUrl, templateFields } from '../lib/open-fields';
 import { getPdfUsage, getUsage, listRecentRenders } from '../lib/quota';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
 import { SIG_PARAM, SIZE_PARAM, buildSignedUrl, canonicalString, deriveSiteSecret, type OgExtension } from '../lib/signed-url';
@@ -70,8 +72,28 @@ dashboardRouter.get('/config', (c) => {
     turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
     // PDF_ENABLED is "true" and the Browser Run binding exists (src/pdf/render.ts).
     pdf_enabled: pdfEnabled(c.env),
+    batch: batchConfig(c.env),
   });
 });
+
+/**
+ * The Bulk tab's limits (site/public/assets/js/dashboard/bulk.js reads these names). Only
+ * `enabled: false` while a batch could not start: BATCH_ENABLED off, PDFs off, or no queue.
+ */
+function batchConfig(env: Env): Record<string, unknown> {
+  if (!(featureEnabled(env, 'batch') && pdfEnabled(env) && env.BATCH_QUEUE !== undefined)) return { enabled: false };
+  return {
+    enabled: true,
+    max_rows: { ...BATCH.maxRows },
+    max_active: BATCH.maxActivePerAccount,
+    max_request_bytes: BATCH.maxRequestBodyBytes,
+    max_value_chars: PDF.maxDataValueChars,
+    max_columns: BATCH.maxCsvColumns,
+    units_per_document: PDF.baseUnits,
+    base_pages: PDF.basePages,
+    pdf_formats: [...PDF.formats],
+  };
+}
 
 dashboardRouter.post('/contact', requireSameOrigin, async (c) => {
   await enforceRateLimit(c.env, 'RL_AUTH', `contact:${clientIp(c.req.raw)}`);
@@ -291,14 +313,37 @@ function metaTags(url: string, width: number, height: number): string {
 dashboardRouter.post('/sign', requireSameOrigin, requireSession, async (c) => {
   const body = await readJsonObject(c.req.raw);
   const site = await ownSite(c, body.site_id);
-  const template = await resolveTemplate(c.env.DB, c.var.user.id, body.template);
+  // Open fields while they are off: 503, before the template (the email starters are unknown then too).
+  if (body.open !== undefined) assertFeatureEnabled(c.env, 'emailfields');
+  const template = await resolveTemplate(c.env.DB, c.var.user.id, body.template, templateOptions(c.env));
   if (!template) throw templateNotFound();
   const format = parseFormat(body.format);
   const size = parseSize(body.size);
-  const data = validateData(body.data, [SIZE_PARAM, SIG_PARAM]);
+  // "open" is reserved whatever EMAIL_FIELDS_ENABLED says: with open fields on, a signed URL reads
+  // it as the list of open fields, so a URL signed now with "open" as data would change meaning
+  // (or stop verifying) the day the switch is turned on (security review SEC-6).
+  const data = validateData(body.data, OPEN_RESERVED_PARAMS);
 
   const ext = FORMAT_TO_EXTENSION[format] as OgExtension;
   const params = size.id === 'og' ? data : { ...data, [SIZE_PARAM]: size.id };
+  if (body.open !== undefined) {
+    assertFeatureEnabled(c.env, 'emailfields');
+    if (!Array.isArray(body.open) || !body.open.every((field): field is string => typeof field === 'string')) {
+      throw new ApiError('invalid_request', '"open" must be a list of field names, for example ["name"].');
+    }
+    // Signed without the open fields, which are appended empty: the email platform's merge tag goes after "=".
+    const { url, canonical } = await buildOpenFieldsUrl({
+      baseUrl: c.env.APP_URL,
+      siteId: site.id,
+      template: template.label,
+      ext,
+      params,
+      secret: await siteSecret(c.env, site),
+      open: body.open,
+      templateFields: templateFields(template),
+    });
+    return c.json({ url, canonical, open: body.open });
+  }
   const url = await buildSignedUrl({
     baseUrl: c.env.APP_URL,
     siteId: site.id,

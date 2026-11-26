@@ -11,7 +11,7 @@ import { randomId } from '../lib/crypto';
 import { ApiError } from '../lib/errors';
 import { deleteFont, fontsEnabled, listFonts, parseFontDescriptor, uploadFont } from '../lib/fonts-store';
 import { assertKnownFields, cleanName, iso, readBodyBytes, readJsonObject } from '../lib/http';
-import { CARD_FIELDS, parseCardInput, renderDeps, starterTemplateJson, warningsHeader } from '../lib/images';
+import { CARD_FIELDS, parseCardInput, renderDeps, templateOptions, starterTemplateJson, warningsHeader } from '../lib/images';
 import { enforceRateLimit } from '../lib/rate-limit';
 import { renderCard, validateTemplate } from '../render';
 import { STARTER_TEMPLATES } from '../render/templates';
@@ -152,7 +152,7 @@ studioRouter.post('/preview', requireSameOrigin, requireSession, async (c) => {
   await enforceRateLimit(c.env, 'RL_PREVIEW', user.id);
   const body = await readJsonObject(c.req.raw);
   assertKnownFields(body, CARD_FIELDS);
-  const { template, data, size, format } = await parseCardInput(c.env.DB, user.id, body);
+  const { template, data, size, format } = await parseCardInput(c.env.DB, user.id, body, templateOptions(c.env));
 
   // Watermarked, not stored, not counted: a preview is never a usable card.
   const output = await renderCard(

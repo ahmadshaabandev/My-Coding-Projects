@@ -7,31 +7,49 @@
  *   /webhooks/paddle        Paddle Billing notifications (raw body, own signature check)
  *   /healthz                liveness
  *   /auth/*                 magic-link sign-in
- *   /playground/card.png    homepage playground
+ *   /playground/card.png    homepage playground (and /playground/from-check/..., link cards)
+ *   /v/{id}, /v/{id}.json   certificate verification pages (public; BATCH_ENABLED)
  *   /v1/og/...              signed card URLs (public)
  *   /v1/pdf, /v1/pdf/...    PDF documents: API key, and signed PDF links (public)
+ *   /v1/link/...            signed link-card URLs (public; LINK_CARDS_ENABLED)
+ *   /v1/certificates/...    revoking certificate records (API key)
+ *   /v1/batches/...         bulk documents (API key; BATCH_ENABLED and PDFs, routes/batches.ts)
+ *   /v1/pdf-tools/{op}      the PDF toolkit, no browser (API key; PDF_TOOLKIT_ENABLED, routes/pdf-toolkit.ts)
  *   /v1/*                   API-key endpoints
  *   /i/...                  stored images and PDFs
  *   /api/tools/*            free tools (public, no session): the OG checker, the PDF tools
+ *   /api/certificates/...   the dashboard's certificate records (session cookie)
+ *   /api/batches/...        the dashboard's bulk documents (session cookie)
  *   /api/*                  dashboard API (session cookie)
+ *
+ * queue() consumes the bulk-documents queue (BATCH_QUEUE): one PDF per batch row, rendered and
+ * charged like POST /v1/pdf (src/batch/consumer.ts).
  */
 import { Hono } from 'hono';
-import { WORKER_PATHS } from './config';
+import { consumeBatchMessages } from './batch/consumer';
+import { batchPdfJob, batchRenderResult } from './batch/render';
+import type { BatchRender } from './batch/types';
+import { BATCH, LINK_CARDS, WORKER_PATHS } from './config';
 import { runCleanup } from './lib/cleanup';
 import { ApiError, errorResponse } from './lib/errors';
 import { runPdfBudgetAlarm } from './pdf/alarm';
+import { getPdf } from './pdf/service';
 import { apiRouter } from './routes/api';
 import { authRouter } from './routes/auth';
+import { batchesApiRouter, batchesDashboardRouter } from './routes/batches';
 import { dashboardRouter } from './routes/dashboard';
 import { imagesRouter } from './routes/images';
+import { createLinkRouter } from './routes/link';
 import { ogRouter } from './routes/og';
 import { pdfRouter } from './routes/pdf';
+import { pdfToolkitRouter } from './routes/pdf-toolkit';
 import { playgroundRouter } from './routes/playground';
 import { studioRouter } from './routes/studio';
 import { toolsRouter } from './routes/tools';
 import { toolsPdfRouter } from './routes/tools-pdf';
+import { certificatesApiRouter, certificatesDashboardRouter, verifyRouter } from './routes/verify';
 import { paddleWebhookRouter } from './routes/webhooks/paddle';
-import type { AppEnv, Env } from './types';
+import type { AppEnv, BatchQueueMessage, Env } from './types';
 
 /** The router. Requests enter through the default export below, which the tests call too. */
 export const app = new Hono<AppEnv>();
@@ -63,13 +81,20 @@ app.route('/webhooks', paddleWebhookRouter);
 app.get('/healthz', (c) => c.json({ ok: true }));
 app.route('/auth', authRouter);
 app.route('/playground', playgroundRouter);
+app.route('/v', verifyRouter);
 // Before the API-key routes: signed URLs share the /v1 prefix but carry no key.
 app.route('/v1/og', ogRouter);
 app.route('/v1/pdf', pdfRouter);
+app.route('/v1/link', createLinkRouter(LINK_CARDS));
+app.route('/v1/certificates', certificatesApiRouter);
+app.route('/v1/batches', batchesApiRouter);
+app.route('/v1/pdf-tools', pdfToolkitRouter);
 app.route('/v1', apiRouter);
 app.route('/i', imagesRouter);
 app.route('/api/tools', toolsRouter);
 app.route('/api/tools', toolsPdfRouter);
+app.route('/api/certificates', certificatesDashboardRouter);
+app.route('/api/batches', batchesDashboardRouter);
 app.route('/api', dashboardRouter);
 app.route('/api', studioRouter);
 
@@ -98,8 +123,18 @@ function withoutEmptyBody(request: Request): Request {
   return request.body !== null && request.headers.get('content-length') === '0' ? new Request(request, { body: null }) : request;
 }
 
+/** One batch row, rendered and charged exactly like POST /v1/pdf (source 'batch'). */
+const renderBatchRow: BatchRender = async (env, request) => {
+  const job = await batchPdfJob(env.DB, request.user, request.batch, request.row, request.data, request.verification);
+  const result = await getPdf(env, request.background, { user: request.user, job, source: 'batch', siteId: null }, { now: request.now, withBody: false });
+  return batchRenderResult(result);
+};
+
 export default {
   fetch: (request: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> => app.fetch(withoutEmptyBody(request), env, ctx),
+  async queue(batch: MessageBatch<BatchQueueMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
+    await consumeBatchMessages(batch, env, ctx, { render: renderBatchRow, settings: BATCH });
+  },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const now = Date.now();
     ctx.waitUntil(

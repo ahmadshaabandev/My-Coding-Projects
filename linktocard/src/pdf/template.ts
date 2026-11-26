@@ -65,6 +65,13 @@ export interface PdfDocumentInput {
   html: string;
   css: string;
   data: PdfData;
+  /**
+   * Values Link To Card itself sets, never a request's (a bulk document's certificate_id,
+   * verify_url and verify_qr, src/batch/certificates.ts). They are added after `data` is
+   * validated, so the data limits do not apply to them (decision D13), and they win over a key
+   * of the same name in `data` (the batch code refuses a row that brings one).
+   */
+  trusted?: Readonly<Record<string, string>>;
 }
 
 export interface PdfBuildOptions {
@@ -642,7 +649,7 @@ function wrapperAttributes(attrs: Attributes, scope: Scope, state: BindState): A
 export function preparePdfDocument(input: PdfDocumentInput, options: PdfBuildOptions = {}): PreparedPdfHtml {
   assertSourceSize('The template HTML', input.html, PDF.maxHtmlBytes);
   assertSourceSize('The template CSS', input.css, PDF.maxCssBytes);
-  const data = validatePdfData(input.data);
+  const data: PdfData = { ...validatePdfData(input.data), ...input.trusted };
   const warnings = new Set<string>();
   const tokens = new AssetTokens();
   const fonts: FontUse = new Set();

@@ -3,6 +3,7 @@
  *
  *   npm run build:site                     build site/dist
  *   SITE_PDF=on npm run build:site         the same, with the PDF pages and blocks (staging)
+ *   SITE_FEATURES=pdf,toolkit npm run build:site   the same, with any list of features (FEATURES)
  *   npm run build:site -- --tokens         print every [[token]] and partial
  *   npm run build:site -- --check-golive   exit 1 while placeholders remain
  *
@@ -10,9 +11,11 @@
  * Every number on the site comes from src/billing/plans.ts and src/config.ts,
  * so published prices and limits cannot drift from the enforced ones.
  *
- * Feature switches (only "pdf" so far), so a feature can be published on staging before
- * production. SITE_PDF must be "on", "off" or unset (= off); anything else stops the build,
- * so a typo cannot silently publish the wrong site.
+ * Feature switches (FEATURES: pdf, batch, toolkit, linkcards, email, previews, integrations), so
+ * a feature can be published on staging before production. SITE_FEATURES is a comma list of the
+ * features to publish; SITE_PDF=on is the older spelling of "pdf". SITE_PDF must be "on", "off" or unset (= off), and SITE_FEATURES may
+ * name only known features; anything else stops the build, so a typo cannot silently publish
+ * the wrong site.
  *   - A page or Markdown file with `feature: pdf` in its front matter is built only when
  *     SITE_PDF is "on" (`feature: no-pdf`: only when it is off). A page that is not built is
  *     also absent from sitemap.xml and the docs navigation, which are made from built pages.
@@ -29,9 +32,12 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Marked, Renderer, type Tokens } from 'marked';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd, type Plan } from '../src/billing/plans';
-import { AUTH, DAY_MS, FORMATS, HTTP_CACHE, LIMITS, PDF, RATE_LIMITS, SIZES, pdfUnits, type PdfFormat, type RateLimitName } from '../src/config';
+import { AUTH, BATCH, DAY_MS, EMAIL_FIELDS, FORMATS, HTTP_CACHE, LIMITS, LOCAL_PDF, PDF, RATE_LIMITS, SIZES, pdfUnits, type PdfFormat, type RateLimitName } from '../src/config';
 import { PDF_TEMPLATES, type PdfStarterTemplate } from '../src/pdf/templates';
 import { STARTER_TEMPLATES as RENDER_TEMPLATES } from '../src/render/templates';
+import { emailSiteTokens } from './email-site-tokens';
+import { previewsSiteTokens } from './previews-site-tokens';
+import { v3SiteTokens } from './v3-site-tokens';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const KB = 1024;
@@ -172,25 +178,51 @@ function loadConfig(file: string, env: Record<string, string | undefined>): Site
 
 // ------------------------------------------------------------------ feature switches
 
-export const FEATURES = ['pdf'] as const;
+/**
+ * pdf: PDFs (POST /v1/pdf, the PDF tools). batch: bulk documents and certificate verification.
+ * toolkit: the PDF toolkit API and the in-browser merge and image-to-PDF pages. linkcards: cards
+ * from links. email: personalized email images. previews: the one-app link preview pages and the
+ * tool hub. integrations: the Zapier, Make and n8n docs page.
+ */
+export const FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations'] as const;
 export type Feature = (typeof FEATURES)[number];
 export type SiteFeatures = Record<Feature, boolean>;
 
-const FEATURE_ENV: Record<Feature, string> = { pdf: 'SITE_PDF' };
+/** The in-browser PDF engine, written by scripts/build-browser-bundles.mts before this build runs. */
+export const LOCAL_PDF_BUNDLE = 'assets/js/vendor/pdf-local.js';
 
 /** site/public files that exist only for a feature (everything else is always copied). */
 const FEATURE_PUBLIC_FILES: Readonly<Record<string, Feature>> = {
   'assets/js/pdf-tools.js': 'pdf',
+  // /tools/merge-pdf and /tools/image-to-pdf: they run in the browser and need no API, but
+  // they offer the PDF toolkit API, so they are published with it.
+  'assets/js/local-files.js': 'toolkit',
+  'assets/js/merge-pdf.js': 'toolkit',
+  'assets/js/image-to-pdf.js': 'toolkit',
+  [LOCAL_PDF_BUNDLE]: 'toolkit',
+  // The one-app link preview pages.
+  'assets/js/og-platform.js': 'previews',
+  'assets/css/og-platform.css': 'previews',
+  // The dashboard's Bulk documents tab: the dashboard imports it only when the API says batches are on.
+  'assets/js/dashboard/bulk.js': 'batch',
+  'assets/js/dashboard/bulk-helpers.js': 'batch',
+  'assets/js/dashboard/csv.js': 'batch',
+  'assets/css/dashboard-bulk.css': 'batch',
 };
 
-/** Which features this build publishes. Only "on" switches one on; "off" and unset leave it off. */
+/**
+ * Which features this build publishes: the names in SITE_FEATURES ("pdf,toolkit"), and "pdf"
+ * also for SITE_PDF=on. Anything but "on", "off" or unset in SITE_PDF, or an unknown name in
+ * SITE_FEATURES, stops the build.
+ */
 export function siteFeatures(env: Record<string, string | undefined>): SiteFeatures {
-  const features = {} as SiteFeatures;
-  for (const feature of FEATURES) {
-    const name = FEATURE_ENV[feature];
-    const value = (env[name] ?? '').trim();
-    if (value !== '' && value !== 'on' && value !== 'off') throw new Error(`${name} must be "on" or "off" (or unset), not "${value}"`);
-    features[feature] = value === 'on';
+  const features = Object.fromEntries(FEATURES.map((feature) => [feature, false])) as SiteFeatures;
+  const pdf = (env.SITE_PDF ?? '').trim();
+  if (pdf !== '' && pdf !== 'on' && pdf !== 'off') throw new Error(`SITE_PDF must be "on" or "off" (or unset), not "${pdf}"`);
+  if (pdf === 'on') features.pdf = true;
+  for (const name of (env.SITE_FEATURES ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
+    if (!(FEATURES as readonly string[]).includes(name)) throw new Error(`SITE_FEATURES names an unknown feature "${name}" (known: ${FEATURES.join(', ')})`);
+    features[name as Feature] = true;
   }
   return features;
 }
@@ -315,6 +347,21 @@ function pdfDuplicateWaitMs(): number {
   return callTimeoutMs + 15_000;
 }
 
+/** The in-browser PDF tools (LOCAL_PDF). The toolkit numbers they point to come from scripts/v3-site-tokens.ts. */
+function localPdfTokens(): Record<string, string> {
+  return {
+    'localPdf.maxFiles': String(LOCAL_PDF.maxFiles),
+    'localPdf.maxTotalMb': inUnits(LOCAL_PDF.maxTotalBytes, MB),
+    'localPdf.maxPages': formatCount(LOCAL_PDF.maxPages),
+    'localPdf.maxImageMegapixels': inUnits(LOCAL_PDF.maxImagePixels, 1_000_000),
+    // Unformatted, for the data-max-* attributes the page scripts read.
+    'localPdf.raw.maxFiles': String(LOCAL_PDF.maxFiles),
+    'localPdf.raw.maxTotalBytes': String(LOCAL_PDF.maxTotalBytes),
+    'localPdf.raw.maxPages': String(LOCAL_PDF.maxPages),
+    'localPdf.raw.maxImagePixels': String(LOCAL_PDF.maxImagePixels),
+  };
+}
+
 /**
  * [[pdf.*]]: every PDF number the pages print, from PDF and pdfUnits() in src/config.ts and
  * the starter list in src/pdf/templates. Pages never type a PDF number themselves.
@@ -409,7 +456,13 @@ function buildTokens(config: SiteConfig, now: Date): Record<string, string> {
     'http.imageMaxAgeSeconds': String(HTTP_CACHE.imageMaxAgeSeconds),
   };
   for (const id of PLAN_ORDER) Object.assign(tokens, planTokens(PLANS[id]));
-  Object.assign(tokens, pdfTokens());
+  // The v3 modules print the numbers of their own pages; no token name is defined twice.
+  for (const extra of [pdfTokens(), localPdfTokens(), v3SiteTokens(), previewsSiteTokens(), emailSiteTokens()]) {
+    for (const [name, value] of Object.entries(extra)) {
+      if (Object.hasOwn(tokens, name)) throw new Error(`token [[${name}]] is defined twice`);
+      tokens[name] = value;
+    }
+  }
   for (const size of Object.values(SIZES)) {
     tokens[`size.${size.id}.width`] = String(size.width);
     tokens[`size.${size.id}.height`] = String(size.height);
@@ -570,7 +623,7 @@ ${rows.map((row) => `<tr>${cells('td', row, true)}</tr>`).join('\n')}
 </table></div>`;
 }
 
-function limitsTable(): string {
+function limitsTable(site: SiteFeatures): string {
   const plans = PLAN_ORDER.map((id) => PLANS[id]);
   const perPlan = (label: string, value: (plan: Plan) => string): string[] => [label, ...plans.map(value)];
   const planRows = [
@@ -580,6 +633,9 @@ function limitsTable(): string {
     perPlan('Watermark', (plan) => (plan.watermark ? 'Small corner mark' : 'None')),
     perPlan('Custom fonts', (plan) => (plan.fonts.maxFiles === 0 ? 'Not available' : fontAllowance(plan))),
     perPlan('Top-up', topUpAllowance),
+    // The per-plan limits of build v3 tools, published with their features (src/config.ts BATCH, EMAIL_FIELDS).
+    ...(site.batch ? [perPlan('Rows per bulk-documents batch', (plan) => formatCount(BATCH.maxRows[plan.id]))] : []),
+    ...(site.email ? [perPlan('New personalized email images per site per day', (plan) => formatCount(EMAIL_FIELDS.maxUniqueRendersPerDay[plan.id]))] : []),
     perPlan('Support', (plan) => plan.support),
   ];
   const sizes = Object.values(SIZES).map((size) => `${size.width} x ${size.height} (${size.id})`).join(', ');
@@ -607,15 +663,46 @@ function limitsTable(): string {
 ${htmlTable(['Limit', 'Value'], sharedRows)}`;
 }
 
-/** The limiters that exist only for PDFs (RL_PDF_KEY, RL_PDF_FREE, RL_TOOLS_PDF): published only with the PDF pages. */
-export const isPdfRateLimit = (name: RateLimitName): boolean => /_PDF(?:_|$)/.test(name);
+/**
+ * The feature a limiter belongs to, or null for one that is always published: RL_PDF_TOOLS (the
+ * PDF toolkit) is published with "toolkit", the other PDF limiters (RL_PDF_KEY, RL_PDF_FREE,
+ * RL_TOOLS_PDF) with "pdf".
+ */
+export function rateLimitFeature(name: RateLimitName): Feature | null {
+  if (name === 'RL_PDF_TOOLS') return 'toolkit';
+  return /_PDF(?:_|$)/.test(name) ? 'pdf' : null;
+}
+
+/** The limiters published only with the PDF pages. */
+export const isPdfRateLimit = (name: RateLimitName): boolean => rateLimitFeature(name) === 'pdf';
+
+/**
+ * A limiter's scope as published: RATE_LIMITS' text, plus the routes of published features that
+ * count against it too (review CC-2). With no v3 feature published the text is RATE_LIMITS' own.
+ */
+export function rateLimitScope(name: RateLimitName, site: SiteFeatures): string {
+  const scope = RATE_LIMITS[name].scope;
+  if (name === 'RL_KEY') {
+    const also = [
+      ...(site.linkcards ? ['POST /v1/cards/from-url'] : []),
+      ...(site.batch ? ['every /v1/batches request', 'POST /v1/certificates/{id}/revoke'] : []),
+    ];
+    return also.length === 0 ? scope : scope.replace('(POST /v1/images)', `(POST /v1/images, ${also.join(', ')})`);
+  }
+  if (name === 'RL_IP' && site.batch) return `${scope}; also GET /v/{id} and /v/{id}.json`;
+  return scope;
+}
 
 function rateLimitsTable(site: SiteFeatures): string {
   const period = (seconds: number): string => (seconds === 60 ? 'minute' : `${seconds} seconds`);
-  const names = (Object.keys(RATE_LIMITS) as RateLimitName[]).filter((name) => site.pdf || !isPdfRateLimit(name));
+  const names = (Object.keys(RATE_LIMITS) as RateLimitName[]).filter((name) => {
+    const feature = rateLimitFeature(name);
+    return feature === null || site[feature];
+  });
   const rows = names.map((name) => {
     const rule = RATE_LIMITS[name];
-    const scope = rule.scope.charAt(0).toUpperCase() + rule.scope.slice(1);
+    const text = rateLimitScope(name, site);
+    const scope = text.charAt(0).toUpperCase() + text.slice(1);
     return [scope, `${formatCount(rule.limit)} requests per ${period(rule.periodSeconds)}`];
   });
   return htmlTable(['Applies to', 'Limit'], rows);
@@ -765,7 +852,7 @@ function walk(dir: string): string[] {
 function loadPartials(paths: Paths, features: SiteFeatures): Record<string, string> {
   const partials: Record<string, string> = {
     'pricing-table': pricingTable(features),
-    'limits-table': limitsTable(),
+    'limits-table': limitsTable(features),
     'rate-limits-table': rateLimitsTable(features),
     'template-picker': templatePicker(paths.siteDir),
     'playground-image': playgroundImage(paths.siteDir),
@@ -1033,6 +1120,11 @@ export function buildSite(options: BuildOptions = {}): RenderedSite & { outDir: 
   }
   const { config, ctx } = tokenContext(paths, options);
   const site = renderWith(paths, config, ctx);
+  const publicDir = join(paths.siteDir, 'public');
+  // Without the engine the in-browser tools would load and then fail on the first file.
+  if (site.features.toolkit && !existsSync(join(publicDir, LOCAL_PDF_BUNDLE))) {
+    throw new Error(`${display(join(publicDir, LOCAL_PDF_BUNDLE))} is missing: run "npm run build:browser" first (npm run build:site does)`);
+  }
   const written = new Set<string>();
   const emit = (rel: string, data: string | Buffer): void => {
     const target = join(paths.outDir, rel);
@@ -1044,7 +1136,6 @@ export function buildSite(options: BuildOptions = {}): RenderedSite & { outDir: 
   for (const page of site.pages) emit(page.outPath, page.html);
   emit('sitemap.xml', site.sitemap);
 
-  const publicDir = join(paths.siteDir, 'public');
   for (const file of walk(publicDir)) {
     const feature = FEATURE_PUBLIC_FILES[file];
     if (feature !== undefined && !site.features[feature]) continue;

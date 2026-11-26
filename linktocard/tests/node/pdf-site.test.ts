@@ -33,6 +33,12 @@ const template = (id: string) => {
   return found;
 };
 const keysOf = (id: string): string[] => template(id).fields.map((field) => field.key);
+/**
+ * Keys Link To Card fills in for bulk documents with "verify": true. The free tools never ask for
+ * or send them: a free PDF has no verification record behind it.
+ */
+const VERIFICATION_KEYS: readonly string[] = ['verify_url', 'verify_qr'];
+const customerKeysOf = (id: string): string[] => keysOf(id).filter((key) => !VERIFICATION_KEYS.includes(key));
 const itemFieldsOf = (id: string): string[] => [...(template(id).fields.find((field) => field.kind === 'items')?.itemFields ?? [])];
 const requiredOf = (id: string): string[] => template(id).fields.filter((field) => field.required).map((field) => field.key);
 
@@ -737,7 +743,7 @@ describe('the tool script (site/public/assets/js/pdf-tools.js)', () => {
     for (const key of Object.keys(data)) expect(keysOf('certificate'), key).toContain(key);
     for (const key of requiredOf('certificate')) expect(data, key).toHaveProperty(key);
     expect(tools.certificateData({}).problems).toHaveLength(5);
-    expect([...tools.CERTIFICATE_TEXT_KEYS, 'date'].sort()).toEqual(keysOf('certificate').sort());
+    expect([...tools.CERTIFICATE_TEXT_KEYS, 'date'].sort()).toEqual(customerKeysOf('certificate').sort());
     expect([...tools.INVOICE_TEXT_KEYS, 'issue_date', 'due_date', 'items', 'subtotal', 'tax_label', 'tax', 'total'].sort()).toEqual(keysOf('invoice').sort());
   });
 
@@ -858,8 +864,8 @@ describe('the three tool pages', () => {
     expect(invoice).toContain(`data-max-item-chars="${PDF.maxItemValueChars}"`);
     const certificate = built(PAGES.certificate);
     const certificateFields = fieldNames(certificate);
-    for (const key of keysOf('certificate')) expect(certificateFields, key).toContain(key);
-    for (const name of certificateFields) expect([...keysOf('certificate'), 'format'], name).toContain(name);
+    for (const key of customerKeysOf('certificate')) expect(certificateFields, key).toContain(key);
+    for (const name of certificateFields) expect([...customerKeysOf('certificate'), 'format'], name).toContain(name);
     // A field that is sent as data may hold what the API accepts, and not more.
     for (const html of [invoice, certificate]) {
       for (const match of html.matchAll(/<(?:input|textarea)\b[^>]*\sname="([a-z_]+)"[^>]*>/g)) {

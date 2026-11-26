@@ -1,0 +1,9 @@
+[
+    {
+        "name": "url",
+        "type": "url",
+        "label": "Page URL",
+        "required": true,
+        "help": "The https:// address of the page to check."
+    }
+]

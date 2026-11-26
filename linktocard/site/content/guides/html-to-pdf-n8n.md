@@ -108,6 +108,10 @@ A PDF counts as [[pdf.baseUnits]] images for 1 to [[pdf.basePages]] pages, and o
 ### Do I need a paid n8n plan or a community node?
 
 Not for [[site.name]]: the API is a plain HTTP endpoint, and the request above is all it needs. Which n8n plans and hosting options include what is decided by n8n; check their pricing and documentation.
+<!-- feature:integrations -->
+
+A community node for [[site.name]] is being prepared for listing ([Zapier, Make and n8n](/docs/integrations)). It is not published yet; the HTTP request step above does the same.
+<!-- /feature:integrations -->
 
 ### Can I try the template before building the workflow?
 

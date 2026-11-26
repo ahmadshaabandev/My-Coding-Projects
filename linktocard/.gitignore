@@ -2,3 +2,5 @@ node_modules
 .wrangler
 .dev.vars
 dist
+# Built by scripts/build-browser-bundles.mts (npm run build:browser), before every site build.
+site/public/assets/js/vendor/

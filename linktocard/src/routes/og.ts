@@ -8,11 +8,19 @@
  * HEAD never renders and never charges: it answers from the caches when the
  * card exists, and otherwise says what a GET would most likely say (200 with
  * the image type, or 402 when the allowance is used up) without a length.
+ *
+ * Open fields (src/lib/open-fields.ts, EMAIL_FIELDS_ENABLED): a URL with "open"
+ * is verified without the listed fields' values, which an email platform fills
+ * in per recipient. A render with open fields that is not in the cache takes
+ * one of the site's unique renders of the UTC day; once they are used up, the
+ * card is served with every open field at its default instead (one cached
+ * card), so an email that was already sent never shows a broken image.
  */
 import { Hono } from 'hono';
 import { EXTENSION_TO_FORMAT } from '../config';
 import { first, getUserById } from '../db/client';
 import { ApiError } from '../lib/errors';
+import { featureEnabled } from '../lib/features';
 import { backgroundFor, etagFor, imageHeaders, matchesEtag, notModified } from '../lib/http';
 import {
   cardCacheKey,
@@ -23,12 +31,23 @@ import {
   resolveTemplate,
   storedImageHeaders,
   templateNotFound,
+  templateOptions,
   type CardRequest,
 } from '../lib/images';
+import {
+  asOpenFieldsResult,
+  describeOpenFieldsFailure,
+  keepTemplateOpenFields,
+  openFieldsCacheControl,
+  reserveOpenFieldRender,
+  templateFields,
+  verifyWithOpenFields,
+  type OpenRenderReservation,
+} from '../lib/open-fields';
 import { getUsage } from '../lib/quota';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
-import { SIZE_PARAM, deriveSiteSecret, describeSignedUrlFailure, parseOgPath, verifySignedUrl } from '../lib/signed-url';
-import type { AppEnv, Env, SiteRow } from '../types';
+import { SIZE_PARAM, deriveSiteSecret, parseOgPath, verifySignedUrl } from '../lib/signed-url';
+import type { AppEnv, Env, SiteRow, TemplateData } from '../types';
 
 export const ogRouter = new Hono<AppEnv>();
 
@@ -46,7 +65,15 @@ function fromEdgeCache(request: Request, cached: Response): Response {
   return etag !== null && matchesEtag(request, etag) ? notModified(cached.headers) : cached;
 }
 
-async function cardRequestFor(env: Env, url: URL, request: Request): Promise<CardRequest> {
+interface OgCard {
+  card: CardRequest;
+  /** Open fields of the URL that are fields of its template; empty without "open". */
+  openFields: string[];
+  /** The card's data with every open field at its default. */
+  fallbackData: TemplateData;
+}
+
+async function cardRequestFor(env: Env, url: URL, request: Request): Promise<OgCard> {
   const path = parseOgPath(url.pathname);
   if (!path) throw new ApiError('not_found', 'Not found. Signed card URLs look like /v1/og/{site id}/{template}.png?...&sig=...');
   await enforceRateLimit(env, 'RL_IP', clientIp(request));
@@ -55,27 +82,36 @@ async function cardRequestFor(env: Env, url: URL, request: Request): Promise<Car
   const owner = site ? await getUserById(env.DB, site.user_id) : null;
   if (!site || !owner) throw new ApiError('not_found', 'Site not found. Check the site id in the URL.');
 
-  const verified = await verifySignedUrl(url, await deriveSiteSecret(env.SIGNING_MASTER_SECRET, site.id, site.secret_version));
+  const secret = await deriveSiteSecret(env.SIGNING_MASTER_SECRET, site.id, site.secret_version);
+  // Kill switch: while open fields are off, "open" is ordinary signed data, exactly as before.
+  const verified = featureEnabled(env, 'emailfields') ? await verifyWithOpenFields(url, secret) : asOpenFieldsResult(await verifySignedUrl(url, secret));
   if (!verified.ok) {
-    throw new ApiError('invalid_signature', describeSignedUrlFailure(verified.reason), { details: { reason: verified.reason } });
+    throw new ApiError('invalid_signature', describeOpenFieldsFailure(verified.reason), { details: { reason: verified.reason } });
   }
   if (owner.suspended_at !== null) {
     throw new ApiError('account_suspended', `This account is suspended. Contact ${env.SUPPORT_EMAIL}.`);
   }
 
-  const { [SIZE_PARAM]: sizeParam, ...data } = verified.params;
-  const size = parseSize(sizeParam);
-  const template = await resolveTemplate(env.DB, owner.id, path.template);
+  const size = parseSize(verified.params[SIZE_PARAM]);
+  const template = await resolveTemplate(env.DB, owner.id, path.template, templateOptions(env));
   if (!template) throw templateNotFound();
+  // Open fields the template does not have are dropped, so their values cannot vary the cache key.
+  const open = verified.openFields.length > 0 ? keepTemplateOpenFields(verified, templateFields(template)) : verified;
+  const { [SIZE_PARAM]: _size, ...data } = open.params;
+  const { [SIZE_PARAM]: _fallbackSize, ...fallbackData } = open.fallbackParams;
   return {
-    user: owner,
-    template,
-    data,
-    size,
-    format: EXTENSION_TO_FORMAT[path.ext]!,
-    source: 'og',
-    siteId: site.id,
-    renderRateLimitKey: site.id,
+    card: {
+      user: owner,
+      template,
+      data,
+      size,
+      format: EXTENSION_TO_FORMAT[path.ext]!,
+      source: 'og',
+      siteId: site.id,
+      renderRateLimitKey: site.id,
+    },
+    openFields: open.openFields,
+    fallbackData,
   };
 }
 
@@ -85,9 +121,22 @@ ogRouter.get('/*', async (c) => {
   const edge = await edgeCacheMatch(url.href);
   if (edge) return fromEdgeCache(request, edge);
 
-  const card = await cardRequestFor(c.env, url, request);
+  const og = await cardRequestFor(c.env, url, request);
+  let card = og.card;
   const now = Date.now();
-  const cacheKey = await cardCacheKey(card);
+  let cacheKey = await cardCacheKey(card);
+  const personalised = og.openFields.length > 0;
+  // A personalised render that is not cached takes one of the site's unique renders of the day.
+  let reservation: OpenRenderReservation | null = null;
+  let capped = false;
+  if (personalised && request.method !== 'HEAD' && !(await findStoredCard(c.env, card, cacheKey, now, false))) {
+    reservation = await reserveOpenFieldRender(c.env, card.siteId!, card.user, now);
+    if (!reservation.allowed) {
+      card = { ...card, data: og.fallbackData };
+      cacheKey = await cardCacheKey(card);
+      capped = true;
+    }
+  }
   const etag = etagFor(cacheKey);
   const conditional = matchesEtag(request, etag);
 
@@ -95,6 +144,7 @@ ogRouter.get('/*', async (c) => {
     const stored = await findStoredCard(c.env, card, cacheKey, now, false);
     if (stored) {
       const headers = storedImageHeaders(stored.image, 'hit', now);
+      if (personalised) headers.set('cache-control', openFieldsCacheControl(stored.image.expiresAt, now));
       headers.set('content-length', String(stored.image.bytes));
       return new Response(null, { headers });
     }
@@ -104,8 +154,21 @@ ogRouter.get('/*', async (c) => {
   }
 
   const background = backgroundFor(c);
-  const result = await getCard(c.env, background, card, { now, cacheKey, withBody: !conditional });
+  let result: Awaited<ReturnType<typeof getCard>>;
+  try {
+    result = await getCard(c.env, background, card, { now, cacheKey, withBody: !conditional });
+  } catch (error) {
+    await reservation?.release();
+    throw error;
+  }
+  // Nothing new was charged (another request stored or paid for it first): the day's count is given back.
+  if (reservation?.allowed && (result.cached || result.usage === null)) await reservation.release();
   const headers = storedImageHeaders(result.image, result.cached ? 'hit' : 'miss', now);
+  if (personalised) {
+    // The default card served past the cap must not stay in a mail proxy as this recipient's image.
+    headers.set('cache-control', capped ? 'no-store, max-age=0' : openFieldsCacheControl(result.image.expiresAt, now));
+    if (capped) headers.set('x-ltc-open-fields', 'daily-limit');
+  }
   if (result.cached && conditional) return notModified(headers);
 
   const response = new Response(result.body, { headers });

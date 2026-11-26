@@ -43,7 +43,7 @@ To see what a page sends today, before or after you add a card, paste its addres
 
 ## What you get
 
-- **Sizes:** [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`) and [[size.portrait.width]] x [[size.portrait.height]] (`portrait`).
+- **Sizes:** [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`), [[size.portrait.width]] x [[size.portrait.height]] (`portrait`) and [[size.email.width]] x [[size.email.height]] (`email`).
 - **Formats:** PNG, JPEG and WebP.
 - **Templates:** five starter templates (`blog`, `dark`, `quote`, `launch`, `docs`), or your own HTML and CSS.
 - **Text:** `{{placeholders}}` filled from your data. Classes on `<body>` let plain CSS react to missing or long values.
@@ -81,7 +81,22 @@ To see what a page sends today, before or after you add a card, paste its addres
 <!-- feature:pdf -->
 - [PDF documents](/docs/pdf): `POST /v1/pdf` and signed PDF links, the PDF starter templates, sections for line items, limits and how a PDF is counted.
 <!-- /feature:pdf -->
+<!-- feature:email -->
+- [Email images](/docs/email-images): signed card URLs with open fields that an email platform fills in for each reader.
+<!-- /feature:email -->
+<!-- feature:linkcards -->
+- [Cards from links](/docs/link-cards): a card made from a page's own title, description and icon, through the API or a signed link URL.
+<!-- /feature:linkcards -->
+<!-- feature:batch -->
+- [Bulk documents](/docs/bulk): one PDF for every row of your data, ZIP downloads, and certificates with a public verification page.
+<!-- /feature:batch -->
+<!-- feature:toolkit -->
+- [PDF toolkit](/docs/pdf-tools): merge, split, stamp, fill, read form fields, images to PDF and password protection, without a browser.
+<!-- /feature:toolkit -->
 - [API reference](/docs/api): every endpoint, field, header and error code, including `GET /v1/inspect`.
 - [Limits](/docs/limits): what each plan includes, the technical limits, and what happens when you reach one.
+<!-- feature:integrations -->
+- [Zapier, Make and n8n](/docs/integrations): the connectors being prepared for listing, and how to call the API from a workflow today.
+<!-- /feature:integrations -->
 
 Questions that these pages do not answer: [[site.supportEmail]].

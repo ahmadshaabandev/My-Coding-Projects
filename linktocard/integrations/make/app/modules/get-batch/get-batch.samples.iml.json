@@ -1,0 +1,50 @@
+{
+    "id": "bat_m4q8x2k7v1c9d3e6",
+    "status": "done",
+    "template": "certificate",
+    "verify": true,
+    "total": 2,
+    "counts": {
+        "queued": 0,
+        "running": 0,
+        "done": 2,
+        "failed": 0,
+        "cancelled": 0
+    },
+    "pages": 2,
+    "credits_used": 4,
+    "created_at": "2026-11-26T09:12:44.031Z",
+    "started_at": "2026-11-26T09:12:46.112Z",
+    "finished_at": "2026-11-26T09:12:49.874Z",
+    "rows": [
+        {
+            "index": 0,
+            "status": "done",
+            "filename": "certificate-1.pdf",
+            "pages": 1,
+            "credits_used": 2,
+            "url": "https://linktocard.com/i/u_hkr8wty4jftnyum3/0f6e2b9d4a1c8e3f7b5d2a9c6e1f4b8d3a7c0e5f2b9d6a1c4e8f3b7d0a2c5e9f.pdf",
+            "certificate_id": "crt_8w3k5q0m2r7t9v4x6z1b",
+            "verify_url": "https://linktocard.com/v/crt_8w3k5q0m2r7t9v4x6z1b"
+        },
+        {
+            "index": 1,
+            "status": "done",
+            "filename": "certificate-2.pdf",
+            "pages": 1,
+            "credits_used": 2,
+            "url": "https://linktocard.com/i/u_hkr8wty4jftnyum3/7c2a9e4f1b8d3c6a0e5f2b9d4a7c1e8f3b6d0a5c2e9f4b1d8a3c7e0f6b2d5a9c.pdf",
+            "certificate_id": "crt_3n7p1q9s5t2v8w4x0y6z",
+            "verify_url": "https://linktocard.com/v/crt_3n7p1q9s5t2v8w4x0y6z"
+        }
+    ],
+    "zip_parts": [
+        {
+            "part": 1,
+            "entries": 2,
+            "bytes": 70318,
+            "url": "https://linktocard.com/v1/batches/bat_m4q8x2k7v1c9d3e6/zip?part=1"
+        }
+    ],
+    "fileName": "bat_m4q8x2k7v1c9d3e6-part-1.zip"
+}

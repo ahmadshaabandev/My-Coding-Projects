@@ -67,6 +67,14 @@ export interface Env extends Partial<Record<RateLimitName, RateLimitBinding>> {
   /** Daily alarm threshold in browser milliseconds over 24 h; unset means PDF.dailyBrowserMsBudget. */
   PDF_DAILY_BROWSER_MS_BUDGET?: string;
 
+  /* Build v3 tools: kill switches ("true" turns each on) and the bulk-documents queue. */
+  BATCH_ENABLED?: string;
+  PDF_TOOLKIT_ENABLED?: string;
+  LINK_CARDS_ENABLED?: string;
+  EMAIL_FIELDS_ENABLED?: string;
+  /** Producer binding of the bulk-documents queue; the consumer is this Worker's queue() handler. */
+  BATCH_QUEUE?: Queue<BatchQueueMessage>;
+
   /** Test-only switch, honoured only when ENVIRONMENT === 'test'. */
   RATE_LIMITS_DISABLED?: string;
 }
@@ -217,7 +225,7 @@ export interface BrowserUsageRow {
   id: string;
   /** Null for the free tools, and once the account has been deleted. */
   user_id: string | null;
-  source: 'api' | 'signed' | 'tool';
+  source: 'api' | 'signed' | 'tool' | 'batch';
   /** HTTP status of the browser's answer; 0 when the call itself failed. */
   status: number;
   /** X-Browser-Ms-Used; null when the browser did not report it. Browser Run sends 0 for PDF quick actions. */
@@ -325,3 +333,13 @@ export interface UsageSummary {
   watermark: boolean;
 }
 
+/** One message of the bulk-documents queue: rows of one batch to render. */
+export interface BatchQueueMessage {
+  batchId: string;
+  rows: number[];
+  /**
+   * Always 1: a body never changes on redelivery; Message.attempts counts deliveries and
+   * batch_rows.attempts counts renders (src/batch/consumer.ts).
+   */
+  attempt: number;
+}

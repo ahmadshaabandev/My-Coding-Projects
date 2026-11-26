@@ -1,0 +1,28 @@
+{
+  "name": "linktocard-zapier",
+  "version": "1.0.0",
+  "description": "Zapier integration for Link To Card: card images, PDF documents, cards made from a link, bulk PDFs and link preview checks.",
+  "private": true,
+  "main": "index.js",
+  "homepage": "https://linktocard.com",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "validate": "zapier-platform validate --without-style",
+    "check": "npm run typecheck && npm test && npm run validate"
+  },
+  "dependencies": {
+    "zapier-platform-core": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "nock": "14.0.17",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4",
+    "zapier-platform-cli": "19.3.0",
+    "zapier-platform-schema": "19.3.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1464,6 +1464,8 @@ mark.placeholder {
 .tool-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6) var(--space-7); }
 .tool-columns + .tool-columns { margin-top: var(--space-7); }
 .tool-columns .prose h3 { margin-top: 0; font: 900 var(--text-2xl)/1.1 var(--font-display); letter-spacing: -0.015em; }
+/* A second heading in the same column (Discord embed preview) keeps its distance from the list above. */
+.tool-columns .prose > * + h3 { margin-top: var(--space-6); }
 .tool-columns .prose { max-width: none; font-size: 1rem; }
 
 @media (max-width: 62rem) {
@@ -1541,4 +1543,72 @@ mark.placeholder {
   .item-remove { grid-column: 2 / -1; justify-self: start; margin-bottom: 0; }
   .item-number { align-self: start; padding-top: 2.1rem; }
   .pdf-actions .btn-primary { flex: 1 1 100%; }
+}
+
+/* ---------------------------------------------------------------- 12 In-browser PDF tools
+ * /tools/merge-pdf, /tools/image-to-pdf (site/public/assets/js/local-files.js). One card: the
+ * drop zone (files dropped anywhere on the page land here), the list of files, which can be
+ * dragged or moved with Up and Down, the page setup of image-to-pdf, then the button.
+ */
+.local-form { display: grid; gap: var(--space-5); max-width: 60rem; }
+.drop-label {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: clamp(1.75rem, 5vw, 3rem) var(--space-5);
+  text-align: center;
+  background: var(--paper-2);
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.drop-title { font: 900 var(--text-2xl)/1.1 var(--font-display); letter-spacing: -0.015em; }
+/* The label is the control (it opens the file picker); the button inside is only its look. */
+.drop-label .btn { pointer-events: none; }
+.drop-zone:focus-within .drop-label { outline: 3px solid var(--focus); outline-offset: 2px; }
+.drop-zone.is-dragging .drop-label { background: var(--info-soft); border-style: solid; border-color: var(--link); }
+.drop-zone input:disabled + .drop-label { opacity: 0.55; cursor: progress; }
+
+.file-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.file-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  cursor: grab;
+}
+.file-item[draggable='false'] { cursor: progress; }
+.file-item.is-dragged { opacity: 0.5; }
+.file-item.drop-before { box-shadow: inset 0 4px 0 var(--accent); }
+.file-item.drop-after { box-shadow: inset 0 -4px 0 var(--accent); }
+.file-position { flex: 0 0 1.5rem; font: 400 var(--text-sm)/1 var(--font-mono); color: var(--text-muted); text-align: right; }
+.file-thumb { flex: 0 0 auto; width: 3rem; height: 3rem; object-fit: contain; background: var(--paper-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.file-meta { display: grid; flex: 1 1 8rem; min-width: 0; }
+.file-name { font-weight: 600; overflow-wrap: anywhere; }
+.file-detail { font-size: var(--text-sm); color: var(--text-muted); }
+.file-buttons { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-left: auto; }
+
+.local-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4) var(--space-5); min-width: 0; margin: 0; padding: 0; border: 0; }
+.local-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding-top: var(--space-5); border-top: 2px solid var(--line); }
+.local-summary { flex: 1 1 14rem; color: var(--text-muted); }
+.local-actions .btn-primary { min-height: 3.25rem; padding-inline: 1.9rem; font-size: var(--text-lg); font-weight: 700; }
+/* A disabled ghost button (Up on the first row, Sort with one file) fades without the offset shadow of other buttons. */
+.local-form .btn-ghost:disabled { box-shadow: none; }
+.local-form .alert { overflow-wrap: anywhere; }
+.local-form .alert ul { margin-top: var(--space-2); padding-left: 1.2em; }
+.local-form .alert:focus { outline: 3px solid var(--focus); outline-offset: 2px; }
+.local-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.local-api { margin-top: var(--space-5); }
+
+@media (max-width: 48rem) {
+  .local-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .local-actions .btn-primary { flex: 1 1 100%; }
+  .file-buttons { margin-left: calc(1.5rem + var(--space-3)); }
+}
+@media (max-width: 30rem) {
+  .local-options { grid-template-columns: minmax(0, 1fr); }
 }

@@ -90,6 +90,30 @@ On [[plan.starter.name]] and [[plan.pro.name]] you can buy a top-up of [[topup.i
 A PDF counts as [[pdf.baseUnits]] to [[pdf.maxUnits]] images, depending on its pages, and is taken from the allowance as one block. Its own limits (up to [[pdf.maxPages]] pages, [[pdf.maxHtmlMb]] MB of HTML, [[pdf.renderTimeoutSeconds]] seconds to render) are listed on [PDF documents](/docs/pdf#limits), with [what counts](/docs/pdf#what-counts).
 
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+## Bulk documents
+
+Every document of a batch counts like a PDF of its own pages. A batch has at most [[batch.maxRowsFree]] rows on [[plan.free.name]], [[batch.maxRowsStarter]] on [[plan.starter.name]] and [[batch.maxRowsPro]] on [[plan.pro.name]], and an account can have [[batch.maxActive]] batches waiting or running at once. [Bulk documents](/docs/bulk#limits) lists every limit, with [what counts](/docs/bulk#what-counts).
+
+<!-- /feature:batch -->
+<!-- feature:toolkit -->
+## PDF toolkit
+
+A toolkit result counts one image for each started block of [[toolkit.pagesPerUnit]] pages, at least one; reading a form's fields counts nothing. One request takes up to [[toolkit.maxFiles]] files of [[toolkit.maxInputMb]] MB together and [[toolkit.maxPages]] pages. [PDF toolkit](/docs/pdf-tools#limits) lists every limit, with [what counts](/docs/pdf-tools#what-counts).
+
+<!-- /feature:toolkit -->
+<!-- feature:linkcards -->
+## Cards from links
+
+A card made from a page counts one image, like any card. Reading the page counts against a daily allowance of page checks, per API key or per site: [[inspect.dailyFree]] on [[plan.free.name]], [[inspect.dailyStarter]] on [[plan.starter.name]] and [[inspect.dailyPro]] on [[plan.pro.name]]. See [Cards from links](/docs/link-cards#what-counts).
+
+<!-- /feature:linkcards -->
+<!-- feature:email -->
+## Personalized email images
+
+Each distinct set of open-field values is one card. Each site can render at most [[email.dailyFree]] new ones a day on [[plan.free.name]], [[email.dailyStarter]] on [[plan.starter.name]] and [[email.dailyPro]] on [[plan.pro.name]]; past that, new values get the default image. See [Email images](/docs/email-images#the-daily-limit-per-site).
+
+<!-- /feature:email -->
 ## Rate limits
 
 Rate limits are short-term request limits that protect the service. They are not part of your allowance.

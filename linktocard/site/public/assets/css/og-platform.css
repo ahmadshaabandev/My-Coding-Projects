@@ -1,0 +1,41 @@
+/*
+ * The one-app pages of the Open Graph checker (/tools/x-card-validator, /tools/linkedin-post-preview,
+ * /tools/slack-link-preview, /tools/discord-embed-preview, /tools/whatsapp-link-preview), loaded by
+ * site/public/assets/js/og-platform.js. Only what site.css (section 10, the checker) does not already
+ * draw: the single large preview, the layouts that the six-app checker does not have (the small X
+ * card, the LinkedIn card, Discord's small-image, photo and text-only embeds), and the "note" items
+ * of the app's own checks. Colours and sizes come from site.css tokens.
+ */
+
+/* The app's preview leads the results, so it gets more room than one of six. */
+.platform-preview { max-width: 36rem; }
+.platform-preview-notes { max-width: 36rem; margin-top: var(--space-4); }
+.platform-preview-notes > * + * { margin-top: var(--space-2); }
+.platform-fix { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); margin-top: var(--space-5); }
+
+/* A note in the app's own checks: what the app will do, neither a pass nor a problem. */
+.cl-info .cl-icon { color: var(--link); background: var(--info-soft); font-style: italic; }
+
+/* X: the small card (twitter:card summary, or no twitter:card), a square image beside the text. */
+.pv-x .pv-small { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); align-items: stretch; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
+.pv-x .pv-small .pv-thumb { width: 100%; height: 100%; min-height: 6.5rem; aspect-ratio: 1 / 1; border-right: 1px solid var(--border); }
+.pv-x .pv-small .pv-text { align-content: center; gap: 0.2rem; }
+.pv-x .pv-small .pv-title { font-weight: 500; }
+
+/* LinkedIn: the image on top, then the title and the domain on a tinted strip. */
+.pv-linkedin .pv-screen { background: var(--surface); }
+.pv-linkedin .pv-card { border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.pv-linkedin .pv-text { gap: 0.25rem; background: var(--paper-2); border-top: 1px solid var(--border); }
+.pv-linkedin .pv-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+
+/* Discord: Discord's published limits are 3 lines of title and 20 of description. */
+.pv-discord .pv-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; }
+.pv-discord .pv-desc { -webkit-line-clamp: 20; line-clamp: 20; }
+.pv-discord .pv-body { display: grid; gap: 0.3rem; align-content: start; min-width: 0; }
+/* Default and og:type rich: text with a small image beside it. */
+.pv-discord .pv-layout-small, .pv-discord .pv-layout-rich { grid-template-columns: minmax(0, 1fr) 5rem; gap: 0.3rem var(--space-3); align-items: start; }
+.pv-discord .pv-thumb { width: 5rem; height: 5rem; margin-top: 0; aspect-ratio: 1 / 1; object-fit: cover; }
+/* twitter:card photo: the image alone. */
+.pv-discord .pv-layout-photo { padding: 0.4rem; }
+.pv-discord .pv-layout-photo .pv-img { margin-top: 0; }
+.pv-discord .pv-layout-text { max-width: 26rem; }

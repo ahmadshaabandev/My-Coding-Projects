@@ -1,0 +1,163 @@
+---
+title: Image to PDF free - JPG, PNG, WebP and GIF to PDF in your browser
+description: Turn JPG, PNG, WebP and GIF images into one PDF for free, one image per page. This page works in your browser, so your photos stay on your device. No sign-up, no watermark.
+scripts: image-to-pdf
+feature: toolkit
+---
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Images to PDF.</h1>
+<p>Add photos, scans or screenshots, put them in order, choose the paper and download one PDF with an image on each page. <strong>Your files stay on your device:</strong> this page makes the PDF in your browser and uploads nothing. No account, no watermark.</p>
+</div>
+<form class="card card-pop local-form" id="local-form" data-tool="image-to-pdf" data-max-files="[[localPdf.raw.maxFiles]]" data-max-bytes="[[localPdf.raw.maxTotalBytes]]" data-max-pixels="[[localPdf.raw.maxImagePixels]]" novalidate>
+<div class="drop-zone" id="drop-zone">
+<input class="visually-hidden" id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" multiple>
+<label class="drop-label" for="file-input">
+<span class="drop-title">Drop images here</span>
+<span class="btn btn-secondary">Choose images</span>
+<span class="hint">JPG, PNG, WebP or GIF. Up to [[localPdf.maxFiles]] images and [[localPdf.maxTotalMb]] MB together.</span>
+</label>
+</div>
+<ol class="file-list" id="file-list" aria-label="Images, in page order" hidden></ol>
+<fieldset class="local-options">
+<legend class="visually-hidden">Page setup</legend>
+<label class="field"><span class="label">Page size</span><select class="select" name="page_size">[[> pdf-format-options]]<option value="auto">Same as each image</option></select></label>
+<label class="field"><span class="label">Orientation</span><select class="select" name="orientation"><option value="auto" selected>Follow each image</option><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
+<label class="field"><span class="label">Fit</span><select class="select" name="fit"><option value="fit" selected>Whole image</option><option value="fill">Fill the page (crop)</option></select></label>
+<label class="field"><span class="label">Margin (mm)</span><input class="input" name="margin" type="number" inputmode="decimal" min="0" max="[[pdf.maxMarginMm]]" step="1" value="0"></label>
+</fieldset>
+<div class="local-actions">
+<p class="local-summary" id="file-summary">No images yet.</p>
+<button class="btn btn-ghost btn-sm" type="button" data-sort disabled>Sort by name</button>
+<button class="btn btn-ghost btn-sm" type="button" data-clear disabled>Remove all</button>
+<button class="btn btn-primary" id="local-submit" type="submit" disabled>Make PDF</button>
+</div>
+<div class="alert alert-danger" id="local-error" role="alert" tabindex="-1" hidden></div>
+<div class="alert alert-ok local-result" id="local-result" hidden>
+<p id="local-result-text"></p>
+<a class="btn btn-secondary btn-sm" id="local-download" download="images.pdf">Download</a>
+</div>
+<noscript><p class="alert alert-warn">This page needs JavaScript: the PDF is made by your browser. <a href="/docs/pdf-tools">POST /v1/pdf-tools/from-images</a> makes PDFs from PNG and JPEG images from a script.</p></noscript>
+</form>
+<p class="visually-hidden" id="local-status" role="status" aria-live="polite"></p>
+<p class="local-api"><a class="link-arrow" href="#api">Automate this with the API</a></p>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About the tool</p>
+<h2>What it does, and what it does not.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>What it does</h3>
+<ul>
+<li>Puts each image on its own page, in the order of the list: A4, US Letter or A5, or a page the size of the image (one pixel is one point, 1/72 inch).</li>
+<li>Turns each page to suit its image, unless you choose portrait or landscape, and centres the whole image within the margin, or fills the page and crops what does not fit.</li>
+<li>Places JPEG photos in the PDF without compressing them again, so they keep their quality. PNG images are stored without loss, except that a 16-bit PNG is reduced to 8 bits per colour, which looks the same on screen and in print; WebP and GIF images (a GIF&rsquo;s first frame) are turned into PNG in your browser first.</li>
+<li>Shows phone photos the right way up: a photo taken sideways is turned by its orientation tag, as photo viewers do.</li>
+<li>Leaves photo metadata out of the PDF: the place, time and camera a phone stores in a photo are not copied, only the picture.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What it does not do</h3>
+<ul>
+<li>It does not read other formats, such as HEIC, TIFF or SVG. Save them as JPEG or PNG first.</li>
+<li>It does not shrink images. A large photo stays large, and so does the PDF.</li>
+<li>It does not read the text in a scan (no OCR): the pages are pictures.</li>
+<li>PNG, WebP and GIF images may have up to [[localPdf.maxImageMegapixels]] million pixels each, because they are unpacked in memory. JPEG photos are not unpacked, so they have no pixel limit.</li>
+</ul>
+</div>
+</div>
+
+<div class="tool-columns">
+<div class="prose">
+<h3>Your files stay on your device</h3>
+<p>The PDF is made in this browser tab, with the memory and processor of your computer or phone. Your images are not uploaded, so we never see them, their names or their contents, and nothing about them is counted or logged. The previews in the list come from your browser&rsquo;s memory too.</p>
+<p>Because it all happens on your device, the limits are about memory, not money: up to [[localPdf.maxFiles]] images and [[localPdf.maxTotalMb]] MB together per PDF. The page uses the open-source library <a href="https://github.com/Hopding/pdf-lib">pdf-lib</a>; its licence travels with the code, in <a href="/assets/js/vendor/pdf-local.js">pdf-local.js</a>.</p>
+</div>
+<div class="prose">
+<h3 id="api">Automate this with the API</h3>
+<p>To turn images into PDFs from your own app, send their addresses to <code>POST /v1/pdf-tools/from-images</code> with an API key from your dashboard. The options mean the same as here; the margin is in points. The API takes PNG and JPEG images; convert WebP and GIF files first.</p>
+<div class="code-block" data-lang="shell"><button class="copy-btn" type="button" data-copy>Copy</button><pre><code class="language-shell">curl [[site.url]]/v1/pdf-tools/from-images \
+  -H "Authorization: Bearer ltc_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "files": [
+      { "url": "https://example.com/receipt-1.jpg" },
+      { "url": "https://example.com/receipt-2.png" }
+    ],
+    "page_size": "a4",
+    "fit": "fit",
+    "margin": 28,
+    "response": "binary"
+  }' \
+  -o receipts.pdf</code></pre></div>
+<p>Each started block of [[toolkit.pagesPerUnit]] pages of the result counts as one image of your plan. On the Free plan, every page of an API result carries a small &ldquo;[[pdf.freeMark]]&rdquo; line. <a class="link-arrow" href="/docs/pdf-tools">Read the PDF toolkit docs</a></p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about images to PDF.</h2>
+<p>Short answers about privacy, quality and page sizes.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>Are my photos uploaded?</summary>
+<div>
+<p>No. The page reads the images you choose in your browser and makes the PDF there. The download comes from your browser&rsquo;s memory, not from our server. We never receive the images, so we cannot keep, read or share them.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Will my photos lose quality?</summary>
+<div>
+<p>No. JPEG photos go into the PDF as they are, without being compressed again. PNG, WebP and GIF images are stored without loss (a 16-bit PNG is reduced to 8 bits per colour, which looks the same on screen and in print), which can take more room in the PDF than the original file did.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Which page size should I choose?</summary>
+<div>
+<p>A4 or US Letter for anything that will be printed or sent as a document, such as receipts or scans. &ldquo;Same as each image&rdquo; for screenshots and pictures that should be shown as they are, with no white border.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>My photo is sideways. Why?</summary>
+<div>
+<p>The page turns a photo by the orientation tag the camera stored in it, the way photo viewers do. A photo that is sideways in your photo viewer too was saved that way; turn it there, save it, and add it again.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is there a watermark?</summary>
+<div>
+<p>No. Nothing is added to your pages, and there is no sign-up.</p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Documents from your own app.</h2>
+<p>[[site.name]] turns one HTML template and your data into a PDF for every order, booking or report, and merges, stamps and fills PDFs through the same API.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs/pdf-tools">Read the PDF toolkit docs</a>
+</div>
+</div>
+</section>
+
+</main>

@@ -1,0 +1,47 @@
+[
+    {
+        "url": "/v1/images",
+        "method": "POST",
+        "body": {
+            "template": "{{parameters.template}}",
+            "data": "{{toCollection(ifempty(parameters.data, emptyarray), 'key', 'value')}}",
+            "size": "{{ifempty(parameters.size, undefined)}}",
+            "format": "{{ifempty(parameters.format, undefined)}}"
+        },
+        "response": {
+            "temp": {
+                "image": "{{body}}"
+            }
+        }
+    },
+    {
+        "condition": {
+            "condition": "{{parameters.downloadFile}}",
+            "default": "{{temp.image}}"
+        },
+        "url": "{{temp.image.url}}",
+        "method": "GET",
+        "response": {
+            "type": {
+                "200": "binary",
+                "*": "json"
+            },
+            "output": {
+                "id": "{{temp.image.id}}",
+                "url": "{{temp.image.url}}",
+                "width": "{{temp.image.width}}",
+                "height": "{{temp.image.height}}",
+                "format": "{{temp.image.format}}",
+                "bytes": "{{temp.image.bytes}}",
+                "cached": "{{temp.image.cached}}",
+                "template": "{{temp.image.template}}",
+                "created_at": "{{temp.image.created_at}}",
+                "expires_at": "{{temp.image.expires_at}}",
+                "warnings": "{{temp.image.warnings}}",
+                "usage": "{{temp.image.usage}}",
+                "fileName": "{{temp.image.id}}.{{temp.image.format}}",
+                "data": "{{body}}"
+            }
+        }
+    }
+]

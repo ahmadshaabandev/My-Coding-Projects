@@ -1,0 +1,125 @@
+---
+title: Free tools
+description: Every free Link To Card tool in one place, starting with link preview checkers for every app at once or one app at a time. No account needed, and each tool says what it cannot check.
+feature: previews
+---
+<!--
+  The tool hub, /tools (site/pages/tools.html: build-site.ts writes pages as flat files, so this is not
+  tools/index.html; with html_handling "auto-trailing-slash" the file answers /tools). It lists every free
+  tool; tests/node/preview-pages-draft.test.ts fails when a page in site/pages/tools/ is missing here.
+  PDF tools sit in the same feature blocks as their pages. App names appear only in our own descriptions of
+  our own tools (data-own), never as a fact about the app.
+-->
+<main class="tool">
+
+<!-- .tool-results only for its spacing between stacked blocks (site.css, section 10). -->
+<section class="section page-top tool-results">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tools</p>
+<h1>Free tools.</h1>
+<p class="lead">No account needed. Each tool does one job, and each says what it cannot know.</p>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>Link previews</h2>
+<p class="muted">Paste a page URL and see how its link may look when it is shared, with a plain fix for every problem. The previews are approximate mockups drawn from the page's tags, never screenshots.</p>
+</div>
+<dl class="rules">
+<div class="rule-wide">
+<dt><a href="/tools/og-checker">Open Graph checker</a></dt>
+<dd data-own>Every app at once: the page's og: and twitter: tags, a test of its image, the full checklist and six approximate previews side by side.</dd>
+</div>
+<div>
+<dt><a href="/tools/x-card-validator">X card validator</a></dt>
+<dd data-own>The twitter:card tags, an approximate X card and whether the card images are on https.</dd>
+</div>
+<div>
+<dt><a href="/tools/linkedin-post-preview">LinkedIn post preview</a></dt>
+<dd data-own>An approximate LinkedIn preview drawn from the Open Graph tags, with the general checks.</dd>
+</div>
+<div>
+<dt><a href="/tools/slack-link-preview">Slack link preview</a></dt>
+<dd data-own>An approximate Slack unfurl with the site name, title, description and image.</dd>
+</div>
+<div>
+<dt><a href="/tools/discord-embed-preview">Discord embed preview</a></dt>
+<dd data-own>The layout Discord picks, its title and description limits, the accent colour and an approximate embed, checked against Discord's own documentation.</dd>
+</div>
+<div>
+<dt><a href="/tools/whatsapp-link-preview">WhatsApp link preview</a></dt>
+<dd data-own>An approximate WhatsApp preview and a test of the image it would use, with the general checks.</dd>
+</div>
+</dl>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>Share cards</h2>
+</div>
+<dl class="rules">
+<div>
+<dt><a href="/#playground">Card playground</a></dt>
+<dd>Type a page title, pick a template and watch the share card follow, then copy the meta tags it needs.</dd>
+</div>
+</dl>
+</div>
+
+<!-- feature:pdf -->
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>PDFs</h2>
+</div>
+<dl class="rules">
+<div>
+<dt><a href="/tools/html-to-pdf">HTML to PDF</a></dt>
+<dd>Paste your own HTML and CSS, choose the paper size and download a PDF.</dd>
+</div>
+<div>
+<dt><a href="/tools/invoice-generator">Invoice generator</a></dt>
+<dd>Fill in your business, your client and the lines, and download a PDF invoice.</dd>
+</div>
+<div>
+<dt><a href="/tools/certificate-generator">Certificate generator</a></dt>
+<dd>Enter the recipient, what they completed and who issues it, and download a PDF certificate.</dd>
+</div>
+</dl>
+</div>
+<!-- /feature:pdf -->
+
+<!-- feature:toolkit -->
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>PDF files, in your browser</h2>
+<p class="muted">These two run on your device: the files are never uploaded.</p>
+</div>
+<dl class="rules">
+<div>
+<dt><a href="/tools/merge-pdf">Merge PDF</a></dt>
+<dd>Combine PDF files into one and put them in order before you download.</dd>
+</div>
+<div>
+<dt><a href="/tools/image-to-pdf">Image to PDF</a></dt>
+<dd>Turn JPG, PNG, WebP and GIF images into one PDF, one image per page.</dd>
+</div>
+</dl>
+</div>
+<!-- /feature:toolkit -->
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Do it for every page, automatically.</h2>
+<p>[[site.name]] renders a correct [[size.og.width]] &times; [[size.og.height]] card for every page from one HTML and CSS template, and gives you the meta tags to paste.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs">Read the docs</a>
+</div>
+</div>
+</section>
+
+</main>

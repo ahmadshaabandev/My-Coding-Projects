@@ -209,6 +209,10 @@ Every key is optional. The ones marked as required are what the document needs t
 
 [[> pdf-templates]]
 
+<!-- feature:batch -->
+In [bulk documents](/docs/bulk#certificates-and-verification) with `"verify": true`, [[site.name]] fills in `certificate_id`, `verify_url` and `verify_qr` of the `certificate` template itself. Anywhere else they print what you send.
+<!-- /feature:batch -->
+
 In the `report` template, an `items` entry with an empty `heading` continues the section above it, without a new number, so a section longer than [[pdf.maxItemValueChars]] characters can be sent as several entries.
 
 Numbers and money are display text that you send, for example `"1,250.00"`. The templates never calculate a line amount, a tax or a total: compute them in your own system, which already knows its tax rules, and send the results.

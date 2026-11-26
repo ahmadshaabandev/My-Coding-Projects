@@ -1,0 +1,176 @@
+---
+title: Slack link preview - check how a link may unfurl in Slack
+description: Free Slack link preview checker. Paste a URL to see an approximate Slack unfurl with site name, title, description and image, the tags it is drawn from and a plain fix for each problem.
+scripts: og-platform
+feature: previews
+---
+<!--
+  No Slack fact on this page. Slack's own documentation about unfurling (docs.slack.dev, api.slack.com)
+  could not be read on 2026-11-26 and its source is not public. So the page makes no Slack-specific claim:
+  no tag order, no crawler name, no extra fields, no cache time. Every element that names an app carries
+  data-own (our own statement); tests/node/preview-pages-draft.test.ts fails on a Slack sentence with a
+  number in it.
+-->
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Slack link preview.</h1>
+<p data-own>Paste a page URL. The checker fetches that one page, reads its Open Graph and Twitter tags, tests the image they point to and draws an approximate Slack unfurl, with a plain fix for every problem it finds.</p>
+</div>
+<form class="card card-pop tool-form" id="platform-form" data-platform="slack" action="/tools/slack-link-preview" method="get" novalidate>
+<label class="label" for="platform-url">Paste a page URL</label>
+<div class="tool-row">
+<input class="input" id="platform-url" name="url" type="url" inputmode="url" autocomplete="url" spellcheck="false" maxlength="[[inspect.raw.maxUrlChars]]" required placeholder="https://example.com/blog/my-post" aria-describedby="platform-hint">
+<button class="btn btn-primary" id="platform-submit" type="submit">Check</button>
+</div>
+<p class="hint" id="platform-hint">Public https:// pages only. No account needed. Results are kept for [[inspect.cacheMinutes]] minutes, so the same link checked again loads instantly.</p>
+<p class="alert alert-danger" id="platform-error" role="alert" hidden></p>
+<div class="alert alert-info tool-verify" id="platform-verify" hidden>
+<p id="platform-verify-text">Complete the quick check below and your result loads straight away.</p>
+<div class="tool-widget" id="platform-widget"></div>
+</div>
+<noscript><p class="alert alert-warn">This page needs JavaScript to show its results. The <a href="/docs/api">inspect API</a> returns the same check as JSON.</p></noscript>
+</form>
+<p class="visually-hidden" id="platform-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section section-alt tool-results" id="platform-results" aria-labelledby="platform-results-title" hidden>
+<div class="container">
+<h2 class="visually-hidden" id="platform-results-title" tabindex="-1">Results</h2>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>How the link may unfurl in Slack</h2>
+<p class="muted" data-own>A mockup drawn from the page's tags, not a screenshot. Slack draws its own unfurl with its own layout and text length, so treat this as a guide to spot a missing image, a missing site name or a title that is cut off.</p>
+</div>
+<div class="platform-preview" id="platform-preview"></div>
+<div class="alert alert-info platform-preview-notes" id="platform-preview-notes" hidden></div>
+<div class="platform-fix">
+<a class="btn btn-primary" href="/login" data-fix-link>Fix it: make the card</a>
+<a class="link-arrow" id="platform-compare" href="/tools/og-checker">Compare six apps in the Open Graph checker</a>
+</div>
+</div>
+
+<div class="card verdict" id="platform-verdict">
+<p class="eyebrow">Result</p>
+<p class="verdict-title" id="platform-verdict-title"></p>
+<p class="verdict-text" id="platform-verdict-text"></p>
+<dl class="verdict-meta" id="platform-verdict-meta"></dl>
+</div>
+
+<div class="tool-block tool-split">
+<div>
+<div class="tool-block-head">
+<h2>Checklist</h2>
+<p class="muted">Problems first. Each one says what to change in your page.</p>
+</div>
+<ul class="checklist" id="platform-checklist"></ul>
+</div>
+<aside class="card facts-card" aria-labelledby="platform-facts-title">
+<h2 id="platform-facts-title">The image</h2>
+<div class="facts-image" id="platform-facts-image" hidden></div>
+<dl class="facts" id="platform-facts"></dl>
+</aside>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>Tags found on the page</h2>
+<p class="muted">Exactly as the page states them, the first of each tag the page repeats.</p>
+</div>
+<div class="table-wrap tool-tags">
+<table>
+<thead><tr><th scope="col">Tag</th><th scope="col">Value</th></tr></thead>
+<tbody id="platform-tags"></tbody>
+</table>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About this page</p>
+<h2>General checks, an honest mockup.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>What it checks</h3>
+<ul>
+<li>The <code>og:site_name</code>, <code>og:title</code>, <code>og:description</code> and <code>og:image</code> tags, their <code>twitter:</code> twins, the page's <code>&lt;title&gt;</code>, meta description and favicon.</li>
+<li>The image the tags point to: whether it loads without a login, its type, file size, pixel size and shape.</li>
+<li>Whether the site's <code>robots.txt</code> blocks the page, and how fast the page answers.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What it does not claim</h3>
+<ul>
+<li data-own>We could not read Slack's own documentation about unfurling, so this page makes no Slack-specific claim: not which tag Slack reads first, not its text lengths and not its cache time. The checks are the general ones every link preview depends on.</li>
+<li data-own>It cannot see what Slack has already cached for your link.</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about Slack unfurls.</h2>
+<p>Short answers, and where we are not sure, we say so.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>Why does my link not unfurl in Slack?</summary>
+<div>
+<p data-own>The causes this page can test are on your side: a missing tag, a page that needs a login, a slow answer or an image that does not load. The checklist above covers each of them. The checker does not run scripts, so tags that a script adds after the page loads are not seen; put them in the HTML your server sends.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Where does the site name in the mockup come from?</summary>
+<div>
+<p data-own>From <code>og:site_name</code>, and the page's domain when that tag is missing. Set <code>og:site_name</code> to the short name of your site so every app can show it.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>I fixed my tags. Why does Slack still show the old preview?</summary>
+<div>
+<p data-own>Apps cache what they fetched for a link, and we could not confirm Slack's cache time. A URL with a small change, such as <code>?v=2</code> on the end, is usually treated as a new link and fetched fresh.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is this a Slack tool?</summary>
+<div>
+<p data-own>No. It is an independent checker made by [[site.name]], not by Slack, and the unfurl it draws is a mockup.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is it free? What does the checker keep?</summary>
+<div>
+<p>Yes, and you do not need an account. There is an hourly limit on fresh checks from one network, and after a few checks you may be asked to confirm you are a person. The checker keeps the parsed tags and the check results for [[inspect.cacheMinutes]] minutes, never the page's HTML. <a href="/privacy">Privacy policy</a></p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Fix it: make the card.</h2>
+<p>[[site.name]] renders a correct [[size.og.width]] &times; [[size.og.height]] card for every page from one HTML and CSS template, and gives you the meta tags to paste.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/tools">All free tools</a>
+</div>
+</div>
+</section>
+
+</main>

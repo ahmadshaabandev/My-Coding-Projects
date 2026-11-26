@@ -7,7 +7,8 @@
  * never counted; identical requests share one R2 object for a day.
  */
 import { Hono } from 'hono';
-import { DAY_MS, HTTP_CACHE, SIZES } from '../config';
+import { fromCheckHandler, requireLinkCards } from '../cards/handlers';
+import { DAY_MS, HTTP_CACHE, LINK_CARDS, SIZES } from '../config';
 import { sha256Hex } from '../lib/crypto';
 import { ApiError } from '../lib/errors';
 import { codePointLength, etagFor, imageHeaders, matchesEtag, notModified } from '../lib/http';
@@ -86,3 +87,6 @@ playgroundRouter.get('/card.png', async (c) => {
   }).catch((error: unknown) => console.error('storing a playground image failed:', error));
   return new Response(output.bytes, { headers: headers('miss') });
 });
+
+// The OG checker's "Make this card" (src/cards/handlers.ts): a watermarked preview from a stored check, no fetch.
+playgroundRouter.get('/from-check/:checkId/:file', requireLinkCards, fromCheckHandler(LINK_CARDS));

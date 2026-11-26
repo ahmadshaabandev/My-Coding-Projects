@@ -26,6 +26,19 @@ Contact for anything on this page: <[[site.supportEmail]]>
 | **PDF documents**: the HTML, CSS and data you send to be made into a PDF, the PDF itself, and for each PDF that reaches the renderer a record of the pages and the browser time it used | You send them through the API or a signed PDF link. |
 | **Free PDF tools**: the HTML, CSS or form entries you send to be made into a PDF, and a count of PDFs per IP address (IPv6: per /64 network) for the current hour | You enter them on the [HTML to PDF](/tools/html-to-pdf), [invoice generator](/tools/invoice-generator) or [certificate generator](/tools/certificate-generator) page. |
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+| **Bulk documents and certificate records**: the rows you send, one per document, the documents made from them, and for each verified document a record of the recipient's name, the title, the achievement, the issuer name and the date as you entered them | You send them through the API, or through the dashboard's Bulk documents tab, which reads your CSV file in your browser and sends only the values you match to the template. |
+| **Visits to verification pages**: the IP address of whoever opens a page or its JSON version, counted for rate limiting | Created when someone opens a verification link or scans its QR code. |
+<!-- /feature:batch -->
+<!-- feature:toolkit -->
+| **PDF toolkit files**: the PDFs and images you send, upload or link to, and the files the toolkit makes from them | You send them through the API. The free [Merge PDF](/tools/merge-pdf) and [Image to PDF](/tools/image-to-pdf) pages do not send your files to us at all: they work in your browser. |
+<!-- /feature:toolkit -->
+<!-- feature:linkcards -->
+| **Cards from links**: the page address you name, what that page says about itself (title, description, site name, icon and theme colour) and the card made from it | You send the address through the API or sign it into a link URL; anyone who opens that link URL makes the service read the page when it is due. |
+<!-- /feature:linkcards -->
+<!-- feature:email -->
+| **Open-field values**: the short values, such as a first name, that an email platform puts into a personalized image's address for each reader, and the images made from them | They arrive when a reader's mail app, or its image proxy, loads the image, like any image request. |
+<!-- /feature:email -->
 | **Open Graph checker**: the page address you enter, the tags and measurements read from that page, and a count of checks per IP address (IPv6: per /64 network) for the current hour | You enter the address on the [Open Graph checker](/tools/og-checker), or send it to `GET /v1/inspect` with an API key, which counts checks per key for the day instead. |
 | **Messages to us**: the email address and message you enter in the contact form, and emails you send to support | You send them to us. The contact form is not stored by the service; it is delivered to our support mailbox as an email. |
 | **Billing status**: which plan you are on, whether a subscription is active, and identifiers Paddle gives us for your customer and subscription records | Sent to us by Paddle when you buy, renew, cancel or are refunded. |
@@ -33,6 +46,14 @@ Contact for anything on this page: <[[site.supportEmail]]>
 We do **not** receive or store your card number or other payment details. Those go to Paddle only.
 
 Please do not put sensitive personal information in card content. Text and images in a card end up in a public image by design.
+<!-- feature:batch -->
+
+**Verification pages are public.** Anyone who has the link or the printed QR code of a verified document can see its record: the recipient's name and the other facts as the issuer entered them, whether it is valid or revoked, and the domain of the email address the issuing account signs in with (for a public email provider, only that the account has a personal email address). The pages ask search engines not to index them, their titles and link previews do not contain the recipient's name, and the JSON version can be read from any website. The issuer decides what a record says and is responsible for being allowed to publish it.
+<!-- /feature:batch -->
+<!-- feature:email -->
+
+**Open-field values travel in image addresses.** The account owner decides which values an email sends; use open fields for short display text, such as a first name, not for email addresses or other personal details. The rendered image shows the value and is stored like any card.
+<!-- /feature:email -->
 
 ## 3. What we use it for
 
@@ -43,6 +64,9 @@ Please do not put sensitive personal information in card content. Text and image
 - **To provide the service:** signing you in, rendering and caching images and PDF documents, counting usage against your plan, and running the Open Graph checks you ask for.
 - **To keep rendering affordable:** the pages and browser time of each PDF tell us what PDF rendering costs and warn us when it costs more than planned.
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+- **To run verification pages:** showing each verified record to whoever opens its link, and looking into reports about records.
+<!-- /feature:batch -->
 - **To keep it secure and fair:** rate limiting, spotting abuse and investigating problems. This is what IP addresses are used for.
 - **To handle billing:** matching payments processed by Paddle to your account and plan.
 - **To contact you about your account:** sign-in links, warnings when your monthly allowance is nearly or fully used, replies to your messages, and essential service messages, such as changes to these terms or to your plan. We do not send marketing email.
@@ -65,6 +89,14 @@ To make a PDF, the service sends the document's HTML, with your data filled in a
 
 <!-- /feature:pdf -->
 When a card references an image hosted somewhere else, the service requests that image from that host, in the way any web client would.
+<!-- feature:toolkit -->
+
+When you give the PDF toolkit the address of a file, our server downloads that file from its host in the same way, identifying itself as `LinkToCard-FileFetcher/1.0`.
+<!-- /feature:toolkit -->
+<!-- feature:linkcards -->
+
+When you make a card from a link, our server reads that page in the same way as the Open Graph checker described below.
+<!-- /feature:linkcards -->
 
 When you use the Open Graph checker, our server (a Cloudflare Worker) requests the page you entered, that site's `robots.txt` and the image the page names, identifying itself as `LinkToCardBot/1.0`; the [LinkToCardBot page](/bot) describes it. The request comes from our server, not from your browser, and carries none of your cookies. The site you check sees that request in the way it sees any visitor. We never store the page's HTML.
 
@@ -82,6 +114,19 @@ We may also disclose data if the law requires it, or if it is needed to protect 
 - **Records of PDF renders** (when, which account if any and its plan at the time, whether it worked, the pages and the browser time; no document content): [[pdf.browserUsageRetentionDays]] days.
 - **Failed PDF requests:** when a PDF fails because of the document, the error message we answered with is kept under the request's id for [[pdf.failedRenderMemoryMinutes]] minutes, so the same request gets the same answer without being printed again. The count of such failures (and of renders in progress) per account, per site and for all sites of an account is kept until the end of the next day (UTC). The daily clean-up then deletes both, normally within a day.
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+- **Bulk documents:** the rows you send and the status of each document are kept until the batch has finished and the storage time of its last document has ended; the daily clean-up then deletes them, normally within a day. The documents are kept for the cache period of your plan, like other PDFs.
+- **Certificate records:** for as long as the issuing account exists. A revoked record is kept for [[batch.revokedRetentionDays]] days after the revocation, so its page can say that it was revoked, and is then deleted. Deleting the account deletes all of its records.
+<!-- /feature:batch -->
+<!-- feature:toolkit -->
+- **Files sent to the PDF toolkit,** and files it downloads for you: not stored; they are read while the request runs. Its results: for the cache period of your plan.
+<!-- /feature:toolkit -->
+<!-- feature:linkcards -->
+- **Cards from links:** the card, for the cache period of the plan; what was read from the page, for [[inspect.cacheMinutes]] minutes, like an Open Graph checker result.
+<!-- /feature:linkcards -->
+<!-- feature:email -->
+- **Personalized email images:** each image, and so the value it shows, for the cache period of the site owner's plan, like any card. The count of new personalized images per site and day: until the end of the next day (UTC); the daily clean-up then deletes it.
+<!-- /feature:email -->
 - **Previews from the playground on the home page:** about one day.
 - **Open Graph checker results** (the address checked and the tags and measurements read from it): 10 minutes. The count of checks per IP address or network: until the end of that hour; per API key: until the end of that day (UTC). Expired entries are deleted by the daily clean-up, normally within a day.
 - **Sign-in links:** valid for a few minutes, and usable once.
@@ -102,6 +147,10 @@ You can ask us to:
 
 Email <[[site.supportEmail]]> from the address on your account. We will reply within a reasonable time and will not charge for a reasonable request. We may need to confirm that the request really comes from you.
 
+<!-- feature:batch -->
+If you are named on a verification page, the issuer decides about that record: ask the issuer to correct or revoke it, or use the page's "Report this certificate" link to tell us.
+
+<!-- /feature:batch -->
 Depending on where you live, the law may give you further rights, including the right to complain to your local data protection authority. Nothing on this page limits those rights.
 
 ## 7. Cookies
@@ -116,6 +165,10 @@ When you buy a plan, Paddle's checkout opens in an overlay on our site. Paddle m
 The free PDF tools set no cookie either, and may ask for the same Turnstile check described below.
 
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+Verification pages set no cookie and load no script.
+
+<!-- /feature:batch -->
 The Open Graph checker sets no cookie. If it asks you to confirm that you are a person, that check is Cloudflare Turnstile, which runs in a frame loaded from Cloudflare. What it stores in your browser is decided by Cloudflare and described in Cloudflare's own documentation, not by this page.
 
 ## 8. Where data is processed

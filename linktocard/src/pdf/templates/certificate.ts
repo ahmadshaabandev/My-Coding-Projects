@@ -15,6 +15,10 @@ const html = `<main class="certificate">
 
   <section class="body">
     <img class="logo" src="{{logo_url}}" alt="">
+    <div class="verify">
+      <p class="verify-text"><span class="label">Verify this certificate</span><span class="verify-url mono">{{verify_url}}</span></p>
+      <img class="verify-qr" src="{{verify_qr}}" alt="">
+    </div>
 
     <div class="award">
       <p class="label">Presented to</p>
@@ -67,7 +71,7 @@ h1, p { margin: 0; }
 .issuer-name { font-size: 11pt; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .title { position: relative; font-family: 'Source Serif 4', serif; font-size: 32pt; font-weight: 600; line-height: 1.04; letter-spacing: -0.02em; text-wrap: balance; overflow-wrap: anywhere; }
 
-.body { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; padding: 16mm 20mm 17mm 18mm; }
+.body { position: relative; display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; padding: 16mm 20mm 17mm 18mm; }
 .logo { display: block; align-self: flex-start; max-width: 50mm; max-height: 16mm; }
 /* The award sits in the free space between the logo and the facts, slightly above centre. */
 .award { margin: auto 0; padding: 8mm 0 12mm; }
@@ -86,6 +90,19 @@ h1, p { margin: 0; }
 .sign .role { color: var(--muted); }
 .id { text-align: right; }
 
+/* Verification (bulk documents with "verify": true): the record's link and a small QR code in the
+   top-right corner of the white side, opposite the logo. Out of the flow, so everything else sits
+   exactly where it sits without them; empty values drop out (the engine removes an <img> whose src
+   is empty, and the link's label hides with the link). */
+.verify { position: absolute; top: 16mm; right: 20mm; display: flex; align-items: center; gap: 3mm; max-width: 88mm; }
+.verify-text { display: flex; flex-direction: column; gap: 0.8mm; min-width: 0; text-align: right; }
+.verify-text:has(> .verify-url:empty) { display: none; }
+.verify-url { font-size: 6pt; line-height: 1.35; color: var(--muted); overflow-wrap: anywhere; }
+.verify-qr { display: block; flex: 0 0 auto; width: 19mm; height: 19mm; }
+.verify-qr[src=""], .verify-qr:not([src]) { display: none; }
+/* A verified document's ID is always "crt_" and 20 characters: a size that keeps it to one line. */
+.body:has(.verify-url:not(:empty)) .id .value { font-size: 8.5pt; }
+
 /* Small paper (A5 landscape is 210 mm wide; A4 and Letter are wider): smaller type and less
    padding, so the default title does not break inside its words and the facts keep their room. */
 @media (max-width: 230mm) {
@@ -97,6 +114,14 @@ h1, p { margin: 0; }
   .body { padding: 11mm 13mm 10mm 12mm; }
   .award { padding: 4mm 0 6mm; }
   .sign { padding-top: 7mm; }
+  .verify { top: 11mm; right: 13mm; gap: 2mm; max-width: 40mm; }
+  .verify-qr { width: 15mm; height: 15mm; }
+  .verify-url { font-size: 5.5pt; }
+  .body:has(.verify-qr) .logo { max-width: 40mm; }
+  /* That ID beside the date and the signature: a smaller size, narrower gaps and signature line. */
+  .body:has(.verify-url:not(:empty)) .facts { gap: 5mm; }
+  .body:has(.verify-url:not(:empty)) .sign { min-width: 28mm; }
+  .body:has(.verify-url:not(:empty)) .id .value { font-size: 6.5pt; }
 }`;
 
 export const certificate: PdfStarterTemplate = {
@@ -116,6 +141,10 @@ export const certificate: PdfStarterTemplate = {
     { key: 'signer_title', label: 'Signer title', kind: 'text', required: false },
     { key: 'certificate_id', label: 'Certificate ID', kind: 'text', required: false },
     { key: 'logo_url', label: 'Logo URL', kind: 'text', required: false },
+    // Filled in by Link To Card only for bulk documents with "verify": true (src/batch/certificates.ts);
+    // anywhere else they are the caller's own data, so the labels claim nothing (review CC-1).
+    { key: 'verify_url', label: 'Verification link (optional, printed under "Verify this certificate")', kind: 'text', required: false },
+    { key: 'verify_qr', label: 'Verification QR code (optional: an image URL or data: URI)', kind: 'text', required: false },
   ],
   sample: {
     title: 'Certificate of Completion',

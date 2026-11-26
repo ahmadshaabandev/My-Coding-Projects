@@ -1,0 +1,46 @@
+[
+    {
+        "url": "/v1/batches/{{parameters.id}}",
+        "method": "GET",
+        "response": {
+            "temp": {
+                "batch": "{{body}}"
+            }
+        }
+    },
+    {
+        "condition": {
+            "condition": "{{parameters.downloadZip}}",
+            "default": "{{temp.batch}}"
+        },
+        "url": "/v1/batches/{{parameters.id}}/zip",
+        "method": "GET",
+        "qs": {
+            "part": "{{ifempty(parameters.zipPart, 1)}}"
+        },
+        "response": {
+            "type": {
+                "200": "binary",
+                "*": "json"
+            },
+            "output": {
+                "id": "{{temp.batch.id}}",
+                "status": "{{temp.batch.status}}",
+                "template": "{{temp.batch.template}}",
+                "verify": "{{temp.batch.verify}}",
+                "total": "{{temp.batch.total}}",
+                "counts": "{{temp.batch.counts}}",
+                "pages": "{{temp.batch.pages}}",
+                "credits_used": "{{temp.batch.credits_used}}",
+                "created_at": "{{temp.batch.created_at}}",
+                "started_at": "{{temp.batch.started_at}}",
+                "finished_at": "{{temp.batch.finished_at}}",
+                "cancelled_at": "{{temp.batch.cancelled_at}}",
+                "rows": "{{temp.batch.rows}}",
+                "zip_parts": "{{temp.batch.zip_parts}}",
+                "fileName": "{{temp.batch.id}}-part-{{ifempty(parameters.zipPart, 1)}}.zip",
+                "data": "{{body}}"
+            }
+        }
+    }
+]

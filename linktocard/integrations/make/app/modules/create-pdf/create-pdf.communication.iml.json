@@ -1,0 +1,50 @@
+[
+    {
+        "url": "/v1/pdf",
+        "method": "POST",
+        "body": {
+            "template": "{{ifempty(parameters.ownTemplate, parameters.template)}}",
+            "data": "{{ifempty(parameters.data, toCollection(ifempty(parameters.fields, emptyarray), 'key', 'value'))}}",
+            "filename": "{{ifempty(parameters.filename, undefined)}}",
+            "pdf": {
+                "format": "{{ifempty(parameters.pageFormat, undefined)}}",
+                "landscape": "{{ifempty(parameters.landscape, undefined)}}"
+            }
+        },
+        "response": {
+            "temp": {
+                "pdf": "{{body}}"
+            }
+        }
+    },
+    {
+        "condition": {
+            "condition": "{{parameters.downloadFile}}",
+            "default": "{{temp.pdf}}"
+        },
+        "url": "{{temp.pdf.url}}",
+        "method": "GET",
+        "response": {
+            "type": {
+                "200": "binary",
+                "*": "json"
+            },
+            "output": {
+                "id": "{{temp.pdf.id}}",
+                "url": "{{temp.pdf.url}}",
+                "pages": "{{temp.pdf.pages}}",
+                "bytes": "{{temp.pdf.bytes}}",
+                "credits_used": "{{temp.pdf.credits_used}}",
+                "cached": "{{temp.pdf.cached}}",
+                "template": "{{temp.pdf.template}}",
+                "filename": "{{temp.pdf.filename}}",
+                "created_at": "{{temp.pdf.created_at}}",
+                "expires_at": "{{temp.pdf.expires_at}}",
+                "warnings": "{{temp.pdf.warnings}}",
+                "usage": "{{temp.pdf.usage}}",
+                "fileName": "{{temp.pdf.filename}}",
+                "data": "{{body}}"
+            }
+        }
+    }
+]

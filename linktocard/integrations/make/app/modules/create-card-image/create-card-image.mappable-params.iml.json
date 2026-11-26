@@ -1,0 +1,77 @@
+[
+    {
+        "name": "template",
+        "type": "select",
+        "label": "Template",
+        "required": true,
+        "options": "rpc://listCardTemplates",
+        "help": "A starter template or one of your own templates. The starter templates and their fields are listed at https://linktocard.com/docs/html-css-templates#starter-templates."
+    },
+    {
+        "name": "data",
+        "type": "array",
+        "label": "Template fields",
+        "help": "One item per placeholder of the template, for example the field \"title\" with your headline. Fields the template does not have are ignored.",
+        "spec": [
+            {
+                "name": "key",
+                "type": "text",
+                "label": "Field",
+                "required": true,
+                "help": "The placeholder name: lower-case letters, digits and _, starting with a letter.",
+                "validate": {
+                    "pattern": "^[a-z][a-z0-9_]{0,31}$"
+                }
+            },
+            {
+                "name": "value",
+                "type": "text",
+                "label": "Value"
+            }
+        ]
+    },
+    {
+        "name": "size",
+        "type": "select",
+        "label": "Size",
+        "help": "Leave empty for Open Graph (1200 x 630).",
+        "options": [
+            {
+                "label": "Open Graph (1200 x 630)",
+                "value": "og"
+            },
+            {
+                "label": "Square (1080 x 1080)",
+                "value": "square"
+            },
+            {
+                "label": "Portrait (1080 x 1350)",
+                "value": "portrait"
+            },
+            {
+                "label": "Email (1200 x 400)",
+                "value": "email"
+            }
+        ]
+    },
+    {
+        "name": "format",
+        "type": "select",
+        "label": "Image format",
+        "help": "Leave empty for PNG.",
+        "options": [
+            {
+                "label": "PNG",
+                "value": "png"
+            },
+            {
+                "label": "JPEG",
+                "value": "jpeg"
+            },
+            {
+                "label": "WebP",
+                "value": "webp"
+            }
+        ]
+    }
+]

@@ -12,6 +12,12 @@ import { defineConfig } from 'vitest/config'
 //
 // Storage (D1, R2, rate-limit counters) is isolated per test FILE, not per test.
 //
+// The top-level wrangler.toml also gives the pool the REAL local bulk-documents queue
+// (BATCH_QUEUE, linktocard-batch-dev) with this Worker's queue() as its consumer. A test that
+// sent to env.BATCH_QUEUE would start that consumer in the background with the pool's env, so
+// tests never do: producers get recordingQueue() and the consumer is called directly with
+// createMessageBatch (tests/batch-helpers.ts).
+//
 // PROBES=1 (npm run probes) runs the slow, log-only exploration files in tests/probes.
 const probes = process.env.PROBES === '1'
 

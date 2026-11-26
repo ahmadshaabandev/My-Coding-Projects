@@ -1,0 +1,17 @@
+{
+    "url": "/v1/batches",
+    "method": "POST",
+    "body": {
+        "template": "{{ifempty(parameters.ownTemplate, parameters.template)}}",
+        "rows": "{{parameters.rows}}",
+        "verify": "{{ifempty(parameters.verify, undefined)}}",
+        "filename": "{{ifempty(replace(replace(ifempty(parameters.filename, emptystring), '[', decodeURL('%7B%7B')), ']', decodeURL('%7D%7D')), undefined)}}",
+        "pdf": {
+            "format": "{{ifempty(parameters.pageFormat, undefined)}}",
+            "landscape": "{{ifempty(parameters.landscape, undefined)}}"
+        }
+    },
+    "response": {
+        "output": "{{body}}"
+    }
+}

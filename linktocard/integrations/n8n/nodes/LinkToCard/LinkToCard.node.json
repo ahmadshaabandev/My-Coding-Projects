@@ -1,0 +1,18 @@
+{
+	"node": "n8n-nodes-linktocard.linkToCard",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": ["Marketing & Content", "Productivity"],
+	"resources": {
+		"credentialDocumentation": [
+			{
+				"url": "https://linktocard.com/docs/api#authentication"
+			}
+		],
+		"primaryDocumentation": [
+			{
+				"url": "https://linktocard.com/docs/api"
+			}
+		]
+	}
+}

@@ -111,7 +111,9 @@ export async function mount(ctx) {
     return { node: h('div', { class: 'panel-stack' }, head, empty) };
   }
 
-  const builder = createBuilder(ctx, { sites, templates, oncopied: () => toast('Meta tags copied.') });
+  // The builder renames it while open fields turn its output into an email image tag.
+  const outputTitle = h('h4', { class: 'kicker' }, 'Your meta tags');
+  const builder = createBuilder(ctx, { sites, templates, outputTitle, oncopied: () => toast('Meta tags copied.') });
   const cap = ctx.me.limits.sites;
   const node = h(
     'div',
@@ -135,7 +137,7 @@ export async function mount(ctx) {
       h('div', { class: 'card-head' }, h('h3', { id: 'builder-title', class: 'card-title' }, 'Build a signed URL'), h('p', { class: 'muted' }, 'Pick a template, fill it in and copy the meta tags. The preview is free; nothing is counted here.')),
       builder.form,
       h('hr', { class: 'rule' }),
-      h('h4', { class: 'kicker' }, 'Your meta tags'),
+      outputTitle,
       builder.output,
     ),
   );

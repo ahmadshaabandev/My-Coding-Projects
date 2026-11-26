@@ -1,0 +1,197 @@
+---
+title: X card validator - check your Twitter card tags
+description: Free, independent X card validator. Paste a URL to see its twitter:card and og: tags, an approximate X card, whether the card images use https and a plain fix for each problem.
+scripts: og-platform
+feature: previews
+---
+<!--
+  X facts on this page, read on 2026-11-26:
+  - X Developer Policy, section "X Cards": "You must use HTTPS for hosting all assets within your Card."
+    https://docs.x.com/developer-terms/policy, read from its source,
+    https://github.com/xdevplatform/docs/blob/ad1e5df92bbe6908acf98ac3973d8e17cc7d4f4f/developer-terms/policy.mdx
+  - X's developer documentation (https://docs.x.com, source https://github.com/xdevplatform/docs at
+    ad1e5df92bbe6908acf98ac3973d8e17cc7d4f4f, and its history back to 2024-12-12) has no page about card markup
+    or card types. So this page gives no X image size, ratio, file size, cache time or validator status: those
+    numbers could not be read in X's own documents.
+  Every element that states an X fact carries data-fact and the source comment right before it; every other
+  element that names an app carries data-own. tests/node/preview-pages-draft.test.ts enforces both.
+-->
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>X card validator.</h1>
+<p data-own>Paste a page URL. The checker fetches that one page, reads its <code>twitter:</code> and <code>og:</code> tags, tests the card image and draws an approximate X card. An independent tool: it is not made by, or affiliated with, X.</p>
+</div>
+<form class="card card-pop tool-form" id="platform-form" data-platform="x" action="/tools/x-card-validator" method="get" novalidate>
+<label class="label" for="platform-url">Paste a page URL</label>
+<div class="tool-row">
+<input class="input" id="platform-url" name="url" type="url" inputmode="url" autocomplete="url" spellcheck="false" maxlength="[[inspect.raw.maxUrlChars]]" required placeholder="https://example.com/blog/my-post" aria-describedby="platform-hint">
+<button class="btn btn-primary" id="platform-submit" type="submit">Check</button>
+</div>
+<p class="hint" id="platform-hint">Public https:// pages only. No account needed. Results are kept for [[inspect.cacheMinutes]] minutes, so the same link checked again loads instantly.</p>
+<p class="alert alert-danger" id="platform-error" role="alert" hidden></p>
+<div class="alert alert-info tool-verify" id="platform-verify" hidden>
+<p id="platform-verify-text">Complete the quick check below and your result loads straight away.</p>
+<div class="tool-widget" id="platform-widget"></div>
+</div>
+<noscript><p class="alert alert-warn">This page needs JavaScript to show its results. The <a href="/docs/api">inspect API</a> returns the same check as JSON.</p></noscript>
+</form>
+<p class="visually-hidden" id="platform-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section section-alt tool-results" id="platform-results" aria-labelledby="platform-results-title" hidden>
+<div class="container">
+<h2 class="visually-hidden" id="platform-results-title" tabindex="-1">Results</h2>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>How the card may look on X</h2>
+<p class="muted" data-own>A mockup drawn from the page's tags, not a screenshot: the large image card when <code>twitter:card</code> is <code>summary_large_image</code>, a small card otherwise. X draws its own card with its own crop and text length, so treat this as a guide.</p>
+</div>
+<div class="platform-preview" id="platform-preview"></div>
+<div class="alert alert-info platform-preview-notes" id="platform-preview-notes" hidden></div>
+<div class="platform-fix">
+<a class="btn btn-primary" href="/login" data-fix-link>Fix it: make the card</a>
+<a class="link-arrow" id="platform-compare" href="/tools/og-checker">Compare six apps in the Open Graph checker</a>
+</div>
+</div>
+
+<div class="card verdict" id="platform-verdict">
+<p class="eyebrow">Result</p>
+<p class="verdict-title" id="platform-verdict-title"></p>
+<p class="verdict-text" id="platform-verdict-text"></p>
+<dl class="verdict-meta" id="platform-verdict-meta"></dl>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>X checks</h2>
+<!-- source: https://docs.x.com/developer-terms/policy -->
+<p class="muted" data-fact>X's developer policy says that all assets within a card must be hosted on HTTPS. This check tests the addresses in <code>twitter:image</code> and <code>og:image</code>.</p>
+</div>
+<ul class="checklist" id="platform-checks"></ul>
+</div>
+
+<div class="tool-block tool-split">
+<div>
+<div class="tool-block-head">
+<h2>General checks</h2>
+<p class="muted">The tags and the image that every app's preview depends on, <code>twitter:card</code> included. Each problem says what to change in your page.</p>
+</div>
+<ul class="checklist" id="platform-checklist"></ul>
+</div>
+<aside class="card facts-card" aria-labelledby="platform-facts-title">
+<h2 id="platform-facts-title">The image</h2>
+<div class="facts-image" id="platform-facts-image" hidden></div>
+<dl class="facts" id="platform-facts"></dl>
+</aside>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>Tags found on the page</h2>
+<p class="muted">Exactly as the page states them, the first of each tag the page repeats.</p>
+</div>
+<div class="table-wrap tool-tags">
+<table>
+<thead><tr><th scope="col">Tag</th><th scope="col">Value</th></tr></thead>
+<tbody id="platform-tags"></tbody>
+</table>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About the validator</p>
+<h2>What it checks, and what it cannot know.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>What it checks</h3>
+<ul>
+<li data-own>The <code>twitter:card</code>, <code>twitter:title</code>, <code>twitter:description</code>, <code>twitter:image</code> and <code>twitter:site</code> tags, next to the <code>og:</code> tags and the page's <code>&lt;title&gt;</code>.</li>
+<li>The image the tags point to: whether it loads, its type, file size, pixel size and shape.</li>
+<!-- source: https://docs.x.com/developer-terms/policy -->
+<li data-fact>That the card images are on <code>https://</code> addresses: X's developer policy says all assets within a card must be hosted on HTTPS.</li>
+<li>Everything the <a href="/tools/og-checker">Open Graph checker</a> checks, with the same plain fix for each problem.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What it cannot know</h3>
+<ul>
+<!-- source: https://github.com/xdevplatform/docs -->
+<li data-fact>When we checked in November 2026, X's developer documentation at docs.x.com had no page about card markup. So this page gives no X image sizes, limits or cache times, and calls its mockup approximate.</li>
+<li data-own><code>twitter:card</code> is the tag that names the card type. The values in common use are <code>summary</code>, a small image beside the text, and <code>summary_large_image</code>, a large image above it. That is our understanding, not a rule we could read in X's current documentation.</li>
+<li data-own>It cannot see what X has already cached for your link, and it does not ask X to fetch the page again.</li>
+</ul>
+<p data-own>More on this in the guide <a href="/guides/twitter-card-not-showing">Twitter card not showing on X</a>.</p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about X cards.</h2>
+<p>Short answers, and where we are not sure, we say so.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>Is this X's own Card Validator?</summary>
+<div>
+<p data-own>No. It is an independent checker made by [[site.name]]. It reads the same tags a card is built from and draws an approximate card; it cannot show you X's own rendering.</p>
+<!-- source: https://github.com/xdevplatform/docs -->
+<p data-fact>X's current developer documentation does not describe a card validator, so we do not say whether X still offers one.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Do I need twitter: tags if I already have og: tags?</summary>
+<div>
+<p data-own>Set <code>twitter:card</code> at least: it has no Open Graph equivalent, and <code>summary_large_image</code> is the value in common use for a large image. Our understanding is that X falls back to the <code>og:</code> tags for the title, description and image when the <code>twitter:</code> ones are missing, but we could not confirm it in X's current documentation. If the card shows the wrong text, setting the <code>twitter:</code> versions explicitly is the quick test.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>I fixed my tags. Why does X still show the old card?</summary>
+<div>
+<p data-own>Apps cache what they fetched for a link, and we could not find X's cache time in its current documentation. A URL with a small change, such as <code>?v=2</code> on the end, is usually treated as a new link and fetched fresh.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>What image should a large card use?</summary>
+<div>
+<p data-own>We cannot quote X's own numbers, so here is the safe choice: a [[size.og.width]] &times; [[size.og.height]] PNG or JPEG on an <code>https://</code> address, well under [[inspect.imageWarnMb]] MB, with text and faces kept away from the edges in case X crops it.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is it free? What does the checker keep?</summary>
+<div>
+<p>Yes, and you do not need an account. There is an hourly limit on fresh checks from one network, and after a few checks you may be asked to confirm you are a person. The checker keeps the parsed tags and the check results for [[inspect.cacheMinutes]] minutes, never the page's HTML. <a href="/privacy">Privacy policy</a></p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Fix it: make the card.</h2>
+<p>[[site.name]] renders a correct [[size.og.width]] &times; [[size.og.height]] card for every page from one HTML and CSS template, and gives you the meta tags to paste, <code>twitter:card</code> included.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/tools">All free tools</a>
+</div>
+</div>
+</section>
+
+</main>

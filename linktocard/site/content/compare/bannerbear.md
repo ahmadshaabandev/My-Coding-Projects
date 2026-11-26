@@ -4,12 +4,7 @@ description: An honest comparison of [[site.name]] and Bannerbear for generating
 layout: page
 ---
 
-<!-- feature:no-pdf -->
-**In short:** choose Bannerbear if you want to design templates visually, or need video, PDF, batch jobs, AI features or no-code automation. Choose [[site.name]] if you already write HTML and CSS and only need static social-card images from a URL or a REST call.
-<!-- /feature:no-pdf -->
-<!-- feature:pdf -->
-**In short:** choose Bannerbear if you want to design templates visually, or need video, batch jobs, AI features or no-code automation. Choose [[site.name]] if you already write HTML and CSS and need static social-card images, or PDF documents made from HTML, from a URL or a REST call.
-<!-- /feature:pdf -->
+**In short:** choose Bannerbear if you want to design templates visually, or need video, <!-- feature:no-pdf -->PDF, <!-- /feature:no-pdf --><!-- feature:no-batch -->batch jobs, <!-- /feature:no-batch -->AI features or no-code automation. Choose [[site.name]] if you already write HTML and CSS and <!-- feature:no-pdf -->only need static social-card images<!-- /feature:no-pdf --><!-- feature:pdf -->need static social-card images, or PDF documents made from HTML,<!-- /feature:pdf --> from a URL or a REST call.
 
 These are different kinds of product. Bannerbear is a broad media-generation platform; [[site.name]] does one narrow thing. For many teams Bannerbear is the right answer, and this page tries to say so plainly.
 
@@ -70,7 +65,7 @@ Bannerbear does a great deal that [[site.name]] does not do and does not plan to
 <!-- feature:pdf -->
 - **AVIF output**, higher scale factors, DPI settings and transparent backgrounds.
 <!-- /feature:pdf -->
-- **Batch rendering** of many images in one request, and responsive templates that produce several sizes from one design.
+- **Batch rendering** of many images in one request<!-- feature:batch --> (our bulk documents make PDFs, one per row, not images)<!-- /feature:batch -->, and responsive templates that produce several sizes from one design.
 - **Automatic text fitting** as a built-in layer setting.
 - **AI features:** face and subject detection for cropping, background removal and generated backgrounds. We have no AI features.
 - **More layer types:** QR codes, barcodes, star ratings, Lottie animations and audio waveforms.

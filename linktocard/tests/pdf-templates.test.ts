@@ -7,6 +7,7 @@ import { findAll, textContent } from 'domutils'
 import { parseDocument } from 'htmlparser2'
 import { describe, expect, it } from 'vitest'
 import { LIMITS, PDF } from '../src/config'
+import { qrSvgDataUri } from '../src/lib/qr'
 import { buildPdfDocument, validatePdfData } from '../src/pdf/template'
 import { PDF_TEMPLATES, PDF_TEMPLATE_IDS, getPdfTemplate, type PdfData, type PdfItem, type PdfStarterTemplate } from '../src/pdf/templates'
 import { cssDeclarations, parseCss, parseFontFamilyList, stripCssComments, type CssNode } from '../src/render/css'
@@ -20,9 +21,20 @@ const CONTRACT_KEYS: Record<PdfStarterTemplate['id'], string> = {
     'seller_name*, seller_address, seller_email, logo_url, receipt_number*, date*, buyer_name, payment_method, currency, items* [description, quantity, amount], subtotal, tax_label, tax, total*, notes',
   quote:
     'seller_name*, seller_address, seller_email, logo_url, buyer_name*, buyer_address, quote_number*, issue_date*, valid_until, currency, items* [description, quantity, unit_price, amount], subtotal, tax_label, tax, total*, terms, notes',
-  certificate: 'title*, recipient_name*, achievement*, issuer_name*, date*, signer_name, signer_title, certificate_id, logo_url',
+  certificate: 'title*, recipient_name*, achievement*, issuer_name*, date*, signer_name, signer_title, certificate_id, logo_url, verify_url, verify_qr',
   report: 'title*, subtitle, author, date, summary, items [heading, body], footer_note',
 }
+
+/**
+ * Keys Link To Card fills in itself for bulk documents with "verify": true (src/batch/certificates.ts).
+ * A customer never types them, so the samples leave them out.
+ */
+const VERIFICATION_KEYS: readonly string[] = ['verify_url', 'verify_qr']
+/** The only placeholders allowed in an attribute: an image's src. */
+const IMAGE_SOURCES = [
+  { tag: 'img', name: 'src', value: '{{logo_url}}' },
+  { tag: 'img', name: 'src', value: '{{verify_qr}}' },
+]
 
 interface ContractField {
   key: string
@@ -153,11 +165,12 @@ describe.each(PDF_TEMPLATES.map((template) => [template.id, template] as const))
 
     it('each fill a whole element, so a missing value leaves an :empty element that the CSS hides', () => {
       // The CSS drops optional rows and labels with :empty / :has(... :empty), which only works when
-      // the placeholder is the element's only content. The one attribute placeholder is the logo.
+      // the placeholder is the element's only content. The only attribute placeholders are image
+      // sources: the logo, and the certificate's verification QR code.
       for (const element of elements(nodes)) {
         for (const [name, value] of Object.entries(element.attribs)) {
           if (!value.includes('{{')) continue
-          expect({ tag: element.name, name, value }).toEqual({ tag: 'img', name: 'src', value: '{{logo_url}}' })
+          expect(IMAGE_SOURCES).toContainEqual({ tag: element.name, name, value })
         }
         for (const child of element.children) {
           // Section markers ({{#items}} ...) may share text with white space; placeholders may not.
@@ -182,14 +195,14 @@ describe.each(PDF_TEMPLATES.map((template) => [template.id, template] as const))
       expect(template.html).not.toMatch(/javascript:|vbscript:|<!--/i)
     })
 
-    it('loads nothing by itself: the only URL is the {{logo_url}} of an <img>', () => {
+    it('loads nothing by itself: the only URLs are the {{logo_url}} and {{verify_qr}} of an <img>', () => {
       for (const element of elements(nodes)) {
         for (const name of ['src', 'href', 'xlink:href', 'srcset', 'poster', 'background', 'action', 'data']) {
-          if (name in element.attribs) expect({ tag: element.name, name, value: element.attribs[name] }).toEqual({ tag: 'img', name: 'src', value: '{{logo_url}}' })
+          if (name in element.attribs) expect(IMAGE_SOURCES).toContainEqual({ tag: element.name, name, value: element.attribs[name] })
         }
       }
-      const hasLogo = template.fields.some((field) => field.key === 'logo_url')
-      expect(findAll((element) => element.name === 'img', nodes)).toHaveLength(hasLogo ? 1 : 0)
+      const images = template.fields.filter((field) => field.key === 'logo_url' || field.key === 'verify_qr').length
+      expect(findAll((element) => element.name === 'img', nodes)).toHaveLength(images)
       for (const source of [template.html, template.css]) {
         expect(source).not.toMatch(/https?:|\/\/[a-z0-9]/i)
       }
@@ -264,9 +277,11 @@ describe.each(PDF_TEMPLATES.map((template) => [template.id, template] as const))
   })
 
   describe('sample', () => {
-    it('fills every key, and only the template keys', () => {
-      expect(Object.keys(template.sample).sort()).toEqual(template.fields.map((field) => field.key).sort())
+    it('fills every key a customer fills in, and only the template keys', () => {
+      const customerKeys = template.fields.map((field) => field.key).filter((key) => !VERIFICATION_KEYS.includes(key))
+      expect(Object.keys(template.sample).sort()).toEqual(customerKeys.sort())
       for (const field of textFields(template)) {
+        if (VERIFICATION_KEYS.includes(field.key)) continue
         expect(typeof template.sample[field.key], field.key).toBe('string')
         expect(String(template.sample[field.key]).trim(), field.key).not.toBe('')
       }
@@ -322,6 +337,24 @@ describe.each(PDF_TEMPLATES.map((template) => [template.id, template] as const))
       expect(template.html).toMatch(/Issued by<\/span>\s*<span class="issuer-name">\{\{issuer_name\}\}<\/span>/)
       const text = `${template.html}\n${template.css}`.toLowerCase()
       for (const word of OFFICIAL_MARKS) expect(text, word).not.toContain(word)
+    })
+
+    it('prints the verification link and QR code in a corner when given, and nothing of them when not', () => {
+      const qr = qrSvgDataUri('https://linktocard.com/v/crt_8w3k5q0m2r7t9v4x6z1b')
+      const verified = parseDocument(build(template, { ...template.sample, verify_url: 'https://linktocard.com/v/crt_8w3k5q0m2r7t9v4x6z1b', verify_qr: qr }))
+      const images = findAll((element) => element.name === 'img', verified.children)
+      expect(images.map((element) => element.attribs.class)).toEqual(['logo', 'verify-qr'])
+      expect(images[1]!.attribs.src).toBe(qr)
+      const url = findAll((element) => element.attribs.class === 'verify-url mono', verified.children)
+      expect(url.map((element) => textContent(element))).toEqual(['https://linktocard.com/v/crt_8w3k5q0m2r7t9v4x6z1b'])
+
+      const plain = build(template, template.sample)
+      expect(plain).not.toContain('verify-qr"')
+      expect(findAll((element) => element.attribs.class === 'verify-url mono', parseDocument(plain).children).map((element) => textContent(element))).toEqual([''])
+      // Out of the flow: with or without it, nothing else on the page moves.
+      expect(template.css).toMatch(/\.verify \{ position: absolute;/)
+      expect(template.css).toMatch(/\.body \{ position: relative;/)
+      expect(template.css).toMatch(/\.verify-text:has\(> \.verify-url:empty\) \{ display: none; \}/)
     })
 
     it('scales down on A5, where the 32pt title broke inside its words ("Certifica / te of")', () => {
@@ -409,7 +442,7 @@ describe('PDF starter templates built by the engine', () => {
     it('turns markup in values into text', () => {
       const hostile = '<b onclick="x()">bold</b><script>alert(1)</script>'
       const data: PdfData = {}
-      for (const field of textFields(template)) if (field.key !== 'logo_url') data[field.key] = hostile
+      for (const field of textFields(template)) if (field.key !== 'logo_url' && field.key !== 'verify_qr') data[field.key] = hostile
       data.items = [Object.fromEntries(itemFieldsOf(template).map((field) => [field, hostile]))]
       const document = build(template, data)
       const parsed = parseDocument(document)

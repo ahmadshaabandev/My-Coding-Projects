@@ -29,7 +29,7 @@ import { ApiError } from './errors';
 
 /** Carries the signature; never part of the signed message or the template data. */
 export const SIG_PARAM = 'sig';
-/** Reserved: output size preset (og | square | portrait). Signed like any other parameter. */
+/** Reserved: output size preset (og | square | portrait | email). Signed like any other parameter. */
 export const SIZE_PARAM = 'size';
 
 export type OgExtension = 'png' | 'jpg' | 'jpeg' | 'webp';

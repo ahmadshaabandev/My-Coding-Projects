@@ -1,0 +1,25 @@
+{
+    "url": "{{ifempty(parameters.apiUrl, 'https://linktocard.com')}}/v1/usage",
+    "method": "GET",
+    "headers": {
+        "authorization": "Bearer {{parameters.apiKey}}"
+    },
+    "response": {
+        "metadata": {
+            "type": "text",
+            "value": "{{body.plan}} plan"
+        },
+        "error": {
+            "401": {
+                "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})",
+                "type": "InvalidAccessTokenError"
+            },
+            "message": "[{{statusCode}}] {{body.error.message}} (error code: {{body.error.code}})"
+        }
+    },
+    "log": {
+        "sanitize": [
+            "request.headers.authorization"
+        ]
+    }
+}

@@ -72,7 +72,11 @@ export async function readBodyBytes(request: Request, maxBytes: number): Promise
 
 /** Reads a JSON object body under the shared size cap. Every failure says what to fix. */
 export async function readJsonObject(request: Request, maxBytes: number = LIMITS.maxRequestBodyBytes): Promise<JsonObject> {
-  const bytes = await readBodyBytes(request, maxBytes);
+  return parseJsonObject(await readBodyBytes(request, maxBytes));
+}
+
+/** readJsonObject's parsing, for a body already read (a route that checks the bytes first). */
+export function parseJsonObject(bytes: Uint8Array): JsonObject {
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes);

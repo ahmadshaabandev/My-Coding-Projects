@@ -1,9 +1,11 @@
 // The customer dashboard: a small hash-routed app. Each tab is a module under
 // ./dashboard/ whose mount(ctx, param, options) resolves to
-// { node, focus?, isDirty?, destroy? }.
+// { node, focus?, isDirty?, destroy? }. Feature tabs (FEATURE_TABS in ./dashboard/helpers.js)
+// appear only while GET /api/config switches them on, and their modules are imported only when
+// opened: a site built without the feature does not publish them.
 import { LOGIN_URL, api } from './dashboard/client.js';
 import { alertBox, button, confirmDialog, h } from './dashboard/dom.js';
-import { TABS, routeFromHash } from './dashboard/helpers.js';
+import { dashboardTabs, routeFromHash } from './dashboard/helpers.js';
 import * as fonts from './dashboard/fonts.js';
 import * as keys from './dashboard/keys.js';
 import * as overview from './dashboard/overview.js';
@@ -11,7 +13,10 @@ import * as renders from './dashboard/renders.js';
 import * as sites from './dashboard/sites.js';
 import * as templates from './dashboard/templates.js';
 
-const VIEWS = { overview, sites, templates, keys, fonts, renders };
+/** The Bulk documents tab (feature batch), loaded the first time it opens. */
+const bulk = { mount: (...args) => import('./dashboard/bulk.js').then((module) => module.mount(...args)) };
+
+const VIEWS = { overview, sites, templates, bulk, keys, fonts, renders };
 const baseTitle = document.title;
 
 async function signOut(control) {
@@ -37,10 +42,12 @@ function start(app, me, config) {
   if (checkoutReturn) history.replaceState(null, '', `${location.pathname}#overview`);
 
   const panel = h('div', { class: 'dash-panel', id: 'panel' });
+  const shownTabs = dashboardTabs(config);
+  const hashRoute = () => routeFromHash(location.hash, shownTabs);
   const tabs = h(
     'nav',
     { class: 'tabs dash-tabs', 'aria-label': 'Dashboard sections' },
-    TABS.map((tab) => h('a', { class: 'tab', href: `#${tab.id}`, 'data-tab': tab.id }, tab.label)),
+    shownTabs.map((tab) => h('a', { class: 'tab', href: `#${tab.id}`, 'data-tab': tab.id }, tab.label)),
   );
   const planBadge = h('span', { class: 'badge badge-accent' });
   const suspended = alertBox(
@@ -87,7 +94,7 @@ function start(app, me, config) {
       // On a phone the tab strip scrolls sideways: keep the open tab in view without moving the page.
       tabs.scrollLeft = tab.offsetLeft - tabs.offsetLeft - 16;
     }
-    document.title = `${TABS.find((tab) => tab.id === route.tab).label} · ${baseTitle}`;
+    document.title = `${shownTabs.find((tab) => tab.id === route.tab).label} · ${baseTitle}`;
     panel.setAttribute('aria-busy', 'true');
     let view = null;
     try {
@@ -129,7 +136,7 @@ function start(app, me, config) {
         return;
       }
     }
-    show(routeFromHash(location.hash), { focus: true });
+    show(hashRoute(), { focus: true });
   });
   window.addEventListener('beforeunload', (event) => {
     if (current.view?.isDirty?.()) event.preventDefault();
@@ -148,7 +155,7 @@ function start(app, me, config) {
     tabs,
     panel,
   );
-  show(routeFromHash(location.hash));
+  show(hashRoute());
 }
 
 async function boot() {

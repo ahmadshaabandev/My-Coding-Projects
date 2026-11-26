@@ -1,0 +1,10 @@
+[
+    {
+        "name": "downloadFile",
+        "type": "boolean",
+        "label": "Download the file",
+        "required": true,
+        "default": true,
+        "help": "Yes: the module also outputs the PDF itself (File name and Data), for a later module that uploads or attaches files. No: only its link and details."
+    }
+]

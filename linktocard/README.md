@@ -4,7 +4,10 @@ Turn every link into a beautiful share card: an API and a signed-URL service tha
 Open Graph images (PNG, JPEG, WebP) from HTML/CSS templates or five starter templates.
 It runs on Cloudflare Workers with Satori and resvg; card images never touch a browser.
 PDF documents from HTML templates are built too, printed by Cloudflare Browser Run, and are
-switched off in production until Ahmad approves them (see "PDF documents" below).
+switched off in production until Ahmad approves them (see "PDF documents" below). Build v3 adds
+bulk documents with certificate verification, a PDF toolkit, cards from links, personalized
+email images, connectors for Zapier, Make and n8n, and free funnel pages: built and tested, not
+deployed anywhere yet, each behind its own switch (see "Build v3 tools" below).
 
 ## Status, stated plainly
 
@@ -33,6 +36,11 @@ switched off in production until Ahmad approves them (see "PDF documents" below)
   `npm run deploy:production` refuses to run if a placeholder ever returns to a page.
 - Whether Paddle can pay out to an individual in Lebanon is unverified. Read
   [GO-LIVE.md](GO-LIVE.md) step 0 before spending money on anything.
+- **Build v3 (2026-11-26) is not deployed.** Its four Worker switches (`BATCH_ENABLED`,
+  `PDF_TOOLKIT_ENABLED`, `LINK_CARDS_ENABLED`, `EMAIL_FIELDS_ENABLED`) are `"true"` locally and in the
+  staging configuration and `"false"` in production, and `npm run deploy:production` builds the site
+  with none of the new features. The next production deploy of any kind needs the production queue
+  and migration `0008` first: GO-LIVE.md section 11.
 
 ## What it does
 
@@ -45,12 +53,31 @@ switched off in production until Ahmad approves them (see "PDF documents" below)
   `GET /v1/pdf/{siteId}/{template}.pdf` links, stored PDFs under `/i/...pdf`, five PDF starter
   templates, and three free tools (`/tools/html-to-pdf`, `/tools/invoice-generator`,
   `/tools/certificate-generator`).
+- Build v3 tools (built; on locally and in the staging configuration, off in production; GO-LIVE.md
+  section 11):
+  - **Bulk documents** (`BATCH_ENABLED`, needs PDFs): `POST /v1/batches` makes one PDF per row through
+    a Cloudflare Queue, `GET /v1/batches[/{id}]`, ZIP downloads in parts (`/zip?part=N`, at most
+    `BATCH.zipPartMaxEntries` files and `BATCH.zipPartMaxBytes` each), cancel, and a dashboard
+    **Bulk documents** tab that reads a CSV in the browser. Optional certificate records with a
+    public page `GET /v/{id}` (and `.json`), a QR code on the certificate template, and revoking.
+  - **PDF toolkit** (`PDF_TOOLKIT_ENABLED`): `POST /v1/pdf-tools/{merge|split|stamp|fill|fields|from-images|protect}`
+    with @cantoo/pdf-lib in the Worker, no browser; JSON or multipart uploads.
+  - **Cards from links** (`LINK_CARDS_ENABLED`): `POST /v1/cards/from-url` and signed
+    `GET /v1/link/{siteId}/{template}.{ext}?url=...` URLs, made from a page's own metadata.
+  - **Personalized email images** (`EMAIL_FIELDS_ENABLED`): signed card URLs with `open` fields an
+    email platform fills in, a daily cap per site, and two email starter templates.
+  - **Connectors** in `integrations/` (Zapier, Make, n8n): not published; `integrations/README.md`.
+  - **Free pages** (site features only): `/tools` (the tool hub), five one-app link preview
+    checkers, and `/tools/merge-pdf` and `/tools/image-to-pdf`, which work entirely in the browser.
 - A dashboard: sign in by email link, sites and signing secrets, signed-URL builder,
   template editor with live preview, API keys, custom fonts on paid plans, usage, billing.
 - A marketing site with a live playground, pricing, docs, comparisons and legal pages.
 
 Deliberately not built: website screenshots, video or GIF, a visual editor, AI image
 generation, team accounts, automatic overage billing, any payment processor other than Paddle.
+Also not built in build v3, by the owner's decision: a screenshot API, e-signatures, PDF
+compression, Office conversion or OCR, dynamic QR codes, a public receipt generator and
+monitoring.
 
 ## Stack
 
@@ -59,13 +86,18 @@ generation, team accounts, automatic overage billing, any payment processor othe
 | Runtime | One Cloudflare Worker (TypeScript, Hono) plus Workers Static Assets for the site |
 | Rendering | Satori (HTML/CSS to SVG), resvg-wasm (SVG to pixels), jSquash (JPEG, WebP) |
 | PDF documents | Cloudflare Browser Run quick action (`env.BROWSER.quickAction('pdf', ...)`), bound on staging and production only |
-| Data | D1 (accounts, keys, templates, usage, webhook log, PDF browser time), R2 (rendered images and PDFs, fonts) |
+| Bulk documents | Cloudflare Queues (`BATCH_QUEUE`, producer and consumer in the same Worker), QR codes with uqr |
+| PDF toolkit | @cantoo/pdf-lib in the Worker; pdf-lib in the browser for the two in-browser tools, bundled with esbuild |
+| Data | D1 (accounts, keys, templates, usage, webhook log, PDF browser time, batches and certificate records), R2 (rendered images and PDFs, fonts) |
 | Email | Resend (sign-in links, quota warnings, contact form) |
 | Billing | Paddle Billing only: Paddle.js overlay checkout, customer portal, webhooks |
 | Tooling | Wrangler, Vitest with the Cloudflare pool, plain Node for the site build |
 
 The site is plain HTML, CSS and JavaScript generated by `scripts/build-site.ts`. There is no
-front-end framework and no CSS or JS bundler.
+front-end framework and no CSS bundler. One script is bundled: `npm run build:browser`
+(`scripts/build-browser-bundles.mts`, run first by `npm run build:site`) packs pdf-lib with esbuild
+into `site/public/assets/js/vendor/pdf-local.js` for `/tools/merge-pdf` and `/tools/image-to-pdf`.
+That file is a build output and is git-ignored.
 
 ## Run it locally
 
@@ -87,7 +119,11 @@ Regenerate the starter-template sample images after changing a template: `npm ru
 `npm run dev` builds the site without the PDF pages. To see them locally, build with the switch
 on and start Wrangler yourself: `SITE_PDF=on npm run build:site && npx wrangler dev`. Locally
 every PDF endpoint answers 503 `not_configured`: Browser Run is bound only on staging and
-production, so `wrangler dev` and the test pool start without a network connection.
+production, so `wrangler dev` and the test pool start without a network connection. For the same
+reason bulk documents answer 503 "PDF rendering is not enabled yet." under `wrangler dev`, which
+runs a local queue all the same; the toolkit and email images work there, and cards from links
+whenever the local Worker can reach the page. The
+build v3 pages: `SITE_FEATURES=pdf,batch,toolkit,linkcards,email,previews,integrations SITE_PDF=on npm run build:site`.
 
 ## Tests
 
@@ -101,13 +137,30 @@ npm run smoke       # the whole product over HTTP against a real `wrangler dev`
   (`npm run test:workers`).
 - `tests/node/*.test.ts` run in Node: the site build, docs, signing examples in three
   languages, the Paddle catalog instructions, and the dependency guard (`npm run test:node`).
-  The site build is tested with the PDF switch both off and on (`SITE_PDF`).
+  The site build is tested with the PDF switch both off and on (`SITE_PDF`), and with each
+  build v3 feature (`SITE_FEATURES`).
 - `tests/pdf-*.test.ts` cover PDF documents against a mocked Browser Run binding
   (`tests/pdf-helpers.ts`); page counting is checked against real Chrome PDFs in
   `tests/fixtures/pdf/`. The real renderer cannot be reached from a test or from `wrangler dev`.
+- Build v3: `tests/batch*.test.ts` and `tests/batches-*.test.ts` (rows, queue consumer, ZIP parts,
+  routes, an end-to-end batch through the Worker's own `queue()` and one through the pool's real
+  local queue), `tests/verify-page.test.ts`, `tests/zip.test.ts`, `tests/pdftools-*.test.ts`,
+  `tests/cards-*.test.ts`, `tests/email-*.test.ts`; in Node, the v3 docs and site statements
+  (`tests/node/v3-docs-draft.test.ts`, `tests/node/v3-site.test.ts`), the email pages, the preview
+  pages, the dashboard Bulk tab, the in-browser PDF tools, the queue settings in `wrangler.toml` and
+  the three connectors' copies of the service's choices (`tests/node/*-connector-sync.test.ts`). The
+  connectors' own suites run in their folders (`integrations/README.md`), not in `npm test`.
 - `npm run smoke` starts `wrangler dev` on port 8799 with a throw-away database, signs in,
   creates a key and a site, renders, checks caching and counting, checks that every PDF
-  endpoint answers 503 without Browser Run, and stops the server.
+  endpoint answers 503 without Browser Run, checks the build v3 routes it can reach there (an
+  email image with an open field, a 404 verification page with its own CSP, a link card's 403, the
+  bulk documents' 503, toolkit merges and stamps of the test fixtures, a form's fields), and stops
+  the server. It then starts `wrangler dev` twice more on the same data: once with `APP_URL` and
+  `SITE_URL` on an unassigned IPv6 address, so cards from links are made from the Worker's own
+  `/pricing` page (read from the static assets, nothing leaves the machine): `POST
+  /v1/cards/from-url`, a signed `/v1/link/...` URL and `/playground/from-check/...`; and once with
+  the four build v3 switches `"false"`, as in production, where every new route answers 503 and
+  cards and signed URLs still work. It ends with the site built as configured.
 
 The build request's acceptance list maps to `tests/acceptance.test.ts`, one test per item:
 
@@ -156,6 +209,10 @@ they are set with `npx wrangler secret put <NAME> --env staging|production`.
 | `PADDLE_PRICE_STARTER`, `PADDLE_PRICE_PRO`, `PADDLE_PRICE_TOPUP` | The three Paddle price ids (`pri_...`) |
 | `PDF_ENABLED` | `"true"` turns the PDF endpoints on; they also need the `BROWSER` binding. Anything else: every PDF endpoint answers 503 and `/api/config` reports `pdf_enabled: false`. `"true"` locally and on staging, `"false"` on production |
 | `PDF_DAILY_BROWSER_MS_BUDGET` | Optional. Browser Run milliseconds per 24 hours above which the daily cron emails `SUPPORT_EMAIL` (once per UTC day). Unset: `PDF.dailyBrowserMsBudget` in `src/config.ts` |
+| `BATCH_ENABLED` | `"true"` turns bulk documents and the verification pages on (`/v1/batches`, `/api/batches`, `/v/...`, certificate revoking). Batches also need PDFs on and the `BATCH_QUEUE` binding; the verification pages and revoking do not. Off: 503 `not_configured` (also for the listings, status and ZIP downloads of finished batches; each document's `/i/...pdf` link keeps working), `/v/...` a 503 notice page, and queued rows fail uncharged. `wrangler queues pause-delivery` holds rows instead, for the queue's retention only (4 days by default): GO-LIVE.md 11c |
+| `PDF_TOOLKIT_ENABLED` | `"true"` turns `/v1/pdf-tools/*` on. Its stored results are served under `/i/...pdf`, which needs `PDF_ENABLED` too |
+| `LINK_CARDS_ENABLED` | `"true"` turns `POST /v1/cards/from-url` and `/v1/link/...` on. Off: every `/v1/link/...` URL answers 503, stored cards included, so pages that use one show no image |
+| `EMAIL_FIELDS_ENABLED` | `"true"` makes signed card URLs read `open` as the list of open fields, `/api/sign` accept `open`, and the email starters `email-banner` and `email-offer` usable. Off: `open` is an ordinary signed parameter (though `/api/sign` never signs it as data), and the email starters answer 404. Turning it off breaks the open-field images of emails already sent (403) once caches let the request through |
 
 While any Paddle variable is empty, the site still works: the pricing page and dashboard
 show that checkout is not available yet instead of opening a broken overlay.
@@ -175,6 +232,13 @@ the governing law. The environment variables `SITE_URL`, `SITE_LEGAL_NAME`,
 `<!-- feature:pdf -->` blocks): `on` builds them, `off` or unset leaves them out. Any other value
 stops the build. `npm run deploy:staging` builds with `on`, `npm run deploy:production` with
 `off`, so a value left exported in the shell cannot publish PDF pages on production.
+
+`SITE_FEATURES` is a comma list of the site features to publish, the same way: `pdf`, `batch`,
+`toolkit`, `linkcards`, `email`, `previews`, `integrations` (`scripts/build-site.ts` `FEATURES`). An
+unknown name stops the build. `deploy:staging` builds with all seven; `deploy:production` sets
+`SITE_FEATURES=` (empty) explicitly. The terms and the privacy policy carry each feature's text in
+its own block, so the production build's legal pages are unchanged until a feature is switched on
+there (`tests/node/v3-site.test.ts`).
 
 `RATE_LIMITS_DISABLED` exists only for the test suite and is ignored unless `ENVIRONMENT`
 is `test`.
@@ -200,8 +264,10 @@ Workers Paid ($5 a month) is required. On staging a render took up to about 400 
 request. Workers Paid includes 30 million CPU milliseconds a month, about 75,000 renders at
 400 ms, then $0.02 per million CPU milliseconds (research/cloudflare.md).
 
-Bundle size (measured with `wrangler deploy --dry-run --env staging` on 2026-11-22): 6.8 MB,
-2.7 MB gzipped, under the 10 MB compressed limit of Workers Paid. The static site adds about
+Bundle size (measured with `wrangler deploy --dry-run --env staging`): 6.8 MB, 2.7 MB gzipped on
+2026-11-22; with build v3 on 2026-11-26, 8,577.17 KiB, 3,218.23 KiB gzipped (the PDF toolkit brings
+@cantoo/pdf-lib into the bundle). Both under the 10 MB compressed limit of Workers Paid. Worker
+startup time with pdf-lib and the toolkit's CPU per operation on Cloudflare are not measured. The static site adds about
 3,800 asset files, most of them the Twemoji SVGs the renderer loads for emoji.
 
 ## PDF documents
@@ -288,6 +354,66 @@ production are GO-LIVE.md section 10.
   PDFs; the dashboard's signed-URL builder makes card URLs only (signed PDF links are built on the
   customer's server, as `/docs/pdf` shows).
 
+## Build v3 tools
+
+Owner decision of 2026-11-26 ("Paddle pays, build all"): the five ranked tools and the free pages of
+the tool opportunities report. No new Paddle product: every tool spends the existing image units.
+Every number is in `src/config.ts` (`BATCH`, `PDF_TOOLKIT`, `LINK_CARDS`, `EMAIL_FIELDS`, `LOCAL_PDF`)
+and reaches the site through `[[tokens]]` (`scripts/v3-site-tokens.ts`, `scripts/email-site-tokens.ts`,
+`scripts/previews-site-tokens.ts`). Free-plan outputs carry the card watermark or the PDF free mark.
+
+| Tool | Worker switch | Site feature | Docs |
+| --- | --- | --- | --- |
+| Bulk documents and certificate verification | `BATCH_ENABLED` (and PDFs) | `batch` | `/docs/bulk` |
+| PDF toolkit | `PDF_TOOLKIT_ENABLED` | `toolkit` (also `/tools/merge-pdf`, `/tools/image-to-pdf`) | `/docs/pdf-tools` |
+| Cards from links | `LINK_CARDS_ENABLED` | `linkcards` | `/docs/link-cards` |
+| Personalized email images | `EMAIL_FIELDS_ENABLED` | `email` | `/docs/email-images`, `/guides/personalized-email-images` |
+| One-app link preview pages and `/tools` | none (they use `/api/tools/og-check`) | `previews` | |
+| Zapier, Make and n8n connectors | none | `integrations` (the page says "being prepared for listing") | `/docs/integrations`, `integrations/README.md` |
+
+- **Bulk documents.** Rows are checked with `validatePdfData` before anything is stored; each row is
+  rendered and charged exactly like `POST /v1/pdf` (ledger source `batch`) by the queue consumer,
+  one after another, at least `BATCH.minRowMs` each, `max_concurrency` 5. Only Browser Run's own
+  failures and a busy browser are retried, at most `BATCH.maxRowAttempts` renders; running out of
+  images fails the remaining rows and the batch ends `partial`. Batch rows are exempt from
+  `RL_PDF_FREE` (decision D12). Too many rows answer 403 `plan_required` while a higher plan takes
+  them, else 400 (D1); the active-batch cap is 409 `conflict` (D2); an unknown template 404 (D3);
+  default names `certificate-1.pdf` / `document-1.pdf` (D4). ZIP downloads come in parts of at most
+  `BATCH.zipPartMaxEntries` files and `BATCH.zipPartMaxBytes`, sized up front and streamed with a
+  `FixedLengthStream` (D9; the ZIP writer is our own, `src/lib/zip.ts`, store method only).
+  `certificate_id`, `verify_url` and `verify_qr` are added after the row's data was validated, as
+  trusted fields outside `PDF.maxDataValueChars` (D13). The daily cleanup fails rows stranded for
+  `BATCH.staleAfterDays`, deletes finished batches after their last PDF expired, deletes revoked
+  certificate records after `BATCH.revokedRetentionDays`, and deletes a deleted account's batches
+  and records. The verification page states the domain of the issuing account's sign-in email
+  (`src/batch/issuer.ts`; a curated list of public mailbox domains says "personal email address"),
+  a fixed disclaimer and a report link; it is `noindex`, never cached and has its own strict CSP.
+- **PDF toolkit.** `url` inputs are downloaded under the image fetcher's rules (public addresses,
+  every redirect checked, `LIMITS.imageFetchTimeoutMs` per file) and never from Link To Card's own
+  hosts; encrypted and XFA files are refused; a structure budget is checked before pdf-lib parses a
+  file. Units: one per started `PDF_TOOLKIT.pagesPerUnit` output pages (split: per file), charged as
+  one block; `fields` is free. Results are stored like PDFs and every successful request counts
+  (no cache). Split answers `{ op, files, pages, credits_used, created_at, expires_at, usage }` (D10).
+- **Cards from links.** The OG checker's inspector reads the page (same SSRF rules, cache and daily
+  page checks per key or per site); its metadata fills the template; one image unit per new card. A
+  signed link reads its page again after `LINK_CARDS.refreshAfterMs`.
+- **Email images.** `open` is signed; the open fields' values are left out of the signed message,
+  normalised and restricted to short plain text the fonts draw, else the field's signed default.
+  New renders per site and UTC day are capped by `EMAIL_FIELDS.maxUniqueRendersPerDay`; past the cap
+  the default card is served with `no-store`.
+- **Not behind a switch** (live with the next deploy of any kind): the `email` size preset (1200 x
+  400, decision D7); `/v/*` reaching the Worker (a 503 notice page while `BATCH_ENABLED` is off); and
+  `/api/sign` refusing `open` as a data name whatever `EMAIL_FIELDS_ENABLED` says, so that no URL
+  signed while it is off changes meaning when it is turned on. The two email starter templates are
+  part of the email images tool: while `EMAIL_FIELDS_ENABLED` is off, `POST /v1/images`, signed
+  URLs, `/api/sign`, the studio preview and link cards answer 404 for their ids, as for any unknown
+  template, and the free playground never offers them.
+- **Not built from the contract:** the OG checker's "Make this card" button (only the
+  `/playground/from-check/...` endpoint exists, and the docs do not mention it); the dashboard's
+  open-fields option is written but stays hidden until `GET /api/config` sends an `email_fields`
+  block; the email starters are not listed in `GET /v1/templates` or the dashboard; the connectors
+  have no toolkit step.
+
 ## Cloudflare spending cap
 
 Cloudflare has no exact hard cap, so use three layers (details in GO-LIVE.md section 5):
@@ -317,6 +443,10 @@ storage.
 - Dashboard previews and the homepage playground are not counted.
 - Emails go out once at 90% and once at 100% of the allowance in each period (once more after
   an upgrade inside the period, for the new allowance).
+- Build v3 (where switched on): each document of a batch counts like a PDF of its pages; a
+  toolkit result one image per started block of `PDF_TOOLKIT.pagesPerUnit` pages (split: per
+  file; `fields`: nothing), every request; a card from a link one image like any card; an email
+  image one image per distinct set of open values.
 
 The numbers live in two files, `src/billing/plans.ts` and `src/config.ts`. The pricing
 page, the docs limits page and the Paddle catalog instructions are generated from or
@@ -366,6 +496,14 @@ Known gaps, accepted for the MVP:
   emails sent per hour, and each address receives at most 5. Someone with many addresses
   can still send unwanted sign-in emails; a challenge such as Turnstile is not built.
 - The `/v1` API sends no CORS headers on purpose: API keys must not be used in browsers.
+  `GET /v/{id}.json`, outside `/v1`, is a public record read without a key and sends
+  `Access-Control-Allow-Origin: *`.
+- **Build v3 gaps:** the DNS-rebinding gap above applies to the toolkit's `url` downloads and to
+  cards from links too. A toolkit result's `url` (`/i/...pdf`) answers 503 while `PDF_ENABLED` is off,
+  even with the toolkit on (`src/routes/images.ts` gates every stored PDF). In the dashboard, a
+  revoked certificate shows its Revoke button again after a reload (the batch row JSON has no
+  certificate status; revoking twice changes nothing). The five social starter templates are not
+  laid out for the `email` size and look broken there.
 
 ## Assumptions to confirm
 
@@ -387,6 +525,10 @@ it if it is wrong.
 | Terms | Liability capped at 12 months of fees; price changes announced by email; pro-rata refund if the service is closed | `site/content/terms.md` |
 | Privacy | Deletion on request by email to support, done by the operator with one command and completed by the daily cleanup (GO-LIVE.md section 8); the list of processors (Cloudflare, Resend, Paddle; add the support mailbox host) | `site/content/privacy.md` |
 | Text coverage | Bundled fonts cover Latin, Latin Extended, Cyrillic and Greek. Arabic, Hebrew and CJK need an uploaded font, and right-to-left shaping is not tested | `src/render/fonts.ts` |
+| Bulk documents | Rows per batch 25 / 500 / 2,000 by plan, 2 batches at once, 3 render attempts per row, revoked records kept 90 days, ZIP parts of 500 files and 2 GiB, public mailbox domains curated by hand | `src/config.ts` `BATCH`, `src/batch/issuer.ts` |
+| PDF toolkit | One image per started 10 output pages; 20 files, 20 MB of input, 500 pages; every request counts | `src/config.ts` `PDF_TOOLKIT` |
+| Email images | 3 open fields, 40 characters, 200 / 2,000 / 10,000 new renders per site per day, 30 days `max-age` | `src/config.ts` `EMAIL_FIELDS` |
+| Cards from links | `blog` by default, a signed link reads its page again after 24 hours | `src/config.ts` `LINK_CARDS` |
 
 ## Not verified
 
@@ -434,8 +576,49 @@ it if it is wrong.
   image that makes local Chromium write a 54 MB PDF came back from Browser Run as 1.25 MB, so
   its Chrome compresses images more; whether it sends `Content-Length` is not known, and the cap
   holds either way), the failed-render caps and the brake (tested against the mocked binding).
+- **Build v3, on Cloudflare: nothing.** It was built and tested locally (the Workers pool with a
+  mocked Browser Run, `wrangler dev`, offline `wrangler deploy --dry-run`) and has not been deployed
+  to staging. Not checked: Queues on Cloudflare (delivery, retries, `max_concurrency`, the real
+  pacing against Browser Run's 30 quick actions per second, the send-error text), batch PDFs from
+  the real Browser Run, the toolkit's memory and CPU inside a real isolate (its memory budget was
+  calibrated in Node; the pool does not enforce the 128 MB limit), Worker startup time with
+  pdf-lib, link cards from real pages (the local Worker could not resolve outside host names, so
+  only refusals and 422 `page_fetch_failed` were seen), and the edge cache of email images.
+- **Build v3, by hand:** a printed certificate's QR code scanned with a phone; a Free-plan verified
+  certificate with the free mark and the QR code together; the in-browser Merge PDF and Image to PDF
+  in Firefox, Safari or on phones (checked in Chromium only); Turnstile on the Bulk tab's preview;
+  the 409 active-batch cap, the 403 for too many rows and a real multi-part ZIP in the dashboard
+  (unit and route tests only); ZIPs in Windows Explorer and macOS Archive Utility (checked with
+  Info-ZIP `unzip`, Python `zipfile` and Java `ZipFile`).
+- **Build v3, vendor facts:** the connectors on Zapier, Make and n8n (nothing registered or
+  published; `integrations/README.md` lists what each platform's runtime may do differently); the
+  email platforms' merge tags (taken from documentation and code each vendor publishes on GitHub,
+  not from their help pages; mail clients' image caching not checked); the link-preview platform
+  facts on the one-app preview pages beyond the sources their code comments cite.
 
 ## Changelog
+
+- **2026-11-26: Build v3 tools** (not deployed; every new Worker switch is `"false"` in production and
+  production deploys build the site with no new feature). Bulk documents from rows through a
+  Cloudflare Queue with ZIP downloads in parts and optional certificate verification pages
+  (`/v1/batches`, `/v/{id}`, `/v1/certificates/{id}/revoke`, the dashboard's **Bulk documents** tab);
+  a PDF toolkit without a browser (`/v1/pdf-tools/{op}`: merge, split, stamp, fill, fields,
+  from-images, protect); cards from links (`/v1/cards/from-url`, `/v1/link/...`); personalized email
+  images (open fields in signed card URLs, two email starters, the `email` size); connectors for
+  Zapier, Make and n8n in `integrations/` (not published); and free pages (`/tools`, five one-app link
+  preview checkers, in-browser Merge PDF and Image to PDF). New: migration `0008_batches.sql`, a
+  queue per environment (`linktocard-batch-dev`, `-staging`, `-production`, which must be created
+  before the next deploy of each), the `RL_PDF_TOOLS` limiter, four switches (`BATCH_ENABLED`,
+  `PDF_TOOLKIT_ENABLED`, `LINK_CARDS_ENABLED`, `EMAIL_FIELDS_ENABLED`), the `SITE_FEATURES` build
+  list, and dependencies `@cantoo/pdf-lib` 2.11.1 and `uqr` 0.1.3 (dev: `pdf-lib` 1.17.1, `esbuild`
+  0.28.2), all exact. The docs, OpenAPI description, counting rules, limits, terms and privacy policy
+  describe each tool behind its own site feature; built with every feature off, as production
+  builds it, the site differs from the last release only by the `email` size in the size lists
+  (also in the dashboard's size picker) and one sentence of the published OpenAPI description, and
+  the terms and the privacy policy are unchanged. Decisions D1-D13 of the merge
+  plan are in the code and the docs. Where AI was used: written with AI tools (Claude Code) by
+  parallel builders, an integration pass, separate route, dashboard and connector passes and a
+  docs alignment pass, each checked by its own tests; Ahmad reviews before release.
 
 - **2026-11-26: PDF fixes after checking the round-3 fixes** (not deployed; PDFs are still off
   in production). CSS: an unquoted `url(` with `(` or a quote in it is removed with its
@@ -508,6 +691,9 @@ What that means in practice:
 
 - Bundled fonts: Inter, Source Serif 4 and JetBrains Mono, each under the SIL Open Font
   License 1.1 (from the `@fontsource` packages).
+- Build v3: @cantoo/pdf-lib (MIT; with culori, fflate and node-html-better-parser, MIT), uqr (MIT);
+  in the browser bundle pdf-lib with @pdf-lib/standard-fonts, @pdf-lib/upng and pako (MIT) and tslib
+  (0BSD), whose licence texts travel in `pdf-local.js`; esbuild (MIT) builds it.
 - Emoji graphics: [Twemoji](https://github.com/jdecked/twemoji), CC-BY 4.0. The site
   footer carries the attribution.
 - Satori and resvg-wasm are MPL-2.0. jSquash is Apache-2.0. Hono, htmlparser2, harfbuzzjs
@@ -524,7 +710,12 @@ This project's own licence is not set. Until Ahmad adds one, all rights are rese
 - All dependency versions are exact. Upgrade one at a time.
 - Prices and quotas change in `src/billing/plans.ts` only, and then in the Paddle catalog.
 - The daily cron (`src/lib/cleanup.ts`) removes expired sessions, sign-in tokens and
-  stored images, and purges accounts marked for deletion.
+  stored images, and purges accounts marked for deletion. Since build v3 it also fails batch rows
+  stranded for `BATCH.staleAfterDays`, deletes finished batches whose last PDF has expired, deletes
+  revoked certificate records after `BATCH.revokedRetentionDays`, and deletes a deleted account's
+  batches and certificate records before its users row.
+- The connectors keep copies of the service's sizes, formats and PDF templates; change the Worker
+  first, then `integrations/*`, and let the three `tests/node/*-connector-sync.test.ts` say what drifted.
 - Database changes are numbered files in `src/db/migrations/`. Apply new ones with
   `npx wrangler d1 migrations apply DB --env <env> --remote` before deploying the code that
   needs them.
@@ -533,17 +724,22 @@ This project's own licence is not set. Until Ahmad adds one, all rights are rese
 
 ```
 src/index.ts            Worker entry: routes, error handling, cron
-src/routes/             HTTP routes (og, pdf, api, images, playground, dashboard, studio, auth, tools, webhooks)
+src/routes/             HTTP routes (og, pdf, api, images, playground, dashboard, studio, auth, tools, webhooks; batches, verify, pdf-toolkit, link)
 src/render/             template language, CSS handling, Satori/resvg engine, image proxy, fonts
-src/render/templates/   the five starter templates
+src/render/templates/   the five starter templates, and the two email starters
 src/pdf/                PDF documents: template language, sanitiser, fonts, images, Browser Run call
 src/pdf/templates/      the five PDF starter templates
+src/batch/              bulk documents: rows, store, queue consumer, ZIP parts, certificates, verification page
+src/pdftools/           the PDF toolkit operations (@cantoo/pdf-lib)
+src/cards/              cards from links
 src/lib/                signing, quota, images service, email, rate limits, cleanup
 src/auth/               magic links, sessions, API keys, middleware
 src/billing/            plans and Paddle
 src/db/migrations/      D1 schema
 site/                   pages, layouts, partials, Markdown content, static assets
+site/src-browser/       the in-browser PDF engine, bundled by scripts/build-browser-bundles.mts
 scripts/                site build, sample renders, smoke test, Paddle catalog instructions
+integrations/           Zapier, Make and n8n connectors, each its own package (not published)
 examples/signing/       signed-URL examples in Node, PHP and Python
 tests/                  Workers-runtime tests; tests/node/ for Node tests
 research/               working notes behind the factual claims

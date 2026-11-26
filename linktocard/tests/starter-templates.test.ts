@@ -9,7 +9,11 @@ import type { RenderDeps, RenderOutput, TemplateData } from '../src/types'
 import samplesWorker from '../scripts/samples-worker.mjs'
 import { decodePng, diffPixels, pngSize, redImages } from './helpers'
 
-const SIZE_IDS = Object.keys(SIZES) as SizeId[]
+// The social starters are laid out for these presets. The email preset (1200x400, decision D7) is
+// for the email starters (tests/email-templates.test.ts); these five are not laid out for it, and
+// the test below fails when a new preset appears that is in neither list.
+const SIZE_IDS: SizeId[] = ['og', 'square', 'portrait']
+const EMAIL_ONLY_SIZE_IDS: SizeId[] = ['email']
 const DATA_FIELDS = ['title', 'description', 'author', 'image', 'theme', 'site', 'tag']
 const IMAGE_URL = 'https://cdn.example.com/avatar.png'
 
@@ -92,6 +96,10 @@ describe('the starter template catalogue', () => {
     for (const template of STARTER_TEMPLATES) expect(getStarterTemplate(template.id)).toBe(template)
     expect(getStarterTemplate('nope')).toBeUndefined()
     expect(getStarterTemplate('toString')).toBeUndefined()
+  })
+
+  it('is tested at every size preset except the email-only ones', () => {
+    expect(Object.keys(SIZES)).toEqual([...SIZE_IDS, ...EMAIL_ONLY_SIZE_IDS])
   })
 
   it.each(STARTER_TEMPLATES)('$id: the documented fields are exactly the placeholders of its HTML', (template) => {

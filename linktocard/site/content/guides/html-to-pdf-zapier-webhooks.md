@@ -98,7 +98,12 @@ If the trigger fires twice for the same record, the second request is answered f
 
 ### Is there a Link To Card app in Zapier?
 
+<!-- feature:no-integrations -->
 No. [[site.name]] offers an HTTP API and nothing else, so the webhook step is the way in.
+<!-- /feature:no-integrations -->
+<!-- feature:integrations -->
+Not yet. A Zapier app is being prepared for listing ([Zapier, Make and n8n](/docs/integrations)) and cannot be installed today, so the webhook step is the way in.
+<!-- /feature:integrations -->
 
 ### How many images does one PDF use?
 

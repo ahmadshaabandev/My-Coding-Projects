@@ -10,7 +10,9 @@ import goLive from '../GO-LIVE.md?raw';
 import { apiKeyFor, createSite, createUser, sessionCookieFor } from './app-helpers';
 
 const NOW = Date.UTC(2027, 8, 1, 3, 17);
-const CHILD_TABLES = ['sessions', 'api_keys', 'sites', 'templates', 'fonts', 'usage_periods', 'topups', 'renders', 'webhook_events'];
+const CHILD_TABLES = ['sessions', 'api_keys', 'sites', 'templates', 'fonts', 'usage_periods', 'topups', 'renders', 'webhook_events', 'batches', 'certificates'];
+/** batch_rows has no user_id: counted through the batch id fillEveryTable gives it. */
+const batchRowsOf = (userId: string) => n('SELECT COUNT(*) AS n FROM batch_rows WHERE batch_id = ?1', `bat_${userId}`);
 
 const n = async (sql: string, ...params: unknown[]): Promise<number> => (await first<{ n: number }>(env.DB, sql, ...params))?.n ?? 0;
 const rowsOf = (table: string, userId: string) => n(`SELECT COUNT(*) AS n FROM ${table} WHERE user_id = ?1`, userId);
@@ -51,6 +53,16 @@ async function fillEveryTable(userId: string, email: string): Promise<void> {
   await env.BUCKET.put(`r/${userId}/ck.png`, new Uint8Array([1]));
   await run(env.DB, "INSERT INTO webhook_events (event_id, event_type, received_at, user_id) VALUES (?1, 'x', ?2, ?3)", `evt_${userId}`, NOW, userId);
   await run(env.DB, "INSERT INTO login_tokens (token_hash, email, created_at, expires_at) VALUES (?1, ?2, ?3, ?3)", `th_${userId}`, email, NOW);
+  // Bulk documents (migration 0008): a batch with one row, and a certificate record that outlives batches.
+  await run(
+    env.DB,
+    "INSERT INTO batches (id, user_id, status, template, total, created_at, finished_at, expires_at) VALUES (?1, ?2, 'done', 'certificate', 1, 0, 0, ?3)",
+    `bat_${userId}`,
+    userId,
+    NOW + 20 * DAY_MS,
+  );
+  await run(env.DB, "INSERT INTO batch_rows (batch_id, idx, status, data, filename) VALUES (?1, 0, 'done', '{}', 'certificate-1.pdf')", `bat_${userId}`);
+  await run(env.DB, 'INSERT INTO certificates (id, user_id, batch_id, row_index, created_at) VALUES (?1, ?2, ?3, 0, 0)', `crt_${userId}`, userId, `bat_${userId}`);
 }
 
 describe('account deletion, independent review', () => {
@@ -59,12 +71,14 @@ describe('account deletion, independent review', () => {
     const user = await createUser('pro', NOW - 40 * DAY_MS);
     await fillEveryTable(user.id, user.email);
     for (const table of CHILD_TABLES) expect(await rowsOf(table, user.id), table).toBeGreaterThan(0);
+    expect(await batchRowsOf(user.id)).toBe(1);
 
     await run(env.DB, section8Commands(user.email)[0]!);
     expect((await runCleanup(env, NOW)).deletedAccounts).toBe(1);
 
     expect(await n('SELECT COUNT(*) AS n FROM users WHERE id = ?1', user.id)).toBe(0);
     for (const table of CHILD_TABLES) expect(await rowsOf(table, user.id), table).toBe(0);
+    expect(await batchRowsOf(user.id)).toBe(0);
     expect(await n('SELECT COUNT(*) AS n FROM login_tokens WHERE email = ?1', user.email)).toBe(0);
     expect(await keysUnder(`r/${user.id}/`)).toEqual([]);
     expect(await keysUnder(`f/${user.id}/`)).toEqual([]);

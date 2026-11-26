@@ -1,0 +1,221 @@
+---
+title: Discord embed preview - check how your link looks in Discord
+description: Free Discord embed checker. Paste a URL to see the layout Discord picks from your tags, whether the title and description fit Discord's limits, the theme-color accent and an approximate embed.
+scripts: og-platform
+feature: previews
+---
+<!--
+  Discord facts on this page come from Discord's own "Link Previews" page,
+  https://docs.discord.com/developers/link-previews/overview, read on 2026-11-26 from its source,
+  https://github.com/discord/discord-api-docs/blob/62ab2d5019782add4231a3fc6ee6c0fa2d8d62d1/developers/link-previews/overview.mdx
+  Every element that states one carries data-fact and the source comment right before it; every other
+  element that names an app carries data-own (our own statement). tests/node/preview-pages-draft.test.ts
+  enforces both. The checks themselves are in site/public/assets/js/og-platform.js (DISCORD).
+-->
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Discord embed preview.</h1>
+<p data-own>Paste a page URL. The checker fetches that one page, reads the tags Discord builds its embed from, and shows an approximate embed, the layout Discord picks and what to fix.</p>
+</div>
+<form class="card card-pop tool-form" id="platform-form" data-platform="discord" action="/tools/discord-embed-preview" method="get" novalidate>
+<label class="label" for="platform-url">Paste a page URL</label>
+<div class="tool-row">
+<input class="input" id="platform-url" name="url" type="url" inputmode="url" autocomplete="url" spellcheck="false" maxlength="[[inspect.raw.maxUrlChars]]" required placeholder="https://example.com/blog/my-post" aria-describedby="platform-hint">
+<button class="btn btn-primary" id="platform-submit" type="submit">Check</button>
+</div>
+<p class="hint" id="platform-hint">Public https:// pages only. No account needed. Results are kept for [[inspect.cacheMinutes]] minutes, so the same link checked again loads instantly.</p>
+<p class="alert alert-danger" id="platform-error" role="alert" hidden></p>
+<div class="alert alert-info tool-verify" id="platform-verify" hidden>
+<p id="platform-verify-text">Complete the quick check below and your result loads straight away.</p>
+<div class="tool-widget" id="platform-widget"></div>
+</div>
+<noscript><p class="alert alert-warn">This page needs JavaScript to show its results. The <a href="/docs/api">inspect API</a> returns the same check as JSON.</p></noscript>
+</form>
+<p class="visually-hidden" id="platform-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section section-alt tool-results" id="platform-results" aria-labelledby="platform-results-title" hidden>
+<div class="container">
+<h2 class="visually-hidden" id="platform-results-title" tabindex="-1">Results</h2>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>How the link may look in Discord</h2>
+<p class="muted" data-own>A mockup drawn from the page's tags, not a screenshot. It follows the layout rules and text limits Discord publishes, but Discord's own fonts, widths and crops differ, so treat it as a guide.</p>
+</div>
+<div class="platform-preview" id="platform-preview"></div>
+<div class="alert alert-info platform-preview-notes" id="platform-preview-notes" hidden></div>
+<div class="platform-fix">
+<a class="btn btn-primary" href="/login" data-fix-link>Fix it: make the card</a>
+<a class="link-arrow" id="platform-compare" href="/tools/og-checker">Compare six apps in the Open Graph checker</a>
+</div>
+</div>
+
+<div class="card verdict" id="platform-verdict">
+<p class="eyebrow">Result</p>
+<p class="verdict-title" id="platform-verdict-title"></p>
+<p class="verdict-text" id="platform-verdict-text"></p>
+<dl class="verdict-meta" id="platform-verdict-meta"></dl>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>Discord checks</h2>
+<p class="muted" data-own>Each one comes from Discord's own documentation of link previews. Problems first, then what Discord will do with the page.</p>
+</div>
+<ul class="checklist" id="platform-checks"></ul>
+</div>
+
+<div class="tool-block tool-split">
+<div>
+<div class="tool-block-head">
+<h2>General checks</h2>
+<p class="muted">The tags and the image that every app's preview depends on. Each problem says what to change in your page.</p>
+</div>
+<ul class="checklist" id="platform-checklist"></ul>
+</div>
+<aside class="card facts-card" aria-labelledby="platform-facts-title">
+<h2 id="platform-facts-title">The image</h2>
+<div class="facts-image" id="platform-facts-image" hidden></div>
+<dl class="facts" id="platform-facts"></dl>
+</aside>
+</div>
+
+<div class="tool-block">
+<div class="tool-block-head">
+<h2>Tags found on the page</h2>
+<p class="muted">Exactly as the page states them, the first of each tag the page repeats.</p>
+</div>
+<div class="table-wrap tool-tags">
+<table>
+<thead><tr><th scope="col">Tag</th><th scope="col">Value</th></tr></thead>
+<tbody id="platform-tags"></tbody>
+</table>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow" data-own>How Discord reads a link</p>
+<h2>What the embed is made of.</h2>
+<p data-own>Discord documents how it builds a link preview. These are the rules this page checks, in short.</p>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>The fetch</h3>
+<ul>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>Discord makes a single <code>GET</code> request for the shared URL and runs no code, so tags that a script adds after the page loads are never seen.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>The answer must be a 2xx HTML page (<code>text/html</code> or <code>application/xhtml+xml</code>), reached in at most 5 redirects and at most 50 MB.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>The whole fetch, measuring the images included, must finish within 10 seconds. Without <code>og:image:width</code> and <code>og:image:height</code>, Discord downloads the image to measure it.</li>
+</ul>
+<h3>The text</h3>
+<ul>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>The title comes from <code>og:title</code> or <code>twitter:title</code>, the description from <code>og:description</code> or <code>twitter:description</code>, and <code>og:site_name</code> is shown above the title.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact><code>&lt;title&gt;</code> and the meta description are used only as a pair, and only when the page has no Open Graph or Twitter title or description.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>A title over 70 bytes or 3 lines and a description over 350 bytes or 20 lines are trimmed. The description is plain text: HTML tags in it appear literally.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>An <code>og:site_name</code> over 256 characters, image alt text over 4,096 characters or any URL over 2,048 characters means no preview at all.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>The layout and the colour</h3>
+<ul>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>The tags decide the layout, not the size of the image. With no layout tag, the text comes with a small image beside it.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact><code>twitter:card</code> set to <code>summary_large_image</code> puts a large image below the text; <code>photo</code> shows the image on its own; <code>og:type</code> set to <code>rich</code> gives Discord markdown text with a small thumbnail.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>Two or more <code>og:image</code> tags make a gallery of up to 4 images.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact><code>theme-color</code> sets the accent colour, written as <code>#RRGGBB</code> or <code>#RRGGBBAA</code> only.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>Images can be PNG, GIF, JPEG, WebP or AVIF. A relative image URL must start with <code>/</code>.</li>
+</ul>
+<h3>What this page cannot check</h3>
+<ul>
+<li data-own>The checker reads the first <code>og:image</code> only, so it cannot tell whether Discord will show a gallery. It does not read image alt text, oEmbed, publish dates or video tags either.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>When a tag is repeated, the checker keeps the first value. Discord does the same for the title, description and site name, but uses the last one for layout and colour tags, and its tag names are case-sensitive, while the checker also reads <code>OG:Title</code>.</li>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<li data-fact>The checker fetches <code>https://</code> pages only and follows up to [[inspect.maxRedirects]] redirects. Discord also reads <code>http://</code> pages and follows up to 5.</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about Discord embeds.</h2>
+<p>Short answers, and where we are not sure, we say so.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>Why is my image small in Discord?</summary>
+<div>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<p data-fact>Discord picks the layout from your tags, not from the image. Without a layout tag it shows the text with a small image. Add <code>&lt;meta name="twitter:card" content="summary_large_image"&gt;</code> to get the large image below the text.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>I fixed my tags. Why does Discord still show the old embed?</summary>
+<div>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<p data-fact>Discord caches previews for about 30 minutes. To see the change at once, share the URL with a new query string, such as <code>?v=2</code> on the end.</p>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<p data-fact>Discord's own <a href="https://discord.com/developers/embeds" rel="noopener">Embed Debugger</a> shows which tags Discord picked up for a URL and which layout it chose.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Why does Discord ignore my theme-color?</summary>
+<div>
+<!-- source: https://docs.discord.com/developers/link-previews/overview -->
+<p data-fact>Discord takes the accent colour only as a 6- or 8-digit hex value, such as <code>#2f6feb</code>. A short form such as <code>#fff</code>, a colour name or <code>rgb()</code> is not used. If the page repeats <code>theme-color</code>, Discord uses the last one.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is this Discord's own tool?</summary>
+<div>
+<p data-own>No. It is an independent checker made by [[site.name]], not by Discord, and the embed it draws is a mockup. For what Discord itself sees, use Discord's Embed Debugger.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Is it free? What does the checker keep?</summary>
+<div>
+<p>Yes, and you do not need an account. There is an hourly limit on fresh checks from one network, and after a few checks you may be asked to confirm you are a person. The checker keeps the parsed tags and the check results for [[inspect.cacheMinutes]] minutes, never the page's HTML. <a href="/privacy">Privacy policy</a></p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Fix it: make the card.</h2>
+<p>[[site.name]] renders a correct [[size.og.width]] &times; [[size.og.height]] card for every page from one HTML and CSS template, and gives you the meta tags to paste.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/tools">All free tools</a>
+</div>
+</div>
+</section>
+
+</main>

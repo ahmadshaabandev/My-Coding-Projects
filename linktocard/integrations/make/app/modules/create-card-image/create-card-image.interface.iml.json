@@ -1,0 +1,131 @@
+[
+    {
+        "name": "id",
+        "type": "text",
+        "label": "Image ID"
+    },
+    {
+        "name": "url",
+        "type": "url",
+        "label": "Image URL"
+    },
+    {
+        "name": "width",
+        "type": "uinteger",
+        "label": "Width (px)"
+    },
+    {
+        "name": "height",
+        "type": "uinteger",
+        "label": "Height (px)"
+    },
+    {
+        "name": "format",
+        "type": "text",
+        "label": "Image format"
+    },
+    {
+        "name": "bytes",
+        "type": "uinteger",
+        "label": "File size (bytes)"
+    },
+    {
+        "name": "cached",
+        "type": "boolean",
+        "label": "Served from storage"
+    },
+    {
+        "name": "template",
+        "type": "text",
+        "label": "Template"
+    },
+    {
+        "name": "created_at",
+        "type": "date",
+        "label": "Created at"
+    },
+    {
+        "name": "expires_at",
+        "type": "date",
+        "label": "Link expires at"
+    },
+    {
+        "name": "warnings",
+        "type": "array",
+        "label": "Warnings",
+        "spec": {
+            "type": "text"
+        }
+    },
+    {
+        "name": "usage",
+        "type": "collection",
+        "label": "Usage",
+        "spec": [
+            {
+                "name": "plan",
+                "type": "text",
+                "label": "Plan"
+            },
+            {
+                "name": "period_start",
+                "type": "date",
+                "label": "Period start"
+            },
+            {
+                "name": "period_end",
+                "type": "date",
+                "label": "Period end"
+            },
+            {
+                "name": "limit",
+                "type": "uinteger",
+                "label": "Images included per period"
+            },
+            {
+                "name": "used",
+                "type": "uinteger",
+                "label": "Images used this period"
+            },
+            {
+                "name": "remaining",
+                "type": "uinteger",
+                "label": "Images left this period"
+            },
+            {
+                "name": "topup_remaining",
+                "type": "uinteger",
+                "label": "Images left from top-ups"
+            },
+            {
+                "name": "total_remaining",
+                "type": "uinteger",
+                "label": "Images left in total"
+            },
+            {
+                "name": "cache_days",
+                "type": "uinteger",
+                "label": "Days a file is stored"
+            },
+            {
+                "name": "watermark",
+                "type": "boolean",
+                "label": "Watermarked (Free plan)"
+            }
+        ]
+    },
+    {
+        "name": "fileName",
+        "type": "filename",
+        "label": "File name",
+        "semantic": "file:name",
+        "help": "Only with Download the file."
+    },
+    {
+        "name": "data",
+        "type": "buffer",
+        "label": "Image (data)",
+        "semantic": "file:data",
+        "help": "Only with Download the file."
+    }
+]

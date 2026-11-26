@@ -8,8 +8,8 @@
  * caller could repeat such renders all day. So:
  *
  *   failed-render cap  PDF.maxFailedRendersPerDay renders like that per UTC day and scope, by
- *                      the owner's plan. The scope is the account for POST /v1/pdf
- *                      ("pdff:<user id>:<day>"), and for signed links both the site
+ *                      the owner's plan. The scope is the account for POST /v1/pdf and
+ *                      bulk-document rows ("pdff:<user id>:<day>"), and for signed links both the site
  *                      ("pdffs:<site id>:<day>") and all sites of its owner together
  *                      ("pdffo:<user id>:<day>", PDF.maxFailedSignedRendersPerDay). Visitors of
  *                      failing signed links can so stop new signed PDFs (of one site, or of two

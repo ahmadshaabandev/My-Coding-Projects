@@ -45,6 +45,22 @@ The service also includes a free Open Graph checker, on the website and as `GET 
 
 The website also offers free PDF tools: HTML to PDF, an invoice generator and a certificate generator. They need no account, make at most [[pdf.toolPdfsPerHour]] PDFs per hour from one network, print the line "[[pdf.freeMark]]" in the footer of every page and do not store the PDF. What you put into a document made with them is your responsibility, as with every other use of the service (section 4).
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+
+It also makes PDF documents in bulk, one for every row of data you send, and can give each document a public verification page (section 4a).
+<!-- /feature:batch -->
+<!-- feature:toolkit -->
+
+It also offers a PDF toolkit that merges, splits, stamps, fills and password-protects PDF files, lists the fields of PDF forms and turns images into PDFs, from files you send it or link to. The website's free Merge PDF and Image to PDF tools work in your browser: the files you choose there are not sent to us.
+<!-- /feature:toolkit -->
+<!-- feature:linkcards -->
+
+It can also make a card from what a web page that you name says about itself, such as its title, description and icon. To do so it fetches that one page, in the same way as the Open Graph checker.
+<!-- /feature:linkcards -->
+<!-- feature:email -->
+
+Signed image URLs can also have open fields, short values such as a first name that an email platform fills in for each reader when it sends an email.
+<!-- /feature:email -->
 
 ## 3. Your account
 
@@ -63,6 +79,15 @@ You may not use the service to do any of the following, or help anyone else do s
 - break the law, or create content that is illegal where you or your audience are;
 - commit fraud, phishing or impersonation, including cards that pretend to come from a person, brand or organisation that has not agreed to it;
 - create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;
+<!-- feature:batch -->
+- issue documents with a verification record that names an issuer, an accreditation, an achievement or a recipient that is not real or that the issuer did not authorise, or present a verification page as proof of more than it states;
+<!-- /feature:batch -->
+<!-- feature:email -->
+- use open fields in emails sent to people who did not agree to receive them, for anything other than short display text (never email addresses or other personal details), or to show text that breaks these rules;
+<!-- /feature:email -->
+<!-- feature:toolkit -->
+- send files to the PDF toolkit that you have no right to copy or change, or use it to hide or remove a mark, a signature or a notice that someone else put on a document;
+<!-- /feature:toolkit -->
 - send or support spam;
 - infringe someone else's copyright, trademark or other rights, including using fonts or images you do not have the right to use;
 - distribute malware, or link to it;
@@ -80,10 +105,24 @@ You may not use the service to do any of the following, or help anyone else do s
 We may remove content and suspend or close accounts that break these rules. Where the problem is not urgent we will contact you first and give you a chance to fix it. Where it is urgent (for example phishing or an attack on the service) we may act immediately and tell you afterwards.
 
 Counterfeit and misleading documents are always urgent. When we receive a report that the service was used to make one, we suspend the API keys and the account involved straight away, look into the report, and tell you afterwards.
+<!-- feature:batch -->
+
+## 4a. Verification pages
+
+When you issue documents with verification, each document gets a record and a public page that anyone with its link or its printed QR code can open. The page shows the recipient, title, achievement, issuer name and date as you entered them, whether the record is valid or revoked, and the domain of the email address you sign in with (or, for a public email provider, that the account has a personal email address). By issuing a verified document you confirm that you are allowed to publish those facts, including the recipient's name, and that the recipient knows the page exists.
+
+The page confirms only that your account created the record. We do not check who you are, whether you may issue the document, or whether its facts are true, and the page says so. You are responsible for revoking a record that is wrong or no longer valid. A revoked record is shown as revoked for [[batch.revokedRetentionDays]] days and is then deleted; all records are deleted with your account.
+
+Anyone can report a record from its page. A record reported as false or misleading is handled like a counterfeit document (section 4): while we look into it, the records of the account involved are not shown.
+<!-- /feature:batch -->
 
 ## 5. Your content and ours
 
 **Your content stays yours.** You own your templates, the fonts and images you upload or reference, the data you send to be rendered, and the images and other files the service produces for you.
+<!-- feature:toolkit -->
+
+**Files you send to the PDF toolkit** stay yours too. We use them only to make the result you asked for, while the request runs, and do not keep them. The result is stored like your other documents.
+<!-- /feature:toolkit -->
 
 **You give us the permission we need to run the service.** That is a non-exclusive, worldwide licence to host, copy, process, render, cache and deliver your content, only for the purpose of providing the service to you. It ends when the content is deleted from the service, apart from copies that remain for a short time in caches and backups.
 
@@ -104,6 +143,22 @@ Counterfeit and misleading documents are always urgent. When we receive a report
 **What a PDF counts as:** a PDF of 1 to [[pdf.basePages]] pages counts as [[pdf.baseUnits]] images, and every further [[pdf.extraPagesPerUnit]] pages started count as one more, up to [[pdf.maxUnits]] images for the longest PDF of [[pdf.maxPages]] pages. A PDF is taken as one block, from your monthly allowance or from a single top-up, never split between them; if neither has enough left, it is not rendered or not delivered, and nothing is charged. Like images, a PDF is stored for the cache period of your plan and served again without counting, and a failed render is not counted. PDFs made on the Free plan carry the line "[[pdf.freeMark]]" in the footer of every page.
 
 <!-- /feature:pdf -->
+<!-- feature:batch -->
+**Bulk documents:** each document of a batch counts like a PDF of its pages when it is made. A batch is accepted only when at least [[pdf.baseUnits]] images per row are left; if the images run out during a batch, the remaining documents are not made and nothing is charged for them.
+
+<!-- /feature:batch -->
+<!-- feature:toolkit -->
+**PDF toolkit:** a result counts one image for each started block of [[toolkit.pagesPerUnit]] pages, at least one, taken as one block; a split counts each file it makes; listing a form's fields counts nothing. Every request that succeeds counts, also when it repeats an earlier one. Results made on the Free plan carry the line "[[pdf.freeMark]]" on every page.
+
+<!-- /feature:toolkit -->
+<!-- feature:linkcards -->
+**Cards from links:** a card made from a page counts as one image, like any card. Reading the page does not count as an image.
+
+<!-- /feature:linkcards -->
+<!-- feature:email -->
+**Personalized email images:** each distinct set of open-field values is one image, counted when it is first rendered, from the allowance of the account that owns the site. Each site can render only a limited number of new ones per day; the documentation lists the numbers.
+
+<!-- /feature:email -->
 Unused monthly images do not carry over to the next month. We do not charge overage fees: when a paid plan's allowance and any top-ups are used up, new images are not rendered until the next billing period, a top-up or an upgrade. Prices are in US dollars and exclude tax, which Paddle adds at checkout where it applies.
 
 ## 7. Payment
