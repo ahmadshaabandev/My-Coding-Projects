@@ -378,9 +378,10 @@ it if it is wrong.
   length and counted as a failed render; the daily alarm finds an over-budget day and calls
   Resend (run locally; the send itself could not leave the build container). Still not checked:
   that the browser makes no request of its own for a remote `<img>` or CSS `url()` (GO-LIVE
-  section 10 has the check; by design the browser only ever receives data: URLs); that Chrome
-  repeats table header rows on every page; the docs' page-number footer; and the alarm email
-  arriving in the SUPPORT_EMAIL inbox.
+  section 10 has the check; by design the browser only ever receives data: URLs) and the alarm
+  email arriving in the SUPPORT_EMAIL inbox. Table header rows repeat on every page (the 60-item
+  invoice shows them on pages 2 and 3), and the docs' page-number footer prints "Page 1 of 7" to
+  "Page 7 of 7", above the Free line on a Free account.
 
 ## Changelog
 
