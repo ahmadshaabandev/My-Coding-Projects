@@ -234,6 +234,18 @@ export const PDF = {
    * renders and the free tools answer 429. Paid plans keep rendering (src/pdf/guard.ts).
    */
   freeBrakeBudgetMultiple: 5,
+  /**
+   * Largest PDF the browser may return. A small document can make Chrome write a very large
+   * file (an image that compresses well as PNG is stored almost raw in the PDF); a PDF over this
+   * is refused as a document error and never stored.
+   */
+  maxPdfBytes: 20 * 1024 * 1024,
+  /**
+   * How long a document that failed in the browser (too many pages, a browser 422 or timeout,
+   * over maxPdfBytes, or a 402 after rendering) is remembered by its cache key, so the identical
+   * request is answered without rendering it again.
+   */
+  failedRenderMemoryMs: 10 * 60 * 1000,
 } as const;
 
 export type PdfFormat = (typeof PDF.formats)[number];
