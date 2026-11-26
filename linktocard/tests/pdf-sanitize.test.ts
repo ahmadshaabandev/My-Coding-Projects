@@ -122,6 +122,34 @@ describe('attributes', () => {
     expect(body('<svg><rect fill="url(https://evil.example/p.svg#g)" stroke="url(#ok)"/></svg>')).toBe('<svg><rect stroke="url(#ok)"/></svg>');
   });
 
+  it('keeps title, alt, data-* and other HTML attributes with a Windows path, a regex or LaTeX', () => {
+    const data = { path: 'C:\\Users\\Ada\\report (final).pdf', regex: '^\\d+(\\.\\d+)?$', tex: '\\frac{a}{b} \\left( x \\right)' };
+    const png = 'data:image/png;base64,iVBORw0KGgo=';
+    const html = `<p title="{{path}}">x</p><img alt="{{path}}" src="${png}"><table><tr><td data-note="{{path}}" aria-label="{{regex}}">y</td></tr></table><abbr title="{{tex}}">z</abbr>`;
+    const prepared = preparePdfDocument({ html, css: '', data });
+    const out = /<body>([\s\S]*)<\/body>/.exec(prepared.render(() => undefined))![1]!;
+    expect(out).toContain('<p title="C:\\Users\\Ada\\report (final).pdf">x</p>');
+    expect(out).toContain(`<img alt="C:\\Users\\Ada\\report (final).pdf" src="${png}">`);
+    expect(out).toContain('<td data-note="C:\\Users\\Ada\\report (final).pdf" aria-label="^\\d+(\\.\\d+)?$">y</td>');
+    expect(out).toContain('<abbr title="\\frac{a}{b} \\left( x \\right)">z</abbr>');
+    expect(prepared.warnings).toEqual([]);
+    // Inside <svg> too, as long as the attribute is not one Chrome reads as CSS.
+    expect(body('<svg><text data-path="{{path}}" aria-label="{{path}}">p</text></svg>', data)).toBe(
+      '<svg><text data-path="C:\\Users\\Ada\\report (final).pdf" aria-label="C:\\Users\\Ada\\report (final).pdf">p</text></svg>',
+    );
+    // A paid header or footer keeps them as well.
+    expect(preparePdfFragment('<span title="{{path}}">{{path}}</span>', data, 'footer').render(() => undefined)).toBe(
+      '<span title="C:\\Users\\Ada\\report (final).pdf">C:\\Users\\Ada\\report (final).pdf</span>',
+    );
+  });
+
+  it('still drops an SVG presentation attribute with a backslash and a "(", which Chrome reads as CSS', () => {
+    const data = { path: 'C:\\Users\\Ada\\report (final).pdf' };
+    expect(body('<svg><rect fill="{{path}}" stroke="{{path}}" width="10"/></svg>', data)).toBe('<svg><rect width="10"/></svg>');
+    // On an HTML element the same name is not CSS.
+    expect(body('<p fill="{{path}}">x</p>', data)).toBe('<p fill="C:\\Users\\Ada\\report (final).pdf">x</p>');
+  });
+
   it('checks attribute values after the placeholders are filled in', () => {
     expect(body('<a href="{{link}}">pay</a>', { link: 'javascript:alert(1)' })).toBe('<a>pay</a>');
     expect(body('<a href="{{link}}">pay</a>', { link: 'https://pay.example.com/i/1' })).toBe('<a href="https://pay.example.com/i/1">pay</a>');
@@ -273,6 +301,36 @@ describe('CSS', () => {
     expect(style).toContain(kept);
   });
 
+  it.each([
+    ['after <!--', '<!-- @page { margin: 0 }', ''],
+    ['after -->', '--> @page{}', ''],
+    ['after <!-- with no space', '<!--@page{margin:0} .a { color: red }', '.a{color:red;}'],
+    ['after <!-- and -->', '<!-- --> <!-- @page { margin: 0 }', ''],
+    ['after <!---->', '<!----> @page{margin:0} .a { color: red }', '.a{color:red;}'],
+    ['after <!-- and a comment', '<!--/* x */@page{margin:0}', ''],
+    ['after another rule', 'p { color: #111 } <!-- @page{margin:0} --> @page{size:30mm 30mm}', 'p{color:#111;}'],
+    ['nested in @media after <!--', '<!--@media print{@page{margin:0} .a { color: red }}', '@media print{.a{color:red;}}'],
+    ['nested in @media after -->', '--> @media print { @page { size: 30mm 30mm; margin: 0 } }', '@media print{}'],
+  ])('drops @page %s: Chrome skips <!-- and --> at the top level of a stylesheet', (_label, css, kept) => {
+    for (const [html, sheet] of [['<p>x</p>', css], [`<style>${css}</style><p>x</p>`, '']] as const) {
+      const prepared = preparePdfDocument({ html, css: sheet, data: {} });
+      const style = /<style>([\s\S]*)<\/style>/.exec(prepared.render(() => undefined))![1]!;
+      expect(style).not.toMatch(/@page|<!--|-->/i);
+      expect(style).toBe(kept);
+      expect(prepared.warnings).toEqual(['Page size, orientation and margins come from "pdf" (format, landscape, margin); the CSS @page rule was ignored.']);
+    }
+  });
+
+  it('reads other rules after <!-- and --> as Chrome does: old comment-wrapped CSS works, @import and external @font-face are still refused', () => {
+    expect(head('<style><!-- .a { color: red } --></style><p>x</p>')).toContain('<style>.a{color:red;}</style>');
+    expect(errorOf(() => buildPdfDocument({ html: '<p>x</p>', css: '<!-- @import url(https://evil.example/a.css) {}', data: {} })).message).toContain('@import is not supported');
+    expect(errorOf(() => buildPdfDocument({ html: '<p>x</p>', css: '<!-- @font-face { font-family: X; src: url(https://evil.example/x.woff2) }', data: {} })).message).toContain('@font-face may only use fonts embedded');
+    // A block-less "<!-- @import ...;" is not a rule here at all, so nothing of it reaches the browser.
+    expect(head('<p>x</p>', '<!-- @import "https://evil.example/a.css"; .a { color: red }')).toContain('<style>.a{color:red;}</style>');
+    // Inside a block Chrome does not skip them: the rule is invalid there, and dropped here too.
+    expect(head('<p>x</p>', '@media print { <!-- .a { color: red } .b { color: blue } }')).toContain('<style>@media print{.b{color:blue;}}</style>');
+  });
+
   it('cannot close the <style> element early', () => {
     const html = head('<p>x</p>', '.a::after { content: "</style><script>alert(1)</script>" }');
     expect(html).not.toContain('</style><script>');
@@ -396,11 +454,13 @@ describe('header and footer templates', () => {
     expect(footer.render(() => undefined)).toBe('<style>.a{fill:red;}</style><svg><rect/></svg><p>f</p>');
   });
 
-  it('drop their <style> elements, with a warning, when the free mark shares their document', () => {
+  it('are printed as plain text, with a warning, when the free mark shares their document; <style> included', () => {
     const source = '<style>#footer { display: none }</style><svg><style>.a{fill:red}</style><rect class="a"/></svg><span style="color:#111">Page <span class="pageNumber"></span></span>';
     const footer = preparePdfFragment(source, {}, 'footer', { styles: false });
-    expect(footer.render(() => undefined)).toBe('<svg><rect class="a"/></svg><span style="color:#111">Page <span class="pageNumber"></span></span>');
-    expect(footer.warnings).toEqual(['<style> in the footer was removed: on the Free plan, style the header and footer with style="" attributes.']);
+    expect(footer.render(() => undefined)).toBe('Page <span class="pageNumber"></span>');
+    expect(footer.warnings).toEqual([
+      'On the Free plan the footer is printed as plain text next to the free mark: its markup and styles were not used, only its text, line breaks and the pageNumber, totalPages, date and title classes.',
+    ]);
     expect(preparePdfFragment(source, {}, 'footer').render(() => undefined)).toContain('<style>#footer{display:none;}');
   });
 
