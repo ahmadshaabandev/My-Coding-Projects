@@ -199,9 +199,10 @@ const NEXT_TOPUP_FOR_BLOCK = `SELECT id FROM topups
  * inside the batch that takes the block. The counting statements of each batch also require
  * that label, so a block is never taken for a row this request does not hold.
  *
- * PDF_PENDING_STALE_MS is measured from the claimant's request time and must be longer than
- * anything a live claimant does between its claim and its charge: up to 30 remote images
- * (4 at a time, 4 s each, about 30-50 s), the browser call (at most 75 s, CALL_TIMEOUT_MS in
+ * PDF_PENDING_STALE_MS is measured from the claim (created_at is the time of the claim, also
+ * for a request that claims after waiting for another one) and must be longer than anything a
+ * live claimant does between its claim and its charge: up to 30 remote images (4 at a time,
+ * 4 s each, about 30-50 s), the browser call (at most 75 s, CALL_TIMEOUT_MS in
  * src/pdf/render.ts) and a few D1 round trips. Taking over a live claimant only costs it its
  * charge (its batches no longer match), never a double charge.
  */
@@ -546,6 +547,25 @@ export async function claimPdf(
   if (before !== null && holdsCacheKey(before, now)) return { status: 'held', ledger: before };
   if (remembered !== null) return { status: 'remembered', row: remembered };
   throw new Error(`PDF ledger claim of ${pdf.cacheKey}: neither claimed, held nor remembered`);
+}
+
+/**
+ * What a claim would find, read only: another request holds the cache key, its failure is
+ * remembered, or it can be claimed ('free'). Requests that wait for an identical request look
+ * with this and send the claim (a write) only when it can succeed.
+ */
+export async function peekPdfClaim(
+  db: D1Database,
+  cacheKey: string,
+  now: number,
+  unlessRemembered: PdfFailureRange = NO_RANGE,
+): Promise<Exclude<PdfClaimResult, { status: 'claimed' }> | { status: 'free' }> {
+  const results = await db.batch([db.prepare(PDF_LEDGER_STATE_SQL).bind(cacheKey), db.prepare(PDF_REMEMBERED_SQL).bind(unlessRemembered.from, unlessRemembered.to, now)]);
+  const ledger = rowsOf<PdfLedgerState>(results, 0)[0] ?? null;
+  const remembered = rowsOf<PdfRememberedRow>(results, 1)[0] ?? null;
+  if (ledger !== null && holdsCacheKey(ledger, now)) return { status: 'held', ledger };
+  if (remembered !== null) return { status: 'remembered', row: remembered };
+  return { status: 'free' };
 }
 
 /**

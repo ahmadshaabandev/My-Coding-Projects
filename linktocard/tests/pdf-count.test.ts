@@ -1,7 +1,7 @@
 // Page counting on real Chrome PDFs (tests/fixtures/pdf) and on hand-made edge cases. A count
 // that cannot be read is null (a failed render), never 0.
 import { describe, expect, it } from 'vitest';
-import { countPdfPages } from '../src/pdf/count';
+import { MAX_OBJECT_WINDOW, MAX_XREF_WINDOW, countPdfPages } from '../src/pdf/count';
 import { FIXTURES, type FixtureName } from './pdf-helpers';
 
 const encode = (text: string): Uint8Array => Uint8Array.from(text, (char) => char.charCodeAt(0));
@@ -119,4 +119,76 @@ describe('countPdfPages on edge cases', () => {
     expect(cut).toBeGreaterThan(0);
     expect(countPdfPages(bytes.subarray(0, cut))).toBeNull();
   });
+
+  it('reads objects that run past the first window the counter decodes, wherever they are cut', () => {
+    // The parse of each part reads up to the end of what was decoded, then decodes twice as much
+    // and starts again; an object or a table cut anywhere by the first window must not change the count.
+    for (let pad = 0; pad <= 2048; pad += 7) {
+      const tree = ['<</Type/Catalog/Pages 2 0 R>>', `<</Type/Pages/Kids[3 0 R 4 0 R]/Count 2 /Pad (${'x'.repeat(pad)})>>`, page, `${page.slice(0, -2)}/Pad <${'0'.repeat(pad)}> >>`];
+      expect(countPdfPages(pdfFile(tree))).toBe(2);
+    }
+  });
+});
+
+describe('countPdfPages on large structures (each part is decoded in a window that grows)', () => {
+  /** `pattern` repeated `times` times, as bytes. */
+  function repeated(pattern: string, times: number): Uint8Array {
+    const unit = encode(pattern);
+    const out = new Uint8Array(unit.byteLength * times);
+    if (times > 0) out.set(unit);
+    for (let filled = unit.byteLength; filled < out.byteLength; filled *= 2) out.copyWithin(filled, 0, Math.min(filled, out.byteLength - filled));
+    return out;
+  }
+
+  /**
+   * A one-page PDF whose page carries `annots` link references ("4 0 R ", 6 bytes each) and whose
+   * table has `objects` entries (20 bytes each; the ones past object 3 all give object 1's offset,
+   * which nothing looks up).
+   */
+  function bigPdf(annots: number, objects: number): Uint8Array {
+    const parts: Uint8Array[] = [];
+    let length = 0;
+    const add = (part: Uint8Array): void => {
+      parts.push(part);
+      length += part.byteLength;
+    };
+    const offsets: number[] = [];
+    add(encode('%PDF-1.7\n'));
+    offsets[1] = length;
+    add(encode('1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n'));
+    offsets[2] = length;
+    add(encode('2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n'));
+    offsets[3] = length;
+    add(encode('3 0 obj\n<</Type/Page/Parent 2 0 R/Annots['));
+    add(repeated('4 0 R ', annots));
+    add(encode(']>>\nendobj\n'));
+    const xref = length;
+    const entry = (offset: number): string => `${String(offset).padStart(10, '0')} 00000 n \n`;
+    add(encode(`xref\n0 ${objects}\n0000000000 65535 f \n${entry(offsets[1]!)}${entry(offsets[2]!)}${entry(offsets[3]!)}`));
+    add(repeated(entry(offsets[1]!), objects - 4));
+    add(encode(`trailer\n<</Size ${objects}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`));
+    const out = new Uint8Array(length);
+    let at = 0;
+    for (const part of parts) {
+      out.set(part, at);
+      at += part.byteLength;
+    }
+    return out;
+  }
+
+  it('reads a page dictionary and a table many windows long', () => {
+    // Chrome's largest seen: 40,000 links on one page (1.5 MB of HTML, more than PDF.maxHtmlBytes
+    // allows) made /Annots 388 KB and the table 800 KB. Here: 600 KB and 2 MB.
+    expect(countPdfPages(bigPdf(100_000, 100_000))).toBe(1);
+  });
+
+  it(`does not believe an object longer than ${MAX_OBJECT_WINDOW / (1024 * 1024)} MB or a table longer than ${MAX_XREF_WINDOW / (1024 * 1024)} MB`, () => {
+    const annotsThatFit = Math.floor((MAX_OBJECT_WINDOW - 64) / 6);
+    expect(countPdfPages(bigPdf(annotsThatFit, 10))).toBe(1);
+    expect(countPdfPages(bigPdf(Math.ceil(MAX_OBJECT_WINDOW / 6), 10))).toBeNull();
+    const entriesThatFit = Math.floor((MAX_XREF_WINDOW - 256) / 20);
+    expect(countPdfPages(bigPdf(1, entriesThatFit))).toBe(1);
+    expect(countPdfPages(bigPdf(1, Math.ceil(MAX_XREF_WINDOW / 20)))).toBeNull();
+  });
+
 });

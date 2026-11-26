@@ -36,13 +36,15 @@ const TAIL_BYTES = 2048;
  * first window holds about 3,000 objects and the largest about 400,000.
  */
 const XREF_WINDOW = 64 * 1024;
-const MAX_XREF_WINDOW = 8 * 1024 * 1024;
+export const MAX_XREF_WINDOW = 8 * 1024 * 1024;
 /**
  * Decoded window for one object: Chrome's catalog, /Pages nodes and /Page dictionaries are a few
- * hundred bytes; a page with many links carries one reference per link in /Annots.
+ * hundred bytes; a page with many links carries one reference per link in /Annots. Measured on
+ * 349 local Chromium PDFs: largest object 4,988 bytes, largest table 62 KB; 40,000 links on one
+ * page (more HTML than PDF.maxHtmlBytes allows) make /Annots 388 KB and the table 800 KB.
  */
 const OBJECT_WINDOW = 1024;
-const MAX_OBJECT_WINDOW = 4 * 1024 * 1024;
+export const MAX_OBJECT_WINDOW = 4 * 1024 * 1024;
 /** Characters decoded per String.fromCharCode call (argument-count limit). */
 const DECODE_CHUNK = 0x8000;
 /** Generation numbers have five digits: an entry is stored as offset * GEN_LIMIT + generation. */
@@ -104,7 +106,7 @@ class Reader {
     for (;;) {
       const ch = this.at(this.pos);
       if (isWhite(ch)) this.pos++;
-      else if (ch === '%') for (let c = ch; c !== undefined && c !== '\n' && c !== '\r'; c = this.at(++this.pos));
+      else if (ch === '%') for (let c: string | undefined = ch; c !== undefined && c !== '\n' && c !== '\r'; c = this.at(++this.pos));
       else return;
     }
   }
@@ -264,7 +266,12 @@ type Offsets = Map<number, number>;
  * One cross-reference section at the start of the reader: its entries in order, as pairs of
  * object number and offset * GEN_LIMIT + generation (-1 for a free entry), and its trailer.
  */
-function readSection(reader: Reader): { entries: number[]; trailer: Map<string, PdfValue> } {
+interface Section {
+  entries: number[];
+  trailer: Map<string, PdfValue>;
+}
+
+function readSection(reader: Reader): Section {
   // A cross-reference stream ("12 0 obj << /Type /XRef ...") is not what Chrome writes.
   reader.keyword('xref');
   const entries: number[] = [];
@@ -298,15 +305,16 @@ function readXref(bytes: Uint8Array): { offsets: Offsets; trailer: Map<string, P
   while (next !== null) {
     if (next < 0 || seen.has(next) || seen.size >= MAX_XREF_SECTIONS || next >= bytes.length) fail();
     seen.add(next);
-    const { entries, trailer } = inWindow(bytes, next, XREF_WINDOW, MAX_XREF_WINDOW, readSection);
+    const { entries, trailer }: Section = inWindow(bytes, next, XREF_WINDOW, MAX_XREF_WINDOW, readSection);
     for (let i = 0; i < entries.length; i += 2) {
       const id = entries[i]!;
+      const entry = entries[i + 1]!;
       if (defined.has(id)) continue;
       defined.add(id);
-      if (entries[i + 1]! >= 0) offsets.set(id, entries[i + 1]!);
+      if (entry >= 0) offsets.set(id, entry);
     }
     newest ??= trailer;
-    const prev = trailer.get('Prev');
+    const prev: PdfValue | undefined = trailer.get('Prev');
     next = prev === undefined ? null : prev.kind === 'number' && Number.isInteger(prev.value) ? prev.value : fail();
   }
   return { offsets, trailer: newest! };

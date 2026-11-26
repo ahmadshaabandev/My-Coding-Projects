@@ -305,6 +305,17 @@ function pdfSampleJson(id: PdfStarterTemplate['id']): string {
 }
 
 /**
+ * How long a PDF request waits for an identical one that is making the same PDF:
+ * PDF_DUPLICATE_WAIT_MS in src/pdf/service.ts, one browser call (CALL_TIMEOUT_MS in
+ * src/pdf/render.ts) plus 15 s. Those modules do not load outside the Worker, so the formula is
+ * repeated here; tests/node/pdf-site.test.ts checks that both still read this way.
+ */
+function pdfDuplicateWaitMs(): number {
+  const callTimeoutMs = 2 * PDF.renderTimeoutMs + 15_000;
+  return callTimeoutMs + 15_000;
+}
+
+/**
  * [[pdf.*]]: every PDF number the pages print, from PDF and pdfUnits() in src/config.ts and
  * the starter list in src/pdf/templates. Pages never type a PDF number themselves.
  */
@@ -320,6 +331,9 @@ function pdfTokens(): Record<string, string> {
     'pdf.maxCssKb': inUnits(PDF.maxCssBytes, KB),
     'pdf.maxAssetMb': inUnits(PDF.maxAssetBytes, MB),
     'pdf.maxRequestBodyMb': inUnits(PDF.maxRequestBodyBytes, MB),
+    'pdf.maxPdfMb': inUnits(PDF.maxPdfBytes, MB),
+    'pdf.failedRenderMemoryMinutes': String(PDF.failedRenderMemoryMs / 60_000),
+    'pdf.duplicateWaitSeconds': String(pdfDuplicateWaitMs() / 1000),
     'pdf.maxHeaderFooterKb': inUnits(PDF.maxHeaderFooterBytes, KB),
     'pdf.renderTimeoutSeconds': String(PDF.renderTimeoutMs / 1000),
     'pdf.maxMarginMm': String(PDF.maxMarginMm),
@@ -630,7 +644,8 @@ function pdfLimitsTable(): string {
   return htmlTable(
     ['Limit', 'Value'],
     [
-      ['Pages per PDF', `${PDF.maxPages}; a longer document is refused (HTTP 422) and not counted`],
+      ['Pages per PDF', `${PDF.maxPages}; a longer document is refused (HTTP 422) and not charged`],
+      ['PDF size', `${inUnits(PDF.maxPdfBytes, MB)} MB; a larger PDF is refused (HTTP 422) and not charged`],
       ['Paper formats', `${formats}; portrait or landscape`],
       ['Page margins', `Up to ${PDF.maxMarginMm} mm on each side; ${PDF.defaultMarginMm} mm when neither the request nor the template sets one`],
       ['Template HTML, after placeholders are filled in', `${inUnits(PDF.maxHtmlBytes, MB)} MB`],
@@ -646,9 +661,11 @@ function pdfLimitsTable(): string {
       ['List items (items)', `${PDF.maxItems} entries, ${PDF.maxItemFields} fields each, ${formatCount(PDF.maxItemValueChars)} characters per field`],
       ['Render time', `${PDF.renderTimeoutMs / 1000} seconds for loading and ${PDF.renderTimeoutMs / 1000} seconds for printing`],
       [
-        'Renders that produce no PDF',
-        `${PDF.maxFailedRendersPerDay.free} per UTC day on ${PLANS.free.name}, ${PDF.maxFailedRendersPerDay.paid} on ${PLANS.starter.name} and ${PLANS.pro.name}; then new PDFs answer HTTP 429 until 00:00 UTC`,
+        'Failed renders (the document failed in the browser, or needed more images than were left)',
+        `${PDF.maxFailedRendersPerDay.free} per UTC day on ${PLANS.free.name}, ${PDF.maxFailedRendersPerDay.paid} on ${PLANS.starter.name} and ${PLANS.pro.name}, ` +
+          'per account for POST /v1/pdf and per site for signed PDF links; then new PDFs there answer HTTP 429 until 00:00 UTC',
       ],
+      ['A failed document sent again', `the same answer, without rendering or counting, for ${PDF.failedRenderMemoryMs / 60_000} minutes`],
       ['Request body', `${inUnits(PDF.maxRequestBodyBytes, MB)} MB`],
       ['File name', `${PDF.maxFilenameChars} characters, ending in .pdf`],
     ],

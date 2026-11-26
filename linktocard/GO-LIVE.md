@@ -324,9 +324,11 @@ visitors are asked to confirm they are human from the 6th check in an hour.
 
 ## 10. PDF documents (staging first; production only after Ahmad approves)
 
-PDF documents are built and tested against a mocked Browser Run binding. **The real renderer has
-never been called**: Browser Run cannot be reached from the build environment. Production stays
-off (`PDF_ENABLED = "false"`, site built with `SITE_PDF=off`) until you decide otherwise.
+PDF documents are built and tested against a mocked Browser Run binding; Browser Run cannot be
+reached from the build environment. Real renders were checked on staging on 2026-11-25 and 26
+(README.md, "Not verified"). The fixes of 2026-11-26 (README changelog) have not been deployed
+to staging yet, so run the staging list below again after the next staging deploy. Production
+stays off (`PDF_ENABLED = "false"`, site built with `SITE_PDF=off`) until you decide otherwise.
 
 Staging, for the first real renders:
 
@@ -344,16 +346,41 @@ Staging, for the first real renders:
       (a log line "page count cannot be read" means every PDF fails with 500).
 - [ ] Browser time is recorded per attempt:
       `npx wrangler d1 execute DB --env staging --remote --command "SELECT source, status, browser_ms, pages FROM browser_usage ORDER BY created_at DESC LIMIT 10"`
-- [ ] The browser makes no request of its own: put an image at an address whose requests you
-      can see (a request-logging service, or a file on a server you control) in a document's
-      `<img src>` and in a CSS `url()`, make the PDF, and check the log: each address was
-      requested once, by the Worker's image fetcher, and never by a browser (no Chrome
-      User-Agent). A browser request would mean `allowRequestPattern` does not hold.
+- [ ] Remote images are fetched by the Worker only: put an image at an address whose requests
+      you can see (a request-logging service, or a file on a server you control) in a
+      document's `<img src>` and in a CSS `url()`, make the PDF, and check the log: each address
+      was requested once, by the Worker's image fetcher (no Chrome User-Agent). This does not
+      test `allowRequestPattern`: the sanitiser replaces every address it can see with a
+      `data:` URI before the browser gets the document, so a browser request cannot happen here.
+- [ ] `allowRequestPattern: ['^data:']` itself, the safety net for a gap in the sanitiser: call
+      Browser Run directly, not through Link To Card, so that nothing rewrites the HTML. With an
+      API token that has Browser Run - Edit (the deploy token does not), `POST
+      https://api.cloudflare.com/client/v4/accounts/<account id>/browser-run/pdf` (Cloudflare's
+      Browser Run docs, "PDF endpoint", have the curl form) with
+      `{"html": "<link rel=stylesheet href=https://<logger>/a.css><img src=https://<logger>/b.png><style>p{background:url(https://<logger>/c.png)}</style><p>x</p>", "allowRequestPattern": ["^data:"], "setJavaScriptEnabled": false}`.
+      Expect a PDF and no request at all in the logger. Any request means a sanitiser gap would
+      reach the open web: keep PDFs off until it is understood.
+- [ ] A Free account's PDF with a header and a footer (the `/docs/pdf` example footer): both
+      print as plain text in the fixed style, with the page numbers, above the "Made with Link To
+      Card" line on every page, and the response warns that their markup and styles were not
+      used. The same request on a Starter account prints them as written, without the line.
+- [ ] A PDF over the size limit (`PDF.maxPdfBytes`): print a document with one
+      `data:image/png` made of identical noise rows, about 12000 x 1500 pixels (locally in
+      Chromium that made a 54 MB PDF). Expect 422 `template_error` "The PDF is larger than 20 MB,
+      ..." with `details.max_bytes`, nothing charged, and a `browser_usage` row with status 200,
+      `pages` empty and `wall_ms` set. Whether Browser Run sends `Content-Length` on PDF answers
+      is not known; it only decides whether the body is refused before or while it is read.
+- [ ] The same failing request twice within `PDF.failedRenderMemoryMs` (10 minutes): the second
+      answer is the same 422 with
+      "(An identical request failed like this at ...)" at the end of the message, and no new
+      `browser_usage` row.
 - [ ] Optional, to see the budget alarm once: set `PDF_DAILY_BROWSER_MS_BUDGET = "1"` under
       `[env.staging.vars]`, deploy, make one PDF, and expect the email "Link To Card: PDF browser
       time over budget" at `SUPPORT_EMAIL` after the next daily cron (03:17 UTC). A budget that
-      low also engages the automatic brake (below): Free-plan and free-tool PDFs on staging answer
-      429 until the line is removed. Remove the line and deploy again.
+      low engages the automatic brake (below) only once Free-account or free-tool PDFs have used
+      that much browser time; a paid account's PDF does not. While it is on, Free-plan and
+      free-tool PDFs on staging answer 429 with `Retry-After: 3600`. Remove the line and deploy
+      again; the brake then lifts within a minute.
 - [ ] Staging is public (workers.dev) with PDFs on as soon as it is deployed: the limits below
       apply there too, and its browser time is billed like production's.
 
@@ -378,13 +405,23 @@ Production, only when you approve PDFs:
       - The daily cron emails `SUPPORT_EMAIL` once per UTC day when the last 24 hours went over
         `PDF_DAILY_BROWSER_MS_BUDGET` (default `PDF.dailyBrowserMsBudget`). Attempts Browser Run
         reports no time for (timeouts, errors) count with their measured length.
-      - An account whose renders keep failing without a charge (too many pages, timeouts,
-        errors, not enough images) is stopped for the rest of the UTC day after
-        `PDF.maxFailedRendersPerDay` such renders (429).
-      - The automatic brake: while the last 24 hours used more than
-        `PDF.freeBrakeBudgetMultiple` times the daily budget, Free-plan renders and the free
-        tools answer 429; Starter and Pro keep rendering, and stored PDFs keep being served.
-        Lowering `PDF_DAILY_BROWSER_MS_BUDGET` and deploying engages it on purpose.
+      - Renders that reach the browser and fail because of the document (more than
+        `PDF.maxPages` pages, a PDF over `PDF.maxPdfBytes`, a timeout, a document the browser
+        cannot render, an unreadable page count), or need more images than are left (402 after
+        rendering), are capped at `PDF.maxFailedRendersPerDay` per UTC day by the owner's plan:
+        per account for `POST /v1/pdf`, and per site for signed PDF links, so visitors of a
+        failing link can stop only that site's new signed PDFs. Then 429 until 00:00 UTC.
+        Browser Run's own errors (5xx that is not a timeout, 400, unreachable, busy, a body that
+        stopped) do not count, so an outage on Cloudflare's side locks nobody out.
+      - A failed document is remembered for `PDF.failedRenderMemoryMs` and the identical
+        request is answered without rendering, so a failing signed link opened again and again
+        uses the browser once per 10 minutes. Identical requests at the same time render once.
+      - The automatic brake: while the browser time of Free accounts and the free tools in the
+        last 24 hours is over `PDF.freeBrakeBudgetMultiple` times the daily budget, Free-plan
+        renders and the free tools answer 429; it lifts as that use ages out of the 24 hours.
+        Starter and Pro keep rendering, their own browser time never engages it, and stored
+        PDFs keep being served. Lowering `PDF_DAILY_BROWSER_MS_BUDGET` and deploying engages it
+        on purpose once Free or tool PDFs have used that much browser time.
       - To stop PDFs completely, set `PDF_ENABLED = "false"` and deploy. That is a full stop:
         stored PDFs (`/i/...pdf`) and every signed `/v1/pdf` link, including PDFs customers
         have already paid for and invoice links already emailed, answer 503 until it is

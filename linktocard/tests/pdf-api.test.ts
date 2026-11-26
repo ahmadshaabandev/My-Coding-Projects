@@ -184,19 +184,20 @@ describe('POST /v1/pdf', () => {
     expect(footerOf(browser.calls[1]!.options) ?? '').not.toContain(PDF.freeMark);
   });
 
-  it('passes the customer header and footer, sanitised, with the mark below the footer on Free', async () => {
+  it('passes the customer header and footer, sanitised and as plain text, with the mark below the footer on Free', async () => {
     const { secret } = await account();
     const browser = mockBrowser();
     const pdf = { header: '<div onclick="x()">{{seller_name}}<script>1</script></div>', footer: '<div>Page <span class="pageNumber"></span></div>' };
     await postPdf(secret, { template: 'invoice', data: unique(INVOICE_DATA), pdf }, pdfEnv(browser));
     const { pdfOptions } = browser.calls[0]!.options;
-    // Next to the mark, each customer part sits in a box it cannot paint outside of (src/pdf/page.ts).
-    expect(pdfOptions?.headerTemplate).toMatch(/^<div style="[^"]*contain:layout paint[^"]*"><div>Fernhill Studio<\/div><\/div>$/);
-    expect(pdfOptions?.footerTemplate).toContain('<div>Page <span class="pageNumber"></span></div>');
+    // Next to the mark, each customer part is only its text, in a box of ours sized to its margin (src/pdf/page.ts).
+    expect(pdfOptions?.headerTemplate).toMatch(/^<div style="[^"]*overflow:hidden;max-height:[\d.]+pt">Fernhill Studio<\/div>$/);
+    expect(pdfOptions?.footerTemplate).toMatch(/^<div style="width:100%"><div style="[^"]*overflow:hidden;max-height:[\d.]+pt">Page <span class="pageNumber"><\/span><\/div><div style="[^"]*z-index:2147483647/);
     expect(pdfOptions?.footerTemplate).toContain(PDF.freeMark);
+    expect(pdfOptions?.footerTemplate?.endsWith(`${PDF.freeMark}</div></div></div>`)).toBe(true);
   });
 
-  it('removes header and footer stylesheets on Free, so they cannot hide the mark; paid plans keep them', async () => {
+  it('prints Free headers and footers as plain text, so their stylesheets and styles cannot hide the mark; paid plans keep them', async () => {
     const pdf = {
       header: '<style>#footer{display:none!important}</style><span>Acme</span>',
       footer: '<style>div[style*="6b7280"]{display:none!important}</style><div style="font-size:8px">Page <span class="pageNumber"></span></div>',
@@ -204,10 +205,14 @@ describe('POST /v1/pdf', () => {
     const free = await account('free');
     const browser = mockBrowser();
     const response = await postPdf(free.secret, { template: 'invoice', data: unique(INVOICE_DATA), pdf }, pdfEnv(browser));
-    expect(((await response.json()) as PdfJson).warnings).toEqual(expect.arrayContaining([expect.stringContaining('<style> in the header was removed')]));
+    const { warnings } = (await response.json()) as PdfJson;
+    for (const part of ['header', 'footer']) {
+      expect(warnings).toEqual(expect.arrayContaining([expect.stringContaining(`On the Free plan the ${part} is printed as plain text next to the free mark`)]));
+    }
     const options = browser.calls[0]!.options.pdfOptions!;
-    expect(`${options.headerTemplate}${options.footerTemplate}`).not.toMatch(/<style/i);
-    expect(options.footerTemplate).toContain('<div style="font-size:8px">Page <span class="pageNumber"></span></div>');
+    expect(`${options.headerTemplate}${options.footerTemplate}`).not.toMatch(/<style|display:none|font-size:8px/i);
+    expect(options.headerTemplate).toMatch(/^<div style="[^"]*">Acme<\/div>$/);
+    expect(options.footerTemplate).toContain('">Page <span class="pageNumber"></span></div>');
     expect(options.footerTemplate).toContain(PDF.freeMark);
 
     const paid = await account('starter');

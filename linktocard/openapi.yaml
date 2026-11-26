@@ -349,8 +349,19 @@ paths:
         A PDF of 1 to 10 pages counts as 2 images, plus 1 more for each further 10 pages
         started (11-20 pages: 3, 41-50 pages: 6). It is charged as one block: from the monthly
         allowance when it fits there, otherwise from one top-up with enough left, otherwise the
-        answer is 402. A PDF may have at most 50 pages; a longer one answers 422 and is not
-        counted. On the Free plan every page carries the footer line "Made with Link To Card".
+        answer is 402. A PDF may have at most 50 pages and at most 20 MB; a longer or larger one
+        answers 422 and is not charged. On the Free plan every page carries the footer line
+        "Made with Link To Card", and the header and footer are printed as plain text.
+
+        Renders that reach the browser and fail because of the document (more than 50 pages, a
+        PDF over 20 MB, a timeout, a document the browser cannot render, an unreadable page
+        count), and PDFs that need more images than are left (402 after rendering), are capped
+        at 20 per UTC day on Free and 200 on Starter and Pro, per account for this endpoint and
+        per site for signed PDF links; past the cap the answer is 429 until 00:00 UTC. Failures
+        of Browser Run itself never count. Such a failure is remembered for 10 minutes: the
+        identical request gets the same answer without being rendered or counted again (a
+        remembered 402 is checked again against what is left now). Of identical requests sent
+        at the same time only one renders; the others wait up to 90 seconds for its result.
       security:
         - apiKey: []
       requestBody:
@@ -451,9 +462,9 @@ paths:
         "422":
           $ref: "#/components/responses/PdfUnprocessable"
         "429":
-          $ref: "#/components/responses/RateLimited"
+          $ref: "#/components/responses/PdfRateLimited"
         "500":
-          $ref: "#/components/responses/ServerError"
+          $ref: "#/components/responses/PdfServerError"
         "503":
           $ref: "#/components/responses/PdfNotConfigured"
         "504":
@@ -477,7 +488,14 @@ paths:
         POST /v1/pdf.
 
         The first request renders, stores and counts the PDF; later requests are served from
-        storage and are not counted. HEAD never renders and never counts.
+        storage and are not counted. Failed renders of a site's signed links count toward a
+        daily cap per site (see POST /v1/pdf), whoever opens them; reaching it stops only that
+        site's new signed PDFs.
+
+        HEAD never renders and never counts. It answers what the GET would answer before
+        rendering: 402 when not enough images are left, 429 when the site's daily cap on failed
+        renders is reached or, for a Free account, the free brake is on, and the status of a
+        remembered failure (for example 422).
       security: []
       parameters:
         - name: site_id
@@ -565,9 +583,9 @@ paths:
         "422":
           $ref: "#/components/responses/PdfUnprocessable"
         "429":
-          $ref: "#/components/responses/RateLimited"
+          $ref: "#/components/responses/PdfRateLimited"
         "500":
-          $ref: "#/components/responses/ServerError"
+          $ref: "#/components/responses/PdfServerError"
         "503":
           $ref: "#/components/responses/PdfNotConfigured"
         "504":
@@ -1036,10 +1054,10 @@ components:
           $ref: "#/components/schemas/PdfMargin"
         header:
           type: string
-          description: HTML printed at the top of every page, at most 32 KB, sanitised and filled in like the document. It does not use the document's CSS; style it inline. <span class="pageNumber"></span> and <span class="totalPages"></span> print the page numbers.
+          description: HTML printed at the top of every page, at most 32 KB, sanitised and filled in like the document. It does not use the document's CSS; on Starter and Pro, style it inline or with a <style> element of its own. <span class="pageNumber"></span> and <span class="totalPages"></span> print the page numbers (the class names are case-sensitive).
         footer:
           type: string
-          description: HTML printed at the bottom of every page, with the same rules as header. On the Free plan the "Made with Link To Card" line is printed below it, and the header and footer lose their <style> elements (style attributes still work) and are cut off at the edge of their margin.
+          description: HTML printed at the bottom of every page, with the same rules as header. On the Free plan the "Made with Link To Card" line is printed below it, and the header and footer are printed as plain text in a fixed style (their text, line breaks and the pageNumber, totalPages, date and title classes; no markup, styles or images, with a warning), cut off after the last whole line that fits in their margin.
     PdfRequest:
       type: object
       description: Send exactly one of "template" and "html". Unknown fields are refused.
@@ -1323,7 +1341,9 @@ components:
         quota_exceeded. Not enough is left in one place for this PDF: it is charged as one block,
         from the monthly allowance or from one top-up, and is never split. Checked before rendering
         (a PDF needs at least 2 images) and again with its real page count. details.usage is the
-        Usage object, details.units_needed the images the PDF needs.
+        Usage object, details.units_needed the images the PDF needs. Nothing is charged. A 402
+        after rendering counts toward the daily cap on failed renders and is remembered for 10
+        minutes: the identical request is checked against what is left then, without rendering.
       content:
         application/json:
           schema:
@@ -1337,8 +1357,12 @@ components:
     PdfUnprocessable:
       description: |
         template_error (the template cannot be used as written: more than 50 pages, HTML over 1 MB,
-        CSS over 256 KB, images over 10 MB together, @import, an external @font-face, ...) or
-        image_fetch_failed (a remote image could not be downloaded). Nothing is stored or counted.
+        CSS over 256 KB, images over 10 MB together, a PDF over 20 MB (details.max_bytes), @import,
+        an external @font-face, a document the browser could not render, ...) or
+        image_fetch_failed (a remote image could not be downloaded). Nothing is stored or charged.
+        When the browser was reached (more than 50 pages, a PDF over 20 MB, a document it could
+        not render), it counts toward the daily cap on failed renders, and the identical request
+        gets the same answer for 10 minutes without being rendered again.
       content:
         application/json:
           schema:
@@ -1350,7 +1374,34 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     PdfRenderTimeout:
-      description: render_timeout. Loading or printing the document took longer than 30 seconds. Nothing is counted.
+      description: render_timeout. Loading or printing the document took longer than 30 seconds. Nothing is charged; it counts toward the daily cap on failed renders, and the identical request gets the same answer for 10 minutes without being rendered again.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PdfRateLimited:
+      description: |
+        rate_limited. Nothing is charged. One of: a rate limit; the daily cap on failed renders
+        (20 per UTC day on Free, 200 on Starter and Pro, per account for POST /v1/pdf and per
+        site for signed links; Retry-After is the time until 00:00 UTC, details { limit, scope:
+        account or site, period_seconds, retry_after_seconds }); the brake on the Free plan and
+        the free tools while they used far more browser time than usual in the last 24 hours
+        (Retry-After 3600; it lifts as that use ages out of the 24-hour window); an identical
+        request still making this PDF after 90 seconds (Retry-After until its place can be
+        taken over); or the renderer busy for a moment.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/Retry-After"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PdfServerError:
+      description: |
+        render_failed or internal_error. Nothing is charged. render_failed: the renderer failed,
+        could not be reached or did not finish sending the PDF; these failures of Browser Run do
+        not count toward the daily cap on failed renders and are not remembered. It is also the
+        answer for a PDF whose page count cannot be read, which does count.
       content:
         application/json:
           schema:

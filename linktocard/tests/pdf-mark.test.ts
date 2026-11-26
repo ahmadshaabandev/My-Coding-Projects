@@ -206,6 +206,33 @@ describe('the mark\'s margin: @page after <!-- or --> is dropped everywhere a Fr
       expect(Number.parseFloat(job.setup.margin.bottom)).toBeGreaterThanOrEqual(PDF.freeMarkMinBottomMm);
     }
   });
+
+  // Chrome ends an unquoted url( at its first ")" even when it holds "(" or a quote; the
+  // sanitiser's tokenizer read on, and the @page behind it reached Chrome (css-3: margins 0, a
+  // 30 mm page, a rotated page).
+  const behindUrl = [
+    'url(x(){}@page{margin:0}){}',
+    '\\75rl(x(){}@page{size:30mm 30mm;margin:0}){}',
+    "p url(x'){}@page{margin:0}'){color:red}",
+    '@media print{url(x(){}@page{page-orientation:rotate-left}){}}',
+    'p{background:url(data:x()}@page{margin:0});}',
+  ];
+  it.each(behindUrl)('also when it hides behind a url( that Chrome ends early: %s', async (css) => {
+    const jobs = [
+      (await parsePdfRequest(env.DB, FREE, { html: '<p>x</p>', css })).job,
+      (await parsePdfRequest(env.DB, FREE, { html: `<style>${css}</style><p>x</p>` })).job,
+      (await parseToolRequest({ tool: 'html-to-pdf', html: '<p>x</p>', css })).job,
+      (await parseToolRequest({ tool: 'invoice', data: invoice, css })).job,
+      (await parseToolRequest({ tool: 'certificate', data: { recipient_name: 'Ada' }, css })).job,
+    ];
+    for (const job of jobs) {
+      expect(job.mark).toBe(true);
+      const prepared = preparePdf(job);
+      const style = /<style>([\s\S]*)<\/style>/.exec(prepared.document.render(() => undefined))![1]!;
+      expect(style).not.toMatch(/@page|url\(x|data:x/i);
+      expect(prepared.warnings.length).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('plainTextOnly (src/pdf/page.ts)', () => {

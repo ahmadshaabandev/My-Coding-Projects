@@ -22,6 +22,11 @@
  *   a string with a raw line break   refused (template_error): Chrome would end the string there
  *                                    and read the rest as CSS the sanitiser never saw
  *   src("...")                       the declaration is dropped (its string is a URL)
+ *   url( with "(" or a quote in an   the declaration, rule or statement is dropped: Chrome ends
+ *   address not in quotes            that url( at its first ")", while the tokenizer here would
+ *                                    read on (see urlTokens)
+ *   url( in a selector or at-rule    the rule or statement is dropped: url() is never valid there
+ *   prelude                          (@import and @namespace are handled first)
  *
  * The browser call itself also allows only data: requests, so a gap here would show up as a
  * missing image, never as a request to the open web.
@@ -52,6 +57,7 @@ const SILENT_AT_RULES = new Set(['charset']);
 const DROPPED_AT_RULES = new Set(['namespace']);
 /** The page box is set by the request's "pdf" alone. */
 const PAGE_AT_RULE_WARNING = 'Page size, orientation and margins come from "pdf" (format, landscape, margin); the CSS @page rule was ignored.';
+const PRELUDE_URL_WARNING = 'A CSS rule with url(...) in its selector or at-rule prelude was ignored: url() belongs in declarations only.';
 /** The at-keyword: it ends at the first character that cannot be part of a name, so "@import'a.css'" is @import. */
 const AT_NAME = /^@([\w-]+)/;
 const URL_FUNCTION = /(^|[^\w-])url\(/gi;
@@ -135,6 +141,85 @@ function assertNoBadStrings(css: string): void {
   }
 }
 
+const isSpace = (ch: string | undefined): boolean => ch === ' ' || ch === '\t' || isLineBreak(ch);
+const isHexDigit = (ch: string | undefined): boolean => ch !== undefined && /^[0-9a-fA-F]$/.test(ch);
+/** A character that continues a CSS name: ASCII letters, digits, "_", "-" and everything non-ASCII. */
+const isNameChar = (ch: string | undefined): boolean => ch !== undefined && (/^[\w-]$/.test(ch) || ch.charCodeAt(0) >= 0x80);
+
+/** The character a CSS escape at `at` (a backslash not followed by a line break) stands for, and the index after it. */
+function readEscape(text: string, at: number): { char: string; end: number } {
+  let i = at + 1;
+  if (!isHexDigit(text[i])) return { char: text[i] ?? '�', end: Math.min(text.length, i + 1) };
+  let hex = '';
+  while (hex.length < 6 && isHexDigit(text[i])) hex += text[i++];
+  if (text[i] === '\r' && text[i + 1] === '\n') i += 2;
+  else if (isSpace(text[i])) i += 1;
+  const code = parseInt(hex, 16);
+  return { char: code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff) ? '�' : String.fromCodePoint(code), end: i };
+}
+
+/**
+ * The url( tokens of one piece of CSS (a declaration value, a rule prelude, a statement), outside
+ * strings, as Chrome's tokenizer finds them. `found`: some name that ends in "url" (any case, also
+ * spelled with escapes such as "\\75rl") is directly followed by "(". `mismatch`: one of them is
+ * not followed by a quote and, before its first unescaped ")", holds a "(" or a quote.
+ *
+ * Chrome reads such a url( as one token up to that ")" (a "bad url"), whatever is inside. The
+ * tokenizer here (src/render/css.ts, shared with the card renderer) counts the "(" as a nested
+ * parenthesis and the quote as the start of a string, so it would read on past Chrome's ")"
+ * across "}", "{" and ";": text it puts inside a value or a prelude would reach Chrome as new
+ * rules (@page, @import, @font-face) that were never inspected. Any name ending in "url" counts,
+ * not only "url" itself, so that what comes before it never matters ("<!--url(", "U+0url(").
+ */
+export function urlTokens(text: string): { found: boolean; mismatch: boolean } {
+  let found = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch && !isLineBreak(text[j])) j += text[j] === '\\' ? 2 : 1;
+      i = j + 1;
+      continue;
+    }
+    const escape = ch === '\\' && !isLineBreak(text[i + 1]) && i + 1 < text.length;
+    if (!isNameChar(ch) && !escape) {
+      i++;
+      continue;
+    }
+    let name = '';
+    let j = i;
+    while (j < text.length) {
+      if (text[j] === '\\') {
+        if (j + 1 >= text.length || isLineBreak(text[j + 1])) break;
+        const decoded = readEscape(text, j);
+        name += decoded.char;
+        j = decoded.end;
+      } else if (isNameChar(text[j])) {
+        name += text[j++];
+      } else {
+        break;
+      }
+    }
+    i = j;
+    if (text[j] !== '(' || !name.toLowerCase().endsWith('url')) continue;
+    found = true;
+    let k = j + 1;
+    while (isSpace(text[k])) k++;
+    // url("...") is a function and a string, read alike by both tokenizers.
+    if (text[k] === '"' || text[k] === "'") {
+      i = k;
+      continue;
+    }
+    for (; k < text.length && text[k] !== ')'; k++) {
+      if (text[k] === '\\') k++;
+      else if (text[k] === '(' || text[k] === '"' || text[k] === "'") return { found, mismatch: true };
+    }
+    i = k + 1;
+  }
+  return { found, mismatch: false };
+}
+
 /**
  * An absolute http(s) URL the asset collector may fetch, normalised by the URL parser (which
  * percent-encodes spaces, quotes and angle brackets); undefined otherwise. A backslash is
@@ -151,6 +236,10 @@ export function remoteUrl(target: string): string | undefined {
  * declaration must be dropped. `fontFace` refuses everything but data: (an @font-face src).
  */
 function rewriteUrls(property: string, value: string, scope: CssScope, context: AssetContext, fontFace: boolean): string | undefined {
+  if (urlTokens(value).mismatch) {
+    scope.warn(`url(...) in "${property}" has "(" or a quote in an address that is not in quotes, and was removed; write it as url("...").`);
+    return undefined;
+  }
   const bare = withoutStrings(value);
   if (bare.includes('\\') && bare.includes('(')) {
     scope.warn(`A CSS value of "${property}" uses escape sequences together with a function and was removed.`);
@@ -257,6 +346,12 @@ function sanitizeNodes(nodes: readonly CssNode[], scope: CssScope, context: Asse
     }
     if (name === 'page') {
       scope.warn(PAGE_AT_RULE_WARNING);
+      continue;
+    }
+    // url() is never valid in a selector or an at-rule prelude, and one with "(" or a quote in
+    // it would end, for Chrome, inside this prelude (urlTokens): the whole rule goes.
+    if (urlTokens(rest).found) {
+      scope.warn(PRELUDE_URL_WARNING);
       continue;
     }
     if (node.kind === 'statement') {

@@ -418,7 +418,33 @@ describe('failureCause', () => {
     [new ApiError('template_error', 'browser 422 or too many pages'), null, null, 'document'],
     [new ApiError('render_failed', 'unreadable page count'), pdfBytes, null, 'document'],
     [new ApiError('render_failed', 'HTTP 503'), null, null, 'provider'],
+    [new ApiError('template_error', `PDF over ${PDF.maxPdfBytes} bytes`), null, null, 'document'],
+    [new ApiError('render_failed', 'answered 200, body stopped or past the deadline'), null, null, 'provider'],
   ] as const)('%s -> %s', (error, bytes, pages, cause) => {
     expect(failureCause({ error, bytes, pages })).toBe(cause);
+  });
+
+  it('is what printPdf reports for each outcome', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const huge = new Response(new Uint8Array(0), { headers: { 'content-type': 'application/pdf', 'content-length': String(PDF.maxPdfBytes + 1) } });
+    const broken = new Response('%PDF-1.4\n1 0 obj<<>>endobj\n%%EOF', { headers: { 'content-type': 'application/pdf' } });
+    const cases: Array<[Response | Error, string | null]> = [
+      [pdfResponse('3-pages'), null],
+      [pdfResponse('51-pages'), 'document'],
+      [huge, 'document'],
+      [broken, 'document'],
+      [browserErrorResponse(422, 'Unable to render'), 'document'],
+      [browserErrorResponse(422, 'Navigation timeout of 30000 ms exceeded'), 'document'],
+      [browserErrorResponse(429, 'Rate limit exceeded'), 'busy'],
+      [browserErrorResponse(400, 'Invalid margin'), 'provider'],
+      [browserErrorResponse(503, 'Service unavailable', null), 'provider'],
+      [new Response('<html></html>', { headers: { 'content-type': 'text/html' } }), 'provider'],
+      [new Error('binding exploded'), 'provider'],
+    ];
+    for (const [answer, cause] of cases) {
+      const outcome = await printPdf(mockBrowser(() => (answer instanceof Error ? Promise.reject(answer) : answer)).binding, REQUEST);
+      expect(outcome.cause).toBe(cause);
+      expect(outcome.cause).toBe(failureCause(outcome));
+    }
   });
 });

@@ -428,6 +428,69 @@ describe('CSS the browser would read differently from the sanitiser', () => {
     expect(body('<p style="--u: \'https://evil.example/u.png\'; background-image: image-set(var(--u) 1x)">x</p>')).not.toMatch(/image-set/);
   });
 
+  // Chrome reads url( followed by anything but a quote as ONE token that ends at its first ")",
+  // also when it holds "(" or a quote (a "bad url"). The tokenizer here counted that "(" as a
+  // parenthesis and that quote as a string, read on across "}", "{" and ";", and passed what
+  // followed on unseen: Chrome then had these rules at the top level (Chromium's CSSOM of the
+  // old output, css-3). Every case here reached Chrome before the fix.
+  const hidden = '@page{margin:0}@import url(https://evil.example/a.css);@font-face{font-family:Q;src:url(https://evil.example/q.woff2)}.q{background:url(https://evil.example/t.png)}';
+  it.each([
+    ['a rule prelude', `url(x(){}${hidden}){}`],
+    ['URL( in capitals', `URL(x(){}${hidden}){}`],
+    ['url( spelled with a hex escape', `\\75rl(x(){}${hidden}){}`],
+    ['url( spelled with a hex escape and a space', `\\55 RL(x(){}${hidden}){}`],
+    ['url( spelled with a plain escape', `u\\rl(x(){}${hidden}){}`],
+    ['a quote in a selector url(', `p url(x'){}${hidden}'){color:red}`],
+    ['@media url(', `@media url(x(){}${hidden}){}`],
+    ['@supports url(', `@supports url(x(){}${hidden}){}`],
+    ['a block-less @layer url(', `@layer url(x(){}${hidden});`],
+    ['a prelude nested in @media', `@media print{url(x(){}${hidden}){}}`],
+    ['<!-- right before url(', `<!--url(x"){}${hidden}"){}`],
+    ['a name that only ends in url', `U+0-7Furl(x(){}${hidden}){}`],
+    ['a comment inside url(', `url(a/*)*/(b){}${hidden}){}`],
+    ['a data: URI with "(" in a declaration', `p{background:url(data:x()}${hidden});}`],
+    ['a data: URI with a quote in a declaration', `p{background:url(data:x')}${hidden}');}`],
+    ['a #fragment with "(" in a declaration', `p{background:url(#a()}${hidden});}`],
+    ['a custom property', `p{--v:url(data:x()}${hidden});}`],
+    ['a declaration nested in @media', `@media print{p{b:url(data:x()}${hidden});}}`],
+  ])('drops what hides behind a url( that Chrome ends early: %s', (_label, css) => {
+    for (const [html, sheet] of [['<p class="q">x</p>', css], [`<style>${css}</style><p class="q">x</p>`, '']] as const) {
+      const prepared = preparePdfDocument({ html, css: sheet, data: {} });
+      const style = /<style>([\s\S]*)<\/style>/.exec(prepared.render(() => 'data:image/png;base64,QQ=='))?.[1] ?? '';
+      expect(style).not.toMatch(/@page|@import|@font-face|evil\.example|url\(/i);
+      expect(prepared.remoteUrls).toEqual([]);
+      expect(prepared.warnings.length).toBeGreaterThan(0);
+    }
+  });
+
+  it.each([
+    ['"("', 'background:url(data:x();background-image:url(https://evil.example/i.png);)'],
+    ['a quote', "background:url(data:x');background-image:url(https://evil.example/i.png);x:')"],
+  ])('drops a style attribute declaration whose url( has %s in an address not in quotes', (_label, style) => {
+    const prepared = preparePdfDocument({ html: `<p style="${style.replace(/"/g, '&quot;')}">x</p>`, css: '', data: {} });
+    expect(prepared.render(() => 'data:image/png;base64,QQ==')).toContain('<p>x</p>');
+    expect(prepared.remoteUrls).toEqual([]);
+  });
+
+  it('keeps url() Chrome reads like the sanitiser: quoted, plain, in strings, and escaped parentheses in a selector', () => {
+    const css = [
+      '.a { background: url( "https://cdn.example.com/a.png" ) }',
+      '.b { background: url(https://cdn.example.com/b.png) }',
+      '.c::after { content: "url(x(){}" }',
+      '[title="url(x()"] { color: red }',
+      '.bg-\\[url\\(\\/x\\.png\\)\\] { color: blue }',
+      '.d { mask: url(#m) }',
+    ].join(' ');
+    const prepared = preparePdfDocument({ html: '<p>x</p>', css, data: {} });
+    expect(prepared.warnings).toEqual([]);
+    expect(prepared.remoteUrls).toEqual(['https://cdn.example.com/a.png', 'https://cdn.example.com/b.png']);
+    const style = /<style>([\s\S]*)<\/style>/.exec(prepared.render(() => 'data:image/png;base64,QQ=='))![1]!;
+    expect(style).toContain('.c::after{content:"url(x(){}";}');
+    expect(style).toContain('[title="url(x()"]{color:red;}');
+    expect(style).toContain('.bg-\\[url\\(\\/x\\.png\\)\\]{color:blue;}');
+    expect(style).toContain('.d{mask:url("#m");}');
+  });
+
   it.each(['fill', 'mask', 'clip-path', 'marker-start', 'cursor', 'filter'])('drops an SVG %s attribute that spells url( with a CSS escape', (attribute) => {
     expect(body(`<svg><rect ${attribute}="\\75rl(https://evil.example/x.svg#a)"/></svg>`)).toBe('<svg><rect/></svg>');
     expect(body(`<svg><rect ${attribute}="{{f}}"/></svg>`, { f: '\\55 RL(https://evil.example/x.svg#a)' })).toBe('<svg><rect/></svg>');

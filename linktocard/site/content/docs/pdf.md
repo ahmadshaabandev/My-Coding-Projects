@@ -259,6 +259,8 @@ Before your data is filled in, the HTML is parsed and cleaned. The `warnings` in
 
 CSS `@import` and an `@font-face` that loads a font from another address are refused with 422 `template_error` instead of being dropped, because the document would print differently from what you wrote.
 
+In CSS, write an address that contains `(`, `)`, a quote or a space in quotes: `url("...")`. Chrome ends an unquoted `url(` at its first `)`, so a declaration whose unquoted `url(` holds `(` or a quote is removed, with a warning, and so is a rule or statement with `url(` in its selector or at-rule prelude, where `url()` has no meaning.
+
 ## Page setup
 
 `pdf` in the request sets the page. A starter template brings its own setup; anything you send overrides it.
@@ -270,13 +272,21 @@ CSS `@import` and an `@font-face` that loads a font from another address are ref
 | `margin` | `top`, `right`, `bottom`, `left`: a length such as `"20mm"`, `"2cm"`, `"0.75in"` or `"48px"`, at most [[pdf.maxMarginMm]] mm each | The template's, else [[pdf.defaultMarginMm]] mm on every side |
 | `header`, `footer` | HTML printed at the top or bottom of every page, inside the margin | None |
 
-The paper size, orientation and margins come from `format`, `landscape` and `margin` only. A CSS `@page` rule is removed, with a warning, wherever it is (also inside `@media`).
+The paper size, orientation and margins come from `format`, `landscape` and `margin` only. A CSS `@page` rule is removed, with a warning, wherever it is: also inside `@media`, and also after `<!--` or `-->`, which Chrome skips at the top level of a stylesheet. Inside a block, a rule that starts with `<!--` or `-->` is dropped, because Chrome ignores it too. An `@page` behind an unquoted `url(` is removed with that `url(` (above).
 
 ### Header and footer
 
-`header` and `footer` are small HTML templates, at most [[pdf.maxHeaderFooterKb]] KB each, cleaned and filled in with your data like the document. Chrome prints them in the top and bottom margin, so give the margin room for them. They do not use the document's CSS: style them inline, font size included. Chrome fills in elements with these classes on every page: `pageNumber`, `totalPages`, `date` and `title` (the document's `<title>`).
+`header` and `footer` are small HTML templates, at most [[pdf.maxHeaderFooterKb]] KB each, cleaned and filled in with your data like the document. Chrome prints them in the top and bottom margin, so give the margin room for them. Chrome fills in elements with these classes on every page: `pageNumber`, `totalPages`, `date` and `title` (the document's `<title>`). The class names are case-sensitive: `pagenumber` prints nothing.
 
-On the [[plan.free.name]] plan the header and footer share the page margin with the free mark, so `<style>` elements in them are removed (with a warning; `style=""` attributes work as usual), and each is kept inside its own margin: anything taller is cut off, and nothing in them can cover the mark.
+On [[plan.starter.name]] and [[plan.pro.name]] they are printed as written. They do not use the document's CSS: style them inline, font size included, or with a `<style>` element of their own.
+
+On the [[plan.free.name]] plan they share Chrome's header and footer with the free mark, so they are printed as plain text, with page numbers, in a fixed style of ours: full width, centred, 8 pt sans-serif in dark grey.
+
+- After your data is filled in, only the text is kept: a line break at each `<br>` and at the start and end of blocks (such as `div`, `p`, `li`, headings and table rows), a gap between table cells and between the items of an element with an inline `style="display:flex"` or `display:grid`, and the four classes above.
+- Markup, `style=""` attributes, classes, `<style>` elements, images, SVG and MathML are not used, and a warning says so. Hidden content (`hidden`, `display:none`, `visibility:hidden`) is not printed, and nothing in a Free header or footer is downloaded.
+- Each is cut off after the last whole line that fits: the header in the top margin less 4 mm, the footer in the bottom margin less 9 mm, above the mark. At the [[pdf.freeMarkMinBottomMm]] mm minimum bottom margin that is one line of footer, from about 16.4 mm two.
+
+On both plans the footer of the example below prints its title and the page numbers on every page, for example "Customer Support Review, Q3 2026 · Page 2 of 7" on page 2 of a seven-page report. On [[plan.free.name]] it is printed in the fixed style, above the mark, with a warning that its markup and style were not used.
 
 ```json
 {
@@ -440,7 +450,7 @@ A link that does not verify answers 403 `invalid_signature` before anything is r
 
 ## The free footer mark
 
-On the [[plan.free.name]] plan every page of a PDF carries one centred line in the bottom margin: "[[pdf.freeMark]]". It is printed in grey on a small white background of its own, below your own footer if you send one, and the bottom margin is raised to at least [[pdf.freeMarkMinBottomMm]] mm to make room. PDFs made on [[plan.starter.name]] and [[plan.pro.name]] have no mark. The PDFs of the free tools on this site always have it.
+On the [[plan.free.name]] plan every page of a PDF carries one centred line in the bottom margin: "[[pdf.freeMark]]". It is printed in grey on a small white background of its own, below your own footer if you send one, and the bottom margin is raised to at least [[pdf.freeMarkMinBottomMm]] mm to make room. On [[plan.free.name]] your header and footer are printed as plain text next to it (see [Header and footer](#header-and-footer)), so nothing in them can cover or move the mark. PDFs made on [[plan.starter.name]] and [[plan.pro.name]] have no mark. The PDFs of the free tools on this site always have it.
 
 The mark is part of what makes a PDF unique, so after an upgrade the first request for a PDF renders it again, without the mark, and counts it.
 
@@ -452,7 +462,19 @@ A PDF is taken from the same monthly allowance as card images, by its number of 
 
 - **One block.** A PDF is taken whole from the monthly allowance when it fits there, otherwise whole from one top-up that has enough left. It is never split between the two, so a period never goes below zero. When neither has enough, the answer is HTTP 402 `quota_exceeded`, with the usage in `details.usage` and the images the PDF needs in `details.units_needed`.
 - **Checked twice.** Before rendering, at least [[pdf.baseUnits]] images must be left in one place, or the answer is 402 without rendering. After rendering, the real number for its pages is charged. If a long document needs more than is left, the PDF is not delivered and nothing is charged.
-- **Failures count nothing.** A failed render is not counted. A document of more than [[pdf.maxPages]] pages is refused with 422 `template_error` and not counted. Renders like these still use the browser, so an account can have [[pdf.maxFailedRendersPerDayFree]] of them per UTC day on [[plan.free.name]] and [[pdf.maxFailedRendersPerDayPaid]] on [[plan.starter.name]] and [[plan.pro.name]]: a render that reaches the browser and ends without a charged PDF (too many pages, a timeout, a renderer error, not enough images left). After that, new PDFs answer 429 `rate_limited` until 00:00 UTC; stored PDFs keep working.
+- **Failures are not charged.** A render that fails charges nothing. A document of more than [[pdf.maxPages]] pages, or one that makes a PDF over [[pdf.maxPdfMb]] MB, is refused with 422 `template_error` and not charged.
+- **Failed renders per day.** A render that fails in the browser has still used it, so failures caused by the document are capped at [[pdf.maxFailedRendersPerDayFree]] per UTC day on [[plan.free.name]] and [[pdf.maxFailedRendersPerDayPaid]] on [[plan.starter.name]] and [[plan.pro.name]], by the plan of the account that owns the template or link:
+  - **What counts:** a render that fails in the browser because of the document (more than [[pdf.maxPages]] pages, a PDF over [[pdf.maxPdfMb]] MB, a timeout, a document the browser cannot render, or a PDF whose page count cannot be read), and a PDF that needs more images than are left (402 after rendering).
+  - **What does not count:** anything refused before the browser (a bad request, a template error found while cleaning it, an image that cannot be downloaded, a 402 before rendering, a rate limit), stored PDFs, answers from memory (below), and failures of Browser Run itself: a server error that is not a timeout, a refused or unreachable call, a PDF that did not finish arriving, or the renderer being busy. Those never count.
+  - **Per account and per site:** `POST /v1/pdf` counts per account. Signed PDF links count per site, each site with its own [[pdf.maxFailedRendersPerDayFree]] or [[pdf.maxFailedRendersPerDayPaid]]: a link's render counts on its site whoever opens it, and reaching the cap stops only that site's new signed PDFs. `POST /v1/pdf` and your other sites are not affected.
+  - **At the cap:** a render takes its place under the cap before it starts, so requests sent at the same time cannot pass it together. Past it, new PDFs there answer 429 `rate_limited` until 00:00 UTC, with `Retry-After` in seconds and `details` `{ "limit", "scope": "account" or "site", "period_seconds", "retry_after_seconds" }`. The message names the causes and how long it is until 00:00 UTC. Stored PDFs keep working.
+- **Failed documents are remembered.** For [[pdf.failedRenderMemoryMinutes]] minutes after a render fails because of the document, or needs more images than are left, the identical request gets the same answer without being rendered and without counting again. Identical means the same `id`: the same account, template, data, page setup, header, footer and file name. Any change makes a new `id`, which renders at once.
+  - The message then ends with "(An identical request failed like this at HH:MM:SS UTC; until HH:MM:SS UTC it gets this answer without being rendered again.)", and `details` are kept, for example `max_pages` and `pages_rendered`.
+  - A remembered 402 is checked again against what is left now: after a top-up or an upgrade the PDF is rendered normally; otherwise the answer is 402 with the current usage and `units_needed`.
+  - Failures of Browser Run itself are never remembered: the next request tries again.
+- **Identical requests at the same time.** Only one of them renders. The others wait for it, up to [[pdf.duplicateWaitSeconds]] seconds, and get its result: the stored PDF with `credits_used: 0`, `cached: true` and `X-LTC-Cache: hit`, or, when it failed because of the document, the same answer. After any other failure, one of the waiting requests renders the PDF itself.
+  - If the first request has still not finished after [[pdf.duplicateWaitSeconds]] seconds, the answer is 429 `rate_limited`: "An identical request started making this PDF ... s ago and has not finished; this request waited ... s for it and charged nothing.", with `Retry-After` set to when that request's place can be taken over. When fewer than [[pdf.baseUnits]] images are left, it is 402 instead.
+  - Rarely, a render that takes unusually long is taken over by an identical request; it then answers 429 with a short `Retry-After`, or the PDF free of charge when the other request already paid for it.
 - **Stored PDFs count once.** A PDF is stored for [[plan.free.cacheDays]] days on [[plan.free.name]], [[plan.starter.cacheDays]] on [[plan.starter.name]] and [[plan.pro.cacheDays]] on [[plan.pro.name]]. The same request in that time (same template, data, page setup, header, footer and file name) is served from storage with `credits_used: 0`. A different file name is a different PDF.
 - **The dashboard shows PDFs separately**: how many were made this period, and how many images they counted as. Those images are not counted a second time: they are already in the images used from the allowance, or from the top-up they were taken from.
 - **The free tools count nothing** against any account.
@@ -463,7 +485,7 @@ A PDF is taken from the same monthly allowance as card images, by its number of 
 
 PDF requests have their own rate limits, listed with the others under [Rate limits](/docs/limits#rate-limits). A request over a limit answers 429 `rate_limited` with a `Retry-After` header.
 
-When PDF rendering as a whole has used far more browser time than usual in the last 24 hours, new PDFs on the [[plan.free.name]] plan and in the free tools answer 429 `rate_limited` for a while. [[plan.starter.name]] and [[plan.pro.name]] are not affected, and stored PDFs keep working.
+When [[plan.free.name]] accounts and the free tools together have used far more browser time than usual in the last 24 hours, new PDFs on the [[plan.free.name]] plan and in the free tools answer 429 `rate_limited`, with a `Retry-After` of an hour. Only their own browser time counts toward this brake: PDFs made on [[plan.starter.name]] and [[plan.pro.name]] never engage it. It lifts by itself as that use ages out of the last 24 hours, so it can last up to 24 hours after the use stopped. [[plan.starter.name]] and [[plan.pro.name]] are not affected, and stored PDFs keep working.
 
 ## API reference
 
@@ -493,7 +515,7 @@ Any other field is refused with 400 `invalid_request`.
 GET /v1/pdf/{site id}/{template}.pdf?...&sig={signature}
 ```
 
-A [signed PDF link](#signed-pdf-links). The answer is the PDF, shown inline in the browser under its file name (default: `{template}.pdf`), with `X-LTC-Pages`, `X-LTC-Cache`, `ETag` and `Cache-Control: public, max-age=[[http.imageMaxAgeSeconds]]` (or less when the stored PDF expires sooner). `If-None-Match` with the `ETag` answers 304. `HEAD` never renders and never counts.
+A [signed PDF link](#signed-pdf-links). The answer is the PDF, shown inline in the browser under its file name (default: `{template}.pdf`), with `X-LTC-Pages`, `X-LTC-Cache`, `ETag` and `Cache-Control: public, max-age=[[http.imageMaxAgeSeconds]]` (or less when the stored PDF expires sooner). `If-None-Match` with the `ETag` answers 304. `HEAD` never renders and never counts, but it answers what the `GET` would answer before rendering: 402 when not enough images are left, 429 when the site's daily cap on failed renders is reached or, for a [[plan.free.name]] account, the brake is on, and the status of a remembered failure, for example 422.
 
 ### GET /i/... .pdf
 
@@ -510,13 +532,14 @@ The same error format and codes as the rest of the API ([Errors](/docs/api#error
 | Status | Code | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | A malformed body, an unknown field, both or neither of `template` and `html`, data over its limits, a bad margin or format. |
-| 402 | `quota_exceeded` | Not enough images left in one place for this PDF; see [What counts](#what-counts). |
+| 402 | `quota_exceeded` | Not enough images left in one place for this PDF; see [What counts](#what-counts). Nothing was charged. A 402 after rendering counts toward the [daily cap on failed renders](#what-counts) and is remembered for [[pdf.failedRenderMemoryMinutes]] minutes. |
 | 413 | `payload_too_large` | The body is over [[pdf.maxRequestBodyMb]] MB. |
-| 422 | `template_error` | The document cannot be printed as written: more than [[pdf.maxPages]] pages, HTML or CSS over its limit, `@import`, a remote `@font-face`, too many images. The message says what to change. |
-| 422 | `image_fetch_failed` | A remote image could not be downloaded. `details.url` and `details.reason` say which and why. |
-| 429 | `rate_limited` | Over a [rate limit](/docs/limits#rate-limits), or the renderer is busy for a moment. Retry after the seconds in `Retry-After`. Nothing was counted. |
+| 422 | `template_error` | The document cannot be printed as written: more than [[pdf.maxPages]] pages, a PDF over [[pdf.maxPdfMb]] MB (`details.max_bytes`), HTML or CSS over its limit, `@import`, a remote `@font-face`, too many images, or a document the browser could not render. The message says what to change. Nothing was charged. When the browser was reached (too many pages, a PDF too large, a document it could not render), it counts toward the daily cap on failed renders and is remembered for [[pdf.failedRenderMemoryMinutes]] minutes. |
+| 422 | `image_fetch_failed` | A remote image could not be downloaded. `details.url` and `details.reason` say which and why. Nothing was charged or counted. |
+| 429 | `rate_limited` | Over a [rate limit](/docs/limits#rate-limits); the [daily cap on failed renders](#what-counts) is reached, until 00:00 UTC, per account or per site; the brake on the [[plan.free.name]] plan and the free tools is on (`Retry-After` of an hour, see [Limits](#limits)); an identical request is still making this PDF after [[pdf.duplicateWaitSeconds]] seconds; or the renderer is busy for a moment. Retry after the seconds in `Retry-After`. Nothing was charged. |
+| 500 | `render_failed` | The renderer failed, could not be reached, or did not finish sending the PDF ("The PDF renderer did not finish sending the PDF. Try again in a moment."), or it returned a PDF whose page count cannot be read. Nothing was charged. A failure of Browser Run itself does not count toward the daily cap on failed renders and is not remembered; a PDF whose page count cannot be read counts. |
 | 503 | `not_configured` | PDF rendering is switched off on this deployment: "PDF rendering is not enabled yet." While it is off, stored PDF links (`/i/...pdf`) and signed PDF links answer it too. |
-| 504 | `render_timeout` | Loading or printing took longer than [[pdf.renderTimeoutSeconds]] seconds. Nothing was counted. |
+| 504 | `render_timeout` | Loading or printing took longer than [[pdf.renderTimeoutSeconds]] seconds. Nothing was charged. It counts toward the daily cap on failed renders and is remembered for [[pdf.failedRenderMemoryMinutes]] minutes. |
 
 The [OpenAPI description](/openapi.yaml) covers `POST /v1/pdf`, signed PDF links and stored PDFs.
 

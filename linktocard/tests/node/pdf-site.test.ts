@@ -93,6 +93,9 @@ describe('[[pdf.*]] tokens', () => {
       'pdf.maxCssKb': String(PDF.maxCssBytes / 1024),
       'pdf.maxAssetMb': String(PDF.maxAssetBytes / (1024 * 1024)),
       'pdf.maxRequestBodyMb': String(PDF.maxRequestBodyBytes / (1024 * 1024)),
+      'pdf.maxPdfMb': String(PDF.maxPdfBytes / (1024 * 1024)),
+      'pdf.failedRenderMemoryMinutes': String(PDF.failedRenderMemoryMs / 60_000),
+      'pdf.duplicateWaitSeconds': String((2 * PDF.renderTimeoutMs + 15_000 + 15_000) / 1000),
       'pdf.maxHeaderFooterKb': String(PDF.maxHeaderFooterBytes / 1024),
       'pdf.renderTimeoutSeconds': String(PDF.renderTimeoutMs / 1000),
       'pdf.maxMarginMm': String(PDF.maxMarginMm),
@@ -122,6 +125,13 @@ describe('[[pdf.*]] tokens', () => {
     expect(JSON.parse(tokens['pdf.sample.invoice'] ?? '')).toEqual(template('invoice').sample);
     expect(JSON.parse(tokens['pdf.sample.certificate'] ?? '')).toEqual(template('certificate').sample);
     expect(partials).toEqual(expect.arrayContaining(['pdf-units-table', 'pdf-limits-table', 'pdf-templates', 'pdf-format-options']));
+  });
+
+  it('print the wait for an identical request as the engine computes it: one browser call, plus 15 s', () => {
+    // src/pdf/render.ts and src/pdf/service.ts do not load outside the Worker; the token repeats their formula.
+    expect(read('src/pdf/render.ts')).toContain('export const CALL_TIMEOUT_MS = 2 * PDF.renderTimeoutMs + 15_000;');
+    expect(read('src/pdf/service.ts')).toContain('export const PDF_DUPLICATE_WAIT_MS = CALL_TIMEOUT_MS + 15_000;');
+    expect(tokens['pdf.duplicateWaitSeconds']).toBe(String((2 * PDF.renderTimeoutMs + 15_000 + 15_000) / 1000));
   });
 
   it('are the only way PDF numbers reach the pages: no PDF page types a limit itself', () => {
@@ -241,14 +251,14 @@ describe('/docs/pdf', () => {
   it('states what bounds browser time, the page box, the free mark and saved templates, as the engine does', () => {
     const text = visibleText(article('docs/pdf.html'));
     expect(text).toContain(
-      `Renders that produce no PDF${PDF.maxFailedRendersPerDay.free} per UTC day on ${PLANS.free.name}, ${PDF.maxFailedRendersPerDay.paid} on ${PLANS.starter.name} and ${PLANS.pro.name}`,
+      `needed more images than were left)${PDF.maxFailedRendersPerDay.free} per UTC day on ${PLANS.free.name}, ${PDF.maxFailedRendersPerDay.paid} on ${PLANS.starter.name} and ${PLANS.pro.name}, per account for POST /v1/pdf and per site for signed PDF links; then new PDFs there answer HTTP 429 until 00:00 UTC`,
     );
-    expect(text).toContain(`an account can have ${PDF.maxFailedRendersPerDay.free} of them per UTC day on ${PLANS.free.name}`);
+    expect(text).toContain(`so failures caused by the document are capped at ${PDF.maxFailedRendersPerDay.free} per UTC day on ${PLANS.free.name} and ${PDF.maxFailedRendersPerDay.paid} on ${PLANS.starter.name} and ${PLANS.pro.name}, by the plan of the account that owns the template or link`);
     expect(text).toContain(`${PLANS.starter.name} and ${PLANS.pro.name} are not affected, and stored PDFs keep working.`);
-    // @page is dropped by src/pdf/css.ts; header/footer <style> is dropped next to the mark.
-    expect(text).toContain('A CSS @page rule is removed, with a warning, wherever it is');
+    // @page is dropped by src/pdf/css.ts, also after <!-- or -->; next to the mark the header and footer are plain text.
+    expect(text).toContain('A CSS @page rule is removed, with a warning, wherever it is: also inside @media, and also after <!-- or -->');
     expect(text).not.toContain('@page { size: ... } rule does not change it');
-    expect(text).toContain('<style> elements in them are removed (with a warning');
+    expect(text).not.toContain('<style> elements in them are removed');
     expect(text).toContain('in grey on a small white background of its own');
     // Saved templates go through the card validator (src/routes/studio.ts).
     expect(text).toContain(`A template saved in the dashboard is checked like a card template: at most ${LIMITS.maxHtmlBytes / 1024} KB of HTML and ${LIMITS.maxCssBytes / 1024} KB of CSS, ${formatCount(LIMITS.maxNodes)} elements, nested at most ${LIMITS.maxDepth} deep.`);
@@ -257,6 +267,106 @@ describe('/docs/pdf', () => {
     expect(text).not.toMatch(/Indic|colour emoji/);
     // The kill switch also stops stored and signed PDFs.
     expect(text).toContain('While it is off, stored PDF links (/i/...pdf) and signed PDF links answer it too.');
+  });
+
+  // Loaded through computed paths, as signed-url.ts below: they do not type-check under the Node project.
+  const pagePath = fileURLToPath(new URL('../../src/pdf/page.ts', import.meta.url));
+  const templatePath = fileURLToPath(new URL('../../src/pdf/template.ts', import.meta.url));
+  type PageModule = {
+    PLAIN_TEXT_STYLE: string;
+    headerFooter(header: string | null, footer: string | null, mark: boolean, margin: { top: string; bottom: string }): { headerTemplate?: string; footerTemplate?: string };
+  };
+  type TemplateModule = {
+    preparePdfFragment(source: string, data: Record<string, unknown>, what: 'header' | 'footer', options: { mark?: boolean }): { render(resolve: () => undefined): string; warnings: string[] };
+  };
+
+  it('says how a Free header and footer print: plain text with page numbers, in our style, cut to whole lines, as src/pdf/page.ts does', async () => {
+    const text = visibleText(article('docs/pdf.html'));
+    expect(text).toContain(
+      `On the ${PLANS.free.name} plan they share Chrome's header and footer with the free mark, so they are printed as plain text, with page numbers, in a fixed style of ours: full width, centred, 8 pt sans-serif in dark grey.`,
+    );
+    expect(text).toContain('Markup, style="" attributes, classes, <style> elements, images, SVG and MathML are not used, and a warning says so.');
+    expect(text).toContain(`the header in the top margin less 4 mm, the footer in the bottom margin less 9 mm, above the mark. At the ${PDF.freeMarkMinBottomMm} mm minimum bottom margin that is one line of footer, from about 16.4 mm two.`);
+    expect(text).toContain(`On ${PLANS.starter.name} and ${PLANS.pro.name} they are printed as written.`);
+    expect(text).toContain('The class names are case-sensitive: pagenumber prints nothing.');
+
+    const page = (await import(pagePath)) as PageModule;
+    expect(page.PLAIN_TEXT_STYLE).toMatch(/^width:100%;.*font-family:sans-serif;font-size:8pt;line-height:1\.3;color:#374151;.*text-align:center/);
+    const heights = (top: string, bottom: string) => {
+      const options = page.headerFooter('h', 'f', true, { top, bottom });
+      return [options.headerTemplate, options.footerTemplate].map((template) => Number(/max-height:([\d.]+)pt/.exec(template ?? '')?.[1]));
+    };
+    const line = 8 * 1.3;
+    expect(heights('4mm', `${PDF.freeMarkMinBottomMm}mm`)).toEqual([0, line]);
+    expect(heights('7.7mm', '16.3mm')).toEqual([line, line]);
+    expect(heights('15mm', '16.4mm')).toEqual([2 * line, 2 * line]);
+
+    // The example footer of the docs, on Free: its text and Chrome's page numbers, nothing else, with the warning.
+    const template = (await import(templatePath)) as TemplateModule;
+    const body = codeBlocks(article('docs/pdf.html'), 'json').map((block) => JSON.parse(block) as Record<string, any>).find((candidate) => candidate.template === 'report');
+    const footer = template.preparePdfFragment(body?.pdf.footer, body?.data, 'footer', { mark: true });
+    expect(footer.render(() => undefined)).toBe(`${body?.data.title} \u00b7 Page <span class="pageNumber"></span> of <span class="totalPages"></span>`);
+    expect(footer.warnings).toEqual([expect.stringContaining('On the Free plan the footer is printed as plain text next to the free mark')]);
+    expect(text).toContain('"Customer Support Review, Q3 2026 · Page 2 of 7" on page 2 of a seven-page report');
+  });
+
+  it('states the size limit, the daily cap on failed renders, the failure memory, the wait for identical requests and the brake, as the engine does', () => {
+    const text = visibleText(article('docs/pdf.html'));
+    const mb = PDF.maxPdfBytes / (1024 * 1024);
+    const minutes = PDF.failedRenderMemoryMs / 60_000;
+    const waitSeconds = (2 * PDF.renderTimeoutMs + 30_000) / 1000;
+    // Size limit (src/pdf/render.ts).
+    expect(read('src/pdf/render.ts')).toContain('The PDF is larger than ${PDF.maxPdfBytes / (1024 * 1024)} MB');
+    expect(text).toContain(`A document of more than ${PDF.maxPages} pages, or one that makes a PDF over ${mb} MB, is refused with 422 template_error and not charged.`);
+    expect(text).toContain(`PDF size${mb} MB; a larger PDF is refused (HTTP 422) and not charged`);
+    expect(text).not.toMatch(/Failures count nothing|A failed render is not counted/);
+    // What counts toward the cap, and what never does (src/pdf/render.ts failureCause, src/pdf/guard.ts).
+    expect(text).toContain(`What counts: a render that fails in the browser because of the document (more than ${PDF.maxPages} pages, a PDF over ${mb} MB, a timeout, a document the browser cannot render, or a PDF whose page count cannot be read), and a PDF that needs more images than are left (402 after rendering).`);
+    expect(text).toContain('and failures of Browser Run itself: a server error that is not a timeout, a refused or unreachable call, a PDF that did not finish arriving, or the renderer being busy. Those never count.');
+    expect(text).toContain(`POST /v1/pdf counts per account. Signed PDF links count per site, each site with its own ${PDF.maxFailedRendersPerDay.free} or ${PDF.maxFailedRendersPerDay.paid}: a link's render counts on its site whoever opens it, and reaching the cap stops only that site's new signed PDFs. POST /v1/pdf and your other sites are not affected.`);
+    expect(text).toContain('a render takes its place under the cap before it starts, so requests sent at the same time cannot pass it together. Past it, new PDFs there answer 429 rate_limited until 00:00 UTC');
+    const guard = read('src/pdf/guard.ts');
+    expect(guard).toContain("`${scope.kind === 'site' ? 'pdffs' : 'pdff'}:${scope.id}:${day}`");
+    expect(guard).toContain('details: { limit, scope: scope.kind, period_seconds: DAY_MS / 1000, retry_after_seconds: retryAfter }');
+    expect(text).toContain('details { "limit", "scope": "account" or "site", "period_seconds", "retry_after_seconds" }');
+    // The failure memory, with the message suffix guard.ts adds.
+    expect(text).toContain(`For ${minutes} minutes after a render fails because of the document, or needs more images than are left, the identical request gets the same answer without being rendered and without counting again.`);
+    expect(guard).toContain('(An identical request failed like this at ${clock(at)}; until ${clock(until)} it gets this answer without being rendered again.)');
+    expect(text).toContain('(An identical request failed like this at HH:MM:SS UTC; until HH:MM:SS UTC it gets this answer without being rendered again.)');
+    expect(text).toContain('A remembered 402 is checked again against what is left now: after a top-up or an upgrade the PDF is rendered normally');
+    expect(text).toContain('Failures of Browser Run itself are never remembered');
+    // Identical requests at the same time (src/pdf/service.ts).
+    expect(text).toContain(`Only one of them renders. The others wait for it, up to ${waitSeconds} seconds, and get its result: the stored PDF with credits_used: 0, cached: true and X-LTC-Cache: hit, or, when it failed because of the document, the same answer.`);
+    expect(read('src/pdf/service.ts')).toContain('has not finished; this request waited ${Math.round(waitedMs / 1000)} s for it and charged nothing.');
+    expect(text).toContain('"An identical request started making this PDF ... s ago and has not finished; this request waited ... s for it and charged nothing."');
+    // The brake: Free and tool time only, an hour's Retry-After, up to 24 hours.
+    expect(guard).toContain("(b.source = 'tool' OR u.plan = 'free')");
+    expect(guard).toContain('const BRAKE_RETRY_SECONDS = 3600;');
+    expect(text).toContain(`When ${PLANS.free.name} accounts and the free tools together have used far more browser time than usual in the last 24 hours, new PDFs on the ${PLANS.free.name} plan and in the free tools answer 429 rate_limited, with a Retry-After of an hour. Only their own browser time counts toward this brake: PDFs made on ${PLANS.starter.name} and ${PLANS.pro.name} never engage it. It lifts by itself as that use ages out of the last 24 hours, so it can last up to 24 hours after the use stopped.`);
+    expect(text).not.toContain('for a while');
+    // HEAD of a signed link (src/pdf/service.ts assertPdfWouldRender).
+    expect(text).toContain('HEAD never renders and never counts, but it answers what the GET would answer before rendering: 402 when not enough images are left, 429 when the site\'s daily cap on failed renders is reached');
+  });
+
+  it('says "not charged" in every error row, and which errors count toward the daily cap on failed renders', () => {
+    const rows = new Map<string, string>();
+    for (const match of article('docs/pdf.html').matchAll(/<tr>\n<td>(\d{3})<\/td>\n<td><code>([a-z_]+)<\/code><\/td>\n<td>([\s\S]*?)<\/td>\n<\/tr>/g)) {
+      rows.set(`${match[1]} ${match[2]}`, visibleText(match[3] ?? ''));
+    }
+    const minutes = PDF.failedRenderMemoryMs / 60_000;
+    for (const row of ['402 quota_exceeded', '422 template_error', '422 image_fetch_failed', '429 rate_limited', '500 render_failed', '504 render_timeout']) {
+      expect(rows.get(row), row).toContain('Nothing was charged');
+    }
+    for (const [row, when] of rows) expect(when, row).not.toContain('Nothing was counted');
+    expect(rows.get('402 quota_exceeded')).toContain(`A 402 after rendering counts toward the daily cap on failed renders and is remembered for ${minutes} minutes.`);
+    expect(rows.get('422 template_error')).toContain(`a PDF over ${PDF.maxPdfBytes / (1024 * 1024)} MB (details.max_bytes)`);
+    expect(rows.get('422 template_error')).toContain(`it counts toward the daily cap on failed renders and is remembered for ${minutes} minutes.`);
+    expect(rows.get('429 rate_limited')).toContain('the daily cap on failed renders is reached, until 00:00 UTC, per account or per site');
+    expect(rows.get('429 rate_limited')).toContain(`(Retry-After of an hour, see Limits); an identical request is still making this PDF after ${(2 * PDF.renderTimeoutMs + 30_000) / 1000} seconds`);
+    expect(read('src/pdf/render.ts')).toContain("'The PDF renderer did not finish sending the PDF. Try again in a moment.'");
+    expect(rows.get('500 render_failed')).toContain('did not finish sending the PDF ("The PDF renderer did not finish sending the PDF. Try again in a moment.")');
+    expect(rows.get('500 render_failed')).toContain('A failure of Browser Run itself does not count toward the daily cap on failed renders and is not remembered; a PDF whose page count cannot be read counts.');
+    expect(rows.get('504 render_timeout')).toContain(`Nothing was charged. It counts toward the daily cap on failed renders and is remembered for ${minutes} minutes.`);
   });
 
   it('follows the docs rules: no unresolved token, TODO or localhost, no other payment provider, prices only from the catalog', () => {
@@ -428,6 +538,43 @@ describe('openapi.yaml (PDF paths)', () => {
     // A signed PDF link keeps the card URL rules.
     expect(text).toContain(`at most ${LIMITS.maxDataKeys} parameters, each value (items included) at most ${LIMITS.maxDataValueChars} characters`);
     expect(text).toContain(`at most ${LIMITS.maxSignedUrlChars} characters`);
+  });
+
+  it('states the size limit, the daily cap on failed renders, the failure memory, the wait and the brake, with the numbers of src/config.ts', () => {
+    const text = pdfPart().replace(/\s+/g, ' ');
+    const mb = PDF.maxPdfBytes / (1024 * 1024);
+    const minutes = PDF.failedRenderMemoryMs / 60_000;
+    const waitSeconds = (2 * PDF.renderTimeoutMs + 30_000) / 1000;
+    const { free, paid } = PDF.maxFailedRendersPerDay;
+    expect(text).toContain(`A PDF may have at most ${PDF.maxPages} pages and at most ${mb} MB; a longer or larger one answers 422 and is not charged.`);
+    expect(text).toContain(`the header and footer are printed as plain text.`);
+    expect(text).toContain(`a timeout, a document the browser cannot render, an unreadable page count), and PDFs that need more images than are left (402 after rendering), are capped at ${free} per UTC day on Free and ${paid} on Starter and Pro, per account for this endpoint and per site for signed PDF links; past the cap the answer is 429 until 00:00 UTC. Failures of Browser Run itself never count.`);
+    expect(text).toContain(`Such a failure is remembered for ${minutes} minutes: the identical request gets the same answer without being rendered or counted again`);
+    expect(text).toContain(`Of identical requests sent at the same time only one renders; the others wait up to ${waitSeconds} seconds for its result.`);
+    expect(text).toContain('HEAD never renders and never counts. It answers what the GET would answer before rendering: 402 when not enough images are left, 429 when the site\'s daily cap on failed renders is reached or, for a Free account, the free brake is on, and the status of a remembered failure (for example 422).');
+    expect(text).toContain(`images over ${PDF.maxAssetBytes / (1024 * 1024)} MB together, a PDF over ${mb} MB (details.max_bytes)`);
+    expect(text).toContain(`Nothing is stored or charged. When the browser was reached (more than ${PDF.maxPages} pages, a PDF over ${mb} MB, a document it could not render), it counts toward the daily cap on failed renders, and the identical request gets the same answer for ${minutes} minutes without being rendered again.`);
+    expect(text).toContain(`render_timeout. Loading or printing the document took longer than ${PDF.renderTimeoutMs / 1000} seconds. Nothing is charged; it counts toward the daily cap on failed renders, and the identical request gets the same answer for ${minutes} minutes`);
+    expect(text).toContain(`A 402 after rendering counts toward the daily cap on failed renders and is remembered for ${minutes} minutes`);
+    expect(text).toContain(`rate_limited. Nothing is charged. One of: a rate limit; the daily cap on failed renders (${free} per UTC day on Free, ${paid} on Starter and Pro, per account for POST /v1/pdf and per site for signed links; Retry-After is the time until 00:00 UTC`);
+    expect(text).toContain('(Retry-After 3600; it lifts as that use ages out of the 24-hour window)');
+    expect(text).toContain(`an identical request still making this PDF after ${waitSeconds} seconds`);
+    expect(text).toContain('render_failed or internal_error. Nothing is charged. render_failed: the renderer failed, could not be reached or did not finish sending the PDF; these failures of Browser Run do not count toward the daily cap on failed renders and are not remembered.');
+    expect(text).toContain('the header and footer are printed as plain text in a fixed style (their text, line breaks and the pageNumber, totalPages, date and title classes; no markup, styles or images, with a warning)');
+    expect(text).not.toContain('Nothing is counted');
+    expect(text).not.toContain('lose their <style> elements');
+    // Both PDF paths answer with the PDF responses, which describe all of this.
+    for (const name of ['PdfRateLimited', 'PdfServerError', 'PdfRenderTimeout', 'PdfUnprocessable', 'PdfQuotaExceeded']) {
+      expect((pdfPart().match(new RegExp(`\\$ref: "#/components/responses/${name}"`, 'g')) ?? []).length, name).toBe(2);
+    }
+    expect(pdfPart()).not.toMatch(/\$ref: "#\/components\/responses\/(RateLimited|ServerError)"/);
+    // Each of those responses has its own description and exactly one content block.
+    for (const name of ['PdfRateLimited', 'PdfServerError', 'PdfRenderTimeout', 'PdfUnprocessable', 'PdfQuotaExceeded']) {
+      const start = pdfPart().indexOf(`\n    ${name}:\n`);
+      const block = pdfPart().slice(start + 1, start + 1 + (/\n {4}\S/.exec(pdfPart().slice(start + 1))?.index ?? Infinity));
+      expect(block.match(/^ {6}description:/gm), name).toHaveLength(1);
+      expect(block.match(/^ {6}content:/gm), name).toHaveLength(1);
+    }
   });
 
   it('lists the request fields the API accepts', () => {

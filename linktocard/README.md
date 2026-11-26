@@ -214,8 +214,14 @@ production are GO-LIVE.md section 10.
 - **Renderer.** One `env.BROWSER.quickAction('pdf', options)` call per PDF (`src/pdf/render.ts`).
   The browser only ever receives our own sanitised document as `html`, never a `url`, with
   JavaScript off, `allowRequestPattern: ['^data:']` (no network access), `cacheTTL: 0` and
-  `tagged: false`. No headless-browser package is a dependency;
-  `tests/node/forbidden-deps.test.ts` enforces that.
+  `tagged: false`. One deadline (`CALL_TIMEOUT_MS`, 2 x `PDF.renderTimeoutMs` + 15 s) covers
+  the call, the PDF body and error bodies (read up to 64 KB). The PDF is refused (422) when its
+  `Content-Length` is over `PDF.maxPdfBytes`, and is otherwise read with a running count and
+  cancelled past it, so no more than that is ever kept (with chunks and no `Content-Length`,
+  about twice that for a moment while they are joined). A body that stops, or does not arrive
+  before the deadline, is 500 `render_failed` and counts as Browser Run's failure, not the
+  document's. `browser_usage.wall_ms` is measured to the end of reading the body. No
+  headless-browser package is a dependency; `tests/node/forbidden-deps.test.ts` enforces that.
 - **Template language and sanitiser** (`src/pdf/template.ts`, `src/pdf/css.ts`): `{{key}}`
   placeholders and `{{#items}}` sections filled in on the parsed tree; scripts, event
   attributes, frames, `javascript:` links and the like removed; `@import`, remote `@font-face`
@@ -224,20 +230,44 @@ production are GO-LIVE.md section 10.
   and embedded (`src/pdf/assets.ts`); the bundled fonts are embedded when the CSS names them.
 - **Counting.** A PDF counts as several images by its page count (`pdfUnits()` in
   `src/config.ts`; the table is on `/docs/pdf`), charged as one block from the allowance or one
-  top-up, never split (`chargePdf` in `src/lib/quota.ts`; its ledger row is "pending" until the
-  block is taken, and an identical request is served only from a paid row). The page count is
-  read from the PDF's cross-reference table and page tree (`src/pdf/count.ts`), never by
-  searching its text. Free-plan and free-tool PDFs carry the "Made with Link To Card" footer
-  line on a white background of its own; next to it the customer's header and footer lose their
-  `<style>` elements and are kept inside their own margin (`src/pdf/page.ts`).
+  top-up, never split. Its ledger row is claimed as "pending" before anything is rendered
+  (`claimPdf` in `src/lib/quota.ts`) and labelled paid when the block is taken
+  (`chargeClaimedPdf`), so of several identical requests only one renders: the others wait for
+  it (`PDF_DUPLICATE_WAIT_MS` in `src/pdf/service.ts`, 90 s) and are served its stored PDF free,
+  or the same failure. A claim older than `PDF_PENDING_STALE_MS` (180 s) can be taken over. The
+  page count is read from the PDF's cross-reference table and page tree (`src/pdf/count.ts`),
+  never by searching its text, and only from windows of the file: the last 2 KB, each xref
+  section (64 KB, doubling up to 8 MiB) and each object (1 KB, doubling up to 4 MiB); a larger
+  structure makes the count unreadable (500, not charged). Free-plan and free-tool PDFs carry
+  the "Made with Link To Card" footer line on a white background of its own; next to it the
+  customer's header and footer are printed as plain text in our own style
+  (`preparePdfFragment` with `mark` in `src/pdf/template.ts`, `headerFooter` in
+  `src/pdf/page.ts`), so no customer element, attribute or style reaches the document Chrome
+  renders them in with the mark.
 - **Cost tracking.** Every browser call is a row in `browser_usage` (kept
   `PDF.browserUsageRetentionDays` days), with the time Browser Run reported and the measured
   length of the call (counted when Browser Run reports none: timeouts, 5xx). The daily cron emails
   `SUPPORT_EMAIL` when the last 24 hours used more browser time than
-  `PDF_DAILY_BROWSER_MS_BUDGET`. Two automatic limits (`src/pdf/guard.ts`): an account gets
-  `PDF.maxFailedRendersPerDay` renders per UTC day that reach the browser and charge nothing,
-  then 429; and while the last 24 hours used more than `PDF.freeBrakeBudgetMultiple` daily
-  budgets, Free-plan renders and the free tools answer 429. On 2026-11-25 Cloudflare's
+  `PDF_DAILY_BROWSER_MS_BUDGET`. Three automatic limits (`src/pdf/guard.ts`):
+  - the failed-render cap: `PDF.maxFailedRendersPerDay` renders per UTC day, by the owner's
+    plan, that reach the browser and fail because of the document (more than
+    `PDF.maxPages` pages, over `PDF.maxPdfBytes`, a timeout, a browser 422, an unreadable page
+    count) or need more images than are left (402 after rendering), then 429 until 00:00 UTC.
+    It counts per account for `POST /v1/pdf` and per site for signed links, and a render
+    reserves its slot with an atomic bump before the browser runs, so concurrent requests
+    cannot pass it. Browser Run's own failures (5xx without a timeout, 400, unreachable, busy,
+    a body that stopped) give the slot back and never count;
+  - the failure memory: such a failure is remembered for `PDF.failedRenderMemoryMs` by cache
+    key (`tool_usage`, bucket `pdfm:<cache key>:<answer>`), and the identical request gets the
+    same answer without rendering or counting (a remembered 402 is checked again against what
+    is left now);
+  - the free brake: while the browser time of Free accounts and the free tools in the last 24
+    hours is over `PDF.freeBrakeBudgetMultiple` daily budgets, Free-plan renders and the free
+    tools answer 429 (`Retry-After: 3600`); paid accounts' browser time never engages it. It
+    lifts as that use ages out of the 24-hour window, at the latest 24 hours after it stopped.
+
+  `HEAD` of a signed link runs the same checks a render runs first (402, the site's cap, the
+  brake, a remembered failure) and never renders or counts. On 2026-11-25 Cloudflare's
   pricing page listed Browser Run on Workers Paid as 10 browser hours a month included, then
   $0.09 per hour.
 - **Starter templates** (`src/pdf/templates/`): invoice, receipt, quote, certificate of
@@ -375,16 +405,38 @@ it if it is wrong.
   Worker and inlined (27 images, just under the 10 MB image cap, printed as 15 pages, so Browser
   Run takes a request that large); a print that cannot finish comes back from Browser Run as 422
   after about 61 s, mentions "timeout" and answers 504 `render_timeout`, recorded at its measured
-  length and counted as a failed render; the daily alarm finds an over-budget day and calls
+  length and counted as a failed render (since 2026-11-26 also remembered for
+  `PDF.failedRenderMemoryMs`); the daily alarm finds an over-budget day and calls
   Resend (run locally; the send itself could not leave the build container). Still not checked:
-  that the browser makes no request of its own for a remote `<img>` or CSS `url()` (GO-LIVE
-  section 10 has the check; by design the browser only ever receives data: URLs) and the alarm
-  email arriving in the SUPPORT_EMAIL inbox. Table header rows repeat on every page (the 60-item
+  that `allowRequestPattern: ['^data:']` blocks a browser request of its own. A PDF made
+  through Link To Card cannot show it, because the sanitiser turns every address it sees into a
+  data: URL first; GO-LIVE section 10 has a direct Browser Run call for it. Also not checked: the
+  alarm email arriving in the SUPPORT_EMAIL inbox. Table header rows repeat on every page (the 60-item
   invoice shows them on pages 2 and 3), and the docs' page-number footer prints "Page 1 of 7" to
-  "Page 7 of 7", above the Free line on a Free account.
+  "Page 7 of 7", above the Free line on a Free account. Chrome writes one classic
+  cross-reference section, which is what the page counter reads.
+  The changes of 2026-11-26 (changelog) are tested against the mocked binding and in local
+  Playwright Chromium only, not yet on staging: the plain-text Free header and footer, the
+  `PDF.maxPdfBytes` cap (whether Browser Run sends `Content-Length` on PDF answers is not
+  known; the cap holds either way), the wait of identical requests, the failed-render cap per
+  account and per site, the failure memory and the brake counting Free and tool time only.
 
 ## Changelog
 
+- **2026-11-26: PDF fixes after the second review** (not deployed; PDFs are still off in
+  production). Free-plan headers and footers are printed as plain text with page numbers in a
+  fixed style next to the mark, so no customer markup shares Chrome's footer with it; `@page`
+  after `<!--` or `-->` is dropped like any other `@page`. A PDF over `PDF.maxPdfBytes` (20 MB)
+  is refused with 422 and never buffered past that size; the page counter reads only windows of the file. One
+  deadline covers the whole browser call. Identical requests wait for one render instead of
+  rendering again. The daily failed-render cap counts only the document's own failures and
+  402s after rendering, per account for `POST /v1/pdf` and per site for signed links, reserved
+  before the browser runs; Browser Run's own failures never count. A failed document is
+  remembered for `PDF.failedRenderMemoryMs` (10 minutes) and answered without rendering. The
+  free brake counts the browser time of Free accounts and the free tools only. `HEAD` of a
+  signed link answers what the `GET` would answer before rendering. No migration. Where AI was
+  used: written with AI tools (Claude Code) by three parallel owners and an integration pass,
+  after a second round of separate AI reviews; Ahmad reviews before release.
 - **2026-11-25: PDF documents from HTML templates** (on staging; off in production until Ahmad approves).
   `POST /v1/pdf`, signed `/v1/pdf/...` links, stored PDFs under `/i/`, five PDF starter templates,
   `/docs/pdf`, three free tools and three guides, all behind `PDF_ENABLED` and the `SITE_PDF`

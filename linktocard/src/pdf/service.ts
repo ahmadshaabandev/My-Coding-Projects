@@ -27,7 +27,7 @@
  */
 import { PLAN_ORDER, formatCount, getPlan } from '../billing/plans';
 import { DAY_MS, PDF, pdfUnits } from '../config';
-import { first, run } from '../db/client';
+import { first, isMissingColumnError, run } from '../db/client';
 import { randomId, sha256Hex } from '../lib/crypto';
 import { quotaWarningEmail, sendEmail } from '../lib/email';
 import { ApiError } from '../lib/errors';
@@ -36,6 +36,7 @@ import {
   chargeClaimedPdf,
   claimPdf,
   pdfCapacity,
+  peekPdfClaim,
   PDF_PENDING_STALE_MS,
   readPdfLedger,
   releasePdfClaim,
@@ -56,6 +57,7 @@ import {
   failureRange,
   forgetFailure,
   giveBackFailedRender,
+  keepFailedRender,
   quotaFailureNote,
   readRememberedFailure,
   recallFailure,
@@ -65,7 +67,7 @@ import {
   type RememberedFailure,
 } from './guard';
 import { contentDisposition, headerFooter, parseFormat, parseLandscape, parseMargin, withMarkRoom } from './page';
-import { printPdf, type FailureCause, type PrintRequest } from './render';
+import { CALL_TIMEOUT_MS, printPdf, type FailureCause, type PrintRequest } from './render';
 import { preparePdfDocument, preparePdfFragment, type PdfData, type PreparedPdfHtml } from './template';
 import { PDF_TEMPLATE_IDS, getPdfTemplate } from './templates';
 import type { PdfPageSetup } from './templates/types';
@@ -204,14 +206,16 @@ export interface RenderedPdf {
 export interface RenderAttempt {
   userId: string | null;
   source: 'api' | 'signed' | 'tool';
+  /** The account's plan in force for this render (browser_usage.plan); none for the free tools. */
+  plan?: UsageSummary['plan'] | null;
 }
 
 /** Steps 4 of the module comment: pure, throws template_error / invalid_request before anything is downloaded. */
 export function preparePdf(job: PdfJob): PreparedPdf {
   const document = preparePdfDocument({ html: job.template.html, css: job.template.css, data: job.data }, { fontFaces: bundledFontFaces });
-  // Next to the free mark, header and footer stylesheets are dropped (src/pdf/page.ts headerFooter).
-  const header = job.header === null ? null : preparePdfFragment(job.header, job.data, 'header', { styles: !job.mark });
-  const footer = job.footer === null ? null : preparePdfFragment(job.footer, job.data, 'footer', { styles: !job.mark });
+  // Next to the free mark, the header and footer are printed as plain text (src/pdf/template.ts, src/pdf/page.ts headerFooter).
+  const header = job.header === null ? null : preparePdfFragment(job.header, job.data, 'header', { mark: job.mark });
+  const footer = job.footer === null ? null : preparePdfFragment(job.footer, job.data, 'footer', { mark: job.mark });
   const warnings = [...new Set([document, header, footer].flatMap((part) => part?.warnings ?? []))];
   return { job, document, header, footer, warnings };
 }
@@ -222,19 +226,19 @@ async function recordBrowserUsage(
   outcome: { status: number; browserMs: number | null; wallMs: number; pages: number | null },
   now: number,
 ): Promise<void> {
+  const values = [randomId('bu'), attempt.userId, attempt.source, outcome.status, outcome.browserMs, outcome.wallMs, outcome.pages, now] as const;
   try {
     await run(
       db,
-      'INSERT INTO browser_usage (id, user_id, source, status, browser_ms, wall_ms, pages, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)',
-      randomId('bu'),
-      attempt.userId,
-      attempt.source,
-      outcome.status,
-      outcome.browserMs,
-      outcome.wallMs,
-      outcome.pages,
-      now,
-    );
+      'INSERT INTO browser_usage (id, user_id, source, status, browser_ms, wall_ms, pages, created_at, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)',
+      ...values,
+      attempt.plan ?? null,
+    ).catch(async (error: unknown) => {
+      // Deployed before migration 0007: the row is still recorded, without the plan.
+      if (!isMissingColumnError(error)) throw error;
+      console.error('browser_usage.plan is missing: apply migration 0007_browser_usage_plan.sql');
+      return run(db, 'INSERT INTO browser_usage (id, user_id, source, status, browser_ms, wall_ms, pages, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)', ...values);
+    });
   } catch (error) {
     // Cost tracking must not fail a render that already happened.
     console.error('recording browser usage failed:', error);
@@ -466,10 +470,8 @@ export interface PdfResult {
   usage: UsageSummary | null;
 }
 
-/** CALL_TIMEOUT_MS in src/pdf/render.ts: the longest one browser call is waited for. */
-const RENDER_DEADLINE_MS = 2 * PDF.renderTimeoutMs + 15_000;
-/** How long a request waits for an identical request that is making the same PDF. */
-export const PDF_DUPLICATE_WAIT_MS = RENDER_DEADLINE_MS + 15_000;
+/** How long a request waits for an identical request that is making the same PDF: one browser call (CALL_TIMEOUT_MS) and 15 s. */
+export const PDF_DUPLICATE_WAIT_MS = CALL_TIMEOUT_MS + 15_000;
 /** Pauses between looks at that request's ledger row: from about 250 ms, growing to 2 s. */
 const WAIT_FIRST_MS = 250;
 const WAIT_LONGEST_MS = 2_000;
@@ -493,9 +495,11 @@ function untilSettled<T>(background: Background, work: Promise<T>): Promise<T> {
   return work;
 }
 
-/** The account for POST /v1/pdf, the site for its signed links (src/pdf/guard.ts). */
+/** The account for POST /v1/pdf; for signed links the site, and all sites of its owner together (src/pdf/guard.ts). */
 function failureScope(request: PdfRequest): FailureScope {
-  return request.source === 'signed' && request.siteId !== null ? { kind: 'site', id: request.siteId } : { kind: 'account', id: request.user.id };
+  return request.source === 'signed' && request.siteId !== null
+    ? { kind: 'site', id: request.siteId, ownerId: request.user.id }
+    : { kind: 'account', id: request.user.id };
 }
 
 function storedResult(stored: { pdf: StoredPdf; body: ReadableStream | null }): PdfResult {
@@ -538,10 +542,10 @@ export async function assertPdfWouldRender(env: Env, request: PdfRequest, cacheK
 }
 
 /**
- * Reserves a failed-render slot, applies the render rate limits and prints. On a browser error
- * the slot is kept for a document failure and given back otherwise, and `release` is called
- * with the failure to remember (if any); any other exception gives the slot back and calls
- * `release` without one. Either way the error is rethrown.
+ * Takes a place under the failed-render cap, applies the Free render rate limit and prints. On
+ * a browser error the place becomes a kept failure for a document failure and is given back
+ * otherwise, and `release` is called with the failure to remember (if any); any other exception
+ * gives the place back and calls `release` without one. Either way the error is rethrown.
  */
 async function reserveAndPrint(
   env: Env,
@@ -556,13 +560,13 @@ async function reserveAndPrint(
   let settled = false;
   try {
     reservation = await reserveFailedRender(env, failureScope(request), plan, now);
-    if (request.renderRateLimitKey) await enforceRateLimit(env, 'RL_KEY', request.renderRateLimitKey);
     if (plan === 'free') await enforceRateLimit(env, 'RL_PDF_FREE', user.id);
-    const print = await printAttempt(env, preparePdf(job), { userId: user.id, source: request.source }, now);
+    const print = await printAttempt(env, preparePdf(job), { userId: user.id, source: request.source, plan }, now);
     if (print.error === null) return { rendered: print.rendered, reservation };
     settled = true;
     // Only the document's own failures count and are remembered; Browser Run failing or busy is not the customer's doing.
     if (print.cause === 'document') {
+      await keepFailedRender(env, reservation);
       await release(documentFailureNote(cacheKey, print.error, now));
     } else {
       await giveBackFailedRender(env, reservation);
@@ -578,9 +582,10 @@ async function reserveAndPrint(
   }
 }
 
-async function renderClaimed(env: Env, background: Background, request: PdfRequest, claim: PdfClaim, plan: UsageSummary['plan'], now: number): Promise<PdfResult> {
+/** Steps 5-11 for a claim this request holds; its time is the claim's (createdAt). */
+async function renderClaimed(env: Env, background: Background, request: PdfRequest, claim: PdfClaim, plan: UsageSummary['plan']): Promise<PdfResult> {
   const { user, job } = request;
-  const { cacheKey } = claim;
+  const { cacheKey, createdAt: now } = claim;
   let held = true;
   const release = async (note?: PdfFailureNote): Promise<void> => {
     if (!held) return;
@@ -614,7 +619,8 @@ async function renderClaimed(env: Env, background: Background, request: PdfReque
   }
 
   if (result.status === 'quota_exceeded') {
-    // Released and remembered by chargeClaimedPdf; the browser time is recorded and the slot kept.
+    // Released and remembered by chargeClaimedPdf; the browser time is recorded and the render counts.
+    await keepFailedRender(env, reservation);
     throw pdfQuotaError(env, result.usage, units, false);
   }
   await giveBackFailedRender(env, reservation);
@@ -643,8 +649,32 @@ async function renderClaimed(env: Env, background: Background, request: PdfReque
   return { pdf, cached: false, body: rendered.bytes, creditsUsed: units, warnings: rendered.warnings, usage: result.usage };
 }
 
-/** A paid PDF whose R2 object is gone (a failed write): rendered again, stored, never charged again. */
+/**
+ * Of several requests that find a paid PDF without its R2 object, one renders it again: the one
+ * that takes this lock (tool_usage "pdfr:<cache key>"). The others keep waiting for the object.
+ * The lock ends when that render does, or after PDF_PENDING_STALE_MS if its request was cut off.
+ */
+const LOCK_PAID_AGAIN_SQL = `INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, 1, ?2)
+  ON CONFLICT (bucket) DO UPDATE SET count = 1, expires_at = excluded.expires_at WHERE tool_usage.expires_at <= ?3
+  RETURNING bucket`;
+const paidAgainLock = (cacheKey: string): string => `pdfr:${cacheKey}`;
+
+async function lockPaidAgain(db: D1Database, cacheKey: string, now: number): Promise<boolean> {
+  return (await first<{ bucket: string }>(db, LOCK_PAID_AGAIN_SQL, paidAgainLock(cacheKey), now + PDF_PENDING_STALE_MS, now)) !== null;
+}
+
+/** A paid PDF whose R2 object is gone (a failed write): rendered again under its lock, stored, never charged again. */
 async function renderPaidAgain(env: Env, request: PdfRequest, ledger: PdfLedgerState, cacheKey: string, plan: UsageSummary['plan'], now: number): Promise<PdfResult> {
+  try {
+    return await renderPaidAgainLocked(env, request, ledger, cacheKey, plan, now);
+  } finally {
+    await run(env.DB, 'DELETE FROM tool_usage WHERE bucket = ?1', paidAgainLock(cacheKey)).catch((error: unknown) =>
+      console.error(`releasing the lock of ${cacheKey}.pdf failed:`, error),
+    );
+  }
+}
+
+async function renderPaidAgainLocked(env: Env, request: PdfRequest, ledger: PdfLedgerState, cacheKey: string, plan: UsageSummary['plan'], now: number): Promise<PdfResult> {
   const { user, job } = request;
   const { rendered, reservation } = await reserveAndPrint(env, request, cacheKey, plan, now, async () => undefined);
   await giveBackFailedRender(env, reservation);
@@ -694,22 +724,33 @@ async function renderAndCharge(
 ): Promise<PdfResult> {
   const { user, job } = request;
   const plan = await preRenderChecks(env, request, now);
+  // Signed links: the site's render rate limit, for every request that renders or waits for an
+  // identical one (a waiter looks at the ledger for up to PDF_DUPLICATE_WAIT_MS).
+  if (request.renderRateLimitKey) await enforceRateLimit(env, 'RL_KEY', request.renderRateLimitKey);
   const range = failureRange(cacheKey);
   const ttlMs = getPlan(user.plan).cacheDays * DAY_MS;
-  const claim = (): Promise<PdfClaimResult> =>
-    claimPdf(env.DB, user, { cacheKey, siteId: request.siteId, source: request.source, template: job.template.label, r2Key: pdfR2Key(user.id, cacheKey), ttlMs }, now, range);
-
   const started = performance.now();
   let slept = 0;
+  const waitedMs = (): number => Math.max(slept, performance.now() - started);
+  // A claim made after waiting is dated when it is made, so PDF_PENDING_STALE_MS counts from there.
+  const at = (): number => now + Math.round(waitedMs());
+  const claim = (time: number): Promise<PdfClaimResult> =>
+    claimPdf(env.DB, user, { cacheKey, siteId: request.siteId, source: request.source, template: job.template.label, r2Key: pdfR2Key(user.id, cacheKey), ttlMs }, time, range);
+  // While waiting: read only, and claim (a write) only when the claim can succeed.
+  const look = async (time: number): Promise<PdfClaimResult> => {
+    const seen = await peekPdfClaim(env.DB, cacheKey, time, range);
+    return seen.status === 'free' ? claim(time) : seen;
+  };
+
   let pause = WAIT_FIRST_MS;
   let paidMissingSince: number | null = null;
-  let attempt = await claim();
+  let attempt = await claim(now);
   for (;;) {
-    if (attempt.status === 'claimed') return untilSettled(background, renderClaimed(env, background, request, attempt.claim, plan, now));
+    if (attempt.status === 'claimed') return untilSettled(background, renderClaimed(env, background, request, attempt.claim, plan));
     if (attempt.status === 'remembered') {
       // Throws the remembered answer; returns only when a remembered 402 fits now (and is forgotten).
       await answerRemembered(env, request, recallFailure(cacheKey, attempt.row), cacheKey, now, true);
-      attempt = await claim();
+      attempt = await claim(at());
       // Remembered again straight away (an identical request has just failed): look again after a pause.
       if (attempt.status !== 'remembered') continue;
     } else if (attempt.ledger.charged_to !== 'pending') {
@@ -717,9 +758,11 @@ async function renderAndCharge(
       const stored = await readStoredPdf(env.BUCKET, user.id, cacheKey, now, options.withBody);
       if (stored) return storedResult(stored);
       paidMissingSince ??= slept;
-      if (slept - paidMissingSince >= PAID_OBJECT_GRACE_MS) return untilSettled(background, renderPaidAgain(env, request, attempt.ledger, cacheKey, plan, now));
+      if (slept - paidMissingSince >= PAID_OBJECT_GRACE_MS && (await lockPaidAgain(env.DB, cacheKey, at()))) {
+        return untilSettled(background, renderPaidAgain(env, request, attempt.ledger, cacheKey, plan, at()));
+      }
     }
-    const waited = Math.max(slept, performance.now() - started);
+    const waited = waitedMs();
     if (waited >= options.maxWaitMs) {
       const ledger = attempt.status === 'held' ? attempt.ledger : { charged_to: 'pending' as const, created_at: now, expires_at: now };
       return waitedTooLong(env, request, ledger, now, waited);
@@ -728,7 +771,7 @@ async function renderAndCharge(
     await sleep(step);
     slept += step;
     pause = Math.min(pause * 2, WAIT_LONGEST_MS);
-    attempt = await claim();
+    attempt = await look(at());
   }
 }
 
