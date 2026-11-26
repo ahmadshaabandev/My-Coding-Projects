@@ -425,12 +425,15 @@ it if it is wrong.
   invoice shows them on pages 2 and 3), and the docs' page-number footer prints "Page 1 of 7" to
   "Page 7 of 7", above the Free line on a Free account. Chrome writes one classic
   cross-reference section, which is what the page counter reads.
-  The changes of 2026-11-26 (changelog) are tested against the mocked binding and in local
-  Playwright Chromium only, not yet on staging: the plain-text Free header and footer, the
-  `PDF.maxPdfBytes` cap (whether Browser Run sends `Content-Length` on PDF answers is not
-  known; the cap holds either way), the wait of identical requests, the failed-render cap per
-  account, per site and per account's sites, the failure memory and the brake counting Free and
-  tool time only (by the plan of each render).
+  The changes of 2026-11-26 (changelog), checked on staging the same day with real renders: a
+  Free footer is printed as plain text ("Footer ... Page 7 of 7") above the free mark, with the
+  warning, and markup that used to hide the mark has no effect; 10 identical requests sent at
+  once give one render and one charge, the other nine are served the stored PDF; a 60-page
+  document renders once (refused at 51 pages) and the next identical requests are answered from
+  the failure memory without a render. Not reached on staging: the `PDF.maxPdfBytes` cap (an
+  image that makes local Chromium write a 54 MB PDF came back from Browser Run as 1.25 MB, so
+  its Chrome compresses images more; whether it sends `Content-Length` is not known, and the cap
+  holds either way), the failed-render caps and the brake (tested against the mocked binding).
 
 ## Changelog
 
