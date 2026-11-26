@@ -111,20 +111,54 @@ export interface HeaderFooter {
 }
 
 /**
- * A customer header or footer next to the free mark. Chrome renders the header and footer
- * templates in one document, so the customer's markup is put in a box it cannot paint outside
- * of: no overflow, layout and paint containment (positioned content stays inside, nothing is
- * drawn past its edge), at most the height the margin leaves it. Its <style> elements are
- * already removed (src/pdf/service.ts preparePdf), so nothing it sends can select the mark.
+ * The classes Chrome fills in on every page of a header or footer, in the order its template
+ * applies them, so on an element with several the last one wins. (Chrome also knows "url",
+ * which is not offered: it would print the browser's address of the document.)
  */
-function contained(html: string, maxHeightMm: number): string {
-  return `<div style="position:relative;width:100%;max-height:${mm(Math.max(0, maxHeightMm))};overflow:hidden;contain:layout paint">${html}</div>`;
+export const PAGE_VALUE_CLASSES = ['date', 'title', 'pageNumber', 'totalPages'] as const;
+export type PageValueClass = (typeof PAGE_VALUE_CLASSES)[number];
+
+/** The only markup of a plain-text header or footer: an element Chrome fills in, and a line break. */
+export const pageValueSpan = (name: PageValueClass): string => `<span class="${name}"></span>`;
+export const PLAIN_LINE_BREAK = '<br>';
+const PLAIN_MARKUP = new RegExp(`${PLAIN_LINE_BREAK}|<span class="(?:${PAGE_VALUE_CLASSES.join('|')})"></span>`, 'g');
+
+/**
+ * Text that keeps only the markup of a plain-text header or footer (src/pdf/template.ts builds
+ * it): every other "<" and ">" is escaped, so no element we did not write can reach Chrome.
+ */
+export function plainTextOnly(html: string): string {
+  const escape = (text: string): string => text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let out = '';
+  let last = 0;
+  for (const match of html.matchAll(PLAIN_MARKUP)) {
+    out += escape(html.slice(last, match.index)) + match[0];
+    last = match.index + match[0].length;
+  }
+  return out + escape(html.slice(last));
 }
 
 /**
- * Chrome's header/footer options: the customer's (sanitised) templates and, when `mark` is
- * set, the free mark below the footer. `margin` is the page's top and bottom margin, which
- * bounds the customer's boxes on a marked PDF.
+ * How a header or footer prints next to the free mark: our own box, laid out like Chrome's
+ * own #header and #footer (full width, centred), in our font, size and colour, slightly
+ * stronger than the mark. It holds only plain text and Chrome's page values, and is cut off at
+ * the height the margin leaves it.
+ */
+export const PLAIN_TEXT_STYLE =
+  'width:100%;box-sizing:border-box;padding:0 10mm;font-family:sans-serif;font-size:8pt;line-height:1.3;color:#374151;' +
+  '-webkit-print-color-adjust:exact;print-color-adjust:exact;text-align:center;overflow-wrap:anywhere;overflow:hidden';
+
+function plainTextBox(text: string, maxHeightMm: number): string {
+  return `<div style="${PLAIN_TEXT_STYLE};max-height:${mm(Math.max(0, maxHeightMm))}">${plainTextOnly(text)}</div>`;
+}
+
+/**
+ * Chrome's header/footer options. Without the mark: the customer's sanitised templates as
+ * they are. With it (Free plan, free tools): Chrome renders the header, the footer and the mark
+ * in one document, so no customer markup goes there at all. The header and footer arrive as
+ * plain text (preparePdfFragment with `mark`), anything else in them is escaped here as well,
+ * and each sits in its own box sized to its margin (`margin`: the page's top and bottom
+ * margin). The mark comes last, below the footer, on its own white box at the highest z-index.
  */
 export function headerFooter(
   header: string | null,
@@ -138,9 +172,11 @@ export function headerFooter(
   }
   const top = marginToMm(margin.top, 'top');
   const bottom = marginToMm(margin.bottom, 'bottom');
-  const headerTemplate = header === null ? EMPTY_TEMPLATE : contained(header, top - CHROME_EDGE_PADDING_MM);
+  const headerTemplate = header === null || header === '' ? EMPTY_TEMPLATE : plainTextBox(header, top - CHROME_EDGE_PADDING_MM);
   const footerTemplate =
-    footer === null ? FREE_MARK_HTML : `<div style="width:100%">${contained(footer, bottom - CHROME_EDGE_PADDING_MM - MARK_LINE_MM)}${FREE_MARK_HTML}</div>`;
+    footer === null || footer === ''
+      ? FREE_MARK_HTML
+      : `<div style="width:100%">${plainTextBox(footer, bottom - CHROME_EDGE_PADDING_MM - MARK_LINE_MM)}${FREE_MARK_HTML}</div>`;
   return { displayHeaderFooter: true, headerTemplate, footerTemplate };
 }
 
