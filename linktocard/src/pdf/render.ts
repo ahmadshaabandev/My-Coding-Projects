@@ -43,6 +43,25 @@ export interface PrintOutcome {
   /** Pages counted in the returned PDF; null when there is none or it cannot be read. */
   pages: number | null;
   error: ApiError | null;
+  /**
+   * Why there is no usable PDF: 'document' when the document itself fails (a browser 422 or
+   * timeout, too many pages, a file too large or unreadable), 'provider' when Browser Run or our
+   * call to it failed (5xx, 400, an unreachable binding, a wrong content type), 'busy' for its
+   * 429. null on success. Only 'document' failures count against an account.
+   */
+  cause: FailureCause | null;
+}
+
+export type FailureCause = 'document' | 'provider' | 'busy';
+
+export function failureCause(outcome: Pick<PrintOutcome, 'error' | 'bytes' | 'pages'>): FailureCause | null {
+  const { error } = outcome;
+  if (error === null) return null;
+  if (error.code === 'rate_limited') return 'busy';
+  if (error.code === 'render_timeout' || error.code === 'template_error') return 'document';
+  // A PDF came back but its page count cannot be read: treated as the document's failure.
+  if (error.code === 'render_failed' && outcome.bytes !== null && outcome.pages === null) return 'document';
+  return 'provider';
 }
 
 const MESSAGE_CHARS = 300;
@@ -145,6 +164,11 @@ function withDeadline<T>(work: Promise<T>): Promise<T> {
  * the browser time of every attempt before it answers.
  */
 export async function printPdf(browser: BrowserRun, request: PrintRequest): Promise<PrintOutcome> {
+  const outcome = await printOnce(browser, request);
+  return { ...outcome, cause: failureCause(outcome) };
+}
+
+async function printOnce(browser: BrowserRun, request: PrintRequest): Promise<Omit<PrintOutcome, 'cause'>> {
   let response: Response;
   const started = Date.now();
   try {

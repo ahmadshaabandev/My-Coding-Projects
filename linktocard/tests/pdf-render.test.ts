@@ -15,7 +15,7 @@ import {
   sanitizeFilename,
   withMarkRoom,
 } from '../src/pdf/page';
-import { browserError, pdfEnabled, printPdf, quickActionOptions, type PrintRequest } from '../src/pdf/render';
+import { browserError, failureCause, pdfEnabled, printPdf, quickActionOptions, type PrintRequest } from '../src/pdf/render';
 import { dohAnswer, requestUrl } from './app-helpers';
 import { browserErrorResponse, mockBrowser, pdfResponse } from './pdf-helpers';
 
@@ -374,5 +374,19 @@ describe('inlineRemoteAssets', () => {
     expect(isOwnHost('LINKTOCARD.COM.', 'http://localhost:8787')).toBe(true);
     expect(isOwnHost('notlinktocard.com', 'http://localhost:8787')).toBe(false);
     expect(isOwnHost('localhost', 'http://localhost:8787')).toBe(true);
+  });
+});
+
+describe('failureCause', () => {
+  const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+  it.each([
+    [null, null, null, null],
+    [new ApiError('rate_limited', 'busy'), null, null, 'busy'],
+    [new ApiError('render_timeout', 'slow'), null, null, 'document'],
+    [new ApiError('template_error', 'browser 422 or too many pages'), null, null, 'document'],
+    [new ApiError('render_failed', 'unreadable page count'), pdfBytes, null, 'document'],
+    [new ApiError('render_failed', 'HTTP 503'), null, null, 'provider'],
+  ] as const)('%s -> %s', (error, bytes, pages, cause) => {
+    expect(failureCause({ error, bytes, pages })).toBe(cause);
   });
 });
