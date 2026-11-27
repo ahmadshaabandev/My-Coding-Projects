@@ -52,7 +52,8 @@ Ahmad approved only the free pages for production; every v3 API stays off there.
   on 2026-11-27, before that day's deploy (GO-LIVE.md section 11a).
 - **Production publishes only the approved free pages** (owner decision of 2026-11-27; deployed to
   staging and then production on 2026-11-27, production Worker version `f0eb445e`; the audit fixes the
-  same day, production `bb46082a`, staging `909574bd`). Live checks
+  same day, production `bb46082a`, staging `909574bd`; analytics and Terms decisions the same day,
+  production `65d05a46`, staging `eea07147`). Live checks
   that day: on staging, an email image counted 1 on its first open and 0 on four repeats (Free and
   Pro, 2 images for 7 opens), the five social starters answered 400 at the email size on
   `/v1/images`, `/api/sign` and `/api/preview` while inline HTML still rendered 1200 x 400, and a
@@ -685,8 +686,12 @@ it if it is wrong.
 
 ## Changelog
 
-- **2026-11-27: Owner decisions on analytics and the Terms** (deployed to staging and production
-  the same day).
+- **2026-11-27: Owner decisions on analytics and the Terms** (deployed to staging, Worker
+  `eea07147`, and production, Worker `65d05a46`, the same day; rollback `bb46082a`). Checked live on
+  production: in Chromium the beacon loads and reports on every page tried, with no CSP violation,
+  no cookie and no storage. Every built page is served byte for byte. The Terms show the
+  counterfeit rule and 27 November 2026, and the privacy policy names Web Analytics. The earlier
+  production checks still pass, and every switch, `CHECKOUT_ENABLED` included, is still `"false"`.
   - **Web Analytics.** The site's CSP allows Cloudflare Web Analytics, which the zone injects:
     `script-src https://static.cloudflareinsights.com`, `connect-src https://cloudflareinsights.com`.
     It reports to `/cdn-cgi/rum` on the same origin. The privacy policy names it as cookieless
