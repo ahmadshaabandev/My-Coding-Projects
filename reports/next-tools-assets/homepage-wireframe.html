@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homepage wireframe (proposal, not the live site)</title>
+<style>
+  :root { --ink:#1b1f24; --mute:#5c6670; --line:#d5dae0; --bg:#f6f7f9; --card:#fff; --free:#0b6b3a; --freebg:#e3f4ea; --paid:#6a3fb5; --paidbg:#eee7fa; --new:#b45309; }
+  * { box-sizing: border-box; } html, body { margin:0; }
+  body { font: 15px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  header { height: 52px; display:flex; align-items:center; gap:20px; padding:0 24px; background:#fff; border-bottom:1px solid var(--line); }
+  header .logo { font-weight:700; } header nav { margin-left:auto; display:flex; gap:18px; color:var(--mute); font-size:14px; } header .btn { border:1px solid var(--ink); border-radius:6px; padding:5px 12px; font-size:14px; }
+  .top { max-width: 1400px; margin: 0 auto; padding: 14px 24px 8px; display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  h1 { font-size: 20px; margin:0; font-weight:700; white-space:nowrap; }
+  .search { flex:1 1 260px; display:flex; align-items:center; gap:8px; height:40px; border:1.5px solid var(--ink); border-radius:8px; background:#fff; padding:0 12px; color:var(--mute); font-size:14px; min-width: 200px; }
+  .chips { display:flex; gap:6px; flex-wrap:nowrap; overflow-x:auto; } .chip { border:1px solid var(--line); background:#fff; border-radius:999px; padding:5px 11px; font-size:13px; white-space:nowrap; } .chip.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .grid { max-width: 1400px; margin: 0 auto; padding: 4px 24px 16px; display:grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0 18px; align-items:start; }
+  .col h2 { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--mute); margin: 8px 0 4px; font-weight:700; display:flex; justify-content:space-between; }
+  .tile { display:grid; grid-template-columns: 22px 1fr auto; column-gap:8px; align-items:center; height:50px; padding:0 8px; background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:5px; }
+  .ico { width:22px; height:22px; border-radius:5px; background:#c9d1da; grid-row: 1 / span 2; }
+  .name { font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; align-self:end; }
+  .desc { grid-column:2 / span 2; font-size:12px; color:var(--mute); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; align-self:start; }
+  .tag { font-size:10.5px; font-weight:700; border-radius:4px; padding:1px 5px; align-self:end; }
+  .tag.free { color:var(--free); background:var(--freebg); } .tag.paid { color:var(--paid); background:var(--paidbg); } .tag.both { color:var(--ink); background:#e7ebf0; }
+  .tile.new .ico { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--new); }
+  .short, .t-short, .legend { display:none; }
+  .foot { max-width:1400px; margin:0 auto; padding: 0 24px 24px; color:var(--mute); font-size:13px; }
+  /* Laptop heights: drop nothing, tighten rows */
+  @media (max-height: 720px) and (min-width: 900px) { .tile { height:44px; margin-bottom:4px; } .top { padding-top:10px; } }
+  /* Tablet: three columns */
+  @media (max-width: 1100px) and (min-width: 721px) { .grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+  /* Phone: names only, two columns, category headings span both columns */
+  @media (max-width: 720px) {
+    header { padding:0 14px; height:48px; } header nav a:not(.btn) { display:none; }
+    .top { padding: 8px 14px 4px; gap:8px; } h1 { font-size:16px; white-space:normal; flex-basis:100%; } .search { height:38px; flex-basis:100%; } .chips { flex-basis:100%; }
+    .grid { padding: 2px 14px 12px; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+    .col { display: contents; } .col h2 { grid-column: 1 / -1; margin: 6px 0 3px; }
+    .tile { height:38px; grid-template-columns: 18px 1fr auto; padding:0 7px; margin-bottom:4px; } .ico { width:18px; height:18px; grid-row:1; } .name { align-self:center; font-size:13px; } .desc { display:none; } .tag { align-self:center; font-size:9.5px; padding:1px 4px; }
+    .full, .t-full { display:none; } .short, .t-short { display:inline; }
+    .legend { display:block; flex-basis:100%; font-size:11px; color:var(--mute); }
+  }
+  /* Dense phone variant (?dense=1): three columns, no headings, colour = category, dot = free/paid */
+  @media (max-width: 720px) {
+    body.dense .grid { grid-template-columns: 1fr 1fr 1fr; gap: 0 5px; }
+    body.dense .col h2 { display:none; }
+    body.dense .tile { height:30px; grid-template-columns: 6px 1fr 8px; column-gap:5px; padding:0 5px; margin-bottom:3px; border-radius:6px; }
+    body.dense .ico { width:6px; height:18px; border-radius:2px; box-shadow:none; }
+    body.dense .name { font-size:11.5px; font-weight:600; }
+    body.dense .tag { width:8px; height:8px; padding:0; border-radius:50%; font-size:0; }
+    body.dense .tag.free { background:var(--free); } body.dense .tag.paid { background:var(--paid); } body.dense .tag.both { background:linear-gradient(90deg, var(--free) 50%, var(--paid) 50%); }
+    body.dense .c0 .ico { background:#2563eb; } body.dense .c1 .ico { background:#db2777; } body.dense .c2 .ico, body.dense .c3 .ico { background:#dc2626; } body.dense .c4 .ico { background:#059669; }
+    body.dense .legend { font-size:10.5px; }
+  }
+</style></head><body>
+<header><span class="logo">▣ Link To Card</span><nav><a>Pricing</a><a>Docs</a><a>Sign in</a><a class="btn">Start free</a></nav></header>
+<div class="top">
+  <h1>Every tool, one click away.</h1>
+  <div class="search">⌕ Search tools…  <span style="margin-left:auto;border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:12px">/</span></div>
+  <div class="chips"><span class="chip on">All 33</span><span class="chip">Link previews 7</span><span class="chip">Images 8</span><span class="chip">PDF 12</span><span class="chip">Automation 6</span><span class="chip">Free only</span></div>
+  <div class="legend"><b>F</b> free · <b>P</b> paid · <b>F+P</b> free, with a paid upgrade · ringed icon = new</div>
+</div>
+<main class="grid" id="grid"></main>
+<p class="foot">Below the fold: pricing in one row, “how credits work”, the card playground, FAQ. Wireframe for a proposal; names and counts are illustrative.</p>
+<script>
+  const T = (name, desc, tag, isNew, short) => ({ name, desc, tag, isNew, short: short || name })
+  const COLS = [
+    ['Link previews', [
+      T('Open Graph checker', 'See what any link shares', 'free', false, 'OG checker'), T('X card validator', 'Preview a link on X', 'free'), T('LinkedIn post preview', 'Preview a link on LinkedIn', 'free', false, 'LinkedIn preview'),
+      T('Slack link preview', 'How Slack unfurls it', 'free', false, 'Slack preview'), T('Discord embed preview', 'How Discord embeds it', 'free', false, 'Discord preview'), T('WhatsApp link preview', 'How WhatsApp shows it', 'free', false, 'WhatsApp preview'),
+      T('Site share audit', 'Find every broken share image', 'both', true)]],
+    ['Images', [
+      T('Share card builder', 'OG images from a template', 'both', false, 'Card builder'), T('Card from a link', 'A branded card for any URL', 'paid'), T('Email images', 'A name in every image', 'paid'),
+      T('Chart images', 'Charts for email and PDF', 'both', true), T('Email countdown', 'A live timer for emails', 'both', true), T('Email signature', 'Build and copy a signature', 'free', true),
+      T('Carousel maker', 'LinkedIn and Instagram slides', 'both', true), T('Image to SVG', 'Logos and line art to vectors', 'both', true)]],
+    ['PDF · files', [
+      T('Merge PDF', 'Combine PDFs in your browser', 'free'), T('Image to PDF', 'Photos into one PDF', 'free'), T('Split and organise', 'Split, rotate, delete pages', 'free', true, 'Split, organise'),
+      T('PDF to JPG', 'Pages into images', 'free', true), T('Fill and sign', 'Fill a form, add a signature', 'free', true), T('PDF toolkit API', 'Merge, stamp, fill by API', 'paid')]],
+    ['PDF · documents', [
+      T('HTML to PDF', 'Print your HTML to PDF', 'both'), T('Invoice generator', 'A clean invoice in a minute', 'free', false, 'Invoices'), T('Certificate generator', 'A certificate in a minute', 'free', false, 'Certificates'),
+      T('Bulk documents', 'One PDF per spreadsheet row', 'paid'), T('QR tickets', 'Tickets you can scan at the door', 'both', true), T('Labels, badges', 'Sheets from a spreadsheet', 'both', true)]],
+    ['Automation', [
+      T('API', 'Images and PDFs by request', 'paid'), T('Signed URLs', 'An image per page, no code', 'paid'), T('Zapier', 'Make cards and PDFs in Zaps', 'paid'),
+      T('Make', 'Scenarios with cards and PDFs', 'paid'), T('n8n', 'Nodes for cards and PDFs', 'paid'), T('Google Sheets', 'Rows to documents, in a sheet', 'both', true)]],
+  ]
+  const label = { free: 'Free', paid: 'Paid', both: 'Free + Paid' }
+  const letter = { free: 'F', paid: 'P', both: 'F+P' }
+  if (new URLSearchParams(location.search).get('dense')) document.body.classList.add('dense')
+  document.getElementById('grid').innerHTML = COLS.map(([title, tiles], ci) => `<section class="col c${ci}"><h2><span>${title}</span><span>${tiles.length}</span></h2>${tiles.map((t) => `<a class="tile${t.isNew ? ' new' : ''}"><span class="ico"></span><span class="name"><span class="full">${t.name}</span><span class="short">${t.short}</span></span><span class="tag ${t.tag}"><span class="t-full">${label[t.tag]}</span><span class="t-short">${letter[t.tag]}</span></span><span class="desc">${t.desc}</span></a>`).join('')}</section>`).join('')
+</script>
+</body></html>
