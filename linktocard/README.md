@@ -717,8 +717,10 @@ it if it is wrong.
 
   New tests: `tests/email-daily-cap.test.ts`, `tests/node/legal-pages.test.ts`,
   `tests/node/production-docs-claims.test.ts` and `tests/node/email-daily-cap-privacy.test.ts`, plus
-  new cases in `tests/verify-page.test.ts` and `tests/email-fields.test.ts`. Each fails against the
-  code before the fix.
+  new cases in `tests/verify-page.test.ts` and `tests/email-fields.test.ts`. Each new file fails
+  against the code before the fix. A few cases are regression guards that pass before and after:
+  production stays without the email sentence, a raised `legalUpdated` wins, and revocation is
+  unchanged with `BATCH_ENABLED` on.
 
   Where AI was used: the audit, fixes and reviews were written with AI tools (Claude Code); Ahmad
   reviews before release.

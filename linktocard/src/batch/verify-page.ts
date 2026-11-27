@@ -278,8 +278,9 @@ interface Shell {
   description: string;
   /**
    * Path of the canonical URL, e.g. /v/crt_..., for the page's link rel=canonical and og:url. Left
-   * out on pages that stand for no record (a link without a certificate ID, verification switched
-   * off): /v/ itself is no page, so they name no URL of their own.
+   * out on pages that name no record: a link without a valid certificate ID, and the page shown
+   * while verification is switched off. /v/ itself is no page, so they name no URL of their own.
+   * A well-formed ID keeps its own URL, found or not.
    */
   path?: string;
   main: string;

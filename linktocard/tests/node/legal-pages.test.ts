@@ -192,9 +192,11 @@ describe('"Last updated"', () => {
     }
   });
 
-  it('of the privacy policy is its own because its production text changed since 89270a7, and only there', () => {
+  it('of the privacy policy is its own because its production text changed since 89270a7', () => {
     // Without its `updated` line, the production source differs from 89270a7 in the two sentences
-    // that are no feature's text. Were they ever reverted, the page would need no date of its own.
+    // that are no feature's text. The same line also dates the privacy text of the feature blocks
+    // written on 26 and 27 November (staging), so it must stay even if those two sentences were
+    // reverted, until a raised legalUpdated covers that text.
     const privacy = productionSource('privacy').replace(/^updated: .*\n/m, '');
     expect(blobId(privacy)).not.toBe(BLOBS_89270A7.privacy);
     const visible = text(mainOf(html(production, 'privacy.html')));

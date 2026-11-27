@@ -404,8 +404,14 @@ Production, only when you approve PDFs:
       PDFs go on. Without it the free tools are limited only per IPv4 address or IPv6 /64, and
       one visitor with many IPv6 networks is not limited at all.
 - [ ] `wrangler.toml`, `[env.production.vars]`: `PDF_ENABLED = "true"`.
-- [ ] `package.json`: in `deploy:production`, change `SITE_PDF=off` to `SITE_PDF=on`, and update
-      the test in `tests/node/site-features.test.ts` that pins that script.
+- [ ] `package.json`: in `deploy:production`, change `SITE_PDF=off` to `SITE_PDF=on`. Together
+      with `legalUpdated` below, update the tests that pin the production build and the legal dates on purpose, so that each launch is
+      a deliberate change: `tests/node/site-features.test.ts` (the script), `tests/node/v3-site.test.ts`,
+      `tests/node/production-site.test.ts`, `tests/node/production-docs-claims.test.ts` (what the
+      production docs pages say while their tool is off), `tests/node/legal-pages.test.ts` (the
+      production Terms equal to `89270a7`, the four features off, `legalUpdated` 2026-11-25 and each
+      legal page's date) and the date pins in `tests/node/site.test.ts`. They fail until updated: that is
+      their job.
 - [ ] `site/site.config.json`: set `legalUpdated` to the launch date. The PDF parts of the terms
       and the privacy policy go live with the PDF pages: in the terms, the rule against counterfeit
       or misleading documents, the immediate suspension when one is reported ("always urgent") and
@@ -557,8 +563,12 @@ For each tool you approve, in one change:
 2. `package.json`, `deploy:production`: add its site feature to `SITE_FEATURES=`, keeping
    `previews,localpdf,apidocs` (for example `SITE_FEATURES=previews,localpdf,apidocs,batch` with
    `SITE_PDF=on`: the build refuses `batch` or `toolkit` without `pdf`), and
-   update the tests that pin that script (`tests/node/site-features.test.ts`, `tests/node/v3-site.test.ts`
-   and `tests/node/production-site.test.ts`). With its feature on, the tool's docs page loses its
+   update the tests that pin the production build and the legal dates on purpose, so that each launch is
+   a deliberate change: `tests/node/site-features.test.ts` (the script), `tests/node/v3-site.test.ts`,
+   `tests/node/production-site.test.ts`, `tests/node/production-docs-claims.test.ts` (what the
+   production docs pages say while their tool is off), `tests/node/legal-pages.test.ts` (the
+   production Terms equal to `89270a7`, the four features off, `legalUpdated` 2026-11-25 and each
+   legal page's date) and the date pins in `tests/node/site.test.ts` (with step 3). With its feature on, the tool's docs page loses its
    "Not switched on yet" notice and joins the docs navigation and the sitemap by itself.
 3. `site/site.config.json`: set `legalUpdated` to the launch day when the tool has text in the terms
    or the privacy policy (bulk documents, the PDF toolkit, cards from links, email images). That text
