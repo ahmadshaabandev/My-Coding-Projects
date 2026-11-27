@@ -1,15 +1,14 @@
-// The legal pages as each deployment publishes them (audit F4; owner decision of 2026-11-27).
+// The legal pages as each deployment publishes them (audit F4 and the owner decisions of 2026-11-27).
 //   - Production publishes the Terms of Service of 89270a7, the last production deploy before build
-//     v3, which the owner approved: the terms text that came with PDF documents (counterfeit
-//     documents, suspension on report, "and other files") waits in feature:pdf blocks, and staging
-//     keeps it.
+//     v3, which the owner approved, plus one line the owner published on 2026-11-27: the rule against
+//     counterfeit or misleading documents, in every build. The rest of the terms text that came with
+//     PDF documents (suspension on report, "and other files") waits in feature:pdf blocks, and
+//     staging keeps it. The terms are dated 2026-11-27 (front matter `updated`) in every build.
 //   - The privacy policy keeps its two changes that are no feature's text (Turnstile "if a free tool
-//     on the website shows it", which the preview checkers can show, and "the daily clean-up"), so it
-//     has its own date: front matter `updated`, which scripts/build-site.ts prints instead of
-//     legalUpdated of site/site.config.json. Terms and refund keep legalUpdated in production.
-//   - The terms text of bulk documents, the PDF toolkit, cards from links and email images was
-//     written on 2026-11-26 (cce33b0), after legalUpdated: the terms date it with
-//     `updated.<feature>`, so a build that prints that text (staging) says 26 November 2026.
+//     on the website shows it", which the preview checkers can show, and "the daily clean-up") and
+//     names Cloudflare Web Analytics (owner decision of 2026-11-27), so it has its own date: front
+//     matter `updated`, which scripts/build-site.ts prints instead of legalUpdated of
+//     site/site.config.json. The refund policy keeps legalUpdated.
 //   - Each page shows the latest date that applies, so raising legalUpdated at a launch (GO-LIVE.md
 //     sections 10 and 11c) dates every legal page without touching their front matter.
 // The 89270a7 texts are pinned by their git blob ids, so the test needs no git history; where
@@ -21,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FEATURES, applyFeatureBlocks, renderSite, siteFeatures, type Feature, type RenderedSite } from '../../scripts/build-site';
+import { FEATURES, applyFeatureBlocks, renderSite, siteFeatures, type RenderedSite } from '../../scripts/build-site';
 import siteConfig from '../../site/site.config.json';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -85,8 +84,9 @@ const lastUpdated = (page: string): string[] => [...text(mainOf(page)).matchAll(
 
 /** The `updated.<feature>` lines of a page's front matter: the dates of text that only a build with that feature prints. */
 const featureDates = (source: string): string[] => (source.split(/^---$/m)[1] ?? '').split('\n').filter((line) => line.startsWith('updated.'));
-/** The four features whose terms text was written on 2026-11-26 (cce33b0). */
-const TERMS_OF_2026_11_26: readonly Feature[] = ['batch', 'toolkit', 'linkcards', 'email'];
+/** The line the owner published in every build on 2026-11-27 (it was feature:pdf text before). */
+const COUNTERFEIT_RULE =
+  '- create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;';
 
 let production: RenderedSite;
 let staging: RenderedSite;
@@ -96,14 +96,17 @@ beforeAll(() => {
 });
 
 describe('the Terms of Service', () => {
-  it('are, in production, the text of 89270a7 byte for byte: the new terms wait for PDFs', () => {
-    // The production source differs only by the front-matter dates of text that production does not
-    // print (a build prints no front matter): one line per feature, each off in production.
+  it('are, in production, the text of 89270a7 plus the counterfeit rule, and nothing else', () => {
+    // The production source differs from 89270a7 by its date (front matter, which a build does not
+    // print) and by the one line the owner published on 2026-11-27, right after the fraud rule.
     const source = productionSource('terms');
-    expect(featureDates(source)).toEqual(TERMS_OF_2026_11_26.map((feature) => `updated.${feature}: 2026-11-26`));
-    const features = siteFeatures(buildEnv('deploy:production'));
-    for (const feature of TERMS_OF_2026_11_26) expect(features[feature], feature).toBe(false);
-    const terms = source.replace(/^updated\.[a-z-]+: \d{4}-\d{2}-\d{2}\n/gm, '');
+    expect(featureDates(source)).toEqual([]);
+    expect(source).toMatch(/^---\n[\s\S]*?^updated: 2026-11-27$[\s\S]*?^---$/m);
+    const lines = source.replace(/^updated: \d{4}-\d{2}-\d{2}\n/m, '').split('\n');
+    const at = lines.indexOf(COUNTERFEIT_RULE);
+    expect(at, 'the counterfeit rule is in the production terms').toBeGreaterThan(0);
+    expect(lines[at - 1]).toMatch(/^- commit fraud, phishing or impersonation/);
+    const terms = [...lines.slice(0, at), ...lines.slice(at + 1)].join('\n');
     const previous = previousSource('terms');
     if (previous !== null) {
       expect(blobId(previous), 'the pinned blob id is the one of 89270a7').toBe(BLOBS_89270A7.terms);
@@ -112,11 +115,12 @@ describe('the Terms of Service', () => {
     expect(blobId(terms)).toBe(BLOBS_89270A7.terms);
   });
 
-  it('carry the counterfeit clause, the suspension on report and "other files" with PDFs only', () => {
+  it('carry the counterfeit rule in every build, and the suspension on report and "other files" with PDFs only', () => {
     const counterfeit = 'create counterfeit or misleading documents in any form the service produces';
     const urgent = 'Counterfeit and misleading documents are always urgent. When we receive a report that the service was used to make one, we suspend the API keys and the account involved straight away, look into the report, and tell you afterwards.';
     const prod = text(mainOf(html(production, 'terms.html')));
-    expect(prod).not.toContain(counterfeit);
+    expect(prod).toContain(COUNTERFEIT_RULE.slice(2));
+    expect(text(mainOf(html(renderSite({ env: {}, now: NOW }), 'terms.html')))).toContain(counterfeit);
     expect(prod).not.toContain('always urgent');
     expect(prod).toContain('the data you send to be rendered, and the images the service produces for you.');
     const stage = text(mainOf(html(staging, 'terms.html')));
@@ -144,39 +148,57 @@ describe('the Terms of Service', () => {
   });
 });
 
-describe('"Last updated"', () => {
-  it('is 27 November 2026 on the privacy policy and 25 November 2026 on the refund policy in both builds, and on the terms 25 November in production and 26 November on staging', () => {
+describe('Cloudflare Web Analytics (owner decision of 2026-11-27)', () => {
+  const csp = read('site/public/_headers').split('\n').find((line) => line.trim().startsWith('Content-Security-Policy:')) ?? '';
+  const directive = (name: string): string[] => (csp.split(';').map((part) => part.trim().replace(/^Content-Security-Policy:\s*/, '')).find((part) => part.startsWith(`${name} `)) ?? '').split(/\s+/).slice(1);
+
+  it("the site's CSP lets its beacon run and report, and allows no other new source", () => {
+    // Cloudflare injects <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/...">
+    // into every HTML page for browsers; on this proxied zone it reports to /cdn-cgi/rum ('self').
+    expect(directive('script-src')).toEqual(["'self'", 'https://cdn.paddle.com', 'https://challenges.cloudflare.com', 'https://static.cloudflareinsights.com']);
+    expect(directive('connect-src')).toEqual(["'self'", 'https://*.paddle.com', 'https://cloudflareinsights.com']);
+    // No inline script or eval for it.
+    expect(csp).not.toMatch(/'unsafe-eval'|script-src[^;]*'unsafe-inline'/);
+  });
+
+  it('the privacy policy names it in both builds and no longer says that no analytics are used', () => {
     for (const site of [production, staging]) {
+      const privacy = text(mainOf(html(site, 'privacy.html')));
+      expect(privacy).toContain('our only website analytics are cookieless Cloudflare Web Analytics');
+      expect(privacy).not.toContain('we do not use analytics');
+      expect(privacy).toContain('counted by Cloudflare Web Analytics. It is cookieless: it sets no cookie, stores nothing on your device and does not fingerprint you. We see only totals, not individual visitors.');
+      expect(privacy).toContain('Web Analytics, the cookieless statistics of this website');
+      // Still true: the beacon sets no cookie (checked in Chromium on 2026-11-27: no Set-Cookie, no storage).
+      expect(privacy).toContain('We use no analytics cookies, no advertising cookies and no tracking pixels.');
+    }
+  });
+
+  it("verification pages keep a policy without script, as the privacy policy says they load none", () => {
+    expect(read('src/batch/verify-page.ts')).not.toContain('cloudflareinsights');
+    expect(text(mainOf(html(staging, 'privacy.html')))).toContain('Verification pages set no cookie and load no script.');
+  });
+});
+
+describe('"Last updated"', () => {
+  it('is 27 November 2026 on the terms and the privacy policy and 25 November 2026 on the refund policy, in both builds', () => {
+    for (const site of [production, staging]) {
+      expect(lastUpdated(html(site, 'terms.html'))).toEqual(['27 November 2026']);
       expect(lastUpdated(html(site, 'privacy.html'))).toEqual(['27 November 2026']);
       expect(lastUpdated(html(site, 'refund.html'))).toEqual(['25 November 2026']);
     }
-    expect(lastUpdated(html(production, 'terms.html'))).toEqual(['25 November 2026']);
-    // Staging prints the terms text of bulk documents, the toolkit, cards from links and email images of 2026-11-26.
-    expect(lastUpdated(html(staging, 'terms.html'))).toEqual(['26 November 2026']);
-    // The site-wide date is unchanged; the privacy policy has a date of its own, the terms one per feature text.
+    // The site-wide date is unchanged; the terms and the privacy policy have a date of their own.
     expect(siteConfig.legalUpdated).toBe('2026-11-25');
-    expect(read('site/content/privacy.md')).toMatch(/^---\n[\s\S]*?^updated: 2026-11-27$[\s\S]*?^---$/m);
-    for (const page of ['terms', 'refund']) expect(read(`site/content/${page}.md`).split(/^---$/m)[1], page).not.toMatch(/^updated:/m);
-    expect(featureDates(read('site/content/privacy.md'))).toEqual([]);
-    expect(featureDates(read('site/content/refund.md'))).toEqual([]);
+    for (const page of ['terms', 'privacy']) expect(read(`site/content/${page}.md`), page).toMatch(/^---\n[\s\S]*?^updated: 2026-11-27$[\s\S]*?^---$/m);
+    expect(read('site/content/refund.md').split(/^---$/m)[1]).not.toMatch(/^updated:/m);
+    for (const page of ['terms', 'privacy', 'refund']) expect(featureDates(read(`site/content/${page}.md`)), page).toEqual([]);
   });
 
-  it('of the terms is 26 November 2026 in every build that prints the text of that day, and 25 November in the others', () => {
+  it('of the terms is 27 November 2026 in every build: the counterfeit rule is in all of them', () => {
     const terms = (env: Record<string, string>): string[] => lastUpdated(html(renderSite({ env, now: NOW }), 'terms.html'));
-    expect(terms({ SITE_PDF: 'on' })).toEqual(['25 November 2026']);
-    expect(terms({ SITE_FEATURES: 'previews,localpdf,apidocs,integrations', SITE_PDF: 'on' })).toEqual(['25 November 2026']);
-    for (const feature of TERMS_OF_2026_11_26) {
-      expect(terms({ SITE_FEATURES: feature, SITE_PDF: 'on' }), feature).toEqual(['26 November 2026']);
+    const envs: Record<string, string>[] = [{}, { SITE_PDF: 'on' }, { SITE_FEATURES: 'linkcards', SITE_PDF: 'off' }, { SITE_FEATURES: 'pdf,batch,toolkit,email' }];
+    for (const env of envs) {
+      expect(terms(env), JSON.stringify(env)).toEqual(['27 November 2026']);
     }
-    expect(terms({ SITE_FEATURES: 'linkcards', SITE_PDF: 'off' })).toEqual(['26 November 2026']);
-    expect(terms({ SITE_FEATURES: 'email', SITE_PDF: 'off' })).toEqual(['26 November 2026']);
-    // Those are exactly the features whose blocks the terms gained in cce33b0 (2026-11-26); the
-    // PDF blocks are of 5093600 (2026-11-25), and the terms have not changed for any feature since.
-    const blocksOf = (source: string): string[] => [...new Set([...source.matchAll(/<!-- feature:([a-z-]+) -->/g)].map((match) => match[1]!))].sort();
-    const blocks = blocksOf(read('site/content/terms.md'));
-    expect(blocks).toEqual([...TERMS_OF_2026_11_26, 'no-pdf', 'pdf'].sort());
-    const before = previousSource('terms', '5093600');
-    if (before !== null) expect(blocks.filter((feature) => !blocksOf(before).includes(feature))).toEqual([...TERMS_OF_2026_11_26].sort());
   });
 
   it('follows legalUpdated when a launch raises it past the pages\' own dates, in production and on staging', () => {
@@ -193,10 +215,10 @@ describe('"Last updated"', () => {
   });
 
   it('of the privacy policy is its own because its production text changed since 89270a7', () => {
-    // Without its `updated` line, the production source differs from 89270a7 in the two sentences
-    // that are no feature's text. The same line also dates the privacy text of the feature blocks
-    // written on 26 and 27 November (staging), so it must stay even if those two sentences were
-    // reverted, until a raised legalUpdated covers that text.
+    // Without its `updated` line, the production source differs from 89270a7 in text that is no
+    // feature's: Turnstile, the clean-up and Cloudflare Web Analytics. The same line also dates the
+    // privacy text of the feature blocks written on 26 and 27 November (staging), so it must stay
+    // even if those sentences were reverted, until a raised legalUpdated covers that text.
     const privacy = productionSource('privacy').replace(/^updated: .*\n/m, '');
     expect(blobId(privacy)).not.toBe(BLOBS_89270A7.privacy);
     const visible = text(mainOf(html(production, 'privacy.html')));
@@ -208,9 +230,13 @@ describe('"Last updated"', () => {
     if (previous !== null) {
       expect(blobId(previous)).toBe(BLOBS_89270A7.privacy);
       const removed = previous.split('\n').filter((line) => !privacy.split('\n').includes(line));
-      expect(removed).toHaveLength(2);
+      expect(removed).toHaveLength(3);
+      expect(removed.join('\n')).toContain('we do not use analytics or advertising trackers');
       expect(removed.join('\n')).toContain('if the Open Graph checker shows it');
       expect(removed.join('\n')).toContain('by a regular clean-up shortly afterwards');
+      const added = privacy.split('\n').filter((line) => !previous.split('\n').includes(line));
+      expect(added).toHaveLength(4);
+      expect(added.filter((line) => line.includes('Cloudflare Web Analytics') || line.includes('Web Analytics, the cookieless statistics'))).toHaveLength(3);
     }
     // The refund policy has not changed at all.
     expect(blobId(productionSource('refund'))).toBe(BLOBS_89270A7.refund);

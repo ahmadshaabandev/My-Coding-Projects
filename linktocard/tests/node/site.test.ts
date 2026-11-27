@@ -355,8 +355,9 @@ describe('built site', () => {
     expect(headers).toContain('X-Frame-Options: DENY');
     const csp = headers.split('\n').find((line) => line.trim().startsWith('Content-Security-Policy:')) ?? '';
     expect(csp).toContain("default-src 'self'");
-    // Turnstile (the OG checker's optional human check) is the only other origin allowed to run script or frames.
-    expect(csp).toContain("script-src 'self' https://cdn.paddle.com https://challenges.cloudflare.com;");
+    // Turnstile (the OG checker's optional human check) and Cloudflare Web Analytics (owner decision of
+    // 2026-11-27) are the only other origins allowed to run script; Turnstile the only one for frames.
+    expect(csp).toContain("script-src 'self' https://cdn.paddle.com https://challenges.cloudflare.com https://static.cloudflareinsights.com;");
     expect(csp).toContain('frame-src https://*.paddle.com https://challenges.cloudflare.com;');
     expect(csp).toContain("img-src 'self' data: blob: https://*.paddle.com;");
     expect(csp).toContain("frame-ancestors 'none'");

@@ -351,9 +351,9 @@ describe('the two builds', () => {
     expect(page(on, 'index.html').match(/<details class="faq-item">/g)).toHaveLength(8);
   });
 
-  it('forbids counterfeit and misleading documents, and promises suspension on report, in the PDF build only', () => {
-    // Owner decision of 2026-11-27 (audit F4): the production terms stay those of 89270a7, which the
-    // owner approved, so this text from the PDF feature waits for PDFs (tests/node/legal-pages.test.ts).
+  it('forbids counterfeit and misleading documents in every build, and promises suspension on report in the PDF build only', () => {
+    // Owner decisions of 2026-11-27: the production terms are those of 89270a7 plus the counterfeit
+    // rule; the suspension on report and "other files" wait for PDFs (tests/node/legal-pages.test.ts).
     const production = renderSite({ env: { SITE_FEATURES: 'previews,localpdf,apidocs', SITE_PDF: 'off' }, now: NOW });
     const counterfeit =
       'create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;';
@@ -364,7 +364,8 @@ describe('the two builds', () => {
     expect(onTerms).toContain('and the images and other files the service produces for you.');
     for (const site of [off, production]) {
       const terms = text(page(site, 'terms.html'));
-      expect(terms).not.toContain('counterfeit');
+      expect(terms).toContain(counterfeit);
+      expect(terms).not.toContain('always urgent');
       expect(terms).not.toContain(suspension);
       expect(terms).not.toContain('other files');
       expect(terms).toContain('and the images the service produces for you.');

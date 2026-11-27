@@ -263,10 +263,8 @@ build prints, `updated.<feature>: YYYY-MM-DD` (`updated.batch`, `updated.no-pdf`
 a build with that feature switch prints. A legal page shows the latest of `legalUpdated` and the
 dates that apply to the build, so raising `legalUpdated` at a launch dates every legal page by
 itself. A date that is not a real day, an unknown feature, or the key on a page that is not
-`layout: legal` stops the build. Today `privacy.md` has `updated: 2026-11-27` and `terms.md` has
-`updated.batch`, `updated.toolkit`, `updated.linkcards` and `updated.email` at 2026-11-26 (the day
-that text was written), so production shows terms and refund 25 November and privacy 27 November,
-and staging terms 26 November.
+`layout: legal` stops the build. Today `privacy.md` and `terms.md` have `updated: 2026-11-27`, so
+both builds show the terms and the privacy policy 27 November and the refund policy 25 November.
 
 `SITE_PDF` switches the PDF pages and blocks of the site (`feature: pdf` front matter,
 `<!-- feature:pdf -->` blocks): `on` builds them, `off` or unset leaves them out. Any other value
@@ -288,12 +286,18 @@ notice and puts the page back in the navigation and the sitemap by itself. `depl
 with all nine; `deploy:production` with `SITE_FEATURES=previews,localpdf,apidocs` (owner decision
 of 2026-11-27). The terms and the privacy policy carry each feature's text in its own block, so a
 feature's legal text goes live only with that feature (`tests/node/v3-site.test.ts`). The production
-Terms are byte for byte the owner-approved text of commit `89270a7` once the blocks are applied
-(the counterfeit-documents rule, the "always urgent" suspension and "and other files" are `pdf`
-text), and the refund policy is unchanged from it (`tests/node/legal-pages.test.ts`). The privacy
-policy has two wording changes that belong to no feature and are true in production: Turnstile is
-shown "if a free tool on the website shows it" (the one-app preview pages can), and expired entries
-are "deleted by the daily clean-up, normally within a day"; hence its own date.
+Terms are the owner-approved text of commit `89270a7` once the blocks are applied, plus the rule
+against counterfeit or misleading documents, which the owner published in every build on
+2026-11-27 (the "always urgent" suspension and "and other files" are still `pdf` text). The refund
+policy is unchanged from `89270a7` (`tests/node/legal-pages.test.ts`). The privacy policy has
+wording that belongs to no feature and is true in production: Turnstile is shown "if a free tool on
+the website shows it" (the one-app preview pages can), expired entries are "deleted by the daily
+clean-up, normally within a day", and the website uses cookieless Cloudflare Web Analytics (owner
+decision of 2026-11-27); hence its own date. The zone injects the Web Analytics script into every
+HTML page for browsers, and `site/public/_headers` allows it: `https://static.cloudflareinsights.com`
+in `script-src`, `https://cloudflareinsights.com` in `connect-src`. It reports to `/cdn-cgi/rum` on
+the same origin. The verification pages' own policy (`VERIFY_PAGE_CSP`) still allows no script,
+because the privacy policy says they load none, so the script is blocked there.
 
 `RATE_LIMITS_DISABLED` exists only for the test suite and is ignored unless `ENVIRONMENT`
 is `test`.
@@ -681,6 +685,28 @@ it if it is wrong.
 
 ## Changelog
 
+- **2026-11-27: Owner decisions on analytics and the Terms** (deployed to staging and production
+  the same day).
+  - **Web Analytics.** The site's CSP allows Cloudflare Web Analytics, which the zone injects:
+    `script-src https://static.cloudflareinsights.com`, `connect-src https://cloudflareinsights.com`.
+    It reports to `/cdn-cgi/rum` on the same origin. The privacy policy names it as cookieless
+    website statistics in section 2, in Cloudflare's row in section 4 and in the summary, which no
+    longer says "we do not use analytics". Its date stays 27 November 2026. Checked in Chromium
+    before the deploy: the beacon loads and reports (204), with no CSP violation, no console
+    error, no `Set-Cookie` and nothing in local or session storage. Verification pages keep their
+    no-script policy.
+  - **Terms.** The rule against counterfeit or misleading documents is in every build, dated 27
+    November 2026. The suspension on report and "and other files" still wait for PDFs. The four
+    `updated.<feature>` dates of the terms are gone: the page's own date is later in every build.
+  - **Tests changed because the decisions changed behaviour:** `tests/node/legal-pages.test.ts`
+    (production Terms are `89270a7` plus that one line, every legal date, the privacy lines that
+    differ from `89270a7`, and new cases for the CSP and the analytics wording),
+    `tests/node/site-features.test.ts` (the counterfeit rule is in every build) and
+    `tests/node/site.test.ts` (the pinned `script-src`).
+  - **Staging.** The two throwaway test accounts of the launch checks were marked for deletion.
+    The daily clean-up deletes them with their files and records.
+
+  Where AI was used: written and checked with AI tools (Claude Code); Ahmad reviews before release.
 - **2026-11-27: Fixes from the live audit of that day's deploy** (deployed to staging, Worker
   `909574bd`, and production, Worker `bb46082a`, the same day; checked live: on both sites every built
   page is served byte for byte, and the legal, docs, `/v/` and revoke answers are the ones above; on

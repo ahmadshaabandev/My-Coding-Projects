@@ -2,10 +2,7 @@
 title: Terms of Service
 description: The terms that apply when you use [[site.name]], a hosted API that renders social-card images from HTML and CSS.
 layout: legal
-updated.batch: 2026-11-26
-updated.toolkit: 2026-11-26
-updated.linkcards: 2026-11-26
-updated.email: 2026-11-26
+updated: 2026-11-27
 ---
 
 Last updated: [[legal.updated]]
@@ -82,9 +79,7 @@ You may not use the service to do any of the following, or help anyone else do s
 
 - break the law, or create content that is illegal where you or your audience are;
 - commit fraud, phishing or impersonation, including cards that pretend to come from a person, brand or organisation that has not agreed to it;
-<!-- feature:pdf -->
 - create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;
-<!-- /feature:pdf -->
 <!-- feature:batch -->
 - issue documents with a verification record that names an issuer, an accreditation, an achievement or a recipient that is not real or that the issuer did not authorise, or present a verification page as proof of more than it states;
 <!-- /feature:batch -->

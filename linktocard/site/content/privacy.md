@@ -7,7 +7,7 @@ updated: 2026-11-27
 
 Last updated: [[legal.updated]]
 
-This page explains what data [[site.name]] collects and what happens to it. The short version: we collect what is needed to run an image-rendering API and to bill for it, we do not use analytics or advertising trackers, and we do not sell data.
+This page explains what data [[site.name]] collects and what happens to it. The short version: we collect what is needed to run an image-rendering API and to bill for it, our only website analytics are cookieless Cloudflare Web Analytics, we do not use advertising trackers, and we do not sell data.
 
 ## 1. Who is responsible
 
@@ -41,6 +41,7 @@ Contact for anything on this page: <[[site.supportEmail]]>
 | **Open-field values**: the short values, such as a first name, that an email platform puts into a personalized image's address for each reader, and the images made from them | They arrive when a reader's mail app, or its image proxy, loads the image, like any image request. |
 <!-- /feature:email -->
 | **Open Graph checker**: the page address you enter, the tags and measurements read from that page, and a count of checks per IP address (IPv6: per /64 network) for the current hour | You enter the address on the [Open Graph checker](/tools/og-checker), or send it to `GET /v1/inspect` with an API key, which counts checks per key for the day instead. |
+| **Website statistics**: which pages of this website are viewed, from which referring site, with which kind of browser and device, from which country, and how fast they load, counted by Cloudflare Web Analytics. It is cookieless: it sets no cookie, stores nothing on your device and does not fingerprint you. We see only totals, not individual visitors. | Reported by Cloudflare's analytics script when a page of this website loads in your browser. |
 | **Messages to us**: the email address and message you enter in the contact form, and emails you send to support | You send them to us. The contact form is not stored by the service; it is delivered to our support mailbox as an email. |
 | **Billing status**: which plan you are on, whether a subscription is active, and identifiers Paddle gives us for your customer and subscription records | Sent to us by Paddle when you buy, renew, cancel or are refunded. |
 
@@ -81,7 +82,7 @@ We use three outside companies. Each receives only what it needs for its job.
 
 | Company | What it does | What it receives |
 | --- | --- | --- |
-| **Cloudflare** | Hosting, database (D1), object storage (R2) and network; Turnstile, the check that tells people from bots, if a free tool on the website shows it | Everything stored in or passing through the service: account data, templates, uploaded fonts, rendered images, checker results, and request data such as IP addresses. When Turnstile is shown, the data its widget collects in your browser to tell a person from a bot. |
+| **Cloudflare** | Hosting, database (D1), object storage (R2) and network; Turnstile, the check that tells people from bots, if a free tool on the website shows it; Web Analytics, the cookieless statistics of this website | Everything stored in or passing through the service: account data, templates, uploaded fonts, rendered images, checker results, and request data such as IP addresses. When Turnstile is shown, the data its widget collects in your browser to tell a person from a bot. |
 | **Resend** | Email delivery | Your email address and the content of the emails we send you, such as sign-in links and usage warnings. Messages sent with the contact form also pass through Resend on their way to our support mailbox. |
 | **Paddle** | Payments, as our reseller and Merchant of Record | The details you enter at checkout, including payment details. Paddle decides how to handle payment data in its own right, as an independent controller; see [Paddle's privacy notice](https://www.paddle.com/legal/privacy). |
 

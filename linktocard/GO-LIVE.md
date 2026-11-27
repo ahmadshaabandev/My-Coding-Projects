@@ -193,10 +193,12 @@ npx wrangler r2 bucket lifecycle add linktocard-production expire-playground p/ 
 - [ ] **Always Use HTTPS: on.** SSL/TLS > Edge Certificates. It was off at deploy time, so
       `http://linktocard.com` served pages without redirecting to HTTPS.
 - [ ] **Minimum TLS version: 1.2.** Same page. It was 1.0.
-- [ ] **Web Analytics: off** for linktocard.com (Analytics & Logs > Web Analytics). Cloudflare
-      injects its beacon script into the pages; the site's Content-Security-Policy blocks it,
-      and the privacy policy says no analytics are used. Turning it off removes the console
-      error and keeps the policy literally true.
+- [x] **Web Analytics: on** for linktocard.com (owner decision of 2026-11-27; it had been on
+      with automatic setup). Cloudflare injects its beacon script into the pages for browsers,
+      `site/public/_headers` allows it, and the privacy policy names it. Checked in Chromium on
+      2026-11-27: the beacon loads, reports to `/cdn-cgi/rum` (204), and sets no cookie or storage.
+      Verification pages keep a policy without script, so it is blocked there. If you turn it off
+      later, change the privacy policy's sentences that name it.
 - [ ] Check the certificate: open https://linktocard.com and https://www.linktocard.com in a
       browser and look at the padlock. (The deploy session could not see the real certificate:
       its network proxy re-terminates TLS, and the token has no SSL read permission.)
@@ -409,14 +411,14 @@ Production, only when you approve PDFs:
       a deliberate change: `tests/node/site-features.test.ts` (the script), `tests/node/v3-site.test.ts`,
       `tests/node/production-site.test.ts`, `tests/node/production-docs-claims.test.ts` (what the
       production docs pages say while their tool is off), `tests/node/legal-pages.test.ts` (the
-      production Terms equal to `89270a7`, the four features off, `legalUpdated` 2026-11-25 and each
+      production Terms equal to `89270a7` plus the counterfeit rule, the four features off, `legalUpdated` 2026-11-25 and each
       legal page's date) and the date pins in `tests/node/site.test.ts`. They fail until updated: that is
       their job.
 - [ ] `site/site.config.json`: set `legalUpdated` to the launch date. The PDF parts of the terms
-      and the privacy policy go live with the PDF pages: in the terms, the rule against counterfeit
-      or misleading documents, the immediate suspension when one is reported ("always urgent") and
-      "and other files" in section 5 (owner decision of 2026-11-27: production keeps the Terms of
-      `89270a7` until then). Saying "PDF approved" approves that text too; decide whether section 12
+      and the privacy policy go live with the PDF pages: in the terms, the immediate suspension when
+      a counterfeit document is reported ("always urgent") and "and other files" in section 5. The
+      rule against counterfeit or misleading documents itself has been in force in every build since
+      2026-11-27 (owner decision). Saying "PDF approved" approves that text too; decide whether section 12
       of the terms calls for an email to account holders. The pages' own `updated:` dates need no
       change: the later date wins.
 - [ ] `npm test`, then `npm run deploy:production`, then `/api/config` reports
@@ -519,8 +521,9 @@ npx wrangler d1 migrations apply DB --env production --remote
       from the static site (`/assets/partials/footer.html`); `/api/sign` refusing
       `open` as a data name; `/v/*` reaching the Worker, which answers a "not available" page (503)
       while `BATCH_ENABLED` is `"false"` (with no canonical URL), and the certificate revoke routes
-      answering 503 `not_configured` before any key or session check; the Terms of `89270a7` (the
-      counterfeit rule waits for PDFs) and the privacy policy dated 27 November 2026. The two email starter templates do not: they answer 404
+      answering 503 `not_configured` before any key or session check; the Terms of `89270a7` plus the
+      counterfeit rule, dated 27 November 2026, and the privacy policy of the same date, which names
+      Cloudflare Web Analytics; the site's CSP that lets the Web Analytics script run. The two email starter templates do not: they answer 404
       everywhere while `EMAIL_FIELDS_ENABLED` is `"false"`, and the free playground never offers them. The bundle is about
       3.2 MB gzipped (README.md, "Deploying").
 
@@ -568,7 +571,7 @@ For each tool you approve, in one change:
    a deliberate change: `tests/node/site-features.test.ts` (the script), `tests/node/v3-site.test.ts`,
    `tests/node/production-site.test.ts`, `tests/node/production-docs-claims.test.ts` (what the
    production docs pages say while their tool is off), `tests/node/legal-pages.test.ts` (the
-   production Terms equal to `89270a7`, the four features off, `legalUpdated` 2026-11-25 and each
+   production Terms equal to `89270a7` plus the counterfeit rule, the four features off, `legalUpdated` 2026-11-25 and each
    legal page's date) and the date pins in `tests/node/site.test.ts` (with step 3). With its feature on, the tool's docs page loses its
    "Not switched on yet" notice and joins the docs navigation and the sitemap by itself.
 3. `site/site.config.json`: set `legalUpdated` to the launch day when the tool has text in the terms
