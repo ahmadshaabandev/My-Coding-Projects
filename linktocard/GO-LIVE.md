@@ -450,9 +450,9 @@ Built and tested locally on 2026-11-26 and checked on staging the same day (READ
 tools" and "Not verified"). Each tool has a Worker switch in `wrangler.toml` and a site feature in
 `SITE_FEATURES`. Turning a tool on in production is your approval, one tool at a time.
 
-**What production has, by your decision of 2026-11-27** (not deployed when this was written):
+**What production has, by your decision of 2026-11-27** (deployed 2026-11-27, Worker version `f0eb445e`):
 
-- **On with the next `npm run deploy:production`:** the site build
+- **On since the deploy of 2026-11-27 (`npm run deploy:production`):** the site build
   `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off`. It publishes the tools hub `/tools`, the
   five one-app preview checkers (`/tools/x-card-validator`, `/tools/linkedin-post-preview`,
   `/tools/slack-link-preview`, `/tools/discord-embed-preview`, `/tools/whatsapp-link-preview`),
@@ -474,17 +474,19 @@ tools" and "Not verified"). Each tool has a Worker switch in `wrangler.toml` and
 
 ### 11a. Before the next deploy of each environment (whatever it is for)
 
-- [ ] Create the queue the environment's `wrangler.toml` section binds, once per environment, or
-      `wrangler deploy` fails:
+- [x] Create the queue the environment's `wrangler.toml` section binds, once per environment, or
+      `wrangler deploy` fails (staging 2026-11-26, production 2026-11-27):
 
 ```sh
 npx wrangler queues create linktocard-batch-staging
 npx wrangler queues create linktocard-batch-production
 ```
 
-- [ ] Apply the migrations before the code that uses them. Production has `0001`-`0005`; `0006_pdf.sql`,
-      `0007_browser_usage_plan.sql` and `0008_batches.sql` must be applied before the next production
-      deploy (section 4). There is no `0009`: the charge-once records of email images are rows of
+- [x] Apply the migrations before the code that uses them. Production had `0001`-`0005`;
+      `0006_pdf.sql`, `0007_browser_usage_plan.sql` and `0008_batches.sql` were applied on 2026-11-27
+      before that day's deploy (section 4); the D1 Time Travel bookmark taken just before was
+      `00000010-00000000-00005130-f91334fbd3a021a4216f5f2af1d966f7`, and the Worker version before
+      the deploy `69b021dd-7ff5-421a-9ce5-ac708078a28d`. There is no `0009`: the charge-once records of email images are rows of
       `tool_usage` (migration `0005`), and the free pages need no migration of their own.
 
 ```sh

@@ -37,7 +37,8 @@ Ahmad approved only the free pages for production; every v3 API stays off there.
   `npm run deploy:production` refuses to run if a placeholder ever returns to a page.
 - Whether Paddle can pay out to an individual in Lebanon is unverified. Read
   [GO-LIVE.md](GO-LIVE.md) step 0 before spending money on anything.
-- **Build v3 (2026-11-26) is on staging, not in production.** Checked on staging with real renders
+- **Build v3 (2026-11-26) is on staging; production has only the approved free pages (2026-11-27).**
+  Checked on staging with real renders
   the same day: a 3-row certificate batch ran through the queue (6 images charged, each PDF with its
   certificate ID, a verify link and a QR code that decodes to its `/v/{id}` page, which loads with no
   console errors), and its ZIP is a valid archive of the 3 PDFs; the toolkit's merge, fields, stamp
@@ -46,10 +47,18 @@ Ahmad approved only the free pages for production; every v3 API stays off there.
   value answered 403; the 13 new public pages answer 200. The connectors are not published.
   Its four Worker switches (`BATCH_ENABLED`,
   `PDF_TOOLKIT_ENABLED`, `LINK_CARDS_ENABLED`, `EMAIL_FIELDS_ENABLED`) are `"true"` locally and in the
-  staging configuration and `"false"` in production. The next production deploy of any kind needs
-  the production queue and migrations `0006`-`0008` first: GO-LIVE.md section 11.
-- **Production publishes only the approved free pages** (owner decision of 2026-11-27, not deployed
-  when this was written). `npm run deploy:production` builds the site with
+  staging configuration and `"false"` in production. Production got its queue
+  (`linktocard-batch-production`, idle while `BATCH_ENABLED` is off) and migrations `0006`-`0008`
+  on 2026-11-27, before that day's deploy (GO-LIVE.md section 11a).
+- **Production publishes only the approved free pages** (owner decision of 2026-11-27; deployed to
+  staging and then production on 2026-11-27, production Worker version `f0eb445e`). Live checks
+  that day: on staging, an email image counted 1 on its first open and 0 on four repeats (Free and
+  Pro, 2 images for 7 opens), the five social starters answered 400 at the email size on
+  `/v1/images`, `/api/sign` and `/api/preview` while inline HTML still rendered 1200 x 400, and a
+  new certificate's `/v/{id}` page printed the home page's footer; on production, the 12 approved
+  pages answer 200, the four docs pages carry their notice and `noindex`, `/docs/integrations` and
+  the other unapproved pages answer 404, and `POST /v1/pdf`, `/v1/batches`, `/v1/pdf-tools/merge`
+  and `/v1/cards/from-url` answer 503 `not_configured`. `npm run deploy:production` builds the site with
   `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off`: the tools hub `/tools`, the five one-app
   preview checkers, `/tools/merge-pdf` and `/tools/image-to-pdf` (they run in the browser and count
   nothing), and the docs pages `/docs/bulk`, `/docs/pdf-tools`, `/docs/link-cards` and
@@ -651,7 +660,7 @@ it if it is wrong.
 
 ## Changelog
 
-- **2026-11-27: Owner decisions after build v3** (not deployed when this was written). Production
+- **2026-11-27: Owner decisions after build v3** (deployed to staging and production the same day). Production
   publishes only the approved free pages: `deploy:production` now builds the site with
   `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off` (the tools hub, the five one-app preview
   checkers, Merge PDF and Image to PDF in the browser, and the docs pages of bulk documents, the PDF
