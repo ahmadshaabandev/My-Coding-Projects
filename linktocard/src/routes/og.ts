@@ -12,9 +12,11 @@
  * Open fields (src/lib/open-fields.ts, EMAIL_FIELDS_ENABLED): a URL with "open"
  * is verified without the listed fields' values, which an email platform fills
  * in per recipient. A render with open fields that is not in the cache takes
- * one of the site's unique renders of the UTC day; once they are used up, the
- * card is served with every open field at its default instead (one cached
- * card), so an email that was already sent never shows a broken image.
+ * the image's slot among the site's unique renders of the UTC day, or shares it
+ * with the other requests for the same image (the cap counts images, not
+ * requests); once the day's slots are held by other images, the card is served
+ * with every open field at its default instead (one cached card), so an email
+ * that was already sent never shows a broken image.
  *
  * Charge once: such a card is charged 1 image the first time it is rendered and
  * never again while its charge is remembered (EMAIL_FIELDS.chargeMemoryDays): a
@@ -141,11 +143,11 @@ ogRouter.get('/*', async (c) => {
   const now = Date.now();
   let cacheKey = await cardCacheKey(card);
   const personalised = og.openFields.length > 0;
-  // A personalised render that is not cached takes one of the site's unique renders of the day.
+  // A personalised render that is not cached takes (or shares) the image's slot among the site's unique renders of the day.
   let reservation: OpenRenderReservation | null = null;
   let capped = false;
   if (personalised && request.method !== 'HEAD' && !(await findStoredCard(c.env, card, cacheKey, now, false))) {
-    reservation = await reserveOpenFieldRender(c.env, card.siteId!, card.user, now);
+    reservation = await reserveOpenFieldRender(c.env, card.siteId!, cacheKey, card.user, now);
     if (!reservation.allowed) {
       card = { ...card, data: og.fallbackData };
       cacheKey = await cardCacheKey(card);
@@ -185,9 +187,11 @@ ogRouter.get('/*', async (c) => {
     await reservation?.release();
     throw error;
   }
-  // Nothing new was rendered and stored by this request (another request stored or paid for it first):
-  // the day's count is given back. A free render of an image charged before keeps it, like a charged one.
-  if (reservation?.allowed && (result.outcome === 'cached' || result.outcome === 'duplicate')) await reservation.release();
+  // This request rendered nothing (another request stored the image first): its hold on the image's
+  // slot is given back, and the slot stays taken while a request that rendered the image holds it.
+  // Every request that rendered keeps its hold: charged, rendered again for free after expiry, or a
+  // duplicate of an image the ledger already covered (one image, one slot, however often rendered).
+  if (reservation?.allowed && result.outcome === 'cached') await reservation.release();
   const headers = storedImageHeaders(result.image, result.cached ? 'hit' : 'miss', now);
   if (personalised) {
     // The default card served past the cap must not stay in a mail proxy as this recipient's image.

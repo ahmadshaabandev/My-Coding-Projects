@@ -10,7 +10,7 @@ import { PLANS } from '../src/billing/plans';
 import { DAY_MS, EMAIL_FIELDS } from '../src/config';
 import { all, first, run } from '../src/db/client';
 import { runCleanup } from '../src/lib/cleanup';
-import { emailChargeBucket, hasEmailCharge, openRenderBucket } from '../src/lib/open-fields';
+import { emailChargeBucket, hasEmailCharge, openRenderBucket, openRendersUsed } from '../src/lib/open-fields';
 import * as renderModule from '../src/render';
 import type { Env } from '../src/types';
 import { bytesOf, call, createSite, createUser, dashboard, isPng, renderCount, sessionCookieFor, setUsed, signedPath, usageOf } from './app-helpers';
@@ -78,8 +78,12 @@ const memoryOf = (userId: string, cacheKey: string) =>
   first<{ count: number; expires_at: number }>(env.DB, 'SELECT count, expires_at FROM tool_usage WHERE bucket = ?1', emailChargeBucket(userId, cacheKey));
 const memoriesOf = async (userId: string): Promise<number> =>
   (await all<{ bucket: string }>(env.DB, "SELECT bucket FROM tool_usage WHERE bucket > ?1 AND bucket < ?2", `emailpaid:${userId}:`, `emailpaid:${userId};`)).length;
-const usedToday = async (siteId: string): Promise<number> =>
-  (await first<{ count: number }>(env.DB, 'SELECT count FROM tool_usage WHERE bucket = ?1', openRenderBucket(siteId, Date.now())))?.count ?? 0;
+const usedToday = (siteId: string): Promise<number> => openRendersUsed(env.DB, siteId, Date.now());
+/** Slots of `count` other images among the site's unique renders of today, as earlier renders leave them. */
+async function fillToday(siteId: string, count: number): Promise<void> {
+  const expiresAt = (Math.floor(Date.now() / DAY_MS) + 2) * DAY_MS;
+  for (let n = 0; n < count; n++) await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, 1, ?2)', openRenderBucket(siteId, Date.now(), `other${n}`), expiresAt);
+}
 /** Every request misses the edge cache, so it is answered from R2 or rendered. */
 const withoutEdgeCache = () => vi.spyOn(caches.default, 'match').mockResolvedValue(undefined);
 
@@ -137,7 +141,7 @@ describe('email images are charged once', () => {
     expect(await renderCount(user.id)).toBe(1);
     expect(await ledgerOf(user.id, opens[0]!.key)).toMatchObject({ charged_to: 'plan' });
     expect(await memoryOf(user.id, opens[0]!.key)).not.toBeNull();
-    // The requests that were not charged gave their unique render of the day back.
+    // One image: the simultaneous opens shared its one unique render of the day (audit CHG-1).
     expect(await usedToday(site.id)).toBe(1);
   });
 
@@ -227,7 +231,7 @@ describe('email images are charged once', () => {
 
     // Both copies expired; the site has used every unique render of the new day.
     vi.setSystemTime(T0 + FREE_TTL + DAY_MS);
-    await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, ?2, ?3)', openRenderBucket(site.id, Date.now()), limit, Date.now() + DAY_MS);
+    await fillToday(site.id, limit);
     const capped = await call(`${path}Maya`, {}, limited);
     expect(capped.status).toBe(200);
     await capped.arrayBuffer();
@@ -239,7 +243,7 @@ describe('email images are charged once', () => {
     expect(await ledgerOf(user.id, maya.key)).toMatchObject({ charged_to: 'plan', expires_at: T0 + FREE_TTL });
 
     // One render left today: Maya's free re-render takes it and keeps it.
-    await run(env.DB, 'UPDATE tool_usage SET count = ?2 WHERE bucket = ?1', openRenderBucket(site.id, Date.now()), limit - 1);
+    await run(env.DB, 'DELETE FROM tool_usage WHERE bucket = ?1', openRenderBucket(site.id, Date.now(), 'other0'));
     expect(await open(`${path}Maya`, limited)).toMatchObject({ status: 200, cache: 'miss', credits: '0', key: maya.key });
     expect(await usedToday(site.id)).toBe(limit);
     expect(await ledgerOf(user.id, maya.key)).toMatchObject({ charged_to: 'none' });

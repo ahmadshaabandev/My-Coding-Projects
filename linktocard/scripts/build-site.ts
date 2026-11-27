@@ -15,7 +15,8 @@
  * localpdf, apidocs), so a feature can be published on staging before production. SITE_FEATURES
  * is a comma list of the features to publish; SITE_PDF=on is the older spelling of "pdf". SITE_PDF must be "on", "off" or unset (= off), and SITE_FEATURES may
  * name only known features; anything else stops the build, so a typo cannot silently publish
- * the wrong site.
+ * the wrong site. "batch" and "toolkit" need "pdf" (their documents are PDFs, and their legal text
+ * builds on that of PDFs), and "localpdf" needs "toolkit" or "apidocs" (siteFeatures()).
  *   - A page or Markdown file with `feature: pdf` in its front matter is built only when
  *     SITE_PDF is "on" (`feature: no-pdf`: only when it is off). A page that is not built is
  *     also absent from sitemap.xml and the docs navigation, which are made from built pages.
@@ -33,6 +34,15 @@
  *     this build does not publish, or to an anchor the target does not have, is printed as plain text.
  *   - assets/partials/footer.html is the footer of this build as every page prints it, for pages the
  *     Worker renders (src/batch/verify-page.ts reads it through env.ASSETS).
+ *
+ * Legal pages print "Last updated" from legalUpdated in site.config.json. A legal page whose wording
+ * changed later than that can say when in its front matter: `updated: YYYY-MM-DD` for its text in
+ * every build, and `updated.<feature>: YYYY-MM-DD` (`updated.batch`, `updated.no-pdf`, ...) for text
+ * that only a build with that feature switch prints. The page's "Last updated" line and its
+ * [[legal.updated]] / [[legal.updatedIso]] tokens show the latest of legalUpdated and the dates that
+ * apply to this build, so raising legalUpdated (GO-LIVE.md sections 10 and 11c) dates every legal page
+ * on its own and needs no change here. Each date must be a real day and each feature a known one,
+ * on a `layout: legal` page only; anything else stops the build.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -44,7 +54,7 @@ import { PDF_TEMPLATES, type PdfStarterTemplate } from '../src/pdf/templates';
 import { STARTER_TEMPLATES as RENDER_TEMPLATES } from '../src/render/templates';
 import { emailSiteTokens } from './email-site-tokens';
 import { previewsSiteTokens } from './previews-site-tokens';
-import { v3SiteTokens } from './v3-site-tokens';
+import { rateLimitText, v3SiteTokens } from './v3-site-tokens';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const KB = 1024;
@@ -127,6 +137,8 @@ interface Paths {
 
 interface TokenContext {
   tokens: Record<string, string>;
+  /** legalUpdated of site.config.json: the date legal pages show unless their front matter has a later one. */
+  legalUpdated: string;
   /** Token names whose value is still a config placeholder. */
   placeholders: Set<string>;
   /** Partial name -> source (file partials may contain tokens and other partials). */
@@ -146,6 +158,8 @@ interface PageSource {
   indexed: boolean;
   scripts: string[];
   content: string;
+  /** The page's "Last updated" date in this build, YYYY-MM-DD: legalUpdated, or a later one of its front matter (pageUpdated()). */
+  updated: string;
   /**
    * True for a page with an `unlaunched` notice that this build publishes only through "apidocs",
    * its own feature being off: the notice opens it, and it stays out of the sitemap and docs navigation.
@@ -163,6 +177,13 @@ const ENV_OVERRIDES: Partial<Record<keyof SiteConfig, string>> = {
   legalAddress: 'SITE_LEGAL_ADDRESS',
   legalLocality: 'SITE_LEGAL_LOCALITY',
 };
+
+/** A real calendar date written YYYY-MM-DD (not 2026-02-30). */
+function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const time = Date.parse(`${value}T00:00:00Z`);
+  return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value;
+}
 
 /** LEGAL_NAME, LEGAL_ADDRESS, ...: an ALL_CAPS_WITH_UNDERSCORES value has not been filled in. */
 const isPlaceholder = (value: string): boolean => /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value);
@@ -189,7 +210,7 @@ function loadConfig(file: string, env: Record<string, string | undefined>): Site
     }
     config[key] = value.trim();
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(config.legalUpdated)) {
+  if (!isIsoDate(config.legalUpdated)) {
     throw new Error(`${display(file)}: "legalUpdated" must be a YYYY-MM-DD date`);
   }
   // Origin only: every page appends its own path.
@@ -236,7 +257,8 @@ const FEATURE_PUBLIC_FILES: Readonly<Record<string, Feature>> = {
 /**
  * Which features this build publishes: the names in SITE_FEATURES ("pdf,toolkit"), and "pdf"
  * also for SITE_PDF=on. Anything but "on", "off" or unset in SITE_PDF, an unknown name in
- * SITE_FEATURES, or "localpdf" without "toolkit" or "apidocs", stops the build.
+ * SITE_FEATURES, "batch" or "toolkit" without "pdf", or "localpdf" without "toolkit" or
+ * "apidocs", stops the build.
  */
 export function siteFeatures(env: Record<string, string | undefined>): SiteFeatures {
   const features = Object.fromEntries(FEATURES.map((feature) => [feature, false])) as SiteFeatures;
@@ -246,6 +268,15 @@ export function siteFeatures(env: Record<string, string | undefined>): SiteFeatu
   for (const name of (env.SITE_FEATURES ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
     if (!(FEATURES as readonly string[]).includes(name)) throw new Error(`SITE_FEATURES names an unknown feature "${name}" (known: ${FEATURES.join(', ')})`);
     features[name as Feature] = true;
+  }
+  // Bulk documents and the PDF toolkit make PDF documents, and their text builds on that of PDFs:
+  // the terms' section 4a hands a reported record to the counterfeit rule of section 4, and the
+  // toolkit's results "stored like your other documents" lean on section 5's "images and other
+  // files", both PDF text. GO-LIVE.md section 11c ("Needs first") turns them on only after PDFs.
+  for (const feature of ['batch', 'toolkit'] as const) {
+    if (features[feature] && !features.pdf) {
+      throw new Error(`SITE_FEATURES: "${feature}" needs "pdf" too (SITE_PDF=on, or "pdf" in SITE_FEATURES): it makes PDFs, and GO-LIVE.md section 11c ("Needs first") turns it on only after PDF documents`);
+    }
   }
   // The in-browser tools are published together with /docs/pdf-tools, the docs of the API that does
   // the same (and links back to them), which only these publish.
@@ -722,16 +753,15 @@ export function rateLimitScope(name: RateLimitName, site: SiteFeatures): string 
 }
 
 function rateLimitsTable(site: SiteFeatures): string {
-  const period = (seconds: number): string => (seconds === 60 ? 'minute' : `${seconds} seconds`);
   const names = (Object.keys(RATE_LIMITS) as RateLimitName[]).filter((name) => {
     const feature = rateLimitFeature(name);
     return feature === null || site[feature];
   });
   const rows = names.map((name) => {
-    const rule = RATE_LIMITS[name];
     const text = rateLimitScope(name, site);
     const scope = text.charAt(0).toUpperCase() + text.slice(1);
-    return [scope, `${formatCount(rule.limit)} requests per ${period(rule.periodSeconds)}`];
+    // The same words as the [[toolkit.rateLimit]] token, which states one limit on its own page.
+    return [scope, rateLimitText(name)];
   });
   return htmlTable(['Applies to', 'Limit'], rows);
 }
@@ -906,6 +936,7 @@ function tokenContext(paths: Paths, options: BuildOptions): { config: SiteConfig
   const features = siteFeatures(env);
   const ctx: TokenContext = {
     tokens: buildTokens(config, options.now ?? new Date()),
+    legalUpdated: config.legalUpdated,
     placeholders: placeholderTokens(config),
     partials: loadPartials(paths, features),
     features,
@@ -979,6 +1010,25 @@ function unlaunchedNotice(text: string, ctx: TokenContext, source: string): stri
   return `<p class="alert alert-warn" id="not-switched-on" role="note">${inline}</p>\n`;
 }
 
+/**
+ * The "Last updated" date of a page in this build (see the header of this file): the latest of
+ * legalUpdated, its `updated` front matter and each `updated.<feature>` whose switch holds here.
+ * Throws, naming the file and key, on such a key on a page that is not a legal page, a date that
+ * is not a real YYYY-MM-DD day, and an unknown feature.
+ */
+function pageUpdated(data: Record<string, string>, layout: Layout, ctx: TokenContext, source: string): string {
+  let latest = ctx.legalUpdated;
+  for (const [key, value] of Object.entries(data)) {
+    const match = /^updated(?:\.(.*))?$/.exec(key);
+    if (!match) continue;
+    if (layout !== 'legal') throw new Error(`${source}: "${key}" is only for legal pages (layout: legal), which print a "Last updated" date`);
+    if (!isIsoDate(value)) throw new Error(`${source}: "${key}" must be a YYYY-MM-DD date, not "${value}"`);
+    const rule = match[1] === undefined ? null : parseSwitch(match[1], `${source}: "${key}"`);
+    if ((rule === null || switchedOn(rule, ctx.features)) && value > latest) latest = value;
+  }
+  return latest;
+}
+
 /** A page, or null when its front matter names a feature this build leaves out. */
 function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: TokenContext): PageSource | null {
   const source = display(join(root, rel));
@@ -997,15 +1047,18 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
   const ownFeature = rule === null || switchedOn(rule, ctx.features);
   const unlaunched = !ownFeature && data.unlaunched !== undefined && ctx.features.apidocs;
   if (!ownFeature && !unlaunched) return null;
-  const field = (key: string): string => expand(data[key] ?? '', ctx, source, 'text');
+  const layout = (data.layout ?? (kind === 'content' ? 'page' : 'site')) as Layout;
+  // A legal page with a date of its own prints it in its [[legal.updated]] tokens as well as in the layout.
+  const updated = pageUpdated(data, layout, ctx, source);
+  const pageCtx: TokenContext = updated === ctx.legalUpdated ? ctx : { ...ctx, tokens: { ...ctx.tokens, 'legal.updated': longDate(updated), 'legal.updatedIso': updated } };
+  const field = (key: string): string => expand(data[key] ?? '', pageCtx, source, 'text');
   const title = field('title');
   const description = field('description');
   if (!title || !description) throw new Error(`${source}: front matter needs both "title" and "description"`);
-  const layout = (data.layout ?? (kind === 'content' ? 'page' : 'site')) as Layout;
   if (!LAYOUTS.includes(layout)) throw new Error(`${source}: unknown layout "${layout}" (use ${LAYOUTS.join(', ')})`);
   const order = data.order === undefined ? Number.MAX_SAFE_INTEGER : Number(data.order);
   if (Number.isNaN(order)) throw new Error(`${source}: "order" must be a number`);
-  const expanded = expand(body, ctx, source, 'html');
+  const expanded = expand(body, pageCtx, source, 'html');
   const content = kind === 'content' ? renderMarkdown(expanded) : expanded;
   return {
     source,
@@ -1019,7 +1072,8 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
     // Not advertised while the API it documents is off: no sitemap entry, noindex.
     indexed: data.noindex !== 'true' && !unlaunched,
     scripts: (data.scripts ?? '').split(',').map((name) => name.trim()).filter(Boolean),
-    content: unlaunched ? unlaunchedNotice(data.unlaunched ?? '', ctx, source) + content : content,
+    content: unlaunched ? unlaunchedNotice(data.unlaunched ?? '', pageCtx, source) + content : content,
+    updated,
     unlaunched,
   };
 }
@@ -1095,7 +1149,7 @@ function renderPage(page: PageSource, layouts: Record<Layout | 'base', string>, 
   const heading = /<h1[\s>]/.test(page.content) ? '' : `<h1>${escapeHtml(page.title)}</h1>`;
   const updated = /last updated/i.test(page.content)
     ? ''
-    : `<p class="eyebrow">Last updated <time datetime="${config.legalUpdated}">${longDate(config.legalUpdated)}</time></p>`;
+    : `<p class="eyebrow">Last updated <time datetime="${page.updated}">${longDate(page.updated)}</time></p>`;
   const body =
     page.layout === 'site'
       ? page.content

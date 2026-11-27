@@ -407,7 +407,12 @@ Production, only when you approve PDFs:
 - [ ] `package.json`: in `deploy:production`, change `SITE_PDF=off` to `SITE_PDF=on`, and update
       the test in `tests/node/site-features.test.ts` that pins that script.
 - [ ] `site/site.config.json`: set `legalUpdated` to the launch date. The PDF parts of the terms
-      and the privacy policy go live with the PDF pages.
+      and the privacy policy go live with the PDF pages: in the terms, the rule against counterfeit
+      or misleading documents, the immediate suspension when one is reported ("always urgent") and
+      "and other files" in section 5 (owner decision of 2026-11-27: production keeps the Terms of
+      `89270a7` until then). Saying "PDF approved" approves that text too; decide whether section 12
+      of the terms calls for an email to account holders. The pages' own `updated:` dates need no
+      change: the later date wins.
 - [ ] `npm test`, then `npm run deploy:production`, then `/api/config` reports
       `"pdf_enabled": true`.
 - [ ] Turnstile (section 9b) also covers the free PDF tools: with `TURNSTILE_SECRET_KEY` set,
@@ -506,7 +511,9 @@ npx wrangler d1 migrations apply DB --env production --remote
       does nothing while `EMAIL_FIELDS_ENABLED` is `"false"`; the verification page's footer read
       from the static site (`/assets/partials/footer.html`); `/api/sign` refusing
       `open` as a data name; `/v/*` reaching the Worker, which answers a "not available" page (503)
-      while `BATCH_ENABLED` is `"false"`. The two email starter templates do not: they answer 404
+      while `BATCH_ENABLED` is `"false"` (with no canonical URL), and the certificate revoke routes
+      answering 503 `not_configured` before any key or session check; the Terms of `89270a7` (the
+      counterfeit rule waits for PDFs) and the privacy policy dated 27 November 2026. The two email starter templates do not: they answer 404
       everywhere while `EMAIL_FIELDS_ENABLED` is `"false"`, and the free playground never offers them. The bundle is about
       3.2 MB gzipped (README.md, "Deploying").
 
@@ -548,7 +555,8 @@ For each tool you approve, in one change:
 
 1. `wrangler.toml`, `[env.production.vars]`: its switch to `"true"`.
 2. `package.json`, `deploy:production`: add its site feature to `SITE_FEATURES=`, keeping
-   `previews,localpdf,apidocs` (for example `SITE_FEATURES=previews,localpdf,apidocs,batch`), and
+   `previews,localpdf,apidocs` (for example `SITE_FEATURES=previews,localpdf,apidocs,batch` with
+   `SITE_PDF=on`: the build refuses `batch` or `toolkit` without `pdf`), and
    update the tests that pin that script (`tests/node/site-features.test.ts`, `tests/node/v3-site.test.ts`
    and `tests/node/production-site.test.ts`). With its feature on, the tool's docs page loses its
    "Not switched on yet" notice and joins the docs navigation and the sitemap by itself.

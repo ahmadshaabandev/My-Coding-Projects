@@ -175,11 +175,11 @@ Anyone who has one of your email URLs can change its open values, and every new 
 | [[plan.starter.name]] | [[email.dailyStarter]] |
 | [[plan.pro.name]] | [[email.dailyPro]] |
 
-Only renders count toward it: a value that is already stored is served without counting, however often it is loaded. A render after the stored copy expired counts toward it, even though it is not counted against the allowance.
+Only renders count toward it, each image once: a value that is already stored is served without counting, however often it is loaded, and simultaneous first opens of one value count once. A render after the stored copy expired counts toward it, even though it is not counted against the allowance.
 
 The limit is well below a month's images, so it slows such a drain, but it does not stop someone who has one of your URLs from using up the month's images over several days, and then your top-ups. Keep the URLs in your emails, and watch the usage in the dashboard.
 
-Once a site has used its limit for the day, a value that is not stored yet gets the default image instead of an error: every open field at its default. That response has `Cache-Control: no-store` and `X-LTC-Open-Fields: daily-limit`, so that a mail app or proxy does not keep the default as this reader's image. Values that were already rendered keep working, and new values render again after 00:00 UTC.
+Once a site has used its limit for the day on other values, a value that is not stored yet gets the default image instead of an error: every open field at its default. That response has `Cache-Control: no-store` and `X-LTC-Open-Fields: daily-limit`, so that a mail app or proxy does not keep the default as this reader's image. Values that were already rendered keep working, and new values render again after 00:00 UTC.
 
 If a list has more distinct values than the limit, send it in parts on different days, or from a plan with a higher limit.
 

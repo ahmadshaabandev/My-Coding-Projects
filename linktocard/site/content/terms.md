@@ -2,6 +2,10 @@
 title: Terms of Service
 description: The terms that apply when you use [[site.name]], a hosted API that renders social-card images from HTML and CSS.
 layout: legal
+updated.batch: 2026-11-26
+updated.toolkit: 2026-11-26
+updated.linkcards: 2026-11-26
+updated.email: 2026-11-26
 ---
 
 Last updated: [[legal.updated]]
@@ -78,7 +82,9 @@ You may not use the service to do any of the following, or help anyone else do s
 
 - break the law, or create content that is illegal where you or your audience are;
 - commit fraud, phishing or impersonation, including cards that pretend to come from a person, brand or organisation that has not agreed to it;
+<!-- feature:pdf -->
 - create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;
+<!-- /feature:pdf -->
 <!-- feature:batch -->
 - issue documents with a verification record that names an issuer, an accreditation, an achievement or a recipient that is not real or that the issuer did not authorise, or present a verification page as proof of more than it states;
 <!-- /feature:batch -->
@@ -103,8 +109,10 @@ You may not use the service to do any of the following, or help anyone else do s
 - resell the service as your own competing image-rendering service.
 
 We may remove content and suspend or close accounts that break these rules. Where the problem is not urgent we will contact you first and give you a chance to fix it. Where it is urgent (for example phishing or an attack on the service) we may act immediately and tell you afterwards.
+<!-- feature:pdf -->
 
 Counterfeit and misleading documents are always urgent. When we receive a report that the service was used to make one, we suspend the API keys and the account involved straight away, look into the report, and tell you afterwards.
+<!-- /feature:pdf -->
 <!-- feature:batch -->
 
 ## 4a. Verification pages
@@ -118,7 +126,7 @@ Anyone can report a record from its page. A record reported as false or misleadi
 
 ## 5. Your content and ours
 
-**Your content stays yours.** You own your templates, the fonts and images you upload or reference, the data you send to be rendered, and the images and other files the service produces for you.
+**Your content stays yours.** You own your templates, the fonts and images you upload or reference, the data you send to be rendered, and the images<!-- feature:pdf --> and other files the service produces for you.<!-- /feature:pdf --><!-- feature:no-pdf --> the service produces for you.<!-- /feature:no-pdf -->
 <!-- feature:toolkit -->
 
 **Files you send to the PDF toolkit** stay yours too. We use them only to make the result you asked for, while the request runs, and do not keep them. The result is stored like your other documents.

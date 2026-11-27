@@ -5,8 +5,8 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PLANS } from '../src/billing/plans';
 import { DAY_MS, EMAIL_FIELDS } from '../src/config';
-import { first, run } from '../src/db/client';
-import { openRenderBucket } from '../src/lib/open-fields';
+import { run } from '../src/db/client';
+import { openRenderBucket, openRendersUsed } from '../src/lib/open-fields';
 import { canonicalString, signCanonical } from '../src/lib/signed-url';
 import type { Env } from '../src/types';
 import { apiKeyFor, bearer, bytesOf, call, createSite, createUser, dashboard, errorOf, isPng, pngDimensions, renderCount, sessionCookieFor, setUsed, siteSecret, signedPath } from './app-helpers';
@@ -47,8 +47,15 @@ async function openUrl(cookie: string, siteId: string): Promise<string> {
 
 const etagOf = (response: Response): string => response.headers.get('etag') ?? '';
 
-async function used(siteId: string): Promise<number> {
-  return (await first<{ count: number }>(env.DB, 'SELECT count FROM tool_usage WHERE bucket = ?1', openRenderBucket(siteId, Date.now())))?.count ?? 0;
+/** The site's unique open-field renders of today: one slot per image (audit CHG-1). */
+function used(siteId: string): Promise<number> {
+  return openRendersUsed(env.DB, siteId, Date.now());
+}
+
+/** Slots of `count` other images among the site's unique renders of today, as earlier renders leave them. */
+async function fillToday(siteId: string, count: number): Promise<void> {
+  const expiresAt = (Math.floor(Date.now() / DAY_MS) + 2) * DAY_MS;
+  for (let n = 0; n < count; n++) await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, 1, ?2)', openRenderBucket(siteId, Date.now(), `other${n}`), expiresAt);
 }
 
 describe('GET /v1/og with open fields', () => {
@@ -127,7 +134,7 @@ describe('GET /v1/og with open fields', () => {
     const { user, cookie, site } = await account();
     const path = await openUrl(cookie, site.id);
     const limit = EMAIL_FIELDS.maxUniqueRendersPerDay.free;
-    await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, ?2, ?3)', openRenderBucket(site.id, Date.now()), limit, Date.now() + DAY_MS);
+    await fillToday(site.id, limit);
 
     const capped = await call(`${path}Maya`, {}, limited);
     expect(capped.status).toBe(200);

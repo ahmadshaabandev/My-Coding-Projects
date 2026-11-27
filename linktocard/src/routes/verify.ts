@@ -9,12 +9,14 @@
  * Only BATCH_ENABLED gates these, not pdfEnabled(): showing or revoking a record needs no
  * browser, so a PDF outage (or the browser-time brake) leaves printed QR codes working. While
  * BATCH_ENABLED is off, the page answers 503 with an HTML notice, and the JSON and revoke routes
- * 503 not_configured like every switched-off feature.
+ * 503 not_configured like every switched-off feature. The revoke routes check the switch before
+ * the rate limiter, the key and the session, as the /v1/batches routers do, so every revocation
+ * answers 503 while it is off, with a key or without one.
  *
  * The public routes count against RL_IP per client. Ids carry 100 random bits, so the limit is
  * about D1 reads, not about guessing.
  */
-import { Hono, type Context } from 'hono';
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { requireApiKey, requireSameOrigin, requireSession } from '../auth/middleware';
 import { getCertificate, parseCertificateId, revokeCertificate } from '../batch/certificates';
 import { loadSiteFooter, notFoundPageHtml, unavailablePageHtml, verifyHtmlResponse, verifyJson, verifyJsonResponse, verifyPageHtml, type VerifyContext } from '../batch/verify-page';
@@ -52,7 +54,14 @@ verifyRouter.get('/:file', async (c) => {
   return record ? verifyHtmlResponse(verifyPageHtml(record, page), 200) : verifyHtmlResponse(notFoundPageHtml(id, page), 404);
 });
 
+/** The kill switch, before anything else (BATCH_ENABLED only: revoking needs no PDF rendering). */
+const requireVerification: MiddlewareHandler<AppEnv> = async (c, next) => {
+  assertFeatureEnabled(c.env, 'batch');
+  await next();
+};
+
 async function revoke(c: Context<AppEnv>): Promise<Response> {
+  // Checked again here, should a route ever reach revoke() without requireVerification.
   assertFeatureEnabled(c.env, 'batch');
   const id = parseCertificateId(c.req.param('id') ?? '');
   if (id === null) throw notFound();
@@ -66,6 +75,7 @@ export const certificatesApiRouter = new Hono<AppEnv>();
 
 certificatesApiRouter.post(
   '/:id/revoke',
+  requireVerification,
   async (c, next) => {
     await enforceRateLimit(c.env, 'RL_IP', clientIp(c.req.raw));
     await next();
@@ -80,4 +90,4 @@ certificatesApiRouter.post(
 /** Mounted at /api/certificates. */
 export const certificatesDashboardRouter = new Hono<AppEnv>();
 
-certificatesDashboardRouter.post('/:id/revoke', requireSameOrigin, requireSession, revoke);
+certificatesDashboardRouter.post('/:id/revoke', requireVerification, requireSameOrigin, requireSession, revoke);

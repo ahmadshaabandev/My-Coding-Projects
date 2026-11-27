@@ -276,8 +276,12 @@ interface Shell {
   /** Page title without the site name. */
   title: string;
   description: string;
-  /** Path of the canonical URL, e.g. /v/crt_... */
-  path: string;
+  /**
+   * Path of the canonical URL, e.g. /v/crt_..., for the page's link rel=canonical and og:url. Left
+   * out on pages that stand for no record (a link without a certificate ID, verification switched
+   * off): /v/ itself is no page, so they name no URL of their own.
+   */
+  path?: string;
   main: string;
 }
 
@@ -286,7 +290,7 @@ function documentHtml(shell: Shell, ctx: VerifyContext): string {
   const base = origin(ctx.appUrl);
   const title = escapeHtml(`${shell.title} - ${SITE_NAME}`);
   const description = escapeHtml(shell.description);
-  const canonical = escapeHtml(`${base}${shell.path}`);
+  const canonical = shell.path === undefined ? null : escapeHtml(`${base}${shell.path}`);
   const image = escapeHtml(`${base}/assets/img/og.png`);
   return [
     '<!doctype html>',
@@ -297,12 +301,12 @@ function documentHtml(shell: Shell, ctx: VerifyContext): string {
     `<title>${title}</title>`,
     `<meta name="description" content="${description}">`,
     '<meta name="robots" content="noindex">',
-    `<link rel="canonical" href="${canonical}">`,
+    ...(canonical === null ? [] : [`<link rel="canonical" href="${canonical}">`]),
     '<meta property="og:type" content="website">',
     `<meta property="og:site_name" content="${escapeHtml(SITE_NAME)}">`,
     `<meta property="og:title" content="${title}">`,
     `<meta property="og:description" content="${description}">`,
-    `<meta property="og:url" content="${canonical}">`,
+    ...(canonical === null ? [] : [`<meta property="og:url" content="${canonical}">`]),
     `<meta property="og:image" content="${image}">`,
     '<meta name="twitter:card" content="summary_large_image">',
     `<meta name="twitter:image" content="${image}">`,
@@ -414,7 +418,7 @@ export function notFoundPageHtml(id: string | null, ctx: VerifyContext): string 
     '</main>',
   ].join('\n');
   return documentHtml(
-    { title: 'Certificate not found', description: `No certificate record with this ID on ${SITE_NAME}.`, path: id === null ? '/v/' : `/v/${id}`, main },
+    { title: 'Certificate not found', description: `No certificate record with this ID on ${SITE_NAME}.`, ...(id === null ? {} : { path: `/v/${id}` }), main },
     ctx,
   );
 }
@@ -430,7 +434,8 @@ export function unavailablePageHtml(ctx: VerifyContext): string {
     '</div>',
     '</main>',
   ].join('\n');
-  return documentHtml({ title: 'Verification unavailable', description: `Certificate verification on ${SITE_NAME}.`, path: '/v/', main }, ctx);
+  // No canonical URL: the page answers every /v/... link alike, and /v/ itself is no page.
+  return documentHtml({ title: 'Verification unavailable', description: `Certificate verification on ${SITE_NAME}.`, main }, ctx);
 }
 
 /** GET /v/{id}.json: the same facts as the page, values unescaped (JSON consumers escape for their own output). */

@@ -256,7 +256,16 @@ staging, your workers.dev subdomain in `APP_URL`. Each is marked `TODO(Ahmad)`.
 address**, the short **locality** shown in the footer, the legal pages' "last updated" date and
 the governing law. The environment variables `SITE_URL`, `SITE_LEGAL_NAME`,
 `SITE_LEGAL_ADDRESS` and `SITE_LEGAL_LOCALITY` override the file for one build. Change
-`legalUpdated` whenever the wording of the terms, privacy policy or refund policy changes.
+`legalUpdated` whenever the wording of the terms, privacy policy or refund policy changes, or give
+only the changed page a date of its own in its front matter: `updated: YYYY-MM-DD` for text every
+build prints, `updated.<feature>: YYYY-MM-DD` (`updated.batch`, `updated.no-pdf`, ...) for text only
+a build with that feature switch prints. A legal page shows the latest of `legalUpdated` and the
+dates that apply to the build, so raising `legalUpdated` at a launch dates every legal page by
+itself. A date that is not a real day, an unknown feature, or the key on a page that is not
+`layout: legal` stops the build. Today `privacy.md` has `updated: 2026-11-27` and `terms.md` has
+`updated.batch`, `updated.toolkit`, `updated.linkcards` and `updated.email` at 2026-11-26 (the day
+that text was written), so production shows terms and refund 25 November and privacy 27 November,
+and staging terms 26 November.
 
 `SITE_PDF` switches the PDF pages and blocks of the site (`feature: pdf` front matter,
 `<!-- feature:pdf -->` blocks): `on` builds them, `off` or unset leaves them out. Any other value
@@ -265,7 +274,9 @@ stops the build. `npm run deploy:staging` builds with `on`, `npm run deploy:prod
 
 `SITE_FEATURES` is a comma list of the site features to publish, the same way: `pdf`, `batch`,
 `toolkit`, `linkcards`, `email`, `previews`, `integrations`, `localpdf`, `apidocs`
-(`scripts/build-site.ts` `FEATURES`). An unknown name stops the build. `localpdf` publishes the
+(`scripts/build-site.ts` `FEATURES`). An unknown name stops the build, and so do `batch` or
+`toolkit` without `pdf` (their documents are PDFs and their terms build on the PDF terms; GO-LIVE.md
+section 11c turns them on only after PDFs). `localpdf` publishes the
 in-browser `/tools/merge-pdf` and `/tools/image-to-pdf` (their API sections need `toolkit`), and the
 build refuses it unless `toolkit` or `apidocs` is on too, so its "Automate this with the API" link
 has a page. `apidocs` publishes every docs page with an `unlaunched: <notice>` front-matter key
@@ -274,9 +285,14 @@ while that page's own feature is off: the notice opens the page under its headin
 the build does not publish are printed as text. Approving a tool later (its feature on) removes the
 notice and puts the page back in the navigation and the sitemap by itself. `deploy:staging` builds
 with all nine; `deploy:production` with `SITE_FEATURES=previews,localpdf,apidocs` (owner decision
-of 2026-11-27). The terms and the privacy policy carry each feature's text in its own block, so the
-production build's legal pages are unchanged until a feature is switched on there
-(`tests/node/v3-site.test.ts`).
+of 2026-11-27). The terms and the privacy policy carry each feature's text in its own block, so a
+feature's legal text goes live only with that feature (`tests/node/v3-site.test.ts`). The production
+Terms are byte for byte the owner-approved text of commit `89270a7` once the blocks are applied
+(the counterfeit-documents rule, the "always urgent" suspension and "and other files" are `pdf`
+text), and the refund policy is unchanged from it (`tests/node/legal-pages.test.ts`). The privacy
+policy has two wording changes that belong to no feature and are true in production: Turnstile is
+shown "if a free tool on the website shows it" (the one-app preview pages can), and expired entries
+are "deleted by the daily clean-up, normally within a day"; hence its own date.
 
 `RATE_LIMITS_DISABLED` exists only for the test suite and is ignored unless `ENVIRONMENT`
 is `test`.
@@ -445,8 +461,12 @@ and reaches the site through `[[tokens]]` (`scripts/v3-site-tokens.ts`, `scripts
   signed link reads its page again after `LINK_CARDS.refreshAfterMs`.
 - **Email images.** `open` is signed; the open fields' values are left out of the signed message,
   normalised and restricted to short plain text the fonts draw, else the field's signed default.
-  New renders per site and UTC day are capped by `EMAIL_FIELDS.maxUniqueRendersPerDay`; past the cap
-  the default card is served with `no-store`. Charge once (owner decision of 2026-11-27): each unique
+  New renders per site and UTC day are capped by `EMAIL_FIELDS.maxUniqueRendersPerDay`, counting
+  images, not requests: each image a site renders that day holds one `tool_usage` row
+  `emailr:{site}:{day}:{cache key}` (taken in one atomic D1 statement, kept until the end of the next
+  UTC day, removed by the daily clean-up), simultaneous requests for one image share it, and a
+  request that rendered nothing (its render failed, or another request stored the image first)
+  gives its hold back. Past the cap the default card is served with `no-store`. Charge once (owner decision of 2026-11-27): each unique
   email image (account, template and version, signed data, normalised open values, size, format,
   watermark) counts 1 image on its first render; repeat opens are served from the edge or R2 at no
   cost; when its stored copy expires it is rendered and stored again uncharged (a ledger row with
@@ -660,6 +680,48 @@ it if it is wrong.
 
 ## Changelog
 
+- **2026-11-27: Fixes from the live audit of that day's deploy** (deployed to staging and
+  production the same day). An independent audit of the live sites confirmed six issues, and
+  each fix was reviewed adversarially:
+  - **Terms (F4).** Production had published the counterfeit-documents rule, the "always
+    urgent" suspension and "and other files" under the old 25 November date. They are now `pdf`
+    text that goes live with PDFs. The production Terms are again the `89270a7` text, and the
+    test pins its git blob.
+  - **Privacy (F4).** It keeps its two wording changes, which are true in production, and shows
+    27 November through a new `updated:` front-matter key. Legal pages show the latest of
+    `legalUpdated` and their own dates, so the staging Terms show 26 November for their v3 text.
+  - **Docs (F1, F2, F3).** The production `/docs/bulk` and `/docs/pdf-tools` no longer point to an
+    OpenAPI description that does not cover them. They state their real rate limits, and the toolkit
+    limit comes from `RATE_LIMITS` through `[[toolkit.rateLimit]]`. The bulk preview no longer names
+    a free PDF tool that production does not publish.
+  - **Verification pages (F5).** The `/v/` "Verification unavailable" page and the not-found page
+    without an ID no longer declare a canonical URL or `og:url`.
+  - **Revoke routes (F6).** `POST /v1/certificates/{id}/revoke` and `/api/certificates/{id}/revoke`
+    check `BATCH_ENABLED` before the rate limiter, key or session, so they answer 503
+    `not_configured` while it is off, as `/v1/batches` does.
+  - **Daily cap of email images (CHG-1, staging only, since `EMAIL_FIELDS_ENABLED` is off in
+    production).** The cap now counts images, not requests. Before, simultaneous first opens of one
+    value each held a slot while they rendered, so near the cap some readers of that value got the
+    default card. The
+    privacy text on staging now says what is kept: one-way hashes per site and day, not a count.
+  - **Build.** It refuses `batch` or `toolkit` without `pdf`.
+
+  Tests changed because a decision changed behaviour:
+  - `tests/node/site-features.test.ts`: the counterfeit clause is expected in the PDF build only.
+    Builds of `batch` or `toolkit` alone now add `pdf`, here and in `v3-site.test.ts` and
+    `client-pdf-pages.test.ts`.
+  - `tests/node/dashboard-bulk.test.ts`: the pinned revoke route line.
+  - `tests/node/v3-site.test.ts`: the email privacy sentence.
+  - `tests/email-fields.test.ts`, `email-charge-once.test.ts` and `email-fields-route.test.ts`: the
+    storage of the daily cap. No assertion was weakened.
+
+  New tests: `tests/email-daily-cap.test.ts`, `tests/node/legal-pages.test.ts`,
+  `tests/node/production-docs-claims.test.ts` and `tests/node/email-daily-cap-privacy.test.ts`, plus
+  new cases in `tests/verify-page.test.ts` and `tests/email-fields.test.ts`. Each fails against the
+  code before the fix.
+
+  Where AI was used: the audit, fixes and reviews were written with AI tools (Claude Code); Ahmad
+  reviews before release.
 - **2026-11-27: Owner decisions after build v3** (deployed to staging and production the same day). Production
   publishes only the approved free pages: `deploy:production` now builds the site with
   `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off` (the tools hub, the five one-app preview
@@ -759,7 +821,9 @@ it if it is wrong.
   deploy of any kind: `/api/me` and the daily cron read its tables even with PDFs off), three rate limiters
   (`RL_PDF_KEY`, `RL_PDF_FREE`, `RL_TOOLS_PDF`), the `BROWSER` binding on staging and production,
   `PDF_DAILY_BROWSER_MS_BUDGET` and a daily alarm email. The terms now forbid counterfeit or
-  misleading documents (in both site builds, not only with PDFs on; on production from its next deploy). Where AI was used: the code, tests,
+  misleading documents (first in both site builds; since the owner decision of 2026-11-27 this rule,
+  with the suspension on report, is `pdf` text that goes live with PDFs, and production keeps the
+  Terms of `89270a7`). Where AI was used: the code, tests,
   templates, docs and copy were written with AI tools (Claude Code), in three parts with an
   integration pass, then reviewed by separate AI reviewers (security, billing, operations, content)
   whose confirmed findings were fixed, and checked with real renders on staging. Ahmad reviews

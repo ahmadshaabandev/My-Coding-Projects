@@ -10,7 +10,7 @@ unlaunched: **Not switched on yet on [[site.host]].** Bulk documents have not la
 
 A batch makes one PDF for every row of your data: the same template, a different row each time. Certificates for everyone who finished a course, an invoice for every customer of the month, a report for every location. You send the rows as JSON, the documents are made in the background, and you follow the progress, then download each PDF or all of them as ZIP files.
 
-The dashboard does the same from a CSV file (**Bulk documents**). It reads the file in your browser and does not upload it: only the values you match to template fields are sent, row 1 for a preview made by the free PDF tool (with that tool's mark, not stored and not counted) and every row when you start the batch. It reads at most [[batch.maxCsvColumns]] columns.
+The dashboard does the same from a CSV file (**Bulk documents**). It reads the file in your browser and does not upload it: only the values you match to template fields are sent, row 1 for a preview<!-- feature:pdf --> made by the free PDF tool (with that tool's mark, not stored and not counted)<!-- /feature:pdf --><!-- feature:no-pdf --> (with the "[[pdf.freeMark]]" line, not stored and not counted)<!-- /feature:no-pdf --> and every row when you start the batch. It reads at most [[batch.maxCsvColumns]] columns.
 
 ## How a batch runs
 
@@ -325,7 +325,7 @@ A record is kept for as long as your account exists. A revoked record is kept fo
 | Batches per page of `GET /v1/batches` | [[batch.listMaxLimit]] |
 | Revoked certificate records | Kept [[batch.revokedRetentionDays]] days after the revocation |
 
-Every other limit of a PDF, such as its HTML size and its images, is the one<!-- feature:pdf --> in [PDF documents](/docs/pdf#limits)<!-- /feature:pdf --><!-- feature:no-pdf --> of a `POST /v1/pdf` request<!-- /feature:no-pdf -->. The requests count against the API's [rate limits](/docs/limits#rate-limits) per IP address and per API key.
+Every other limit of a PDF, such as its HTML size and its images, is the one<!-- feature:pdf --> in [PDF documents](/docs/pdf#limits)<!-- /feature:pdf --><!-- feature:no-pdf --> of a `POST /v1/pdf` request<!-- /feature:no-pdf -->. <!-- feature:batch -->The requests count against the API's [rate limits](/docs/limits#rate-limits) per IP address and per API key.<!-- /feature:batch --><!-- feature:no-batch -->The requests count against the API's [rate limits](/docs/limits#rate-limits): the one per IP address, and per API key the one of `POST /v1/images`, which they share.<!-- /feature:no-batch -->
 
 ## API reference
 
@@ -382,4 +382,6 @@ The same error format and codes as the rest of the API ([Errors](/docs/api#error
 | 429 | `rate_limited` | Over a [rate limit](/docs/limits#rate-limits). Retry after the seconds in `Retry-After`. |
 | 503 | `not_configured` | Bulk documents are switched off on this deployment: "Bulk documents are not enabled yet." They also need PDF rendering, so while that is off, the answer is "PDF rendering is not enabled yet." |
 
+<!-- feature:batch -->
 The [OpenAPI description](/openapi.yaml) covers every endpoint on this page.
+<!-- /feature:batch -->

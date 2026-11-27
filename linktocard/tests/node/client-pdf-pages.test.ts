@@ -35,8 +35,10 @@ function walk(dir: string): string[] {
   );
 }
 
-/** The pages with the PDF toolkit API (staging). */
-const ON = 'localpdf,toolkit';
+/** The pages with the PDF toolkit API (staging; the toolkit needs "pdf", scripts/build-site.ts siteFeatures()). */
+const ON = 'pdf,localpdf,toolkit';
+/** The toolkit API without the in-browser pages. */
+const TOOLKIT_ONLY = 'pdf,toolkit';
 /** The pages without it, as production builds them (apidocs publishes /docs/pdf-tools with its notice). */
 const WITHOUT_API = 'previews,localpdf,apidocs';
 
@@ -60,7 +62,7 @@ const attribute = (html: string, name: string): string | undefined => new RegExp
 
 describe('publishing', () => {
   it('builds both pages only with the localpdf feature, and lists them in sitemap.xml only then', () => {
-    const toolkitOnly = renderSite({ env: { SITE_FEATURES: 'toolkit' }, now: NOW });
+    const toolkitOnly = renderSite({ env: { SITE_FEATURES: TOOLKIT_ONLY }, now: NOW });
     for (const outPath of Object.values(PAGES)) {
       expect(page(off, outPath), outPath).toBeUndefined();
       expect(page(toolkitOnly, outPath), outPath).toBeUndefined();
@@ -80,7 +82,7 @@ describe('publishing', () => {
     const toolkitDir = join(temp, 'toolkit');
     buildSite({ outDir: offDir, env: {}, now: NOW });
     buildSite({ outDir: onDir, env: { SITE_FEATURES: WITHOUT_API }, now: NOW });
-    buildSite({ outDir: toolkitDir, env: { SITE_FEATURES: 'toolkit' }, now: NOW });
+    buildSite({ outDir: toolkitDir, env: { SITE_FEATURES: TOOLKIT_ONLY }, now: NOW });
     const offFiles = walk(offDir);
     const onFiles = walk(onDir);
     const toolkitFiles = walk(toolkitDir);
@@ -101,7 +103,7 @@ describe('publishing', () => {
     }
     // Without the feature the engine is not needed, the PDF toolkit API's docs included.
     expect(() => buildSite({ siteDir, outDir: join(temp, 'no-engine-off'), env: {}, now: NOW })).not.toThrow();
-    expect(() => buildSite({ siteDir, outDir: join(temp, 'no-engine-toolkit'), env: { SITE_FEATURES: 'toolkit' }, now: NOW })).not.toThrow();
+    expect(() => buildSite({ siteDir, outDir: join(temp, 'no-engine-toolkit'), env: { SITE_FEATURES: TOOLKIT_ONLY }, now: NOW })).not.toThrow();
   });
 });
 

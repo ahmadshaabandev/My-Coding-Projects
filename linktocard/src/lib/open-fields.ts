@@ -25,16 +25,16 @@
  *     the template uses the field.
  *   - it cannot add, change or remove a signed parameter: every other name in the query is in
  *     the signed message, and `open` (which names the unsigned ones) is too.
- *   - it can vary the cache key, which is what costs units: the route caps unique renders per
- *     site and UTC day (reserveOpenFieldRender, EMAIL_FIELDS.maxUniqueRendersPerDay), and
- *     identical values are the same card and hit the cache. Each unique image is charged once
- *     ("Charge once" below): a copy rendered again after its stored period ended is free.
+ *   - it can vary the cache key, which is what costs units: the route caps the unique images it
+ *     renders per site and UTC day (reserveOpenFieldRender, EMAIL_FIELDS.maxUniqueRendersPerDay;
+ *     every request for one image shares its slot), and identical values are the same card and
+ *     hit the cache. Each unique image is charged once ("Charge once" below): a copy rendered
+ *     again after its stored period ended is free.
  *
  * A URL without `open` takes verifySignedUrl itself, untouched: it verifies exactly as before.
  */
 import { effectivePlanId } from '../billing/plans';
 import { DAY_MS, EMAIL_FIELDS, LIMITS } from '../config';
-import { run } from '../db/client';
 import { limitsDisabled } from '../inspect/limits';
 import { parseTemplate } from '../render/template';
 import type { Env, UserRow } from '../types';
@@ -362,46 +362,93 @@ export function openFieldsCacheControl(expiresAt: number, now: number): string {
   return `public, max-age=${Math.max(0, Math.min(EMAIL_FIELDS.maxAgeSeconds, Math.floor((expiresAt - now) / 1000)))}`;
 }
 
-/** tool_usage bucket of a site's unique open-field renders on one UTC day. */
-export function openRenderBucket(siteId: string, now: number): string {
-  return `emailr:${siteId}:${Math.floor(now / DAY_MS)}`;
+/*
+ * The daily cap counts unique images, not requests (audit CHG-1). Every image (its card cache key)
+ * that a site renders with open fields on a UTC day holds one slot: a tool_usage row
+ * "emailr:{site id}:{day}:{cache key}", kept until the end of the next UTC day and then removed by
+ * the daily cleanup of expired tool_usage rows (src/lib/cleanup.ts). The site's usage of the day
+ * is the number of those rows, and the cap is EMAIL_FIELDS.maxUniqueRendersPerDay of them.
+ *
+ * Every request for an image that is not stored takes or shares that image's slot in one D1
+ * statement (TAKE_SLOT_SQL), which is atomic: requests for different images can never pass the
+ * cap together, and every request for an image that already holds a slot of the day is let
+ * through, however many arrive at once, so simultaneous first opens of one value hold one slot.
+ * The row's count is the number of requests holding the slot. A request that rendered nothing
+ * (its render failed, or another request stored the image first) gives its hold back, and the
+ * slot is freed with the last hold (RELEASE_SLOT_SQL), so a slot stays taken exactly when a
+ * request for that image rendered it, or is still rendering it.
+ */
+const RENDER_PREFIX = 'emailr:';
+
+/**
+ * The slots of a site's unique open-field renders on the UTC day of `now` lie strictly between
+ * these two buckets: ";" follows ":", and site ids and day numbers hold neither, so no other
+ * site's or day's row (and no other kind of tool_usage row) falls in between.
+ */
+export function openRenderRange(siteId: string, now: number): { from: string; to: string } {
+  const day = `${RENDER_PREFIX}${siteId}:${Math.floor(now / DAY_MS)}`;
+  return { from: `${day}:`, to: `${day};` };
 }
 
+/** tool_usage bucket of one image's slot among a site's unique open-field renders of the UTC day of `now`. */
+export function openRenderBucket(siteId: string, now: number, cacheKey: string): string {
+  return `${openRenderRange(siteId, now).from}${cacheKey}`;
+}
+
+/** The unique open-field renders a site has used on the UTC day of `now`: images rendered, or being rendered. */
+export async function openRendersUsed(db: D1Database, siteId: string, now: number): Promise<number> {
+  const { from, to } = openRenderRange(siteId, now);
+  const row = await db.prepare('SELECT COUNT(*) AS used FROM tool_usage WHERE bucket > ?1 AND bucket < ?2').bind(from, to).first<{ used: number }>();
+  return row?.used ?? 0;
+}
+
+// ?1 the image's slot, ?2 its expiry, ?3 and ?4 the site's slots of the day (openRenderRange), ?5 the limit.
+// The SELECT yields the row when the image holds a slot already, or when the day has a free one;
+// the image's own row then conflicts (shared: one more hold) or is new (taken). No row: refused.
+const TAKE_SLOT_SQL = `INSERT INTO tool_usage (bucket, count, expires_at)
+  SELECT ?1, 1, ?2
+  WHERE EXISTS (SELECT 1 FROM tool_usage WHERE bucket = ?1)
+    OR (SELECT COUNT(*) FROM tool_usage WHERE bucket > ?3 AND bucket < ?4) < ?5
+  ON CONFLICT (bucket) DO UPDATE SET count = tool_usage.count + 1
+  RETURNING count`;
+// Gives one hold back; the last one frees the slot. Run as one batch, which D1 runs as one transaction.
+const RELEASE_SLOT_SQL = ['DELETE FROM tool_usage WHERE bucket = ?1 AND count <= 1', 'UPDATE tool_usage SET count = count - 1 WHERE bucket = ?1'] as const;
+
 export interface OpenRenderReservation {
-  /** False when the site already had its unique renders for the day: nothing was counted. */
+  /** False when the site already used its unique renders for the day on other images: nothing was taken. */
   allowed: boolean;
   limit: number;
-  /** Gives the reservation back (the render failed and charged nothing). Safe to call twice; never throws. */
+  /**
+   * Gives this request's hold on the image's slot back: call it when the request rendered nothing
+   * (the render failed, or the image was found stored after all). The slot is freed only when no
+   * other request for the image holds it. Safe to call twice; never throws.
+   */
   release: () => Promise<void>;
 }
 
 const nothingToRelease = async (): Promise<void> => {};
 
 /**
- * Takes one of the site's unique open-field renders for this UTC day, before a render that is
- * not in the cache. Atomic in D1: concurrent requests cannot overshoot the cap, because the
- * counter only moves while it is below it. Cached cards are never counted (call this only on a
- * cache miss), which is what makes it a cap on unique renders rather than on opens.
+ * Takes the slot of one image (`cacheKey`) among the site's unique open-field renders of this UTC
+ * day, or shares it when the image holds one already, before a render of an image that is not in
+ * the cache. Cached cards are never counted (call this only on a cache miss), which is what makes
+ * it a cap on unique renders rather than on opens; requests are not counted either, images are.
  */
 export async function reserveOpenFieldRender(
   env: Pick<Env, 'DB' | 'ENVIRONMENT' | 'RATE_LIMITS_DISABLED'>,
   siteId: string,
+  cacheKey: string,
   owner: Pick<UserRow, 'plan' | 'cancel_at'>,
   now: number,
 ): Promise<OpenRenderReservation> {
   const limit = EMAIL_FIELDS.maxUniqueRendersPerDay[effectivePlanId(owner, now)];
   if (limitsDisabled(env)) return { allowed: true, limit, release: nothingToRelease };
   if (limit <= 0) return { allowed: false, limit, release: nothingToRelease };
-  const bucket = openRenderBucket(siteId, now);
+  const { from, to } = openRenderRange(siteId, now);
+  const bucket = openRenderBucket(siteId, now, cacheKey);
   // The window ends at the next UTC midnight; the row outlives it by a day, like the PDF guard's.
   const expiresAt = (Math.floor(now / DAY_MS) + 2) * DAY_MS;
-  const row = await env.DB.prepare(
-    `INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, 1, ?2)
-     ON CONFLICT (bucket) DO UPDATE SET count = tool_usage.count + 1 WHERE tool_usage.count < ?3
-     RETURNING count`,
-  )
-    .bind(bucket, expiresAt, limit)
-    .first<{ count: number }>();
+  const row = await env.DB.prepare(TAKE_SLOT_SQL).bind(bucket, expiresAt, from, to, limit).first<{ count: number }>();
   if (!row) return { allowed: false, limit, release: nothingToRelease };
 
   let released = false;
@@ -412,7 +459,7 @@ export async function reserveOpenFieldRender(
       if (released) return;
       released = true;
       try {
-        await run(env.DB, 'UPDATE tool_usage SET count = count - 1 WHERE bucket = ?1 AND count > 0', bucket);
+        await env.DB.batch(RELEASE_SLOT_SQL.map((sql) => env.DB.prepare(sql).bind(bucket)));
       } catch (error) {
         console.error('releasing an open-field render failed:', error);
       }

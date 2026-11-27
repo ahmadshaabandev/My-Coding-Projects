@@ -12,7 +12,7 @@
  * KB / MB rounding as inUnits() there ("1.5", "20").
  */
 import { formatCount } from '../src/billing/plans';
-import { BATCH, INSPECT, LIMITS, LINK_CARDS, PDF, PDF_TOOLKIT, pdfToolkitUnits } from '../src/config';
+import { BATCH, INSPECT, LIMITS, LINK_CARDS, PDF, PDF_TOOLKIT, RATE_LIMITS, pdfToolkitUnits, type RateLimitName } from '../src/config';
 
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
@@ -29,6 +29,15 @@ const gigabytes = (bytes: number): string => String(Math.round((bytes / GB) * 10
  * value the v3 pages print is in config.
  */
 export const PENDING_CONFIG_TOKENS: Readonly<Record<string, string>> = {};
+
+/**
+ * A limiter's limit as the rate-limits table of /docs/limits prints it (rateLimitsTable() in
+ * build-site.ts): "30 requests per minute", "10 requests per 30 seconds".
+ */
+export function rateLimitText(name: RateLimitName): string {
+  const rule = RATE_LIMITS[name];
+  return `${formatCount(rule.limit)} requests per ${rule.periodSeconds === 60 ? 'minute' : `${rule.periodSeconds} seconds`}`;
+}
 
 /** Documents made in the "partial" batch example of /docs/bulk (one page each). */
 const BATCH_EXAMPLE_DONE = 2;
@@ -73,6 +82,8 @@ export function v3SiteTokens(): Record<string, string> {
     // A "url" file is downloaded under the image fetcher's limits (src/routes/pdf-toolkit.ts).
     'toolkit.fetchTimeoutSeconds': String(LIMITS.imageFetchTimeoutMs / 1000),
     'toolkit.fetchMaxRedirects': String(LIMITS.imageMaxRedirects),
+    // Its own limiter per API key, for the page itself: /docs/limits lists it only with "toolkit" on.
+    'toolkit.rateLimit': rateLimitText('RL_PDF_TOOLS'),
 
     // The OG checker's fetcher, which link cards use to read a page (INSPECT).
     'inspect.maxUrlChars': formatCount(INSPECT.maxUrlChars),

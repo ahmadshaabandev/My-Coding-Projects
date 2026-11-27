@@ -122,7 +122,7 @@ describe('applyFeatureBlocks', () => {
     // localpdf and apidocs: owner decision of 2026-11-27 (the in-browser PDF pages and the API docs pages go to
     // production while the APIs stay off), so the in-browser pages no longer come with "toolkit".
     expect(FEATURES).toEqual(['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs']);
-    expect(siteFeatures({ SITE_FEATURES: 'toolkit' })).toEqual(only('toolkit'));
+    expect(siteFeatures({ SITE_FEATURES: 'linkcards' })).toEqual(only('linkcards'));
     expect(siteFeatures({ SITE_FEATURES: ' pdf , toolkit ' })).toEqual(only('pdf', 'toolkit'));
     expect(siteFeatures({ SITE_FEATURES: 'toolkit', SITE_PDF: 'on' })).toEqual(only('pdf', 'toolkit'));
     expect(siteFeatures({ SITE_FEATURES: FEATURES.join(',') })).toEqual(only(...FEATURES));
@@ -134,7 +134,20 @@ describe('applyFeatureBlocks', () => {
     expect(() => siteFeatures({ SITE_FEATURES: 'localpdf' })).toThrow(/"localpdf" needs "toolkit" or "apidocs" too/);
     expect(() => siteFeatures({ SITE_FEATURES: 'previews,localpdf', SITE_PDF: 'on' })).toThrow(/"localpdf" needs "toolkit" or "apidocs" too/);
     expect(siteFeatures({ SITE_FEATURES: 'localpdf,apidocs' })).toEqual(only('localpdf', 'apidocs'));
-    expect(siteFeatures({ SITE_FEATURES: 'localpdf,toolkit' })).toEqual(only('localpdf', 'toolkit'));
+    expect(siteFeatures({ SITE_FEATURES: 'localpdf,toolkit', SITE_PDF: 'on' })).toEqual(only('pdf', 'localpdf', 'toolkit'));
+  });
+
+  it('refuses "batch" and "toolkit" without "pdf": their documents are PDFs, and their text builds on that of PDFs', () => {
+    // GO-LIVE.md section 11c ("Needs first"); the terms' section 4a refers to the counterfeit rule of the PDF text.
+    for (const feature of ['batch', 'toolkit'] as const) {
+      const message = new RegExp(`SITE_FEATURES: "${feature}" needs "pdf" too \\(SITE_PDF=on, or "pdf" in SITE_FEATURES\\)`);
+      expect(() => siteFeatures({ SITE_FEATURES: feature }), feature).toThrow(message);
+      expect(() => siteFeatures({ SITE_FEATURES: `previews,localpdf,apidocs,${feature}`, SITE_PDF: 'off' }), feature).toThrow(message);
+      expect(siteFeatures({ SITE_FEATURES: feature, SITE_PDF: 'on' }), feature).toEqual(only('pdf', feature));
+      expect(siteFeatures({ SITE_FEATURES: `${feature},pdf` }), feature).toEqual(only('pdf', feature));
+    }
+    // The other features need nothing.
+    for (const feature of ['linkcards', 'email', 'previews', 'integrations', 'apidocs'] as const) expect(siteFeatures({ SITE_FEATURES: feature }), feature).toEqual(only(feature));
   });
 });
 
@@ -287,7 +300,7 @@ describe('the two builds', () => {
     for (const name of Object.keys(RATE_LIMITS) as RateLimitName[]) expect(rateLimitFeature(name) !== null, name).toBe(/pdf/i.test(RATE_LIMITS[name].scope));
     expect(rateLimitFeature('RL_PDF_TOOLS')).toBe('toolkit');
     const cellOf = (scope: string): string => `<th scope="row">${scope.charAt(0).toUpperCase()}${scope.slice(1)}</th>`.replace(/&/g, '&amp;');
-    const toolkit = renderSite({ env: { SITE_FEATURES: 'toolkit' }, now: NOW });
+    const toolkit = renderSite({ env: { SITE_FEATURES: 'pdf,toolkit' }, now: NOW });
     for (const outPath of ['docs/limits.html', 'docs/api.html']) {
       for (const scope of pdfScopes) {
         expect(page(off, outPath), outPath).not.toContain(cellOf(scope));
@@ -338,13 +351,23 @@ describe('the two builds', () => {
     expect(page(on, 'index.html').match(/<details class="faq-item">/g)).toHaveLength(8);
   });
 
-  it('forbids counterfeit and misleading documents in the terms of both builds, and promises suspension on report', () => {
-    for (const site of [off, on]) {
+  it('forbids counterfeit and misleading documents, and promises suspension on report, in the PDF build only', () => {
+    // Owner decision of 2026-11-27 (audit F4): the production terms stay those of 89270a7, which the
+    // owner approved, so this text from the PDF feature waits for PDFs (tests/node/legal-pages.test.ts).
+    const production = renderSite({ env: { SITE_FEATURES: 'previews,localpdf,apidocs', SITE_PDF: 'off' }, now: NOW });
+    const counterfeit =
+      'create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;';
+    const suspension = 'When we receive a report that the service was used to make one, we suspend the API keys and the account involved straight away';
+    const onTerms = text(page(on, 'terms.html'));
+    expect(onTerms).toContain(counterfeit);
+    expect(onTerms).toContain(suspension);
+    expect(onTerms).toContain('and the images and other files the service produces for you.');
+    for (const site of [off, production]) {
       const terms = text(page(site, 'terms.html'));
-      expect(terms).toContain(
-        'create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;',
-      );
-      expect(terms).toContain('When we receive a report that the service was used to make one, we suspend the API keys and the account involved straight away');
+      expect(terms).not.toContain('counterfeit');
+      expect(terms).not.toContain(suspension);
+      expect(terms).not.toContain('other files');
+      expect(terms).toContain('and the images the service produces for you.');
     }
     expect(text(page(off, 'terms.html'))).not.toMatch(/\bPDF/);
     const terms = text(page(on, 'terms.html'));
@@ -409,7 +432,7 @@ describe('docs pages with an "unlaunched" notice', () => {
 
   it('are left out without their feature or apidocs, and built as usual with their feature', () => {
     expect(render('').pages.some((built) => built.outPath === 'docs/tool.html')).toBe(false);
-    const own = render('batch');
+    const own = render('pdf,batch');
     expect(article(own, 'docs/tool.html')).not.toContain('not-switched-on');
     expect(own.sitemap).toContain('/docs/tool</loc>');
     expect(navOf(page(own, 'docs/guide.html'))).toContain('href="/docs/tool"');

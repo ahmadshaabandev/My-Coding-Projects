@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import vector from '../examples/signing/vector.json';
 import { DAY_MS, EMAIL_FIELDS, LIMITS } from '../src/config';
 import { first, run } from '../src/db/client';
+import { runCleanup } from '../src/lib/cleanup';
 import { ApiError } from '../src/lib/errors';
 import { cardCacheKey, type ResolvedTemplate } from '../src/lib/images';
 import {
@@ -14,11 +15,14 @@ import {
   OPEN_RESERVED_PARAMS,
   buildOpenFieldsUrl,
   describeOpenFieldsFailure,
+  emailChargeBucket,
   keepTemplateOpenFields,
   normaliseOpenValue,
   openFieldsCacheControl,
   openFieldsCapError,
   openRenderBucket,
+  openRenderRange,
+  openRendersUsed,
   parseOpenList,
   reserveOpenFieldRender,
   templateFields,
@@ -624,65 +628,152 @@ describe('the daily cap of unique renders', () => {
   const limited = { DB: env.DB, ENVIRONMENT: 'test' } as const;
   const now = Date.UTC(2026, 10, 26, 15, 30);
   const free: Pick<UserRow, 'plan' | 'cancel_at'> = { plan: 'free', cancel_at: null };
+  const limit = EMAIL_FIELDS.maxUniqueRendersPerDay.free;
   let counter = 0;
-  const site = (): string => `s_cap${++counter}`;
+  // Ends in "x", so that no id of this suite is another one with a character more or less.
+  const site = (): string => `s_cap${++counter}x`;
+  /** Stands for the cache key of one image. */
+  const image = (name: string): string => `key-${name}`;
 
-  async function used(siteId: string, at = now): Promise<number> {
-    return (await first<{ count: number }>(env.DB, 'SELECT count FROM tool_usage WHERE bucket = ?1', openRenderBucket(siteId, at)))?.count ?? 0;
+  // Behaviour change (audit CHG-1): the cap used to be one counter per site and day, moved by
+  // every request that rendered; it is now one slot (row) per image, so these tests count rows.
+  const used = (siteId: string, at = now): Promise<number> => openRendersUsed(env.DB, siteId, at);
+
+  /** Slots of `count` other images of the day, as earlier renders leave them. */
+  async function preset(siteId: string, count: number, at = now): Promise<void> {
+    const expiresAt = (Math.floor(at / DAY_MS) + 2) * DAY_MS;
+    for (let n = 0; n < count; n++) await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, 1, ?2)', openRenderBucket(siteId, at, image(`e${n}`)), expiresAt);
   }
 
-  async function preset(siteId: string, count: number): Promise<void> {
-    await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, ?2, ?3)', openRenderBucket(siteId, now), count, now + DAY_MS);
-  }
+  const reserve = (siteId: string, cacheKey: string, at = now) => reserveOpenFieldRender(limited, siteId, cacheKey, free, at);
 
   it('counts per site and UTC day, up to the plan\'s limit and not one more', async () => {
     const id = site();
-    const limit = EMAIL_FIELDS.maxUniqueRendersPerDay.free;
-    const firstOne = await reserveOpenFieldRender(limited, id, free, now);
+    const firstOne = await reserve(id, image('a'));
     expect(firstOne).toMatchObject({ allowed: true, limit });
     expect(await used(id)).toBe(1);
-    await run(env.DB, 'UPDATE tool_usage SET count = ?1 WHERE bucket = ?2', limit - 1, openRenderBucket(id, now));
-    expect((await reserveOpenFieldRender(limited, id, free, now)).allowed).toBe(true);
-    expect((await reserveOpenFieldRender(limited, id, free, now)).allowed).toBe(false);
+    await preset(id, limit - 2);
+    expect((await reserve(id, image('b'))).allowed).toBe(true);
+    expect((await reserve(id, image('c'))).allowed).toBe(false);
     expect(await used(id)).toBe(limit);
     // Another site, and the next UTC day, have their own counts.
-    expect((await reserveOpenFieldRender(limited, site(), free, now)).allowed).toBe(true);
-    expect((await reserveOpenFieldRender(limited, id, free, now + DAY_MS)).allowed).toBe(true);
-    const row = await first<{ expires_at: number }>(env.DB, 'SELECT expires_at FROM tool_usage WHERE bucket = ?1', openRenderBucket(id, now));
+    expect((await reserve(site(), image('c'))).allowed).toBe(true);
+    expect((await reserve(id, image('c'), now + DAY_MS)).allowed).toBe(true);
+    const row = await first<{ expires_at: number }>(env.DB, 'SELECT expires_at FROM tool_usage WHERE bucket = ?1', openRenderBucket(id, now, image('a')));
     expect(row?.expires_at).toBe((Math.floor(now / DAY_MS) + 2) * DAY_MS);
   });
 
   it('uses the plan in force: a cancelled subscription counts as Free', async () => {
     const starter = { plan: 'starter', cancel_at: null } as const;
     const cancelled = { plan: 'starter', cancel_at: now - 1 } as const;
-    expect((await reserveOpenFieldRender(limited, site(), starter, now)).limit).toBe(EMAIL_FIELDS.maxUniqueRendersPerDay.starter);
-    expect((await reserveOpenFieldRender(limited, site(), cancelled, now)).limit).toBe(EMAIL_FIELDS.maxUniqueRendersPerDay.free);
-    expect((await reserveOpenFieldRender(limited, site(), { plan: 'pro', cancel_at: null }, now)).limit).toBe(EMAIL_FIELDS.maxUniqueRendersPerDay.pro);
+    expect((await reserveOpenFieldRender(limited, site(), image('a'), starter, now)).limit).toBe(EMAIL_FIELDS.maxUniqueRendersPerDay.starter);
+    expect((await reserveOpenFieldRender(limited, site(), image('a'), cancelled, now)).limit).toBe(EMAIL_FIELDS.maxUniqueRendersPerDay.free);
+    expect((await reserveOpenFieldRender(limited, site(), image('a'), { plan: 'pro', cancel_at: null }, now)).limit).toBe(EMAIL_FIELDS.maxUniqueRendersPerDay.pro);
   });
 
-  it('cannot be overshot by concurrent requests', async () => {
+  it('cannot be overshot by concurrent requests for different images', async () => {
     const id = site();
-    await preset(id, EMAIL_FIELDS.maxUniqueRendersPerDay.free - 3);
-    const results = await Promise.all(Array.from({ length: 10 }, () => reserveOpenFieldRender(limited, id, free, now)));
+    await preset(id, limit - 3);
+    const results = await Promise.all(Array.from({ length: 10 }, (_, n) => reserve(id, image(`n${n}`))));
     expect(results.filter((result) => result.allowed)).toHaveLength(3);
-    expect(await used(id)).toBe(EMAIL_FIELDS.maxUniqueRendersPerDay.free);
+    expect(await used(id)).toBe(limit);
+  });
+
+  it('counts images, not requests: concurrent requests for one image share its slot, also for the last one (audit CHG-1)', async () => {
+    const id = site();
+    await preset(id, limit - 1);
+    const results = await Promise.all(Array.from({ length: 10 }, () => reserve(id, image('maya'))));
+    expect(results.map((result) => result.allowed)).toEqual(Array.from({ length: 10 }, () => true));
+    expect(await used(id)).toBe(limit);
+    // Every request holds the one slot.
+    expect(await first(env.DB, 'SELECT count FROM tool_usage WHERE bucket = ?1', openRenderBucket(id, now, image('maya')))).toEqual({ count: 10 });
+    // The day is full for other images.
+    expect((await reserve(id, image('eve'))).allowed).toBe(false);
+    expect(await used(id)).toBe(limit);
+  });
+
+  it('lets an image that took its slot earlier the same day through again at the cap, without a new slot', async () => {
+    const id = site();
+    await preset(id, limit - 1);
+    expect((await reserve(id, image('maya'))).allowed).toBe(true);
+    expect((await reserve(id, image('eve'))).allowed).toBe(false);
+    // Later that day, at the cap: the image holds its slot.
+    expect((await reserve(id, image('maya'), now + 3_600_000)).allowed).toBe(true);
+    // An image of the earlier days' presets too.
+    expect((await reserve(id, image('e0'), now + 3_600_000)).allowed).toBe(true);
+    expect(await used(id)).toBe(limit);
   });
 
   it('gives a reservation back once when the render failed', async () => {
     const id = site();
-    await preset(id, EMAIL_FIELDS.maxUniqueRendersPerDay.free - 1);
-    const taken = await reserveOpenFieldRender(limited, id, free, now);
+    await preset(id, limit - 1);
+    const taken = await reserve(id, image('a'));
     expect(taken.allowed).toBe(true);
-    expect((await reserveOpenFieldRender(limited, id, free, now)).allowed).toBe(false);
+    expect((await reserve(id, image('b'))).allowed).toBe(false);
     await taken.release();
     await taken.release();
-    expect(await used(id)).toBe(EMAIL_FIELDS.maxUniqueRendersPerDay.free - 1);
-    expect((await reserveOpenFieldRender(limited, id, free, now)).allowed).toBe(true);
+    expect(await used(id)).toBe(limit - 1);
+    expect((await reserve(id, image('b'))).allowed).toBe(true);
+  });
+
+  it('frees a shared slot only with its last hold: a request that rendered keeps it for the others', async () => {
+    const id = site();
+    await preset(id, limit - 1);
+    const [one, two, three] = await Promise.all([reserve(id, image('a')), reserve(id, image('a')), reserve(id, image('a'))]);
+    expect([one?.allowed, two?.allowed, three?.allowed]).toEqual([true, true, true]);
+    // Two requests rendered nothing (one failed, one found the image stored): the third rendered it.
+    await one!.release();
+    await one!.release();
+    await two!.release();
+    expect(await used(id)).toBe(limit);
+    expect((await reserve(id, image('b'))).allowed).toBe(false);
+    expect(await first(env.DB, 'SELECT count FROM tool_usage WHERE bucket = ?1', openRenderBucket(id, now, image('a')))).toEqual({ count: 1 });
+    // Had the third failed too, the slot is free again.
+    await three!.release();
+    expect(await used(id)).toBe(limit - 1);
+    expect((await reserve(id, image('b'))).allowed).toBe(true);
+  });
+
+  it('counts only the site\'s own slots of the day: not the previous day, a lookalike site id, the old day counter or other rows', async () => {
+    const id = site();
+    // The previous UTC day was full, an id that starts with this one is full today, the counter of
+    // the earlier code (one row per site and day) says full, and email charge records lie near by.
+    await preset(id, limit, now - DAY_MS);
+    await preset(`${id}0`, limit);
+    await preset(`${id.slice(0, -1)}`, limit);
+    const day = Math.floor(now / DAY_MS);
+    await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, ?2, ?3)', `emailr:${id}:${day}`, limit, (day + 2) * DAY_MS);
+    await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, 1, ?2)', `emailr:${id}:${day + 1}:${image('x')}`, (day + 3) * DAY_MS);
+    await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, 1, ?2)', `emailr:${id}:${day}0:${image('x')}`, (day + 2) * DAY_MS);
+    await run(env.DB, 'INSERT INTO tool_usage (bucket, count, expires_at) VALUES (?1, 1, ?2)', emailChargeBucket('u_x', image('x')), now + DAY_MS);
+    expect(await used(id)).toBe(0);
+    expect(await used(id, now - DAY_MS)).toBe(limit);
+    expect((await reserve(id, image('a'))).allowed).toBe(true);
+    expect(await used(id)).toBe(1);
+    // An image that held a slot yesterday takes a new one today.
+    expect((await reserve(id, image('e0'))).allowed).toBe(true);
+    expect(await used(id)).toBe(2);
+  });
+
+  it('expires at the end of the next UTC day, and the daily cleanup removes the slots then', async () => {
+    const id = site();
+    await reserve(id, image('a'));
+    await reserve(id, image('b'));
+    const shared = await reserve(id, image('b'));
+    expect(shared.allowed).toBe(true);
+    expect(await used(id)).toBe(2);
+    const expiresAt = (Math.floor(now / DAY_MS) + 2) * DAY_MS;
+    await runCleanup(env, expiresAt - 1);
+    expect(await used(id)).toBe(2);
+    await runCleanup(env, expiresAt);
+    expect(await used(id)).toBe(0);
+    const { from, to } = openRenderRange(id, now);
+    expect(await first(env.DB, 'SELECT COUNT(*) AS rows FROM tool_usage WHERE bucket > ?1 AND bucket < ?2', from, to)).toEqual({ rows: 0 });
   });
 
   it('is off in tests that switch limits off, and counts nothing there', async () => {
     const id = site();
-    const result = await reserveOpenFieldRender({ ...limited, RATE_LIMITS_DISABLED: '1' }, id, free, now);
+    const result = await reserveOpenFieldRender({ ...limited, RATE_LIMITS_DISABLED: '1' }, id, image('a'), free, now);
     expect(result.allowed).toBe(true);
     await result.release();
     expect(await used(id)).toBe(0);

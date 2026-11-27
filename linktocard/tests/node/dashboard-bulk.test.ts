@@ -223,7 +223,8 @@ describe('the batch screen', () => {
     ]) {
       expect(route).toContain(line);
     }
-    expect(read('src/routes/verify.ts')).toContain("certificatesDashboardRouter.post('/:id/revoke', requireSameOrigin, requireSession, revoke);");
+    // The BATCH_ENABLED switch first, then same origin and the session (audit F6).
+    expect(read('src/routes/verify.ts')).toContain("certificatesDashboardRouter.post('/:id/revoke', requireVerification, requireSameOrigin, requireSession, revoke);");
     const source = code('site/public/assets/js/dashboard/bulk.js');
     expect(source).toContain("api.get('/api/batches')");
     expect(source).toContain('`/api/certificates/${encodeURIComponent(row.certificate_id)}/revoke`');

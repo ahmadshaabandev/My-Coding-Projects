@@ -368,7 +368,7 @@ On the [[plan.free.name]] plan, every page of a result carries one small grey li
 | Stamp text and form values | [[pdf.maxDataValueChars]] characters |
 | Request body | [[toolkit.maxRequestBodyMb]] MB; as JSON at most [[toolkit.maxJsonElements]] elements (the files' base64 text does not count), as multipart one part per file plus `image` and `options` |
 
-The toolkit has its own rate limit per API key, listed with the others under [Rate limits](/docs/limits#rate-limits).
+The toolkit has its own rate limit per API key<!-- feature:toolkit -->, listed with the others under [Rate limits](/docs/limits#rate-limits)<!-- /feature:toolkit --><!-- feature:no-toolkit -->, [[toolkit.rateLimit]], on top of the [rate limit](/docs/limits#rate-limits) per IP address of all `/v1` requests<!-- /feature:no-toolkit -->.
 
 ## API reference
 
@@ -395,7 +395,9 @@ The same error format and codes as the rest of the API ([Errors](/docs/api#error
 | 429 | `rate_limited` | Over a [rate limit](/docs/limits#rate-limits). Retry after the seconds in `Retry-After`. |
 | 503 | `not_configured` | The toolkit is switched off on this deployment: "The PDF toolkit is not enabled yet." |
 
+<!-- feature:toolkit -->
 The [OpenAPI description](/openapi.yaml) has a schema for every operation.
+<!-- /feature:toolkit -->
 
 ## In your browser, without an account
 

@@ -95,13 +95,18 @@ const LEGAL: Record<string, { terms: string[]; privacy: string[] }> = {
       'use open fields in emails sent to people who did not agree to receive them, for anything other than short display text (never email addresses or other personal details)',
       'Personalized email images: each distinct set of open-field values is one image',
     ],
-    privacy: ['Open-field values : the short values, such as a first name', 'Open-field values travel in image addresses.', 'The count of new personalized images per site and day: until the end of the next day (UTC)'],
+    privacy: ['Open-field values : the short values, such as a first name', 'Open-field values travel in image addresses.', 'Which new personalized images each site rendered on each UTC day (the site id and a one-way hash of each image, no text from the image): until the end of the next day (UTC)'],
   },
 };
 
 const only = (...on: Feature[]): RenderedSite => renderSite({ env: { SITE_FEATURES: on.join(',') }, now: NOW });
-/** One v3 feature alone; localpdf needs a page for its API link, so it comes with toolkit, which adds no page of its own feature. */
-const alone = (feature: Feature): RenderedSite => (feature === 'localpdf' ? only('localpdf', 'toolkit') : only(feature));
+/**
+ * One v3 feature alone, with what scripts/build-site.ts makes it need: bulk documents and the toolkit
+ * make PDFs, so they come with "pdf" (older, no v3 statement of its own); localpdf needs a page for
+ * its API link, so it comes with toolkit (and so pdf), which adds no page of its own feature.
+ */
+const alone = (feature: Feature): RenderedSite =>
+  feature === 'localpdf' ? only('pdf', 'localpdf', 'toolkit') : feature === 'batch' || feature === 'toolkit' ? only('pdf', feature) : only(feature);
 
 let off: RenderedSite;
 let all: RenderedSite;
@@ -295,7 +300,7 @@ describe('the counting rules, limits and reference pages', () => {
     expect(text(page(off, 'pricing.html'))).not.toMatch(/Merge PDF|one-app link preview/);
     // The in-browser tools are published with their own feature since 2026-11-27 (localpdf, not toolkit).
     expect(text(page(one.localpdf!, 'pricing.html'))).toContain('tools run in your browser: no account, the files are not uploaded, and nothing is counted.');
-    expect(text(page(only('toolkit'), 'pricing.html'))).not.toMatch(/Merge PDF/);
+    expect(text(page(only('pdf', 'toolkit'), 'pricing.html'))).not.toMatch(/Merge PDF/);
     expect(text(page(one.previews!, 'pricing.html'))).toContain('The same goes for the one-app link preview checkers among the free tools');
   });
 });

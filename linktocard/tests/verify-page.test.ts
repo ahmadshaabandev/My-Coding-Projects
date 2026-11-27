@@ -38,7 +38,7 @@ import logoPartial from '../site/partials/logo.html?raw';
 // @ts-expect-error -- Vite raw import; the suite has no vite/client types.
 import staticHeaders from '../site/public/_headers?raw';
 import siteConfig from '../site/site.config.json';
-import { apiKeyFor, bearer, ORIGIN, sessionCookieFor } from './app-helpers';
+import { apiKeyFor, bearer, call, ORIGIN, sessionCookieFor } from './app-helpers';
 import { createAccount, ensureCertificatesTable, SAMPLE_ROW } from './batch-certificate-helpers';
 
 const NOW = Date.UTC(2026, 10, 26, 12, 0, 0);
@@ -334,6 +334,29 @@ describe('the other pages', () => {
     expect(html).toContain('Certificate verification is not available right now.');
     expect(inlineCode(html)).toEqual([]);
   });
+
+  /** The page's own URL as its <head> declares it: link rel=canonical and og:url. */
+  const ownUrls = (html: string): { canonical: string[]; ogUrl: string[] } => {
+    const head = elements(html.slice(0, html.indexOf('</head>') + '</head>'.length));
+    return {
+      canonical: head.filter((element) => element.name === 'link' && element.attribs.rel === 'canonical').map((element) => element.attribs.href ?? ''),
+      ogUrl: head.filter((element) => element.name === 'meta' && element.attribs.property === 'og:url').map((element) => element.attribs.content ?? ''),
+    };
+  };
+
+  it('names no URL of its own where it stands for no record: /v/ itself is no page (audit F5)', () => {
+    // Verification switched off answers every /v/... link alike, and a link without an ID has no record.
+    for (const html of [unavailablePageHtml(CTX), notFoundPageHtml(null, CTX)]) {
+      expect(ownUrls(html)).toEqual({ canonical: [], ogUrl: [] });
+      expect(html).not.toContain('https://linktocard.test/v/"');
+      // Everything else of the head is still there.
+      expect(html).toContain('<meta name="robots" content="noindex">');
+      expect(html).toContain('<meta property="og:image" content="https://linktocard.test/assets/img/og.png">');
+    }
+    // A well-formed ID, found or not, keeps its own URL.
+    expect(ownUrls(notFoundPageHtml(ID, CTX))).toEqual({ canonical: [`https://linktocard.test/v/${ID}`], ogUrl: [`https://linktocard.test/v/${ID}`] });
+    expect(ownUrls(verifyPageHtml(record(), CTX))).toEqual({ canonical: [`https://linktocard.test/v/${ID}`], ogUrl: [`https://linktocard.test/v/${ID}`] });
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -599,7 +622,9 @@ describe('GET /v/{id} and /v/{id}.json', () => {
     expect(await unknown.text()).toContain('No certificate record found.');
     const malformed = await get('/v/%3Cscript%3E');
     expect(malformed.status).toBe(404);
-    expect(await malformed.text()).toContain('This link does not hold a certificate ID.');
+    const malformedHtml = await malformed.text();
+    expect(malformedHtml).toContain('This link does not hold a certificate ID.');
+    expect(malformedHtml).not.toContain('rel="canonical"');
     const json = await get(`/v/${newCertificateId()}.json`);
     expect(json.status).toBe(404);
     expect(((await json.json()) as { error: { code: string } }).error.code).toBe('not_found');
@@ -608,7 +633,14 @@ describe('GET /v/{id} and /v/{id}.json', () => {
   it('answers 503 while BATCH_ENABLED is off: an HTML notice, and not_configured in JSON', async () => {
     const page = await get(`/v/${id}`, OFF);
     expect(page.status).toBe(503);
-    expect(await page.text()).toContain('Certificate verification is not available right now.');
+    const notice = await page.text();
+    expect(notice).toContain('Certificate verification is not available right now.');
+    // No canonical URL: it used to name https://.../v/, which answers 404 (audit F5).
+    expect(notice).not.toContain('rel="canonical"');
+    expect(notice).not.toContain('property="og:url"');
+    const malformed = await get('/v/bad!', OFF);
+    expect(malformed.status).toBe(503);
+    expect(await malformed.text()).not.toContain('rel="canonical"');
     const json = await get(`/v/${id}.json`, OFF);
     expect(json.status).toBe(503);
     expect(((await json.json()) as { error: { code: string } }).error.code).toBe('not_configured');
@@ -707,5 +739,60 @@ describe('revoking', () => {
     const key = await apiKeyFor(owner.id);
     const response = await post(`/v1/certificates/${newCertificateId()}/revoke`, bearer(key.secret), OFF);
     expect(response.status).toBe(503);
+  });
+
+  /** The status and error code of a revocation. */
+  const outcome = async (response: Response): Promise<[number, string | undefined]> => [response.status, ((await response.json()) as { error?: { code: string } }).error?.code];
+
+  it('answers 503 not_configured to every revocation while BATCH_ENABLED is off, before the key or the session is checked (audit F6)', async () => {
+    const owner = await createAccount();
+    const key = await apiKeyFor(owner.id);
+    const cookie = await sessionCookieFor(owner.id);
+    const id = newCertificateId();
+    await createCertificates(env.DB, { userId: owner.id, batchId: null, rows: [{ id, rowIndex: 0, data: SAMPLE_ROW }] }, NOW);
+    const off: Array<[string, string, Record<string, string>]> = [
+      ['API, no key', `/v1/certificates/${id}/revoke`, {}],
+      ['API, a key that does not exist', `/v1/certificates/${id}/revoke`, bearer('ltc_this_key_does_not_exist_0123456789')],
+      ['API, a malformed id and no key', '/v1/certificates/not-an-id/revoke', {}],
+      ['API, the owner\'s key', `/v1/certificates/${id}/revoke`, bearer(key.secret)],
+      ['dashboard, no session and no origin', `/api/certificates/${id}/revoke`, {}],
+      ['dashboard, another origin', `/api/certificates/${id}/revoke`, { cookie, origin: 'https://evil.example' }],
+      ['dashboard, no session', `/api/certificates/${id}/revoke`, { origin: ORIGIN }],
+      ['dashboard, the owner\'s session', `/api/certificates/${id}/revoke`, { cookie, origin: ORIGIN }],
+    ];
+    for (const [label, path, headers] of off) expect(await outcome(await post(path, headers, OFF)), label).toEqual([503, 'not_configured']);
+    // Nothing was revoked.
+    expect(((await (await get(`/v/${id}.json`)).json()) as { status: string }).status).toBe('valid');
+  });
+
+  it('answers so through the whole Worker too, as production was probed (no key, a wrong key, no session)', async () => {
+    const off: Env = { ...env, BATCH_ENABLED: 'false' };
+    const id = newCertificateId();
+    for (const [path, headers] of [
+      [`/v1/certificates/${id}/revoke`, {}],
+      [`/v1/certificates/${id}/revoke`, bearer('ltc_this_key_does_not_exist_0123456789')],
+      [`/api/certificates/${id}/revoke`, {}],
+      [`/api/certificates/${id}/revoke`, { origin: ORIGIN }],
+    ] as Array<[string, Record<string, string>]>) {
+      expect(await outcome(await call(path, { method: 'POST', headers }, off)), `${path} ${JSON.stringify(headers)}`).toEqual([503, 'not_configured']);
+    }
+    // While on, the same requests are refused for the missing key or session, as before.
+    expect((await call(`/v1/certificates/${id}/revoke`, { method: 'POST' }, { ...env, BATCH_ENABLED: 'true' })).status).toBe(401);
+    expect((await call(`/api/certificates/${id}/revoke`, { method: 'POST', headers: { origin: ORIGIN } }, { ...env, BATCH_ENABLED: 'true' })).status).toBe(401);
+  });
+
+  it('checks the key and the session as before while BATCH_ENABLED is on', async () => {
+    const owner = await createAccount();
+    const cookie = await sessionCookieFor(owner.id);
+    const id = newCertificateId();
+    await createCertificates(env.DB, { userId: owner.id, batchId: null, rows: [{ id, rowIndex: 0, data: SAMPLE_ROW }] }, NOW);
+    expect(await outcome(await post(`/v1/certificates/${id}/revoke`, {}))).toEqual([401, 'invalid_api_key']);
+    expect(await outcome(await post(`/v1/certificates/${id}/revoke`, bearer('ltc_this_key_does_not_exist_0123456789')))).toEqual([401, 'invalid_api_key']);
+    expect((await post(`/api/certificates/${id}/revoke`, { origin: ORIGIN })).status).toBe(401);
+    expect((await post(`/api/certificates/${id}/revoke`, { cookie, origin: 'https://evil.example' })).status).toBe(403);
+    expect(((await (await get(`/v/${id}.json`)).json()) as { status: string }).status).toBe('valid');
+    const response = await post(`/api/certificates/${id}/revoke`, { cookie, origin: ORIGIN });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { status: string }).status).toBe('revoked');
   });
 });
