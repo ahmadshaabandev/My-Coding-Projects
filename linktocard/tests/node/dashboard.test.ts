@@ -212,6 +212,16 @@ describe('formatting', () => {
     // A template that was deleted since has no name left: its id is shown.
     expect(helpers.renderSummary({ ...render, template: 't_gone' }, {}).template).toBe('t_gone');
   });
+
+  it('never says a free re-render (charged_to none) counted against the plan (review ECQ-3)', () => {
+    // An email image paid for before and rendered again after its stored copy expired: a ledger
+    // row that moved no counter. The dashboard listed it under "Counted against: Plan".
+    const rerender: Render = { template: 'email-banner', source: 'og', width: 1200, height: 400, format: 'png', bytes: 30000, charged_to: 'none' };
+    const counted = helpers.renderSummary(rerender, { 'email-banner': 'Email banner' }).counted;
+    expect(counted).not.toBe('Plan');
+    expect(counted).not.toBe('Top-up');
+    expect(counted).toBe('Not counted (paid before)');
+  });
 });
 
 describe('usage and billing', () => {

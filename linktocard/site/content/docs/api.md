@@ -83,6 +83,8 @@ Renders one card and stores it, or returns the stored one if the same card was r
 
 Any other field is refused with 400 `invalid_request`, so a typo such as `tempalte` is noticed.
 
+The five starter templates for social cards (`blog`, `dark`, `quote`, `launch`, `docs`) take the `og`, `square` and `portrait` sizes. The `email` size ([[size.email.width]] x [[size.email.height]]) is for your own templates and inline HTML, which take every size<!-- feature:email -->, and for the two email starter templates (`email-banner`, `email-offer`), which do too<!-- /feature:email -->. A social starter at the `email` size, given as `"size": "email"` or as `width` [[size.email.width]] and `height` [[size.email.height]], answers 400 `invalid_request` with `details.reason` `size_not_supported` and the sizes it takes in `details.supported_sizes`. The dashboard's URL builder and preview answer the same.
+
 ### Example: a starter template
 
 ```bash
@@ -462,7 +464,13 @@ A successful response is the image, with these headers:
 | `Content-Type` | `image/png`, `image/jpeg` or `image/webp`. |
 | `Cache-Control` | `public, max-age=86400`, or fewer seconds when the stored image expires sooner. |
 | `ETag` | The card `id` in quotes. `If-None-Match` with the same value answers 304. |
+<!-- feature:no-email -->
 | `X-LTC-Cache` | `miss`: rendered and counted by this request. `hit`: not counted. |
+<!-- /feature:no-email -->
+<!-- feature:email -->
+| `X-LTC-Cache` | `miss`: rendered by this request, and counted unless it is an email image that was counted before. `hit`: not counted. |
+| `X-LTC-Credits-Used` | URLs with open fields only: `1` when this request was counted, `0` otherwise. See [Email images](/docs/email-images#caching-and-what-counts). |
+<!-- /feature:email -->
 | `Cross-Origin-Resource-Policy` | `cross-origin`, so any site may embed the image. |
 
 ## GET /i
@@ -507,7 +515,7 @@ Every error has the same shape, with an HTTP status that matches the code:
 
 | Status | Code | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_request` | The body or a parameter is malformed: not JSON, an unknown field, a bad data key, a value that is not a string or is too long. The message names the problem. |
+| 400 | `invalid_request` | The body or a parameter is malformed: not JSON, an unknown field, a bad data key, a value that is not a string or is too long. Also a starter template for social cards at the `email` size (`details.reason` `size_not_supported`, with `details.supported_sizes`). The message names the problem. |
 | 400 | `unsupported_size` | The size is not `og`, `square`, `portrait` or `email` (or `width` and `height` do not equal one of them). |
 | 400 | `unsupported_format` | The format is not `png`, `jpeg` or `webp`. |
 | 401 | `unauthorized` | Not signed in. Returned by the dashboard's own endpoints, not by the endpoints on this page. |
@@ -550,7 +558,7 @@ Every error has the same shape, with an HTTP status that matches the code:
 | 500 | `render_failed` | The renderer failed on this card. Nothing was counted. If a template fails every time, send it to [[site.supportEmail]]. |
 | 500 | `internal_error` | Something failed on our side. Retry; if it continues, write to [[site.supportEmail]] with the `X-Request-Id`. |
 <!-- feature:no-pdf -->
-| 503 | `not_configured` | A part of the service is not set up on this deployment. You should not see this on `[[site.host]]`. |
+| 503 | `not_configured` | A part of the service is not set up on this deployment, or not switched on yet. On `[[site.host]]`, only an API that is not switched on yet answers it. |
 <!-- /feature:no-pdf -->
 <!-- feature:pdf -->
 | 503 | `not_configured` | A part of the service is not set up on this deployment, for example PDF rendering while it is switched off there ("PDF rendering is not enabled yet."). |

@@ -5,6 +5,7 @@ layout: doc
 order: 3.6
 nav: Email images
 feature: email
+unlaunched: **Not switched on yet on [[site.host]].** Email images have not launched here: until they do, open fields are not read, so a URL with a reader's value in an open field answers 403 `invalid_signature`, and the two email starter templates answer 404 like an unknown template. The guide this page refers to, Personalized email images, is not published here yet either.
 ---
 
 A personalized email image is a [signed card URL](/docs/signed-urls) with one or more **open fields**: fields whose values are not signed, so that your email platform can put a merge tag there and fill in each reader's own value when it sends. Everything else in the URL stays signed. The result is an ordinary static PNG or JPEG, one per distinct value.
@@ -142,14 +143,21 @@ All readers whose values fall back see the same image, which is rendered and cou
 
 ## Caching and what counts
 
-Each distinct set of values is its own card. The first request for "Maya" renders the image, stores it and takes one image from the site owner's monthly allowance, like any new card. Every later request for "Maya", from any reader, is served from storage and is not counted. `name=Maya` and `name=%20Maya%20` are the same card, because values are normalized first.
+Each unique email image is counted once. An email image is the card a signed URL with open fields makes: the same template (for your own templates, the same version), signed parameters, open-field values (after normalization, so `name=Maya` and `name=%20Maya%20` are one image), size, format and watermark, on your account.
 
-So a send costs at most one image per distinct value, not one per reader: a list in which many readers share a first name costs fewer images than it has readers. After the plan's storage period ([[plan.free.cacheDays]] days on [[plan.free.name]], [[plan.starter.cacheDays]] on [[plan.starter.name]], [[plan.pro.cacheDays]] on [[plan.pro.name]]), the next request for a value renders and counts it again.
+- Its first render counts 1 image from the site owner's monthly allowance and is stored. Every later open, from any reader, is served from the cache at no cost while it is stored: [[plan.free.cacheDays]] days on [[plan.free.name]], [[plan.starter.cacheDays]] on [[plan.starter.name]], [[plan.pro.cacheDays]] on [[plan.pro.name]].
+- When the stored copy has expired, the next open renders and stores it again without counting it again, for [[email.chargeMemoryDays]] days from the first time it was counted. This also works when your allowance is used up. After those days, the next render counts once more.
+- A render after expiry still uses one of the site's new renders for the day (see [the daily limit](#the-daily-limit-per-site)). Past that limit the default card is served, as for a new value.
+- Simultaneous first opens of one image never count more than once. Distinct values are distinct images, each counted once.
+- Anything that makes a different image is counted again: a new value, an edited custom template, another size or format, or a plan change that adds or removes the watermark. Cards from URLs without open fields, `POST /v1/images` and link cards are counted as before: again once their cache period ends.
+
+So a send costs at most one image per distinct value, not one per reader: a list in which many readers share a first name costs fewer images than it has readers.
 
 - Personalized images are sent with `Cache-Control: public, max-age=...` of up to [[email.maxAgeDays]] days, and never longer than the image stays stored, so mail apps and their image proxies can keep it. They carry an `ETag`, and a request with a matching `If-None-Match` answers 304.
+- Responses to URLs with open fields carry `X-LTC-Cache` (`hit` or `miss`) and `X-LTC-Credits-Used`: `1` for the request that was counted, `0` otherwise. A free render after expiry says `X-LTC-Cache: miss` and `X-LTC-Credits-Used: 0`.
 - A request that fails is not stored and not counted, and it does not count toward the daily limit below.
 - `HEAD` never renders and never counts.
-- When the monthly allowance is used up, a value that is not stored yet cannot be rendered: the request answers 402 `quota_exceeded` and the reader sees a broken image. Values that were already rendered keep working. See [Limits](/docs/limits#at-the-limit).
+- When the monthly allowance is used up, an image that is not stored and was not counted in the last [[email.chargeMemoryDays]] days cannot be rendered: the request answers 402 `quota_exceeded` and the reader sees a broken image. Images that were already counted keep working, also after their stored copy expires, for [[email.chargeMemoryDays]] days from their count. See [Limits](/docs/limits#at-the-limit).
 
 An email's images can load even when nobody reads it. Apple says of Mail Privacy Protection that "Mail content may be loaded automatically after delivery", and that senders will see emails "as being opened, regardless of if the user read it or not". So count on every distinct value of a send being rendered, whether or not it is read.
 
@@ -167,7 +175,7 @@ Anyone who has one of your email URLs can change its open values, and every new 
 | [[plan.starter.name]] | [[email.dailyStarter]] |
 | [[plan.pro.name]] | [[email.dailyPro]] |
 
-Only renders count toward it: a value that is already stored is served without counting, however often it is loaded.
+Only renders count toward it: a value that is already stored is served without counting, however often it is loaded. A render after the stored copy expired counts toward it, even though it is not counted against the allowance.
 
 The limit is well below a month's images, so it slows such a drain, but it does not stop someone who has one of your URLs from using up the month's images over several days, and then your top-ups. Keep the URLs in your emails, and watch the usage in the dashboard.
 

@@ -7,7 +7,8 @@ PDF documents from HTML templates are built too, printed by Cloudflare Browser R
 switched off in production until Ahmad approves them (see "PDF documents" below). Build v3 adds
 bulk documents with certificate verification, a PDF toolkit, cards from links, personalized
 email images, connectors for Zapier, Make and n8n, and free funnel pages: built, tested and on
-staging since 2026-11-26, off in production, each behind its own switch (see "Build v3 tools" below).
+staging since 2026-11-26, each behind its own switch (see "Build v3 tools" below). On 2026-11-27
+Ahmad approved only the free pages for production; every v3 API stays off there.
 
 ## Status, stated plainly
 
@@ -45,9 +46,21 @@ staging since 2026-11-26, off in production, each behind its own switch (see "Bu
   value answered 403; the 13 new public pages answer 200. The connectors are not published.
   Its four Worker switches (`BATCH_ENABLED`,
   `PDF_TOOLKIT_ENABLED`, `LINK_CARDS_ENABLED`, `EMAIL_FIELDS_ENABLED`) are `"true"` locally and in the
-  staging configuration and `"false"` in production, and `npm run deploy:production` builds the site
-  with none of the new features. The next production deploy of any kind needs the production queue
-  and migration `0008` first: GO-LIVE.md section 11.
+  staging configuration and `"false"` in production. The next production deploy of any kind needs
+  the production queue and migrations `0006`-`0008` first: GO-LIVE.md section 11.
+- **Production publishes only the approved free pages** (owner decision of 2026-11-27, not deployed
+  when this was written). `npm run deploy:production` builds the site with
+  `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off`: the tools hub `/tools`, the five one-app
+  preview checkers, `/tools/merge-pdf` and `/tools/image-to-pdf` (they run in the browser and count
+  nothing), and the docs pages `/docs/bulk`, `/docs/pdf-tools`, `/docs/link-cards` and
+  `/docs/email-images`, each opening with a notice that its API is not switched on yet, `noindex`
+  and out of the sitemap and the docs navigation. `/docs/integrations` is not published in
+  production: the connectors stay unpublished (decision 6), and its "one HTTP request today" list
+  names endpoints that are off there. `PDF_ENABLED`, `BATCH_ENABLED`, `PDF_TOOLKIT_ENABLED`, `EMAIL_FIELDS_ENABLED` and
+  `LINK_CARDS_ENABLED` stay `"false"` there; PDFs, bulk documents, the toolkit and email images wait
+  for "PDF approved, enable it", cards from links for their own approval. The connectors are not
+  published. `CHECKOUT_ENABLED` and Paddle are unchanged. `tests/node/production-site.test.ts`
+  checks the production build page by page against the build with every feature off.
 
 ## What it does
 
@@ -130,7 +143,7 @@ production, so `wrangler dev` and the test pool start without a network connecti
 reason bulk documents answer 503 "PDF rendering is not enabled yet." under `wrangler dev`, which
 runs a local queue all the same; the toolkit and email images work there, and cards from links
 whenever the local Worker can reach the page. The
-build v3 pages: `SITE_FEATURES=pdf,batch,toolkit,linkcards,email,previews,integrations SITE_PDF=on npm run build:site`.
+build v3 pages: `SITE_FEATURES=pdf,batch,toolkit,linkcards,email,previews,integrations,localpdf,apidocs SITE_PDF=on npm run build:site`; the production site: `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off npm run build:site`.
 
 ## Tests
 
@@ -160,7 +173,8 @@ npm run smoke       # the whole product over HTTP against a real `wrangler dev`
 - `npm run smoke` starts `wrangler dev` on port 8799 with a throw-away database, signs in,
   creates a key and a site, renders, checks caching and counting, checks that every PDF
   endpoint answers 503 without Browser Run, checks the build v3 routes it can reach there (an
-  email image with an open field, a 404 verification page with its own CSP, a link card's 403, the
+  email image with an open field, counted once and not on three repeat opens; the social starters'
+  400 `size_not_supported` at the email size, also with every switch off; a 404 verification page with its own CSP, a link card's 403, the
   bulk documents' 503, toolkit merges and stamps of the test fixtures, a form's fields), and stops
   the server. It then starts `wrangler dev` twice more on the same data: once with `APP_URL` and
   `SITE_URL` on an unassigned IPv6 address, so cards from links are made from the Worker's own
@@ -241,11 +255,19 @@ stops the build. `npm run deploy:staging` builds with `on`, `npm run deploy:prod
 `off`, so a value left exported in the shell cannot publish PDF pages on production.
 
 `SITE_FEATURES` is a comma list of the site features to publish, the same way: `pdf`, `batch`,
-`toolkit`, `linkcards`, `email`, `previews`, `integrations` (`scripts/build-site.ts` `FEATURES`). An
-unknown name stops the build. `deploy:staging` builds with all seven; `deploy:production` sets
-`SITE_FEATURES=` (empty) explicitly. The terms and the privacy policy carry each feature's text in
-its own block, so the production build's legal pages are unchanged until a feature is switched on
-there (`tests/node/v3-site.test.ts`).
+`toolkit`, `linkcards`, `email`, `previews`, `integrations`, `localpdf`, `apidocs`
+(`scripts/build-site.ts` `FEATURES`). An unknown name stops the build. `localpdf` publishes the
+in-browser `/tools/merge-pdf` and `/tools/image-to-pdf` (their API sections need `toolkit`), and the
+build refuses it unless `toolkit` or `apidocs` is on too, so its "Automate this with the API" link
+has a page. `apidocs` publishes every docs page with an `unlaunched: <notice>` front-matter key
+while that page's own feature is off: the notice opens the page under its heading, the page is
+`noindex`, left out of `sitemap.xml` and of the docs navigation and pager, and its links to pages
+the build does not publish are printed as text. Approving a tool later (its feature on) removes the
+notice and puts the page back in the navigation and the sitemap by itself. `deploy:staging` builds
+with all nine; `deploy:production` with `SITE_FEATURES=previews,localpdf,apidocs` (owner decision
+of 2026-11-27). The terms and the privacy policy carry each feature's text in its own block, so the
+production build's legal pages are unchanged until a feature is switched on there
+(`tests/node/v3-site.test.ts`).
 
 `RATE_LIMITS_DISABLED` exists only for the test suite and is ignored unless `ENVIRONMENT`
 is `test`.
@@ -273,7 +295,8 @@ request. Workers Paid includes 30 million CPU milliseconds a month, about 75,000
 
 Bundle size (measured with `wrangler deploy --dry-run --env staging`): 6.8 MB, 2.7 MB gzipped on
 2026-11-22; with build v3 on 2026-11-26, 8,577.17 KiB, 3,218.23 KiB gzipped (the PDF toolkit brings
-@cantoo/pdf-lib into the bundle). Both under the 10 MB compressed limit of Workers Paid. Worker
+@cantoo/pdf-lib into the bundle); on 2026-11-27, after the owner decisions and their review fixes,
+8,587.90 KiB, 3,220.92 KiB gzipped (`--env production`: 3,217.08 KiB). Both under the 10 MB compressed limit of Workers Paid. Worker
 startup time with pdf-lib and the toolkit's CPU per operation on Cloudflare are not measured. The static site adds about
 3,800 asset files, most of them the Twemoji SVGs the renderer loads for emoji.
 
@@ -372,10 +395,12 @@ and reaches the site through `[[tokens]]` (`scripts/v3-site-tokens.ts`, `scripts
 | Tool | Worker switch | Site feature | Docs |
 | --- | --- | --- | --- |
 | Bulk documents and certificate verification | `BATCH_ENABLED` (and PDFs) | `batch` | `/docs/bulk` |
-| PDF toolkit | `PDF_TOOLKIT_ENABLED` | `toolkit` (also `/tools/merge-pdf`, `/tools/image-to-pdf`) | `/docs/pdf-tools` |
+| PDF toolkit | `PDF_TOOLKIT_ENABLED` | `toolkit` | `/docs/pdf-tools` |
 | Cards from links | `LINK_CARDS_ENABLED` | `linkcards` | `/docs/link-cards` |
 | Personalized email images | `EMAIL_FIELDS_ENABLED` | `email` | `/docs/email-images`, `/guides/personalized-email-images` |
-| One-app link preview pages and `/tools` | none (they use `/api/tools/og-check`) | `previews` | |
+| One-app link preview pages and `/tools` (approved for production on 2026-11-27) | none (they use `/api/tools/og-check`) | `previews` | |
+| Merge PDF and Image to PDF, in the browser (approved for production on 2026-11-27) | none (nothing reaches the Worker) | `localpdf` | |
+| The four docs pages above (bulk, PDF toolkit, link cards, email images) while their tool is off, with a notice (approved for production on 2026-11-27) | none | `apidocs` | |
 | Zapier, Make and n8n connectors | none | `integrations` (the page says "being prepared for listing") | `/docs/integrations`, `integrations/README.md` |
 
 - **Bulk documents.** Rows are checked with `validatePdfData` before anything is stored; each row is
@@ -395,6 +420,11 @@ and reaches the site through `[[tokens]]` (`scripts/v3-site-tokens.ts`, `scripts
   and records. The verification page states the domain of the issuing account's sign-in email
   (`src/batch/issuer.ts`; a curated list of public mailbox domains says "personal email address"),
   a fixed disclaimer and a report link; it is `noindex`, never cached and has its own strict CSP.
+  Its footer is the static site's own, with that build's tool links: the site build publishes it as
+  `/assets/partials/footer.html`, and the Worker reads it through `env.ASSETS` once per isolate,
+  checks that it is one plain `<footer class="site-footer">` and prints it; when the asset is missing
+  or fails the check, a stand-in footer with only the links every build has is printed. The header
+  stays a checked copy of the site's.
 - **PDF toolkit.** `url` inputs are downloaded under the image fetcher's rules (public addresses,
   every redirect checked, `LIMITS.imageFetchTimeoutMs` per file) and never from Link To Card's own
   hosts; encrypted and XFA files are refused; a structure budget is checked before pdf-lib parses a
@@ -407,9 +437,24 @@ and reaches the site through `[[tokens]]` (`scripts/v3-site-tokens.ts`, `scripts
 - **Email images.** `open` is signed; the open fields' values are left out of the signed message,
   normalised and restricted to short plain text the fonts draw, else the field's signed default.
   New renders per site and UTC day are capped by `EMAIL_FIELDS.maxUniqueRendersPerDay`; past the cap
-  the default card is served with `no-store`.
+  the default card is served with `no-store`. Charge once (owner decision of 2026-11-27): each unique
+  email image (account, template and version, signed data, normalised open values, size, format,
+  watermark) counts 1 image on its first render; repeat opens are served from the edge or R2 at no
+  cost; when its stored copy expires it is rendered and stored again uncharged (a ledger row with
+  `charged_to = 'none'`) for `EMAIL_FIELDS.chargeMemoryDays` from the charge, also with no images
+  left. The record is a `tool_usage` row (`emailpaid:{user}:{cache key}`), written only inside the
+  D1 batch that takes the image (guarded by the take's own condition, so it exists if and only if
+  the image was charged; never from a ledger row, which says `plan` from its claim), deleted with
+  the account and by the daily cleanup once expired. Such a re-render still
+  takes one of the day's unique renders. Responses carry `x-ltc-credits-used` (1 only for the
+  request that was charged).
 - **Not behind a switch** (live with the next deploy of any kind): the `email` size preset (1200 x
-  400, decision D7); `/v/*` reaching the Worker (a 503 notice page while `BATCH_ENABLED` is off); and
+  400, decision D7), which the five social starter templates refuse with 400 `invalid_request`
+  (`details.reason` `size_not_supported`) on every path that renders or signs a card (`POST /v1/images`,
+  signed `/v1/og` and `/v1/link` URLs, `POST /v1/cards/from-url`, `/api/sign`, `/api/preview`), owner
+  decision of 2026-11-27; your own templates and inline HTML take every size; the charge-once code of
+  email images, which does nothing while `EMAIL_FIELDS_ENABLED` is off and needs no migration (its
+  records are `tool_usage` rows, migration `0005`); `/v/*` reaching the Worker (a 503 notice page while `BATCH_ENABLED` is off); and
   `/api/sign` refusing `open` as a data name whatever `EMAIL_FIELDS_ENABLED` says, so that no URL
   signed while it is off changes meaning when it is turned on. The two email starter templates are
   part of the email images tool: while `EMAIL_FIELDS_ENABLED` is off, `POST /v1/images`, signed
@@ -453,7 +498,8 @@ storage.
 - Build v3 (where switched on): each document of a batch counts like a PDF of its pages; a
   toolkit result one image per started block of `PDF_TOOLKIT.pagesPerUnit` pages (split: per
   file; `fields`: nothing), every request; a card from a link one image like any card; an email
-  image one image per distinct set of open values.
+  image one image per distinct set of open values, counted once: after its stored copy expires it is
+  rendered again without counting for `EMAIL_FIELDS.chargeMemoryDays` (400 days) from that count.
 
 The numbers live in two files, `src/billing/plans.ts` and `src/config.ts`. The pricing
 page, the docs limits page and the Paddle catalog instructions are generated from or
@@ -604,6 +650,44 @@ it if it is wrong.
   facts on the one-app preview pages beyond the sources their code comments cite.
 
 ## Changelog
+
+- **2026-11-27: Owner decisions after build v3** (not deployed when this was written). Production
+  publishes only the approved free pages: `deploy:production` now builds the site with
+  `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off` (the tools hub, the five one-app preview
+  checkers, Merge PDF and Image to PDF in the browser, and the docs pages of bulk documents, the PDF
+  toolkit, cards from links and email images, each with a "Not switched on yet" notice, `noindex`;
+  the connectors page `/docs/integrations` stays out of production). Two new site features, `localpdf` and `apidocs`, and the
+  `unlaunched` front-matter key. Every v3 Worker switch and `PDF_ENABLED` stay `"false"` in
+  production; Paddle, the webhook and `CHECKOUT_ENABLED` are unchanged; the connectors are not
+  published. Email images are counted once per unique image: repeat opens cost nothing and a copy
+  that expired is rendered again uncharged for `EMAIL_FIELDS.chargeMemoryDays` (400 days), recorded
+  in `tool_usage` (no migration). The five social starter templates refuse the `email` size
+  (1200 x 400) on the server with 400 `invalid_request` / `size_not_supported`, in the API, signed
+  URLs, link cards and the dashboard's signing and preview; the dashboard's size picker offers a
+  starter only the sizes it is laid out for (`GET /api/templates` sends each starter's `sizes`). The
+  verification page's footer is the
+  static site's own, with the new tool links. Every other number is unchanged (bulk limits, 1 image
+  per started 10 toolkit pages, toolkit limits, certificate price). After review: an email image's
+  charge record is written only inside the D1 batch that takes the image, so it exists if and only
+  if the image was charged (before, a twin open of a claim that then failed for want of images
+  remembered an unpaid image for 400 days, and a failed record write let one image be charged
+  twice); the dashboard lists a free re-render as "Not counted (paid before)"; Merge PDF and Image
+  to PDF no longer offer "Automate this with the API" where the toolkit is off; and the docs pages
+  production publishes no longer send readers to pages it does not publish without saying so (the
+  bulk and toolkit pages leave those sentences out; the email page's notice says that its guide is
+  not published yet). Tests changed because a
+  decision changed behaviour: `tests/email-fields-route.test.ts` (`POST /v1/images` with `blog` at the `email`
+  size now expects 400, and inline HTML at that size still 200) and the deploy-script, feature-list
+  and front-matter pins of the Node suite; after review, `tests/email-charge-once.test.ts` ("the
+  record is written from a paid ledger row only, and restored from one charged before it existed"
+  now asserts that a duplicate render writes no record, so an image charged before charge-once is
+  charged once more after its row expires), `tests/node/client-pdf-pages.test.ts` (the no-toolkit
+  page asserts that the API link is absent instead of present), `tests/node/production-site.test.ts`
+  (no exemption for that link) and `tests/dashboard-api.test.ts` (starters carry `sizes`); none was
+  weakened. Where AI was used: written with AI
+  tools (Claude Code) by two parallel builders (site and cards) and an integration pass that wrote
+  the docs and ran every suite, the dry runs and browser screenshots of the production site build;
+  Ahmad reviews before release.
 
 - **2026-11-26: Build v3 tools** (not deployed; every new Worker switch is `"false"` in production and
   production deploys build the site with no new feature). Bulk documents from rows through a

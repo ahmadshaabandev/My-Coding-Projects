@@ -2,7 +2,9 @@
 // The public certificate verification page and its JSON twin (src/batch/verify-page.ts,
 // src/routes/verify.ts): escaping of hostile values, valid and revoked records, the JSON shape,
 // no inline script or style, a Content-Security-Policy that the static site's own policy would
-// also allow, the site's header and footer copied without drift, and the routes end to end.
+// also allow, the site's header and stand-in footer copied without drift, the static site's own
+// footer read from env.ASSETS (/assets/partials/footer.html, cached, checked, with a stand-in),
+// and the routes end to end.
 import { env } from 'cloudflare:workers';
 import { isTag, type Element } from 'domhandler';
 import { parseDocument } from 'htmlparser2';
@@ -11,8 +13,11 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { createCertificates, newCertificateId, type CertificateRecord } from '../src/batch/certificates';
 import { issuerFromEmail } from '../src/batch/issuer';
 import {
+  isSiteFooter,
+  loadSiteFooter,
   longDate,
   notFoundPageHtml,
+  SITE_FOOTER_ASSET,
   siteFooter,
   siteHeader,
   unavailablePageHtml,
@@ -408,6 +413,127 @@ describe("the site's header, footer and layout", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* The static site's own footer (env.ASSETS)                          */
+/* ------------------------------------------------------------------ */
+
+/** footer.html as scripts/build-site.ts renders it for a build with `on` features: their blocks kept, the others dropped. */
+function builtFooter(on: readonly string[]): string {
+  const kept = footerPartial.replace(
+    /<!--[ \t]*feature:(no-)?([a-z][a-z0-9-]*)[ \t]*-->\n?([\s\S]*?)<!--[ \t]*\/feature:(?:no-)?\2[ \t]*-->\n?/g,
+    (_match: string, negated: string | undefined, feature: string, inner: string) => ((negated ? !on.includes(feature) : on.includes(feature)) ? inner : ''),
+  );
+  return squeeze(expandTokens(kept, SITE_TOKENS, { logo: logoPartial }));
+}
+
+/** The production site's footer (SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off), with the tools links. */
+const PRODUCTION_FOOTER = builtFooter(['previews', 'localpdf', 'apidocs']);
+
+type AssetAnswer = Response | ((url: URL) => Response) | Error;
+
+/** A fake env.ASSETS: records every requested URL and answers from `answers` in turn (the last one repeats). */
+function fakeAssets(...answers: AssetAnswer[]): { assets: Fetcher; requested: string[] } {
+  const requested: string[] = [];
+  const assets = {
+    fetch: async (input: Request): Promise<Response> => {
+      requested.push(input.url);
+      const answer = answers[Math.min(requested.length - 1, answers.length - 1)]!;
+      if (answer instanceof Error) throw answer;
+      return typeof answer === 'function' ? answer(new URL(input.url)) : answer.clone();
+    },
+  } as unknown as Fetcher;
+  return { assets, requested };
+}
+
+const html = (body: string, status = 200): Response => new Response(body, { status, headers: { 'content-type': 'text/html; charset=utf-8' } });
+const FOOTER_URL = `https://assets.local${SITE_FOOTER_ASSET}`;
+
+describe("the static site's own footer", () => {
+  it('is the footer the site build publishes, with the tools links of the production build', () => {
+    expect(SITE_FOOTER_ASSET).toBe('/assets/partials/footer.html');
+    for (const href of ['/tools', '/tools/merge-pdf', '/tools/image-to-pdf']) expect(PRODUCTION_FOOTER).toContain(`<a href="${href}">`);
+    expect(siteFooter(siteConfig.supportEmail, NOW)).not.toContain('href="/tools');
+    expect(isSiteFooter(PRODUCTION_FOOTER)).toBe(true);
+    expect(isSiteFooter(builtFooter(['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs']))).toBe(true);
+    expect(isSiteFooter(siteFooter(siteConfig.supportEmail, NOW))).toBe(true);
+  });
+
+  it.each([
+    ['an empty file', ''],
+    ['the 404 page', '<!doctype html><html><body><footer class="site-footer"></footer></body></html>'],
+    ['a script', PRODUCTION_FOOTER.replace('</footer>', '<script src="/x.js"></script></footer>')],
+    ['an inline handler', PRODUCTION_FOOTER.replace('<a href="/tools">', '<a href="/tools" onclick="alert(1)">')],
+    ['an inline style', PRODUCTION_FOOTER.replace('<a href="/tools">', '<a href="/tools" style="color:red">')],
+    ['a javascript: link', PRODUCTION_FOOTER.replace('<a href="/tools">', '<a href="javascript:alert(1)">')],
+    ['an image', PRODUCTION_FOOTER.replace('</footer>', '<img src="https://evil.example/x.png"></footer>')],
+    ['a frame', PRODUCTION_FOOTER.replace('</footer>', '<iframe src="/"></iframe></footer>')],
+    ['a second footer', `${PRODUCTION_FOOTER}<footer class="site-footer"></footer>`],
+    ['another element', '<div class="site-footer"></div>'],
+    ['something huge', PRODUCTION_FOOTER.replace('</footer>', `<p>${'x'.repeat(40_000)}</p></footer>`)],
+  ])('is refused when it is %s', (_case, candidate) => {
+    expect(isSiteFooter(candidate)).toBe(false);
+  });
+
+  it('is read once per assets binding, then served from memory', async () => {
+    const { assets, requested } = fakeAssets(html(`${PRODUCTION_FOOTER}\n`));
+    expect(await loadSiteFooter(assets)).toBe(PRODUCTION_FOOTER);
+    expect(await loadSiteFooter(assets)).toBe(PRODUCTION_FOOTER);
+    expect(await Promise.all([loadSiteFooter(assets), loadSiteFooter(assets)])).toEqual([PRODUCTION_FOOTER, PRODUCTION_FOOTER]);
+    expect(requested).toEqual([FOOTER_URL]);
+    // Another binding (another deployment's assets) has its own copy.
+    const other = fakeAssets(html(builtFooter([])));
+    expect(await loadSiteFooter(other.assets)).toBe(builtFooter([]));
+    expect(other.requested).toEqual([FOOTER_URL]);
+  });
+
+  it('follows one redirect of the assets to the extensionless path, and no other', async () => {
+    const redirected = fakeAssets(new Response(null, { status: 307, headers: { location: '/assets/partials/footer' } }), html(PRODUCTION_FOOTER));
+    expect(await loadSiteFooter(redirected.assets)).toBe(PRODUCTION_FOOTER);
+    expect(redirected.requested).toEqual([FOOTER_URL, 'https://assets.local/assets/partials/footer']);
+    const elsewhere = fakeAssets(new Response(null, { status: 302, headers: { location: 'https://evil.example/footer.html' } }), html(PRODUCTION_FOOTER));
+    expect(await loadSiteFooter(elsewhere.assets)).toBeNull();
+    expect(elsewhere.requested).toEqual([FOOTER_URL]);
+    const loop = fakeAssets(new Response(null, { status: 307, headers: { location: '/assets/partials/footer' } }));
+    expect(await loadSiteFooter(loop.assets)).toBeNull();
+    expect(loop.requested).toHaveLength(2);
+  });
+
+  it('is null when the asset is missing, broken or not a footer, and is asked for again next time', async () => {
+    const cases: AssetAnswer[] = [
+      html('<!doctype html><h1>Not found</h1>', 404),
+      html('<p>Service unavailable</p>', 503),
+      new Response(PRODUCTION_FOOTER, { headers: { 'content-type': 'text/plain' } }),
+      html(PRODUCTION_FOOTER.replace('</footer>', '<script>alert(1)</script></footer>')),
+      new Error('assets down'),
+    ];
+    for (const answer of cases) {
+      const { assets, requested } = fakeAssets(answer);
+      expect(await loadSiteFooter(assets)).toBeNull();
+      expect(await loadSiteFooter(assets)).toBeNull();
+      expect(requested).toHaveLength(2);
+    }
+    // Once the asset is there, it is used.
+    const { assets } = fakeAssets(html('', 404), html(PRODUCTION_FOOTER));
+    expect(await loadSiteFooter(assets)).toBeNull();
+    expect(await loadSiteFooter(assets)).toBe(PRODUCTION_FOOTER);
+    expect(await loadSiteFooter(undefined)).toBeNull();
+  });
+
+  it('is printed as it is, in place of the stand-in, on every page; without it the stand-in is', () => {
+    const fallback = siteFooter(CTX.supportEmail, CTX.now);
+    const pages = (ctx: VerifyContext): string[] => [verifyPageHtml(record(), ctx), notFoundPageHtml(ID, ctx), unavailablePageHtml(ctx)];
+    for (const page of pages({ ...CTX, footer: PRODUCTION_FOOTER })) {
+      expect(page.split(PRODUCTION_FOOTER)).toHaveLength(2);
+      expect(page).not.toContain(fallback);
+      expect(page.match(/<footer\b/g)).toHaveLength(1);
+      expect(page.indexOf(PRODUCTION_FOOTER)).toBe(page.indexOf('</div>\n<footer') + '</div>\n'.length);
+      expect(inlineCode(page)).toEqual([]);
+      for (const url of loadedUrls(page)) expect(url).toMatch(/^\/(?!\/)/);
+    }
+    for (const page of [...pages(CTX), ...pages({ ...CTX, footer: null })]) expect(page).toContain(fallback);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Routes                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -486,6 +612,43 @@ describe('GET /v/{id} and /v/{id}.json', () => {
     const json = await get(`/v/${id}.json`, OFF);
     expect(json.status).toBe(503);
     expect(((await json.json()) as { error: { code: string } }).error.code).toBe('not_configured');
+  });
+
+  it("prints the static site's footer from env.ASSETS on the record, not-found and unavailable pages, and not for JSON", async () => {
+    const { assets, requested } = fakeAssets(html(PRODUCTION_FOOTER));
+    const withAssets = { ...ON, ASSETS: assets };
+    for (const path of [`/v/${id}`, `/v/${newCertificateId()}`, '/v/not-an-id']) {
+      const page = await (await get(path, withAssets)).text();
+      expect(page, path).toContain(PRODUCTION_FOOTER);
+      expect(page, path).toContain('<li><a href="/tools">All free tools</a></li>');
+      expect(inlineCode(page), path).toEqual([]);
+    }
+    const unavailable = await get(`/v/${id}`, { ...OFF, ASSETS: assets });
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.text()).toContain(PRODUCTION_FOOTER);
+    expect(requested).toEqual([FOOTER_URL]);
+    // The JSON twin needs no footer: a binding that fails every request is never asked.
+    const failing = fakeAssets(new Error('must not be asked'));
+    expect((await get(`/v/${id}.json`, { ...ON, ASSETS: failing.assets })).status).toBe(200);
+    expect(failing.requested).toEqual([]);
+  });
+
+  it('falls back to the stand-in footer while the asset is missing', async () => {
+    const { assets } = fakeAssets(html('<!doctype html><h1>Not found</h1>', 404));
+    const response = await get(`/v/${id}`, { ...ON, ASSETS: assets });
+    expect(response.status).toBe(200);
+    const page = await response.text();
+    expect(page).toContain(siteFooter('support@linktocard.test', Date.now()));
+  });
+
+  it('prints the same footer as the static pages of the deployed site (site/dist, as npm test builds it)', async () => {
+    const home = await env.ASSETS.fetch(new Request('https://linktocard.test/'));
+    expect(home.status, 'site/dist has no home page: run npm run build:site').toBe(200);
+    const homeHtml = await home.text();
+    const footer = homeHtml.slice(homeHtml.indexOf('<footer'), homeHtml.indexOf('</footer>') + '</footer>'.length);
+    expect(footer).toMatch(/^<footer class="site-footer">/);
+    const page = await (await get(`/v/${id}`)).text();
+    expect(page, 'the verification page footer differs from the site footer: rebuild site/dist (npm run build:site)').toContain(`</div>\n${footer}\n</body>`);
   });
 
   it('does not need PDF rendering: no BROWSER binding, PDF_ENABLED off, the page still works', async () => {

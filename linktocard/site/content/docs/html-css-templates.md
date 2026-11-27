@@ -29,7 +29,7 @@ html
 
 - Your HTML can be a fragment (`<div class="card">...</div>`) or a full document. `<html>`, `<head>` and `<body>` wrappers are unwrapped; `class`, `id`, `style`, `dir` and `lang` on your `<html>` and `<body>` are kept.
 - `<style>` elements anywhere in your HTML are collected in document order and placed before the separate `css` text.
-- The canvas is the output size: [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`), [[size.portrait.width]] x [[size.portrait.height]] (`portrait`) or [[size.email.width]] x [[size.email.height]] (`email`, a wide image for the top of an email). `html` and `body` fill it. Content outside it is clipped.
+- The canvas is the output size: [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`), [[size.portrait.width]] x [[size.portrait.height]] (`portrait`) or [[size.email.width]] x [[size.email.height]] (`email`, a wide image for the top of an email; not for the [starter templates](#starter-templates) below). `html` and `body` fill it. Content outside it is clipped.
 - The output is always opaque. Anything you leave transparent is white.
 
 ## Placeholders
@@ -260,7 +260,7 @@ The card uses 9 shadow / filter effects; the limit is 8. Every box-shadow layer,
 
 ## Starter templates
 
-Five templates are ready to use by id. All five take `title`, `description`, `author`, `image`, `site` and `tag`. All but `dark` also take `theme` (`light` or `dark`). Only `title` is marked as required: the designs are built around it. The service does not reject a request without it, and every other field can be left out.
+Five templates are ready to use by id. They are made for social cards and take the `og`, `square` and `portrait` sizes; at the `email` size they answer 400 `invalid_request` (`details.reason` `size_not_supported`). Your own templates and inline HTML take every size<!-- feature:email -->, and so do the two email starter templates (`email-banner`, `email-offer`)<!-- /feature:email -->. All five take `title`, `description`, `author`, `image`, `site` and `tag`. All but `dark` also take `theme` (`light` or `dark`). Only `title` is marked as required: the designs are built around it. The service does not reject a request without it, and every other field can be left out.
 
 `image` is always an absolute image URL and follows the [image rules](#images) above.
 

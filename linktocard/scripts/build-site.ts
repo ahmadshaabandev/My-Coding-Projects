@@ -11,9 +11,9 @@
  * Every number on the site comes from src/billing/plans.ts and src/config.ts,
  * so published prices and limits cannot drift from the enforced ones.
  *
- * Feature switches (FEATURES: pdf, batch, toolkit, linkcards, email, previews, integrations), so
- * a feature can be published on staging before production. SITE_FEATURES is a comma list of the
- * features to publish; SITE_PDF=on is the older spelling of "pdf". SITE_PDF must be "on", "off" or unset (= off), and SITE_FEATURES may
+ * Feature switches (FEATURES: pdf, batch, toolkit, linkcards, email, previews, integrations,
+ * localpdf, apidocs), so a feature can be published on staging before production. SITE_FEATURES
+ * is a comma list of the features to publish; SITE_PDF=on is the older spelling of "pdf". SITE_PDF must be "on", "off" or unset (= off), and SITE_FEATURES may
  * name only known features; anything else stops the build, so a typo cannot silently publish
  * the wrong site.
  *   - A page or Markdown file with `feature: pdf` in its front matter is built only when
@@ -26,6 +26,13 @@
  *   - openapi.yaml uses the same blocks as YAML comment lines (# feature:pdf ... # /feature:pdf):
  *     the copy in the repository describes everything, the published copy only what is switched on.
  *   - site/public files listed in FEATURE_PUBLIC_FILES are copied only when their feature is on.
+ *   - A docs page whose front matter also has `unlaunched: <notice>` documents an API that may not be
+ *     switched on yet. It is built with its own feature as usual, and also with "apidocs" while its
+ *     feature is off: then the notice (inline Markdown, [[tokens]] allowed) opens the page, the page is
+ *     noindex, out of sitemap.xml and out of the docs navigation, and every link of the page to a page
+ *     this build does not publish, or to an anchor the target does not have, is printed as plain text.
+ *   - assets/partials/footer.html is the footer of this build as every page prints it, for pages the
+ *     Worker renders (src/batch/verify-page.ts reads it through env.ASSETS).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -88,7 +95,16 @@ export interface RenderedSite {
   sitemap: string;
   /** openapi.yaml as published: the repository copy with the feature blocks applied. */
   openapi: string;
+  /**
+   * The site footer exactly as every page of this build prints it (site/partials/footer.html with
+   * this build's feature blocks and tokens), published as FOOTER_ASSET for pages the Worker renders.
+   * Null when the site has no footer partial.
+   */
+  footer: string | null;
 }
+
+/** Where the build publishes the footer of its pages; src/batch/verify-page.ts reads it from env.ASSETS. */
+export const FOOTER_ASSET = 'assets/partials/footer.html';
 
 export interface TokenListing {
   tokens: Record<string, string>;
@@ -130,6 +146,11 @@ interface PageSource {
   indexed: boolean;
   scripts: string[];
   content: string;
+  /**
+   * True for a page with an `unlaunched` notice that this build publishes only through "apidocs",
+   * its own feature being off: the notice opens it, and it stays out of the sitemap and docs navigation.
+   */
+  unlaunched: boolean;
 }
 
 // ------------------------------------------------------------------ config
@@ -180,11 +201,13 @@ function loadConfig(file: string, env: Record<string, string | undefined>): Site
 
 /**
  * pdf: PDFs (POST /v1/pdf, the PDF tools). batch: bulk documents and certificate verification.
- * toolkit: the PDF toolkit API and the in-browser merge and image-to-PDF pages. linkcards: cards
+ * toolkit: the PDF toolkit API (and what the in-browser pages say about it). linkcards: cards
  * from links. email: personalized email images. previews: the one-app link preview pages and the
- * tool hub. integrations: the Zapier, Make and n8n docs page.
+ * tool hub. integrations: the Zapier, Make and n8n docs page. localpdf: the in-browser Merge PDF and
+ * Image to PDF pages, which need no server feature. apidocs: the docs pages with an `unlaunched`
+ * notice, published with that notice while their own feature is off.
  */
-export const FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations'] as const;
+export const FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs'] as const;
 export type Feature = (typeof FEATURES)[number];
 export type SiteFeatures = Record<Feature, boolean>;
 
@@ -194,12 +217,12 @@ export const LOCAL_PDF_BUNDLE = 'assets/js/vendor/pdf-local.js';
 /** site/public files that exist only for a feature (everything else is always copied). */
 const FEATURE_PUBLIC_FILES: Readonly<Record<string, Feature>> = {
   'assets/js/pdf-tools.js': 'pdf',
-  // /tools/merge-pdf and /tools/image-to-pdf: they run in the browser and need no API, but
-  // they offer the PDF toolkit API, so they are published with it.
-  'assets/js/local-files.js': 'toolkit',
-  'assets/js/merge-pdf.js': 'toolkit',
-  'assets/js/image-to-pdf.js': 'toolkit',
-  [LOCAL_PDF_BUNDLE]: 'toolkit',
+  // /tools/merge-pdf and /tools/image-to-pdf: they run in the browser and need no API, so they
+  // have their own feature; what they say about the PDF toolkit API sits in toolkit blocks.
+  'assets/js/local-files.js': 'localpdf',
+  'assets/js/merge-pdf.js': 'localpdf',
+  'assets/js/image-to-pdf.js': 'localpdf',
+  [LOCAL_PDF_BUNDLE]: 'localpdf',
   // The one-app link preview pages.
   'assets/js/og-platform.js': 'previews',
   'assets/css/og-platform.css': 'previews',
@@ -212,8 +235,8 @@ const FEATURE_PUBLIC_FILES: Readonly<Record<string, Feature>> = {
 
 /**
  * Which features this build publishes: the names in SITE_FEATURES ("pdf,toolkit"), and "pdf"
- * also for SITE_PDF=on. Anything but "on", "off" or unset in SITE_PDF, or an unknown name in
- * SITE_FEATURES, stops the build.
+ * also for SITE_PDF=on. Anything but "on", "off" or unset in SITE_PDF, an unknown name in
+ * SITE_FEATURES, or "localpdf" without "toolkit" or "apidocs", stops the build.
  */
 export function siteFeatures(env: Record<string, string | undefined>): SiteFeatures {
   const features = Object.fromEntries(FEATURES.map((feature) => [feature, false])) as SiteFeatures;
@@ -223,6 +246,11 @@ export function siteFeatures(env: Record<string, string | undefined>): SiteFeatu
   for (const name of (env.SITE_FEATURES ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
     if (!(FEATURES as readonly string[]).includes(name)) throw new Error(`SITE_FEATURES names an unknown feature "${name}" (known: ${FEATURES.join(', ')})`);
     features[name as Feature] = true;
+  }
+  // The in-browser tools are published together with /docs/pdf-tools, the docs of the API that does
+  // the same (and links back to them), which only these publish.
+  if (features.localpdf && !features.toolkit && !features.apidocs) {
+    throw new Error('SITE_FEATURES: "localpdf" needs "toolkit" or "apidocs" too, which publish /docs/pdf-tools, the docs of the API the in-browser tools stand for');
   }
   return features;
 }
@@ -936,6 +964,21 @@ function renderMarkdown(markdown: string): string {
 
 const LAYOUTS: readonly Layout[] = ['site', 'page', 'doc', 'legal'];
 
+/** The public path of a source file: "docs/bulk.md" -> "/docs/bulk", "index.html" -> "/". */
+const urlOf = (rel: string): string => {
+  const stem = rel.replace(/\.(md|html)$/, '');
+  return stem === 'index' ? '/' : `/${stem}`;
+};
+
+/**
+ * The notice that opens a page published through "apidocs" while its own feature is off: the
+ * front matter's `unlaunched` text as inline Markdown, after [[tokens]] are filled in.
+ */
+function unlaunchedNotice(text: string, ctx: TokenContext, source: string): string {
+  const inline = new Marked({ gfm: true }).parseInline(expand(text, ctx, source, 'text'), { async: false });
+  return `<p class="alert alert-warn" id="not-switched-on" role="note">${inline}</p>\n`;
+}
+
 /** A page, or null when its front matter names a feature this build leaves out. */
 function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: TokenContext): PageSource | null {
   const source = display(join(root, rel));
@@ -945,7 +988,15 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
   }
   const text = applyFeatureBlocks(readFileSync(join(root, rel), 'utf8'), ctx.features, source);
   const { data, body } = parseFrontMatter(text, source);
-  if (data.feature !== undefined && !switchedOn(parseSwitch(data.feature, source), ctx.features)) return null;
+  const rule = data.feature === undefined ? null : parseSwitch(data.feature, source);
+  if (data.unlaunched !== undefined) {
+    // Only a page of a feature that can be off needs the notice, and "apidocs" cannot publish itself.
+    if (rule === null || !rule.when || rule.feature === 'apidocs') throw new Error(`${source}: "unlaunched" needs a "feature" (not no-..., not apidocs) to stand for`);
+    if (data.unlaunched.trim() === '') throw new Error(`${source}: "unlaunched" must say what is not switched on`);
+  }
+  const ownFeature = rule === null || switchedOn(rule, ctx.features);
+  const unlaunched = !ownFeature && data.unlaunched !== undefined && ctx.features.apidocs;
+  if (!ownFeature && !unlaunched) return null;
   const field = (key: string): string => expand(data[key] ?? '', ctx, source, 'text');
   const title = field('title');
   const description = field('description');
@@ -955,27 +1006,45 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
   const order = data.order === undefined ? Number.MAX_SAFE_INTEGER : Number(data.order);
   if (Number.isNaN(order)) throw new Error(`${source}: "order" must be a number`);
   const expanded = expand(body, ctx, source, 'html');
-  const stem = outPath.slice(0, -'.html'.length);
+  const content = kind === 'content' ? renderMarkdown(expanded) : expanded;
   return {
     source,
     outPath,
-    url: stem === 'index' ? '/' : `/${stem}`,
+    url: urlOf(rel),
     layout,
     title,
     description,
     nav: field('nav') || title,
     order,
-    indexed: data.noindex !== 'true',
+    // Not advertised while the API it documents is off: no sitemap entry, noindex.
+    indexed: data.noindex !== 'true' && !unlaunched,
     scripts: (data.scripts ?? '').split(',').map((name) => name.trim()).filter(Boolean),
-    content: kind === 'content' ? renderMarkdown(expanded) : expanded,
+    content: unlaunched ? unlaunchedNotice(data.unlaunched ?? '', ctx, source) + content : content,
+    unlaunched,
   };
+}
+
+/**
+ * A page published through "apidocs" keeps only the links this build can serve: a link to a page
+ * of the site that is not built, or to an anchor that the built target does not have, becomes its
+ * text. Everything else (files, API paths, other sites, anchors of the page itself) stays as it is.
+ */
+function unlinkUnpublished(page: PageSource, built: ReadonlyMap<string, PageSource>, sourceUrls: ReadonlySet<string>): string {
+  return page.content.replace(/<a\b[^>]*?\shref="(\/[^"#?]*)(?:\?[^"#]*)?(?:#([^"]*))?"[^>]*>([\s\S]*?)<\/a>/g, (link: string, path: string, anchor: string | undefined, inner: string): string => {
+    const target = built.get(path);
+    if (!target) return sourceUrls.has(path) ? inner : link;
+    if (anchor && !target.content.includes(` id="${anchor}"`)) return inner;
+    return link;
+  });
 }
 
 function loadPages(paths: Paths, ctx: TokenContext): PageSource[] {
   const pagesDir = join(paths.siteDir, 'pages');
+  const pageFiles = walk(pagesDir).filter((file) => file.endsWith('.html'));
+  const contentFiles = walk(paths.contentDir).filter((file) => file.endsWith('.md'));
   const pages = [
-    ...walk(pagesDir).filter((file) => file.endsWith('.html')).map((file) => loadPage(pagesDir, file, 'page', ctx)),
-    ...walk(paths.contentDir).filter((file) => file.endsWith('.md')).map((file) => loadPage(paths.contentDir, file, 'content', ctx)),
+    ...pageFiles.map((file) => loadPage(pagesDir, file, 'page', ctx)),
+    ...contentFiles.map((file) => loadPage(paths.contentDir, file, 'content', ctx)),
   ].filter((page): page is PageSource => page !== null);
   const seen = new Map<string, string>();
   for (const page of pages) {
@@ -983,6 +1052,13 @@ function loadPages(paths: Paths, ctx: TokenContext): PageSource[] {
     if (other) throw new Error(`${page.source}: writes ${page.outPath}, which ${other} already writes`);
     seen.set(page.outPath, page.source);
   }
+  // Every page the sources can make, built or not, so that only links to the site's own pages are unlinked.
+  const sourceUrls = new Set([...pageFiles, ...contentFiles].map(urlOf));
+  const built = new Map(pages.map((page) => [page.url, page]));
+  const contents = pages.map((page) => (page.unlaunched ? unlinkUnpublished(page, built, sourceUrls) : page.content));
+  pages.forEach((page, i) => {
+    page.content = contents[i] ?? page.content;
+  });
   return pages;
 }
 
@@ -1007,6 +1083,8 @@ function docsSidebar(docs: PageSource[], current: PageSource): string {
 
 function docsPager(docs: PageSource[], current: PageSource): string {
   const at = docs.indexOf(current);
+  // A page outside the navigation (published through "apidocs") has no place in the sequence.
+  if (at < 0) return '';
   const link = (doc: PageSource | undefined, rel: 'prev' | 'next', label: string): string =>
     doc ? `<a class="pager-${rel}" rel="${rel}" href="${doc.url}"><span>${label}</span>${escapeHtml(doc.nav)}</a>` : '<span></span>';
   return `<nav class="pager" aria-label="Previous and next page">${link(docs[at - 1], 'prev', 'Previous')}${link(docs[at + 1], 'next', 'Next')}</nav>`;
@@ -1067,8 +1145,9 @@ function renderWith(paths: Paths, config: SiteConfig, ctx: TokenContext): Render
   };
   const layouts = { base: layout('base'), site: '', page: layout('page'), doc: layout('doc'), legal: layout('legal') };
   const sources = loadPages(paths, ctx);
+  // Pages published through "apidocs" are left out: the navigation says only what this build switches on.
   const docs = sources
-    .filter((page) => page.layout === 'doc')
+    .filter((page) => page.layout === 'doc' && !page.unlaunched)
     .sort((a, b) => a.order - b.order || a.title.localeCompare(b.title));
   const pages = sources.map((page) => ({
     source: page.source,
@@ -1077,7 +1156,10 @@ function renderWith(paths: Paths, config: SiteConfig, ctx: TokenContext): Render
     indexed: page.indexed,
     html: renderPage(page, layouts, docs, config),
   }));
-  return { config, features: ctx.features, pages, sitemap: renderSitemap(sources, config), openapi: renderOpenapi(ctx.features) };
+  // The same expansion as [[> footer]] in site/layouts/base.html, so the asset is byte for byte the pages' footer.
+  const footerFile = display(join(paths.siteDir, 'partials', 'footer.html'));
+  const footer = ctx.partials.footer === undefined ? null : expand('[[> footer]]', ctx, footerFile, 'html');
+  return { config, features: ctx.features, pages, sitemap: renderSitemap(sources, config), openapi: renderOpenapi(ctx.features), footer };
 }
 
 /** Renders every page in memory. Throws (naming the file) on an unknown token, partial or layout. */
@@ -1122,7 +1204,7 @@ export function buildSite(options: BuildOptions = {}): RenderedSite & { outDir: 
   const site = renderWith(paths, config, ctx);
   const publicDir = join(paths.siteDir, 'public');
   // Without the engine the in-browser tools would load and then fail on the first file.
-  if (site.features.toolkit && !existsSync(join(publicDir, LOCAL_PDF_BUNDLE))) {
+  if (site.features.localpdf && !existsSync(join(publicDir, LOCAL_PDF_BUNDLE))) {
     throw new Error(`${display(join(publicDir, LOCAL_PDF_BUNDLE))} is missing: run "npm run build:browser" first (npm run build:site does)`);
   }
   const written = new Set<string>();
@@ -1135,6 +1217,7 @@ export function buildSite(options: BuildOptions = {}): RenderedSite & { outDir: 
 
   for (const page of site.pages) emit(page.outPath, page.html);
   emit('sitemap.xml', site.sitemap);
+  if (site.footer !== null) emit(FOOTER_ASSET, site.footer);
 
   for (const file of walk(publicDir)) {
     const feature = FEATURE_PUBLIC_FILES[file];

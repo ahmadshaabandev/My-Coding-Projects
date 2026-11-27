@@ -192,8 +192,12 @@ export interface RenderRow {
   format: ImageFormat | 'pdf';
   bytes: number;
   r2_key: string;
-  /** 'pending' only for a PDF row whose charge is in progress (src/lib/quota.ts chargePdf). */
-  charged_to: 'plan' | 'topup' | 'pending';
+  /**
+   * 'pending' only for a PDF row whose charge is in progress (src/lib/quota.ts chargePdf); 'none'
+   * only for an email image rendered again after its copy expired, which was charged once before
+   * (src/lib/quota.ts recordUnchargedRender).
+   */
+  charged_to: 'plan' | 'topup' | 'pending' | 'none';
   period_start: number;
   created_at: number;
   expires_at: number;

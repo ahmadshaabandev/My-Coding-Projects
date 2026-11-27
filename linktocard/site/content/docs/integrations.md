@@ -33,8 +33,8 @@ The three connectors are meant to offer the same operations:
 
 How each one comes:
 
-- **Zapier:** an app with these operations. Get batch looks a batch up by its id, so a workflow can wait for it to finish, and offers its ZIP parts as files.
-- **Make:** an app with these operations, one per step; Get batch downloads a ZIP part when asked to. A universal module sends any other API request with the connection's key.
+- **Zapier:** an app with these operations.<!-- feature:batch --> Get batch looks a batch up by its id, so a workflow can wait for it to finish, and offers its ZIP parts as files.<!-- /feature:batch -->
+- **Make:** an app with these operations, one per step<!-- feature:batch -->; Get batch downloads a ZIP part when asked to<!-- /feature:batch -->. A universal module sends any other API request with the connection's key.
 - **n8n:** a node package, `n8n-nodes-linktocard`, with these operations and a credential type for the API key.
 
 ## Signing in
@@ -62,7 +62,7 @@ Until then, use any automation tool that can send an HTTP request with your own 
 
 | Setting | Value |
 | --- | --- |
-| Method | `POST` (`GET` for `/v1/inspect`, `/v1/usage`, and the status and ZIP of a batch) |
+| Method | `POST` (`GET` for `/v1/inspect` and `/v1/usage`<!-- feature:batch -->, and for the status and ZIP of a batch<!-- /feature:batch -->) |
 | URL | `[[site.url]]` and the path of the operation, such as `[[site.url]]/v1/images` |
 | Headers | `Authorization: Bearer ltc_...` and `Content-Type: application/json` |
 | Body | The JSON of the operation, as in the [API reference](/docs/api) |

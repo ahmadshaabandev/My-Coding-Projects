@@ -1,6 +1,8 @@
 // The pages of the in-browser PDF tools, /tools/merge-pdf and /tools/image-to-pdf (feature
-// "toolkit"): built only with the feature, every limit printed from LOCAL_PDF, the attributes
-// the scripts read, the promise that files stay on the device, and the API examples.
+// "localpdf", their own since the owner decision of 2026-11-27; before, they came with "toolkit"):
+// built only with the feature, every limit printed from LOCAL_PDF, the attributes the scripts read,
+// the promise that files stay on the device, the API examples with "toolkit", and without it (as in
+// production) a link to /docs/pdf-tools and not one word that the API is there.
 // tests/node/client-pdf.test.ts covers the engine and the scripts themselves.
 import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,11 +35,18 @@ function walk(dir: string): string[] {
   );
 }
 
+/** The pages with the PDF toolkit API (staging). */
+const ON = 'localpdf,toolkit';
+/** The pages without it, as production builds them (apidocs publishes /docs/pdf-tools with its notice). */
+const WITHOUT_API = 'previews,localpdf,apidocs';
+
 let on: RenderedSite;
 let off: RenderedSite;
+let withoutApi: RenderedSite;
 beforeAll(() => {
-  on = renderSite({ env: { SITE_FEATURES: 'toolkit' }, now: NOW });
+  on = renderSite({ env: { SITE_FEATURES: ON }, now: NOW });
   off = renderSite({ env: {}, now: NOW });
+  withoutApi = renderSite({ env: { SITE_FEATURES: WITHOUT_API, SITE_PDF: 'off' }, now: NOW });
 });
 
 const page = (site: RenderedSite, outPath: string): string | undefined => site.pages.find((candidate) => candidate.outPath === outPath)?.html;
@@ -50,13 +59,17 @@ const formOf = (html: string): string => html.slice(html.indexOf('<form'), html.
 const attribute = (html: string, name: string): string | undefined => new RegExp(`\\s${name}="([^"]*)"`).exec(formOf(html))?.[1];
 
 describe('publishing', () => {
-  it('builds both pages only with the toolkit feature, and lists them in sitemap.xml only then', () => {
+  it('builds both pages only with the localpdf feature, and lists them in sitemap.xml only then', () => {
+    const toolkitOnly = renderSite({ env: { SITE_FEATURES: 'toolkit' }, now: NOW });
     for (const outPath of Object.values(PAGES)) {
       expect(page(off, outPath), outPath).toBeUndefined();
-      expect(page(on, outPath), outPath).toBeDefined();
+      expect(page(toolkitOnly, outPath), outPath).toBeUndefined();
       const url = `/${outPath.replace(/\.html$/, '')}`;
       expect(off.sitemap).not.toContain(`${off.config.url}${url}<`);
-      expect(on.sitemap).toContain(`<loc>${on.config.url}${url}</loc>`);
+      for (const site of [on, withoutApi]) {
+        expect(page(site, outPath), outPath).toBeDefined();
+        expect(site.sitemap).toContain(`<loc>${site.config.url}${url}</loc>`);
+      }
     }
   });
 
@@ -64,12 +77,16 @@ describe('publishing', () => {
     await buildBrowserBundles();
     const offDir = join(temp, 'off');
     const onDir = join(temp, 'on');
+    const toolkitDir = join(temp, 'toolkit');
     buildSite({ outDir: offDir, env: {}, now: NOW });
-    buildSite({ outDir: onDir, env: { SITE_FEATURES: 'toolkit' }, now: NOW });
+    buildSite({ outDir: onDir, env: { SITE_FEATURES: WITHOUT_API }, now: NOW });
+    buildSite({ outDir: toolkitDir, env: { SITE_FEATURES: 'toolkit' }, now: NOW });
     const offFiles = walk(offDir);
     const onFiles = walk(onDir);
+    const toolkitFiles = walk(toolkitDir);
     for (const file of FILES) {
       expect(offFiles, file).not.toContain(file);
+      expect(toolkitFiles, file).not.toContain(file);
       expect(onFiles, file).toContain(file);
     }
     expect(readFileSync(join(onDir, LOCAL_PDF_BUNDLE), 'utf8')).toBe(readFileSync(join(ROOT, 'site/public', LOCAL_PDF_BUNDLE), 'utf8'));
@@ -79,9 +96,12 @@ describe('publishing', () => {
     const siteDir = join(temp, 'site');
     cpSync(join(ROOT, 'site'), siteDir, { recursive: true, filter: (source) => !source.includes(`${join('site', 'dist')}`) && !source.endsWith('pdf-local.js') });
     expect(existsSync(join(siteDir, 'public', LOCAL_PDF_BUNDLE))).toBe(false);
-    expect(() => buildSite({ siteDir, outDir: join(temp, 'no-engine'), env: { SITE_FEATURES: 'toolkit' }, now: NOW })).toThrow(/pdf-local\.js is missing: run "npm run build:browser" first/);
-    // Without the feature the engine is not needed.
+    for (const features of [ON, WITHOUT_API]) {
+      expect(() => buildSite({ siteDir, outDir: join(temp, 'no-engine'), env: { SITE_FEATURES: features }, now: NOW }), features).toThrow(/pdf-local\.js is missing: run "npm run build:browser" first/);
+    }
+    // Without the feature the engine is not needed, the PDF toolkit API's docs included.
     expect(() => buildSite({ siteDir, outDir: join(temp, 'no-engine-off'), env: {}, now: NOW })).not.toThrow();
+    expect(() => buildSite({ siteDir, outDir: join(temp, 'no-engine-toolkit'), env: { SITE_FEATURES: 'toolkit' }, now: NOW })).not.toThrow();
   });
 });
 
@@ -142,6 +162,28 @@ describe.each(Object.entries(PAGES))('%s page', (tool, outPath) => {
     const text = visibleText(html);
     expect(text).toContain(`Each started block of ${PDF_TOOLKIT.pagesPerUnit} pages of the result counts as one image of your plan.`);
     expect(text).toContain(`carries a small “${PDF.freeMark}” line`);
+  });
+
+  // Behaviour change (review EXP-1): this test was "...sends 'Automate this with the API' to
+  // /docs/pdf-tools and says nothing of an API being there" and asserted that link. On
+  // linktocard.com, where the PDF toolkit is off, every /v1/pdf-tools request answers 503
+  // not_configured, so the line was not true there. Without the toolkit the page offers no API.
+  it('without the PDF toolkit API (production): offers no API and does not link to the toolkit docs', () => {
+    const html = page(withoutApi, outPath);
+    if (!html) throw new Error(`no page ${outPath}`);
+    expect(html).not.toContain('Automate this with the API');
+    expect(html).not.toContain('class="local-api"');
+    expect(html).not.toContain('href="/docs/pdf-tools"');
+    expect(html).not.toContain('href="#api"');
+    expect(html).not.toContain('id="api"');
+    const main = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+    expect([...main.matchAll(/href="(\/docs[^"]*)"/g)].map((match) => match[1])).toEqual(['/docs']);
+    const text = visibleText(main);
+    for (const phrase of ['/v1/', 'pdf-tools', 'PDF toolkit', 'API key', 'counts as one image', PDF.freeMark, 'Free plan', 'curl', 'a PDF for every order', 'merges, stamps and fills']) {
+      expect(text, phrase).not.toContain(phrase);
+    }
+    expect(text).toContain('No account, no watermark.');
+    expect(text).toContain('Share cards for every page, from one template.');
   });
 });
 

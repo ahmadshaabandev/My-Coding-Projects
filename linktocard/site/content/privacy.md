@@ -125,7 +125,7 @@ We may also disclose data if the law requires it, or if it is needed to protect 
 - **Cards from links:** the card, for the cache period of the plan; what was read from the page, for [[inspect.cacheMinutes]] minutes, like an Open Graph checker result.
 <!-- /feature:linkcards -->
 <!-- feature:email -->
-- **Personalized email images:** each image, and so the value it shows, for the cache period of the site owner's plan, like any card. The count of new personalized images per site and day: until the end of the next day (UTC); the daily clean-up then deletes it.
+- **Personalized email images:** each image, and so the value it shows, for the cache period of the site owner's plan, like any card. The count of new personalized images per site and day: until the end of the next day (UTC); the daily clean-up then deletes it. For each email image we count, we keep a record that it was counted: your account id and a one-way hash of the image's content, no text from the image. It is kept for [[email.chargeMemoryDays]] days from that count so the image is not counted again, and is deleted with your account.
 <!-- /feature:email -->
 - **Previews from the playground on the home page:** about one day.
 - **Open Graph checker results** (the address checked and the tags and measurements read from it): 10 minutes. The count of checks per IP address or network: until the end of that hour; per API key: until the end of that day (UTC). Expired entries are deleted by the daily clean-up, normally within a day.

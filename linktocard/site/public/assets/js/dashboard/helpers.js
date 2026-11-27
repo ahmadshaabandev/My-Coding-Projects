@@ -266,6 +266,38 @@ export function sizeOption(size) {
   return { value: size.id, label: SIZE_NAMES[size.id] ?? size.id, detail: `${size.width} × ${size.height}` };
 }
 
+/**
+ * Counted against, in words. 'none' is a ledger row that moved no counter: a card rendered again
+ * at no charge because it was paid for before (an email image whose stored copy expired).
+ */
+const COUNTED = { plan: 'Plan', topup: 'Top-up', none: 'Not counted (paid before)' };
+
+/**
+ * The size presets a template can be signed and previewed at, as ids in the order of `sizes`
+ * (GET /api/config). A starter from GET /api/templates carries the presets it is laid out for in
+ * `sizes`: the social starters are not laid out for the email size, and the server refuses it with
+ * 400 size_not_supported. The user's own templates (no `sizes`) take every preset.
+ */
+export function allowedSizes(template, sizes) {
+  const ids = sizes.map((size) => size.id);
+  return Array.isArray(template?.sizes) ? ids.filter((id) => template.sizes.includes(id)) : ids;
+}
+
+/** The size to keep when another template is picked: the current one if the template takes it, else og (else its first). */
+export function sizeForTemplate(current, allowed) {
+  if (allowed.includes(current)) return current;
+  return allowed.includes('og') ? 'og' : (allowed[0] ?? current);
+}
+
+/** Why some sizes cannot be picked for this template, or null when every size can. */
+export function sizeNote(template, sizes) {
+  const allowed = allowedSizes(template, sizes);
+  const missing = sizes.filter((size) => !allowed.includes(size.id)).map((size) => sizeOption(size).label);
+  if (missing.length === 0) return null;
+  const list = missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
+  return `The ${template.name} starter is not laid out for the ${list} size${missing.length === 1 ? '' : 's'}. Your own templates take every size.`;
+}
+
 /** One row of the recent-renders table, in words. */
 export function renderSummary(render, templateNames = {}) {
   return {
@@ -274,7 +306,7 @@ export function renderSummary(render, templateNames = {}) {
     size: `${render.width} × ${render.height}`,
     format: render.format === 'jpeg' ? 'JPG' : render.format.toUpperCase(),
     bytes: formatBytes(render.bytes),
-    counted: render.charged_to === 'topup' ? 'Top-up' : 'Plan',
+    counted: COUNTED[render.charged_to] ?? 'Plan',
   };
 }
 

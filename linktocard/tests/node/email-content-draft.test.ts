@@ -47,7 +47,8 @@ interface Page {
 }
 
 const PAGES: Record<Page['key'], Page> = {
-  docs: { key: 'docs', stem: 'docs/email-images', url: '/docs/email-images', keys: ['description', 'feature', 'layout', 'nav', 'order', 'title'], layout: 'doc' },
+  // unlaunched: the notice of the page when apidocs publishes it while "email" is off (owner decision of 2026-11-27).
+  docs: { key: 'docs', stem: 'docs/email-images', url: '/docs/email-images', keys: ['description', 'feature', 'layout', 'nav', 'order', 'title', 'unlaunched'], layout: 'doc' },
   guide: { key: 'guide', stem: 'guides/personalized-email-images', url: '/guides/personalized-email-images', keys: ['description', 'feature', 'layout', 'title'], layout: 'page' },
 };
 

@@ -202,10 +202,15 @@ describe('the kill switch and URLs without open fields', () => {
       expect(on.status, template).toBe(200);
       await on.arrayBuffer();
     }
-    // The email size itself stays general (decision D7).
+    // The email size stays general for the account's own templates (decision D7), but not for the
+    // social starters, which are not laid out for it: owner decision of 2026-11-27 changed this
+    // assertion, which expected 200 for blog at the email size (tests/card-sizes.test.ts covers every path).
     const blog = await call('/v1/images', { method: 'POST', headers: { ...bearer(key.secret), 'content-type': 'application/json' }, body: JSON.stringify({ template: 'blog', size: 'email', data: { title: 'Hi' }, response: 'binary' }) }, off);
-    expect(blog.status).toBe(200);
-    await blog.arrayBuffer();
+    expect(blog.status).toBe(400);
+    expect(await errorOf(blog)).toMatchObject({ code: 'invalid_request', details: { reason: 'size_not_supported', template: 'blog', size: 'email' } });
+    const inline = await call('/v1/images', { method: 'POST', headers: { ...bearer(key.secret), 'content-type': 'application/json' }, body: JSON.stringify({ html: '<div>{{title}}</div>', size: 'email', data: { title: 'Hi' }, response: 'binary' }) }, off);
+    expect(inline.status).toBe(200);
+    expect(pngDimensions(await bytesOf(inline))).toEqual({ width: 1200, height: 400 });
   });
 
   it('serves a URL without "open" identically with the switch on and off', async () => {

@@ -27,7 +27,8 @@
  *     the signed message, and `open` (which names the unsigned ones) is too.
  *   - it can vary the cache key, which is what costs units: the route caps unique renders per
  *     site and UTC day (reserveOpenFieldRender, EMAIL_FIELDS.maxUniqueRendersPerDay), and
- *     identical values are the same card and hit the cache.
+ *     identical values are the same card and hit the cache. Each unique image is charged once
+ *     ("Charge once" below): a copy rendered again after its stored period ended is free.
  *
  * A URL without `open` takes verifySignedUrl itself, untouched: it verifies exactly as before.
  */
@@ -428,4 +429,41 @@ export function openFieldsCapError(limit: number, now: number): ApiError {
       'Images that were already rendered keep working; new values render again after 00:00 UTC.',
     { headers: { 'retry-after': String(retryAfter) }, details: { limit, period_seconds: DAY_MS / 1000 } },
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Charge once                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * An email image (a card served from a URL with open fields) is charged once. The first render of
+ * a unique image (its card cache key: account, template identity, signed data, open-field values
+ * after normaliseOpenValue, size, format and watermark) is charged 1 image and stored for the
+ * plan's cache days; every later request is served from the edge cache or R2 at no charge. Once
+ * that stored copy has expired, the next request renders and stores it again WITHOUT a new charge,
+ * as long as the charge is remembered here: one tool_usage row per charged image, kept
+ * EMAIL_FIELDS.chargeMemoryDays from the charge (the bucket holds the account id and the cache
+ * key, a one-way hash; no text of the card). The row is written only inside the D1 batch that
+ * takes the image (src/lib/quota.ts CHARGE_RECORD_*, from RenderCharge.chargeRecord), so it exists
+ * if and only if the image was taken; never from a ledger row, which says 'plan' from its claim,
+ * before anything is taken. Expired rows go with the daily cleanup of tool_usage,
+ * an account's rows with the account (src/lib/cleanup.ts). Re-renders still take one of the site's
+ * unique renders of the day (reserveOpenFieldRender), so the CPU they cost stays capped.
+ */
+const CHARGE_PREFIX = 'emailpaid:';
+
+/** tool_usage bucket that remembers one charged email image of an account. */
+export function emailChargeBucket(userId: string, cacheKey: string): string {
+  return `${CHARGE_PREFIX}${userId}:${cacheKey}`;
+}
+
+/** Every bucket of one account lies strictly between these two (";" follows ":"; ids hold neither). */
+export function emailChargeRange(userId: string): { from: string; to: string } {
+  return { from: `${CHARGE_PREFIX}${userId}:`, to: `${CHARGE_PREFIX}${userId};` };
+}
+
+/** True while the account's charge for this image is remembered: a render of it now is free. */
+export async function hasEmailCharge(db: D1Database, userId: string, cacheKey: string, now: number): Promise<boolean> {
+  const row = await db.prepare('SELECT 1 AS paid FROM tool_usage WHERE bucket = ?1 AND expires_at > ?2').bind(emailChargeBucket(userId, cacheKey), now).first<{ paid: number }>();
+  return row !== null;
 }

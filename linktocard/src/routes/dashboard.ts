@@ -19,7 +19,7 @@ import { contactFormEmail, sendEmail } from '../lib/email';
 import { ApiError } from '../lib/errors';
 import { assertFeatureEnabled, featureEnabled } from '../lib/features';
 import { cleanName, codePointLength, iso, isoOrNull, readJsonObject, usageJson } from '../lib/http';
-import { imageUrl, parseFormat, parseSize, resolveTemplate, templateNotFound, templateOptions, validateData } from '../lib/images';
+import { assertTemplateSize, imageUrl, parseFormat, parseSize, resolveTemplate, templateNotFound, templateOptions, validateData } from '../lib/images';
 import { OPEN_RESERVED_PARAMS, buildOpenFieldsUrl, templateFields } from '../lib/open-fields';
 import { getPdfUsage, getUsage, listRecentRenders } from '../lib/quota';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
@@ -319,6 +319,8 @@ dashboardRouter.post('/sign', requireSameOrigin, requireSession, async (c) => {
   if (!template) throw templateNotFound();
   const format = parseFormat(body.format);
   const size = parseSize(body.size);
+  // No URL is signed for a size the starter is not laid out for: it would only ever answer 400.
+  assertTemplateSize(template, size, templateOptions(c.env));
   // "open" is reserved whatever EMAIL_FIELDS_ENABLED says: with open fields on, a signed URL reads
   // it as the list of open fields, so a URL signed now with "open" as data would change meaning
   // (or stop verifying) the day the switch is turned on (security review SEC-6).

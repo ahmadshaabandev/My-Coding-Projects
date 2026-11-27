@@ -947,8 +947,11 @@ describe('og-platform.js on the real pages', () => {
 /* The drafts built by the real build                                  */
 /* ------------------------------------------------------------------ */
 
-/** Features of build v3 that the drafts use; whichever build-site.ts does not know yet is applied here. */
-const DRAFT_FEATURES = ['previews', 'toolkit'] as const;
+/**
+ * Features of build v3 that the drafts use; whichever build-site.ts does not know yet is applied here.
+ * localpdf: the hub's in-browser PDF tools, their own feature since the owner decision of 2026-11-27.
+ */
+const DRAFT_FEATURES = ['previews', 'toolkit', 'localpdf'] as const;
 
 /** Keeps (on) or drops (off) the blocks of the features build-site.ts does not know yet. Blocks do not nest. */
 function applyUnknownBlocks(text: string, on: Record<string, boolean>): string {
@@ -978,7 +981,8 @@ function applyPendingTokens(text: string): string {
  * rendered by the real build-site.ts. Content stays the repository's own.
  */
 function buildDrafts(on: { pdf: boolean; toolkit: boolean }): RenderedSite {
-  const features = { previews: true, ...on };
+  // The in-browser PDF pages (localpdf) come with the toolkit here, as they did before they had their own feature.
+  const features = { previews: true, ...on, localpdf: on.toolkit };
   const dir = join(scratch, `site-${features.pdf ? 'pdf' : 'nopdf'}-${features.toolkit ? 'kit' : 'nokit'}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(dir, { recursive: true });
   for (const part of ['layouts', 'partials', 'pages']) cpSync(join(ROOT, 'site', part), join(dir, part), { recursive: true });

@@ -18,9 +18,10 @@
  * Limits are the signed-URL ones: the url value, like any value, is at most
  * LIMITS.maxDataValueChars characters and the whole URL at most LIMITS.maxSignedUrlChars.
  */
-import { LIMITS, SIZES } from '../config';
+import { DEFAULT_SIZE, LIMITS, SIZES, type SizeId } from '../config';
 import { normaliseInputUrl } from '../inspect/check';
 import { ApiError } from '../lib/errors';
+import { assertTemplateSize } from '../lib/images';
 import {
   SIG_PARAM,
   SIZE_PARAM,
@@ -31,6 +32,7 @@ import {
   type OgExtension,
   type SignedUrlFailure,
 } from '../lib/signed-url';
+import { getStarterTemplate } from '../render/templates';
 import type { TemplateData } from '../types';
 
 /** The page the card is made from. */
@@ -121,6 +123,9 @@ export async function buildLinkUrl(input: LinkUrlInput): Promise<{ url: string; 
   if (input.size !== undefined && !Object.values(SIZES).some((preset) => preset.id === input.size)) {
     throw new ApiError('unsupported_size', `Unsupported size. Supported sizes: ${Object.values(SIZES).map((preset) => preset.id).join(', ')}.`);
   }
+  // A starter is signed only for the sizes it is laid out for, as the route renders it (custom ids are not known here).
+  const starter = getStarterTemplate(input.template, { email: true });
+  if (starter) assertTemplateSize({ label: starter.id, sizes: starter.sizes }, SIZES[(input.size ?? DEFAULT_SIZE) as SizeId], { emailTemplates: true });
   const target = normaliseInputUrl(input.url).href;
   const entries: [string, string][] = [[URL_PARAM, target], ...data];
   if (input.size !== undefined && input.size !== 'og') entries.push([SIZE_PARAM, input.size]);

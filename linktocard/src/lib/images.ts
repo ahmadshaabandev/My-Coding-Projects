@@ -11,6 +11,15 @@
  *   5. chargeRender         the authority: charged | duplicate | quota_exceeded
  *   6. store in R2          only for a charged image or one the ledger already covers
  *
+ * Email images (CardRequest.chargeOnce, a signed URL with open fields) are charged once: step 5
+ * writes the record that the image was paid for in the same D1 batch that takes it
+ * (RenderCharge.chargeRecord), so the record exists if and only if the image was taken. When the
+ * charge of an image is remembered (src/lib/open-fields.ts hasEmailCharge), step 3 is skipped and
+ * step 5 records an uncharged ledger row instead (recordUnchargedRender), so a copy rendered again
+ * after its stored period ended costs nothing.
+ *
+ * A starter template renders only at the size presets it is laid out for (assertTemplateSize).
+ *
  * The dashboard preview and the playground render through the same renderer
  * but skip steps 2-6: they are watermarked, never stored here and never counted.
  */
@@ -20,19 +29,21 @@ import {
   DAY_MS,
   DEFAULT_FORMAT,
   DEFAULT_SIZE,
+  EMAIL_FIELDS,
   EXTENSION_TO_FORMAT,
   FORMATS,
   FORMAT_TO_EXTENSION,
   LIMITS,
   SIZES,
   type ImageFormat,
+  type SizeId,
   type SizePreset,
 } from '../config';
 import { first } from '../db/client';
 import { renderCard } from '../render';
 import { createEmojiLoader } from '../render/emoji';
 import { createImageFetcher } from '../render/proxy';
-import { getStarterTemplate, type StarterTemplate } from '../render/templates';
+import { EMAIL_TEMPLATES, STARTER_TEMPLATES, getStarterTemplate, type StarterTemplate } from '../render/templates';
 import type { Env, RenderDeps, TemplateData, TemplateRow, UsageSummary, UserRow, WatermarkMode } from '../types';
 import { sha256Hex } from './crypto';
 import { featureEnabled } from './features';
@@ -50,7 +61,8 @@ import {
   type Background,
   type JsonObject,
 } from './http';
-import { chargeRender, getUsage } from './quota';
+import { emailChargeBucket, hasEmailCharge } from './open-fields';
+import { chargeRender, getUsage, recordUnchargedRender, type RenderCharge } from './quota';
 import { enforceRateLimit } from './rate-limit';
 
 /** Bump only when the meaning of a cache key changes; it re-bills every cached card. */
@@ -138,6 +150,8 @@ export interface ResolvedTemplate {
   identity: string;
   html: string;
   css: string;
+  /** The presets a starter is laid out for; undefined (custom and inline templates) means every preset. */
+  sizes?: readonly SizeId[];
 }
 
 /** Which starters a request may name: the email starters only while the email images tool is on. */
@@ -157,7 +171,7 @@ export async function resolveTemplate(db: D1Database, userId: string, id: unknow
   if (typeof id !== 'string' || !TEMPLATE_ID_RE.test(id)) return null;
   const starter = getStarterTemplate(id, { email: options.emailTemplates === true });
   // A starter's identity has no content hash on purpose: a redesign must not re-bill existing URLs.
-  if (starter) return { label: starter.id, identity: `starter:${starter.id}`, html: starter.html, css: starter.css };
+  if (starter) return { label: starter.id, identity: `starter:${starter.id}`, html: starter.html, css: starter.css, sizes: starter.sizes };
   const row = await first<TemplateRow>(
     db,
     'SELECT * FROM templates WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL',
@@ -190,6 +204,34 @@ export function starterTemplateJson(template: StarterTemplate, withSource: boole
 
 export function templateNotFound(): ApiError {
   return new ApiError('not_found', 'Template not found. Use a starter template id or the id of one of your own templates.');
+}
+
+const presetName = (id: SizeId): string => `${id} (${SIZES[id].width}x${SIZES[id].height})`;
+
+/**
+ * Refuses a size preset a starter template is not laid out for (StarterTemplate.sizes; the
+ * social starters are not laid out for the email preset), with 400 invalid_request. Every route
+ * that renders or signs a card calls it once the template and the size are known, and getCard
+ * calls it again. Custom and inline templates take every preset. The message names the sizes the
+ * template supports and the starters made for the size asked for, or says that they are not
+ * switched on (the email starters while EMAIL_FIELDS_ENABLED is off).
+ */
+export function assertTemplateSize(template: Pick<ResolvedTemplate, 'label' | 'sizes'>, size: SizePreset, options: TemplateOptions = {}): void {
+  if (template.sizes === undefined || template.sizes.includes(size.id)) return;
+  const madeFor = (list: readonly StarterTemplate[]): string[] => list.filter((starter) => starter.sizes.includes(size.id)).map((starter) => starter.id);
+  const available = [...madeFor(STARTER_TEMPLATES), ...(options.emailTemplates === true ? madeFor(EMAIL_TEMPLATES) : [])];
+  const switchedOff = options.emailTemplates === true ? [] : madeFor(EMAIL_TEMPLATES);
+  const others =
+    available.length > 0
+      ? `For the ${size.id} size, use ${available.length === 1 ? 'the starter template' : 'one of the starter templates'} ${available.join(', ')}, or one of your own templates (they take every size).`
+      : switchedOff.length > 0
+        ? `The starter templates made for the ${size.id} size (${switchedOff.join(', ')}) are not switched on yet; your own templates take every size.`
+        : 'Your own templates take every size.';
+  throw new ApiError(
+    'invalid_request',
+    `The starter template "${template.label}" is not laid out for the ${presetName(size.id)} size. It supports ${template.sizes.map(presetName).join(', ')}. ${others}`,
+    { details: { reason: 'size_not_supported', template: template.label, size: size.id, supported_sizes: [...template.sizes] } },
+  );
 }
 
 /** Body fields that describe a card; POST /v1/images adds "response" on top. */
@@ -226,6 +268,7 @@ export async function parseCardInput(db: D1Database, userId: string, body: JsonO
   if (typeof html === 'string') return { template: await inlineTemplate(html, typeof css === 'string' ? css : ''), data, size, format };
   const template = await resolveTemplate(db, userId, templateId, options);
   if (!template) throw templateNotFound();
+  assertTemplateSize(template, size, options);
   return { template, data, size, format };
 }
 
@@ -373,6 +416,11 @@ export interface CardRequest {
   siteId: string | null;
   /** RL_KEY bucket applied only when a render is really needed (signed URLs: the site id). */
   renderRateLimitKey?: string;
+  /**
+   * An email image (a signed URL with open fields): charged once. While its charge is remembered
+   * (EMAIL_FIELDS.chargeMemoryDays), a copy whose stored period ended is rendered again for free.
+   */
+  chargeOnce?: boolean;
 }
 
 export interface Card {
@@ -384,6 +432,15 @@ export interface Card {
   warnings: string[];
   /** Usage right after the charge; null when nothing was charged. */
   usage: UsageSummary | null;
+  /** Images this request was charged: 1 for 'charged', else 0. */
+  creditsUsed: number;
+  /**
+   * cached: served from R2, nothing rendered. charged: rendered and charged. rerendered: an email
+   * image charged before, rendered again after its copy expired, not charged. duplicate: rendered,
+   * but the ledger already covered the image (a concurrent request, or an object that never
+   * reached R2), not charged.
+   */
+  outcome: 'cached' | 'charged' | 'rerendered' | 'duplicate';
 }
 
 /** sha256 over everything that decides the pixels and who paid for them. */
@@ -441,8 +498,10 @@ export async function findStoredCard(
 
 async function renderAndCharge(env: Env, background: Background, request: CardRequest, cacheKey: string, now: number): Promise<Card> {
   const { user, template, size, format } = request;
+  // An email image that was charged before renders again for free, also with no images left.
+  const prepaid = request.chargeOnce === true && (await hasEmailCharge(env.DB, user.id, cacheKey, now));
   const before = await getUsage(env.DB, user, now);
-  if (before.total_remaining <= 0) throw quotaExceededError(env, before);
+  if (before.total_remaining <= 0 && !prepaid) throw quotaExceededError(env, before);
   if (request.renderRateLimitKey) await enforceRateLimit(env, 'RL_KEY', request.renderRateLimitKey);
 
   // Throws on any failure: from here to chargeRender nothing has been stored or counted.
@@ -463,41 +522,49 @@ async function renderAndCharge(env: Env, background: Background, request: CardRe
     createdAt: now,
     expiresAt: now + ttlMs,
   };
-  const charge = await chargeRender(
-    env.DB,
-    user,
-    {
-      cacheKey,
-      siteId: request.siteId,
-      source: request.source,
-      template: template.label,
-      width: image.width,
-      height: image.height,
-      format,
-      bytes: image.bytes,
-      r2Key: renderR2Key(user.id, cacheKey, format),
-      ttlMs,
-    },
-    now,
-  );
-  if (charge.status === 'quota_exceeded') throw quotaExceededError(env, charge.usage);
+  const ledgerEntry: RenderCharge = {
+    cacheKey,
+    siteId: request.siteId,
+    source: request.source,
+    template: template.label,
+    width: image.width,
+    height: image.height,
+    format,
+    bytes: image.bytes,
+    r2Key: renderR2Key(user.id, cacheKey, format),
+    ttlMs,
+    // Written in the batch that takes the image, and only then (src/lib/quota.ts CHARGE_RECORD_*).
+    ...(request.chargeOnce === true ? { chargeRecord: { bucket: emailChargeBucket(user.id, cacheKey), ttlMs: EMAIL_FIELDS.chargeMemoryDays * DAY_MS } } : {}),
+  };
 
-  const fresh: Card = { image, cached: false, body: output.bytes, warnings: output.warnings, usage: null };
+  const fresh: Card = { image, cached: false, body: output.bytes, warnings: output.warnings, usage: null, creditsUsed: 0, outcome: 'duplicate' };
   // A failed write must not fail a render that was paid for: the next request
   // finds no object, renders again and is told "duplicate" by the ledger.
   const store = (): Promise<void> =>
     storeImage(env.BUCKET, image, output.bytes).catch((error: unknown) => console.error(`storing ${cacheKey} failed:`, error));
 
-  if (charge.status === 'charged') {
-    await store();
-    const percent = charge.crossed100 ? 100 : charge.crossed90 ? 90 : null;
-    if (percent !== null) background(sendQuotaEmail(env, user, percent, charge.usage));
-    return { ...fresh, usage: charge.usage };
+  if (prepaid) {
+    // Paid for once already: a ledger row without a charge, so the copy expires and is cleaned up like any other.
+    if ((await recordUnchargedRender(env.DB, user, ledgerEntry, now)) === 'recorded') {
+      await store();
+      return { ...fresh, outcome: 'rerendered' };
+    }
+  } else {
+    const charge = await chargeRender(env.DB, user, ledgerEntry, now);
+    if (charge.status === 'quota_exceeded') throw quotaExceededError(env, charge.usage);
+    if (charge.status === 'charged') {
+      await store();
+      const percent = charge.crossed100 ? 100 : charge.crossed90 ? 90 : null;
+      if (percent !== null) background(sendQuotaEmail(env, user, percent, charge.usage));
+      return { ...fresh, usage: charge.usage, creditsUsed: 1, outcome: 'charged' };
+    }
   }
 
   // duplicate: the ledger already covers this card (a concurrent request, or an
   // earlier charge whose object never reached R2). Serve it without charging and
-  // make sure the object exists, expiring together with the ledger row.
+  // make sure the object exists, expiring together with the ledger row. It never
+  // writes an email image's charge record: an image row says 'plan' from its
+  // claim, before anything is taken, so the row is no proof that it was paid.
   const ledger = await first<{ created_at: number; expires_at: number }>(
     env.DB,
     'SELECT created_at, expires_at FROM renders WHERE cache_key = ?1 AND user_id = ?2',
@@ -522,8 +589,10 @@ export async function getCard(
   request: CardRequest,
   options: { now: number; withBody: boolean; cacheKey?: string },
 ): Promise<Card> {
+  // The routes refuse a size a starter is not laid out for while parsing; this keeps every caller to it.
+  assertTemplateSize(request.template, request.size, templateOptions(env));
   const cacheKey = options.cacheKey ?? (await cardCacheKey(request));
   const stored = await findStoredCard(env, request, cacheKey, options.now, options.withBody);
-  if (stored) return { image: stored.image, cached: true, body: stored.body, warnings: [], usage: null };
+  if (stored) return { image: stored.image, cached: true, body: stored.body, warnings: [], usage: null, creditsUsed: 0, outcome: 'cached' };
   return renderAndCharge(env, background, request, cacheKey, options.now);
 }

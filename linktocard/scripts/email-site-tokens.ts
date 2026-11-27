@@ -40,5 +40,7 @@ export function emailSiteTokens(): Record<string, string> {
     'email.dailyStarter': formatCount(daily.starter),
     'email.dailyPro': formatCount(daily.pro),
     'email.maxAgeDays': String(maxAgeDays),
+    // Charge once: how long an email image's charge is remembered, so its re-renders after expiry are free.
+    'email.chargeMemoryDays': String(EMAIL_FIELDS.chargeMemoryDays),
   };
 }

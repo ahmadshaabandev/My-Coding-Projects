@@ -139,4 +139,6 @@ export const emailOffer: Omit<StarterTemplate, 'id'> & { id: 'email-offer' } = {
     code: 'SPRING-20',
     expires: 'Valid until 30 November',
   },
+  // Laid out for og (decision D7), with size-email, size-square and size-portrait rules for the others.
+  sizes: ['og', 'square', 'portrait', 'email'],
 };

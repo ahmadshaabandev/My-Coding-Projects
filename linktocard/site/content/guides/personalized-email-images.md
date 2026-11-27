@@ -66,7 +66,7 @@ Send a test to yourself, and to a test contact whose first name has an accent an
 
 ## 5. Before you send to your list
 
-Each distinct name is rendered once, takes one image from your monthly allowance and is then served from storage, so a send costs at most one image per distinct name, not one per reader. [Caching and what counts](/docs/email-images#caching-and-what-counts) has the details.
+Each distinct name is rendered once, takes one image from your monthly allowance and is then served from storage, so a send costs at most one image per distinct name, not one per reader. It is counted once: when its stored copy expires, the next open renders it again without counting it again, for [[email.chargeMemoryDays]] days from its count. [Caching and what counts](/docs/email-images#caching-and-what-counts) has the details.
 
 Each site also has a daily limit of new personalized images: [[email.dailyFree]] on [[plan.free.name]], [[email.dailyStarter]] on [[plan.starter.name]] and [[email.dailyPro]] on [[plan.pro.name]], per UTC day. Some mail apps load images after the email arrives, whether or not it is read (Apple says this of Mail Privacy Protection), so plan for every distinct name of a send to be rendered, not only those of readers who open it. Readers whose name is new after the limit is reached see the default image ("Hi there,") instead, not a broken one. If your list has more distinct names than the limit, send it in parts on different days. [The daily limit per site](/docs/email-images#the-daily-limit-per-site) explains why it exists.
 
@@ -103,7 +103,7 @@ Yes, and so can anyone who has the URL: the open field is not signed, so another
 
 ### What does a campaign cost?
 
-At most one image per distinct name, plus one for the default, from the site owner's monthly allowance; a reader whose name is already stored costs nothing. A stored name is rendered again only after your plan's storage period: [[plan.free.cacheDays]] days on [[plan.free.name]], [[plan.starter.cacheDays]] on [[plan.starter.name]], [[plan.pro.cacheDays]] on [[plan.pro.name]]. When the allowance is used up, new names cannot be rendered and those readers see a broken image, so check your remaining images on the dashboard before a large send.
+At most one image per distinct name, plus one for the default, from the site owner's monthly allowance; a reader whose name is already stored costs nothing. A stored name is rendered again only after your plan's storage period ([[plan.free.cacheDays]] days on [[plan.free.name]], [[plan.starter.cacheDays]] on [[plan.starter.name]], [[plan.pro.cacheDays]] on [[plan.pro.name]]), and that render is not counted again for [[email.chargeMemoryDays]] days from the name's first count, even when your allowance is used up. When the allowance is used up, new names cannot be rendered and those readers see a broken image, so check your remaining images on the dashboard before a large send.
 
 ### Why does the image say "Hi there," for some readers?
 

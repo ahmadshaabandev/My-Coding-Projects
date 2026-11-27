@@ -175,6 +175,7 @@
 .builder-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
 .builder-fields > .hint { grid-column: 1 / -1; }
 .builder-shape { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-5); }
+.builder-shape-note { flex-basis: 100%; margin: 0; }
 .builder-output { min-width: 0; }
 .builder-output .code-block { margin-top: var(--space-5); }
 

@@ -288,6 +288,28 @@ async function smoke() {
   const emailCard = await http('GET', `${emailUrl}Maya`)
   check('the open-field URL with a value -> 1200x400 PNG (size preset "email")', emailCard.status === 200 && isPng(emailCard.bytes) && pngSize(emailCard.bytes) === '1200x400', emailCard.brief())
   uniqueRenders += 1
+  // Charge once (owner decision of 2026-11-27): the first open is counted, repeat opens are not.
+  const emailHeader = (r, name) => r.res.headers.get(name)
+  check('the first open -> x-ltc-cache miss, x-ltc-credits-used 1', emailHeader(emailCard, 'x-ltc-cache') === 'miss' && emailHeader(emailCard, 'x-ltc-credits-used') === '1', `${emailHeader(emailCard, 'x-ltc-cache')} ${emailHeader(emailCard, 'x-ltc-credits-used')}`)
+  const repeatOpens = []
+  for (let n = 0; n < 3; n++) repeatOpens.push(await http('GET', `${emailUrl}Maya`))
+  check(
+    'three repeat opens -> the same PNG, x-ltc-cache hit, x-ltc-credits-used 0',
+    repeatOpens.every((r) => r.status === 200 && r.bytes.equals(emailCard.bytes) && emailHeader(r, 'x-ltc-cache') === 'hit' && emailHeader(r, 'x-ltc-credits-used') === '0'),
+    repeatOpens.map((r) => `${r.status} ${emailHeader(r, 'x-ltc-cache')} ${emailHeader(r, 'x-ltc-credits-used')}`).join(', '),
+  )
+  check('the repeat opens counted nothing', (await usage()) === uniqueRenders, `used ${await usage()}, expected ${uniqueRenders}`)
+  // The five social starter templates refuse the email size (1200x400) on the server (owner decision of 2026-11-27).
+  const sizeRefused = (r) => r.status === 400 && r.json().error.code === 'invalid_request' && r.json().error.details?.reason === 'size_not_supported' && JSON.stringify(r.json().error.details?.supported_sizes) === '["og","square","portrait"]'
+  const blogEmail = await http('POST', '/v1/images', { headers: auth, json: { template: 'blog', size: 'email', data: { title: 'Too wide' } } })
+  check('POST /v1/images blog with size email -> 400 size_not_supported', sizeRefused(blogEmail), blogEmail.brief())
+  const quoteWide = await http('POST', '/v1/images', { headers: auth, json: { template: 'quote', width: 1200, height: 400, data: { title: 'Too wide' } } })
+  check('POST /v1/images quote at width 1200, height 400 -> 400 size_not_supported', sizeRefused(quoteWide), quoteWide.brief())
+  const signWide = await http('POST', '/api/sign', { headers: session, json: { site_id: site.json().site.id, template: 'launch', size: 'email', data: { title: 'Too wide' } } })
+  check('POST /api/sign launch with size email -> 400 size_not_supported', sizeRefused(signWide), signWide.brief())
+  const inlineWide = await http('POST', '/v1/images', { headers: auth, json: { html: '<div style="display: flex; font-size: 64px; padding: 60px">{{title}}</div>', size: 'email', data: { title: 'Inline HTML at the email size' } } })
+  check('POST /v1/images inline HTML with size email -> rendered 1200x400', inlineWide.status === 200 && inlineWide.json().width === 1200 && inlineWide.json().height === 400, inlineWide.brief())
+  if (inlineWide.status === 200) uniqueRenders += 1
   const certificatePage = await http('GET', '/v/crt_00000000000000000000')
   const verifyCsp = certificatePage.res.headers.get('content-security-policy') ?? ''
   check('GET /v/{unknown id} -> 404 HTML, noindex, with its own CSP', certificatePage.status === 404 && certificatePage.res.headers.get('content-type')?.startsWith('text/html') === true && certificatePage.res.headers.get('x-robots-tag') === 'noindex' && verifyCsp.includes("default-src 'none'"), certificatePage.brief())
@@ -508,6 +530,12 @@ async function switchedOff() {
 
   const emailFields = 'Open fields for email images are not enabled yet.'
   off('POST /api/sign with open fields', await http('POST', '/api/sign', { headers: account.session, json: { site_id: account.siteId, template: 'email-banner', size: 'email', data: { title: 'Off' }, open: ['name'] } }), emailFields)
+  // The size block is not behind a switch: with email images off the message says their starters are not on yet.
+  const refusedOff = (r) => r.status === 400 && r.json().error.details?.reason === 'size_not_supported' && r.json().error.message.includes('are not switched on yet')
+  const blogWideOff = await http('POST', '/v1/images', { headers: account.auth, json: { template: 'blog', size: 'email', data: { title: 'Off' } } })
+  check('with every switch off, POST /v1/images blog with size email -> 400 size_not_supported (email starters "not switched on yet")', refusedOff(blogWideOff), blogWideOff.brief())
+  const signWideOff = await http('POST', '/api/sign', { headers: account.session, json: { site_id: account.siteId, template: 'docs', size: 'email', data: { title: 'Off' } } })
+  check('with every switch off, POST /api/sign docs with size email -> 400 size_not_supported', refusedOff(signWideOff), signWideOff.brief())
 
   // What existed before build v3 keeps working with every switch off.
   const signed = await http('POST', '/api/sign', { headers: account.session, json: { site_id: account.siteId, template: 'blog', data: { title: 'Switched off', author: 'smoke.mjs' } } })

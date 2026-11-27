@@ -118,4 +118,6 @@ export const launch: StarterTemplate = {
     author: 'Northwind',
     site: 'northwind.example',
   },
+  // Not the 1200x400 email preset: these cards are not laid out for it (owner decision of 2026-11-27).
+  sizes: ['og', 'square', 'portrait'],
 };

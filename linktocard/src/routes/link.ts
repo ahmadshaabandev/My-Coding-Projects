@@ -39,7 +39,18 @@ import { defaultInspectDeps, inspectUrl } from '../inspect/check';
 import { ApiError } from '../lib/errors';
 import { assertFeatureEnabled } from '../lib/features';
 import { backgroundFor, etagFor, imageHeaders, imageMaxAge, matchesEtag, notModified, type Background } from '../lib/http';
-import { parseSize, quotaExceededError, readStoredImage, resolveTemplate, storedImageHeaders, templateNotFound, templateOptions, type ResolvedTemplate, type StoredImage } from '../lib/images';
+import {
+  assertTemplateSize,
+  parseSize,
+  quotaExceededError,
+  readStoredImage,
+  resolveTemplate,
+  storedImageHeaders,
+  templateNotFound,
+  templateOptions,
+  type ResolvedTemplate,
+  type StoredImage,
+} from '../lib/images';
 import { getUsage } from '../lib/quota';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
 import { deriveSiteSecret } from '../lib/signed-url';
@@ -88,6 +99,8 @@ async function linkRequestFor(env: Env, url: URL, request: Request): Promise<Lin
   const size = parseSize(verified.size);
   const template = await resolveTemplate(env.DB, owner.id, path.template, templateOptions(env));
   if (!template) throw templateNotFound();
+  // Before the pointer, the page or the card: a starter at a size it is not laid out for is refused (400).
+  assertTemplateSize(template, size, templateOptions(env));
   return { site, owner, target: verified.target, template, overrides: verified.overrides, size, format: EXTENSION_TO_FORMAT[path.ext]! };
 }
 

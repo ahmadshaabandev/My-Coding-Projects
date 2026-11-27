@@ -43,7 +43,7 @@ To see what a page sends today, before or after you add a card, paste its addres
 
 ## What you get
 
-- **Sizes:** [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`), [[size.portrait.width]] x [[size.portrait.height]] (`portrait`) and [[size.email.width]] x [[size.email.height]] (`email`).
+- **Sizes:** [[size.og.width]] x [[size.og.height]] (`og`), [[size.square.width]] x [[size.square.height]] (`square`), [[size.portrait.width]] x [[size.portrait.height]] (`portrait`) and [[size.email.width]] x [[size.email.height]] (`email`). The starter templates take the first three; the `email` size is for your own templates<!-- feature:email --> and the two email starter templates (`email-banner`, `email-offer`)<!-- /feature:email -->.
 - **Formats:** PNG, JPEG and WebP.
 - **Templates:** five starter templates (`blog`, `dark`, `quote`, `launch`, `docs`), or your own HTML and CSS.
 - **Text:** `{{placeholders}}` filled from your data. Classes on `<body>` let plain CSS react to missing or long values.

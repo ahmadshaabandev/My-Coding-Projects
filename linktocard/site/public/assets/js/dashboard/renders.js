@@ -1,4 +1,4 @@
-// Recent renders: the latest images that were rendered and counted.
+// Recent renders: the latest images that were rendered (each counted, unless it was paid for before).
 import { api } from './client.js';
 import { dataTable, h } from './dom.js';
 import { formatDateTime, renderSummary } from './helpers.js';
@@ -21,7 +21,11 @@ export async function mount() {
     'header',
     { class: 'panel-head' },
     h('h2', {}, 'Recent renders'),
-    h('p', { class: 'lead-sm' }, 'The latest 50 cards that were rendered and counted. Cached and failed requests are never counted, so they are not listed.'),
+    h(
+      'p',
+      { class: 'lead-sm' },
+      'The latest 50 cards that were rendered and counted. A card rendered again for free because it was paid for before is listed as not counted. Cached and failed requests are never counted, so they are not listed.',
+    ),
   );
 
   if (renders.length === 0) {
@@ -52,6 +56,7 @@ export async function mount() {
       row.format,
       row.bytes,
       formatDateTime(render.created_at),
+      // Top-up stands out; Plan and "not counted" keep the neutral badge.
       h('span', { class: `badge${render.charged_to === 'topup' ? ' badge-accent' : ''}` }, row.counted),
       expired ? h('span', { class: 'muted' }, 'Expired') : h('a', { href: render.url, target: '_blank', rel: 'noopener', 'aria-label': `Open the ${row.template} image rendered ${formatDateTime(render.created_at)}` }, 'Open'),
     ];

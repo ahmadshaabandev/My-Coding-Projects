@@ -5,6 +5,7 @@ layout: doc
 order: 3.5
 nav: Cards from links
 feature: linkcards
+unlaunched: **Not switched on yet on [[site.host]].** Cards from links have not launched here: until they do, `POST /v1/cards/from-url` and every `/v1/link/...` URL answer 503 `not_configured`.
 ---
 
 Give [[site.name]] the address of a page, and it makes the card from what the page says about itself: its title, description, site name, icon and theme colour, put into a card template. You do not write the card's text anywhere: when the page changes, the card follows.

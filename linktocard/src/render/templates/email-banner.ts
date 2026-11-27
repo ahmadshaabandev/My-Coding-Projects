@@ -97,4 +97,6 @@ export const emailBanner: Omit<StarterTemplate, 'id'> & { id: 'email-banner' } =
     title: 'Your spring picks are ready',
     cta: 'See the edit',
   },
+  // Laid out for the email preset (decision D7), with size-og, size-square and size-portrait rules for the others.
+  sizes: ['og', 'square', 'portrait', 'email'],
 };

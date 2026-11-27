@@ -5,6 +5,7 @@
  * from it, the site build (Node) lists it in the gallery and the docs print it.
  */
 
+import type { SizeId } from '../../config';
 import { blog } from './blog';
 import { dark } from './dark';
 import { docs } from './docs';
@@ -34,6 +35,14 @@ export interface StarterTemplate {
   fields: readonly StarterField[];
   /** Example data that makes a good-looking card (used for gallery samples and docs). */
   sample: Readonly<Record<string, string>>;
+  /**
+   * The size presets (src/config.ts SIZES) the template is laid out for, in SIZES order. Every
+   * route that renders or signs a card refuses any other preset for a starter with 400
+   * invalid_request (src/lib/images.ts assertTemplateSize); the account's own templates and
+   * inline HTML take every preset. The social starters are not laid out for the 1200x400 email
+   * preset (owner decision of 2026-11-27); the email starters are laid out for all four.
+   */
+  sizes: readonly SizeId[];
 }
 
 /** The social-card gallery: the site, the docs, the playground and the template lists show these. */

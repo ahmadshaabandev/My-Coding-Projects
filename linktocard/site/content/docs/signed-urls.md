@@ -229,6 +229,8 @@ Replace control characters with a space before signing, and send the replaced va
 
 `size` is `og` ([[size.og.width]] x [[size.og.height]], the default), `square` ([[size.square.width]] x [[size.square.height]]), `portrait` ([[size.portrait.width]] x [[size.portrait.height]]) or `email` ([[size.email.width]] x [[size.email.height]]). Sign it like any other parameter. Leave it out for `og`. Any other value answers 400 `unsupported_size`.
 
+The five starter templates for social cards (`blog`, `dark`, `quote`, `launch`, `docs`) take `og`, `square` and `portrait`. The `email` size is for your own templates, which take every size<!-- feature:email -->, and for the two email starter templates (`email-banner`, `email-offer`), which do too<!-- /feature:email -->. A social starter signed with `size=email` answers 400 `invalid_request`, with `details.reason` `size_not_supported` and the sizes it takes in `details.supported_sizes`.
+
 ### Formats
 
 | Extension | Format | Content-Type |
@@ -312,6 +314,7 @@ A signed URL can also answer:
 | Status | Code | When |
 | --- | --- | --- |
 | 400 | `unsupported_size` | `size` is not `og`, `square`, `portrait` or `email`. |
+| 400 | `invalid_request` | A starter template for social cards (`blog`, `dark`, `quote`, `launch`, `docs`) was signed with `size=email`. `details.reason` is `size_not_supported`. See [the size parameter](#the-size-parameter). |
 | 402 | `quota_exceeded` | The allowance is used up and this card is not stored. See [Limits](/docs/limits#at-the-limit). |
 | 403 | `account_suspended` | The account that owns the site is suspended. |
 | 404 | `not_found` | The path is not a card URL, the site id does not exist, or the template does not exist. |

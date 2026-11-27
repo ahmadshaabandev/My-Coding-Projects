@@ -12,6 +12,10 @@
 /assets/*
   Cache-Control: public, max-age=3600
 
+# The footer that the Worker puts on the pages it renders (/v/...): a fragment, not a page to index.
+/assets/partials/*
+  X-Robots-Tag: noindex
+
 # Twemoji SVGs, loaded by the image renderer.
 /_emoji/*
   Cache-Control: public, max-age=86400

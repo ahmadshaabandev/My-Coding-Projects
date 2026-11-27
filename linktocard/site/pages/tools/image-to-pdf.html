@@ -2,7 +2,7 @@
 title: Image to PDF free - JPG, PNG, WebP and GIF to PDF in your browser
 description: Turn JPG, PNG, WebP and GIF images into one PDF for free, one image per page. This page works in your browser, so your photos stay on your device. No sign-up, no watermark.
 scripts: image-to-pdf
-feature: toolkit
+feature: localpdf
 ---
 <main class="tool">
 
@@ -41,10 +41,12 @@ feature: toolkit
 <p id="local-result-text"></p>
 <a class="btn btn-secondary btn-sm" id="local-download" download="images.pdf">Download</a>
 </div>
-<noscript><p class="alert alert-warn">This page needs JavaScript: the PDF is made by your browser. <a href="/docs/pdf-tools">POST /v1/pdf-tools/from-images</a> makes PDFs from PNG and JPEG images from a script.</p></noscript>
+<noscript><p class="alert alert-warn">This page needs JavaScript: the PDF is made by your browser.<!-- feature:toolkit --> <a href="/docs/pdf-tools">POST /v1/pdf-tools/from-images</a> makes PDFs from PNG and JPEG images from a script.<!-- /feature:toolkit --></p></noscript>
 </form>
 <p class="visually-hidden" id="local-status" role="status" aria-live="polite"></p>
+<!-- feature:toolkit -->
 <p class="local-api"><a class="link-arrow" href="#api">Automate this with the API</a></p>
+<!-- /feature:toolkit -->
 </div>
 </section>
 
@@ -82,6 +84,7 @@ feature: toolkit
 <p>The PDF is made in this browser tab, with the memory and processor of your computer or phone. Your images are not uploaded, so we never see them, their names or their contents, and nothing about them is counted or logged. The previews in the list come from your browser&rsquo;s memory too.</p>
 <p>Because it all happens on your device, the limits are about memory, not money: up to [[localPdf.maxFiles]] images and [[localPdf.maxTotalMb]] MB together per PDF. The page uses the open-source library <a href="https://github.com/Hopding/pdf-lib">pdf-lib</a>; its licence travels with the code, in <a href="/assets/js/vendor/pdf-local.js">pdf-local.js</a>.</p>
 </div>
+<!-- feature:toolkit -->
 <div class="prose">
 <h3 id="api">Automate this with the API</h3>
 <p>To turn images into PDFs from your own app, send their addresses to <code>POST /v1/pdf-tools/from-images</code> with an API key from your dashboard. The options mean the same as here; the margin is in points. The API takes PNG and JPEG images; convert WebP and GIF files first.</p>
@@ -101,6 +104,7 @@ feature: toolkit
   -o receipts.pdf</code></pre></div>
 <p>Each started block of [[toolkit.pagesPerUnit]] pages of the result counts as one image of your plan. On the Free plan, every page of an API result carries a small &ldquo;[[pdf.freeMark]]&rdquo; line. <a class="link-arrow" href="/docs/pdf-tools">Read the PDF toolkit docs</a></p>
 </div>
+<!-- /feature:toolkit -->
 </div>
 </div>
 </section>
@@ -147,6 +151,7 @@ feature: toolkit
 </div>
 </section>
 
+<!-- feature:toolkit -->
 <section class="section cta-band">
 <div class="container cta">
 <div>
@@ -159,5 +164,20 @@ feature: toolkit
 </div>
 </div>
 </section>
+<!-- /feature:toolkit -->
+<!-- feature:no-toolkit -->
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Share cards for every page, from one template.</h2>
+<p>[[site.name]] renders a [[size.og.width]] &times; [[size.og.height]] share card for every page of your site from one HTML and CSS template, and gives you the meta tags to paste.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs">Read the docs</a>
+</div>
+</div>
+</section>
+<!-- /feature:no-toolkit -->
 
 </main>

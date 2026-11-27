@@ -17,7 +17,7 @@
 import { Hono, type Context } from 'hono';
 import { requireApiKey, requireSameOrigin, requireSession } from '../auth/middleware';
 import { getCertificate, parseCertificateId, revokeCertificate } from '../batch/certificates';
-import { notFoundPageHtml, unavailablePageHtml, verifyHtmlResponse, verifyJson, verifyJsonResponse, verifyPageHtml, type VerifyContext } from '../batch/verify-page';
+import { loadSiteFooter, notFoundPageHtml, unavailablePageHtml, verifyHtmlResponse, verifyJson, verifyJsonResponse, verifyPageHtml, type VerifyContext } from '../batch/verify-page';
 import { ApiError } from '../lib/errors';
 import { assertFeatureEnabled, featureEnabled } from '../lib/features';
 import { clientIp, enforceRateLimit } from '../lib/rate-limit';
@@ -26,6 +26,8 @@ import type { AppEnv } from '../types';
 const JSON_SUFFIX = '.json';
 
 const context = (c: Context<AppEnv>): VerifyContext => ({ appUrl: c.env.APP_URL, supportEmail: c.env.SUPPORT_EMAIL, now: Date.now() });
+/** For the HTML pages: with the static site's own footer (its tools links included), read from env.ASSETS. */
+const pageContext = async (c: Context<AppEnv>, ctx: VerifyContext): Promise<VerifyContext> => ({ ...ctx, footer: await loadSiteFooter(c.env.ASSETS) });
 const notFound = (): ApiError => new ApiError('not_found', 'No certificate with this ID.');
 
 /** Mounted at /v (wrangler.toml run_worker_first must list "/v/*"). */
@@ -38,7 +40,7 @@ verifyRouter.get('/:file', async (c) => {
   const ctx = context(c);
   if (!featureEnabled(c.env, 'batch')) {
     if (json) assertFeatureEnabled(c.env, 'batch');
-    return verifyHtmlResponse(unavailablePageHtml(ctx), 503);
+    return verifyHtmlResponse(unavailablePageHtml(await pageContext(c, ctx)), 503);
   }
   const id = parseCertificateId(json ? file.slice(0, -JSON_SUFFIX.length) : file);
   const record = id === null ? null : await getCertificate(c.env.DB, id, ctx.now);
@@ -46,7 +48,8 @@ verifyRouter.get('/:file', async (c) => {
     if (!record) throw notFound();
     return verifyJsonResponse(verifyJson(record, ctx));
   }
-  return record ? verifyHtmlResponse(verifyPageHtml(record, ctx), 200) : verifyHtmlResponse(notFoundPageHtml(id, ctx), 404);
+  const page = await pageContext(c, ctx);
+  return record ? verifyHtmlResponse(verifyPageHtml(record, page), 200) : verifyHtmlResponse(notFoundPageHtml(id, page), 404);
 });
 
 async function revoke(c: Context<AppEnv>): Promise<Response> {

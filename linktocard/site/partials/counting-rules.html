@@ -50,7 +50,7 @@
 <!-- feature:email -->
 <div>
 <dt>Email images count once per distinct value <span class="rule-tag">counts 1</span></dt>
-<dd>Each distinct reader value, such as a first name, is one card: rendered and counted once, then served from storage to everyone with that value. <a href="/docs/email-images#caching-and-what-counts">Details</a></dd>
+<dd>Each distinct reader value, such as a first name, is one card: rendered and counted once, then served from storage to everyone with that value. When its stored copy expires, it is rendered again without being counted again, for [[email.chargeMemoryDays]] days from its count. <a href="/docs/email-images#caching-and-what-counts">Details</a></dd>
 </div>
 <!-- /feature:email -->
 </dl>

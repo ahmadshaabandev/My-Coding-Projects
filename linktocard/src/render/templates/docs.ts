@@ -110,4 +110,6 @@ export const docs: StarterTemplate = {
     author: 'Tidepool API v2',
     theme: 'dark',
   },
+  // Not the 1200x400 email preset: these cards are not laid out for it (owner decision of 2026-11-27).
+  sizes: ['og', 'square', 'portrait'],
 };

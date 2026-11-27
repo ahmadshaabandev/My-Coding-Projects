@@ -5,6 +5,7 @@ layout: doc
 order: 5.7
 nav: PDF toolkit
 feature: toolkit
+unlaunched: **Not switched on yet on [[site.host]].** The PDF toolkit has not launched here: until it does, every `/v1/pdf-tools` request answers 503 `not_configured`.<!-- feature:no-pdf --> Its result links (`/i/...pdf`) need PDF documents too, which are not switched on here yet either.<!-- /feature:no-pdf --><!-- feature:localpdf --> The free [Merge PDF](/tools/merge-pdf) and [Image to PDF](/tools/image-to-pdf) tools work today, in your browser.<!-- /feature:localpdf -->
 ---
 
 The PDF toolkit works on PDFs that already exist: yours, ones that [`POST /v1/pdf`](/docs/pdf) made, or files from anywhere on the web. One endpoint per operation:
@@ -351,7 +352,7 @@ The result is counted by its pages: one image for each started block of [[toolki
 - A request that fails counts nothing.
 - In the dashboard's usage, each request that counts shows as one PDF.
 
-On the [[plan.free.name]] plan, every page of a result carries one small grey line at the bottom, "[[pdf.freeMark]]", on a white background of its own, like the mark of [PDF documents](/docs/pdf#the-free-footer-mark). It is part of the page, also inside a file that `protect` encrypts. Results made on [[plan.starter.name]] and [[plan.pro.name]] have no mark.
+On the [[plan.free.name]] plan, every page of a result carries one small grey line at the bottom, "[[pdf.freeMark]]", on a white background of its own<!-- feature:pdf -->, like the mark of [PDF documents](/docs/pdf#the-free-footer-mark)<!-- /feature:pdf -->. It is part of the page, also inside a file that `protect` encrypts. Results made on [[plan.starter.name]] and [[plan.pro.name]] have no mark.
 
 ## Limits
 

@@ -446,10 +446,31 @@ Production, only when you approve PDFs:
 
 ## 11. Build v3 tools (staging first; production feature by feature)
 
-Built and tested locally on 2026-11-26 (README.md, "Build v3 tools" and "Not verified"); nothing of
-it has run on Cloudflare. Each tool has a Worker switch in `wrangler.toml` and a site feature in
-`SITE_FEATURES`; production has every switch `"false"` and `deploy:production` builds the site with
-`SITE_FEATURES= SITE_PDF=off`. Turning a tool on in production is your approval, one tool at a time.
+Built and tested locally on 2026-11-26 and checked on staging the same day (README.md, "Build v3
+tools" and "Not verified"). Each tool has a Worker switch in `wrangler.toml` and a site feature in
+`SITE_FEATURES`. Turning a tool on in production is your approval, one tool at a time.
+
+**What production has, by your decision of 2026-11-27** (not deployed when this was written):
+
+- **On with the next `npm run deploy:production`:** the site build
+  `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off`. It publishes the tools hub `/tools`, the
+  five one-app preview checkers (`/tools/x-card-validator`, `/tools/linkedin-post-preview`,
+  `/tools/slack-link-preview`, `/tools/discord-embed-preview`, `/tools/whatsapp-link-preview`),
+  `/tools/merge-pdf` and `/tools/image-to-pdf` (in the browser, nothing uploaded or counted), and
+  the docs pages `/docs/bulk`, `/docs/pdf-tools`, `/docs/link-cards` and `/docs/email-images`
+  (`/docs/integrations` stays out until the connectors are published). Each docs page opens with a
+  notice that its API is not switched on yet on linktocard.com, is `noindex` and is left out of
+  `sitemap.xml` and the docs navigation. The footer of every page, the verification page's
+  included, gains Merge PDF, Image to PDF and All free tools; the pricing page gains two lines that
+  say the free tools count nothing. `tests/node/production-site.test.ts` proves that nothing else
+  on the site changes.
+- **Still off, waiting for your words "PDF approved, enable it":** PDF documents (`PDF_ENABLED`),
+  bulk documents (`BATCH_ENABLED`), the PDF toolkit API (`PDF_TOOLKIT_ENABLED`) and email images
+  (`EMAIL_FIELDS_ENABLED`), all `"false"` under `[env.production.vars]`, and their site features
+  (`pdf`, `batch`, `toolkit`, `email`) left out of `deploy:production`.
+- **Not approved:** cards from links (`LINK_CARDS_ENABLED = "false"`, site feature `linkcards`) and
+  publishing the Zapier, Make and n8n connectors (site feature `integrations` off).
+- **Unchanged:** Paddle, the webhook and `CHECKOUT_ENABLED`.
 
 ### 11a. Before the next deploy of each environment (whatever it is for)
 
@@ -461,15 +482,27 @@ npx wrangler queues create linktocard-batch-staging
 npx wrangler queues create linktocard-batch-production
 ```
 
-- [ ] Apply the migrations, so `0008_batches.sql` is in place before code that uses it:
+- [ ] Apply the migrations before the code that uses them. Production has `0001`-`0005`; `0006_pdf.sql`,
+      `0007_browser_usage_plan.sql` and `0008_batches.sql` must be applied before the next production
+      deploy (section 4). There is no `0009`: the charge-once records of email images are rows of
+      `tool_usage` (migration `0005`), and the free pages need no migration of their own.
 
 ```sh
 npx wrangler d1 migrations apply DB --env staging --remote
 npx wrangler d1 migrations apply DB --env production --remote
 ```
 
-- [ ] Know what goes live with any production deploy, switches or not: the `email` size (1200 x 400)
-      in the API, the size lists of the docs and the dashboard's size picker; `/api/sign` refusing
+- [ ] The production queue must exist even with `BATCH_ENABLED = "false"`: `wrangler.toml` binds it in
+      `[env.production]` whatever the switches say, and `wrangler deploy --env production` fails
+      without it. Check with `npx wrangler queues list`.
+- [ ] Know what goes live with any production deploy, switches or not: the approved free pages above;
+      the `email` size (1200 x 400) in the API, the size lists of the docs and the dashboard's size
+      picker, which the five social starter templates refuse with 400 `invalid_request`
+      (`details.reason` `size_not_supported`; the dashboard's URL builder and preview answer it too,
+      and its size picker offers a starter only the sizes it is laid out for, falling back to Link
+      preview); the charge-once code of email images, which
+      does nothing while `EMAIL_FIELDS_ENABLED` is `"false"`; the verification page's footer read
+      from the static site (`/assets/partials/footer.html`); `/api/sign` refusing
       `open` as a data name; `/v/*` reaching the Worker, which answers a "not available" page (503)
       while `BATCH_ENABLED` is `"false"`. The two email starter templates do not: they answer 404
       everywhere while `EMAIL_FIELDS_ENABLED` is `"false"`, and the free playground never offers them. The bundle is about
@@ -477,8 +510,8 @@ npx wrangler d1 migrations apply DB --env production --remote
 
 ### 11b. Staging
 
-- [ ] 11a for staging, then `npm run deploy:staging` (every site feature and `SITE_PDF=on`; all four
-      switches are `"true"` under `[env.staging.vars]`).
+- [ ] 11a for staging, then `npm run deploy:staging` (all nine site features, `localpdf` and `apidocs`
+      included, and `SITE_PDF=on`; all four switches are `"true"` under `[env.staging.vars]`).
 - [ ] `/api/config` on staging reports `"pdf_enabled": true` and a `batch` block with `"enabled": true`.
 - [ ] **Bulk documents:** in the dashboard's **Bulk documents** tab, upload a CSV of a few
       certificates, preview row 1, start the batch, follow it to Finished, download the ZIP, open
@@ -512,9 +545,11 @@ npx wrangler d1 migrations apply DB --env production --remote
 For each tool you approve, in one change:
 
 1. `wrangler.toml`, `[env.production.vars]`: its switch to `"true"`.
-2. `package.json`, `deploy:production`: add its site feature to `SITE_FEATURES=` (for example
-   `SITE_FEATURES=batch`), and update the test in `tests/node/site-features.test.ts` that pins
-   that script.
+2. `package.json`, `deploy:production`: add its site feature to `SITE_FEATURES=`, keeping
+   `previews,localpdf,apidocs` (for example `SITE_FEATURES=previews,localpdf,apidocs,batch`), and
+   update the tests that pin that script (`tests/node/site-features.test.ts`, `tests/node/v3-site.test.ts`
+   and `tests/node/production-site.test.ts`). With its feature on, the tool's docs page loses its
+   "Not switched on yet" notice and joins the docs navigation and the sitemap by itself.
 3. `site/site.config.json`: set `legalUpdated` to the launch day when the tool has text in the terms
    or the privacy policy (bulk documents, the PDF toolkit, cards from links, email images). That text
    goes live with the tool's site feature, and the date tells readers that the pages changed.
@@ -526,7 +561,9 @@ For each tool you approve, in one change:
 | PDF toolkit | PDFs on as well: its results are served under `/i/...pdf`, which answers 503 while `PDF_ENABLED` is off | `PDF_TOOLKIT_ENABLED` | `toolkit` | one merge, and its `url` opens |
 | Cards from links | nothing | `LINK_CARDS_ENABLED` | `linkcards` | one card from your own page |
 | Email images | nothing | `EMAIL_FIELDS_ENABLED` | `email` | one open-field URL in a test email |
-| One-app preview pages and `/tools` | nothing (site only) | none | `previews` | the six pages load |
+| One-app preview pages and `/tools` | nothing; approved for production on 2026-11-27 | none | `previews` | the six pages load |
+| Merge PDF and Image to PDF (in the browser) | nothing; approved for production on 2026-11-27 | none | `localpdf` | both make a PDF from two files |
+| The docs pages of tools that are off, with their notice | nothing; approved for production on 2026-11-27 | none | `apidocs` | each opens with its notice |
 | Connectors page | the connectors published (below) or still "being prepared" | none | `integrations` | the page's status line matches reality |
 
 - **Connectors.** Publishing them is your work in your own accounts; the steps, the accounts each
@@ -567,4 +604,6 @@ For each tool you approve, in one change:
     answers 403 `invalid_signature` (values already rendered and paid for included) once the edge
     and the mail providers' image caches let the request through, so readers see broken images. The
     email starters answer 404 for any URL that names them. Turn it off only when a broken image is
-    better than what it stops.
+    better than what it stops. Charge records stay for up to 400 days
+    (`EMAIL_FIELDS.chargeMemoryDays`). If the tool is switched back on, images that were already
+    counted re-render without being counted again.

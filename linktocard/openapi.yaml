@@ -300,6 +300,26 @@ paths:
           description: Output size. Signed like any other parameter.
           schema:
             $ref: "#/components/schemas/Size"
+        # feature:email
+        - name: open
+          in: query
+          required: false
+          description: |
+            Email images (https://linktocard.com/docs/email-images): a signed, comma-separated list
+            of at most 3 template fields whose values are not signed, so that an email platform can
+            fill them in for each reader. The open fields are left out of the signed message and
+            appended after sig. Each unique email image (the template, for your own templates its
+            version, the signed parameters, the normalized open values, size, format and watermark,
+            on the site's account) is counted once: its first render counts 1 image and is stored,
+            later opens are served from cache at no cost while it is stored, and once the stored
+            copy has expired it is rendered again without being counted again, for 400 days from
+            that count, also when the allowance is used up. Responses to URLs with open fields carry
+            X-LTC-Cache (hit or miss) and X-LTC-Credits-Used: 1 for the request that was counted, 0
+            otherwise (a free render after expiry says miss and 0).
+          schema:
+            type: string
+          example: name
+        # /feature:email
         - name: data
           in: query
           required: false
@@ -326,7 +346,10 @@ paths:
         "304":
           description: Not modified (If-None-Match matched).
         "400":
-          description: unsupported_size
+          description: |
+            unsupported_size, or invalid_request with details.reason size_not_supported: a
+            starter template (blog, dark, quote, launch, docs) signed with size=email. Answered
+            after the signature is verified.
           content:
             application/json:
               schema:
@@ -1549,7 +1572,10 @@ paths:
         "304":
           description: Not modified (If-None-Match matched).
         "400":
-          description: invalid_request (the page address is not a public https:// URL on the default port) or unsupported_size.
+          description: |
+            invalid_request (the page address is not a public https:// URL on the default port, or
+            details.reason size_not_supported: a starter template signed with size=email, refused
+            before the page is read) or unsupported_size.
           content:
             application/json:
               schema:
@@ -1606,7 +1632,13 @@ components:
   schemas:
     Size:
       type: string
-      description: og is 1200x630, square is 1080x1080, portrait is 1080x1350, email is 1200x400.
+      description: |
+        og is 1200x630, square is 1080x1080, portrait is 1080x1350, email is 1200x400.
+        The five starter templates (blog, dark, quote, launch, docs) take og, square and
+        portrait. The email size is for your own templates and inline HTML, which take every
+        size. A starter template at the email size (size email, or width 1200 and height 400)
+        answers 400 invalid_request with details.reason size_not_supported and
+        details.supported_sizes.
       enum: [og, square, portrait, email]
       default: og
     Format:
@@ -2869,7 +2901,11 @@ components:
             type: string
             format: binary
     BadRequest:
-      description: invalid_request, unsupported_size or unsupported_format.
+      description: |
+        invalid_request, unsupported_size or unsupported_format. invalid_request with
+        details.reason size_not_supported (and details.template, details.size,
+        details.supported_sizes) means a starter template was asked for a size it does not
+        take: the five starter templates take og, square and portrait, not email.
       content:
         application/json:
           schema:

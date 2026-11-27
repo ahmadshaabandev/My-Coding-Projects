@@ -57,7 +57,9 @@ studioRouter.get('/templates', requireSession, async (c) => {
     c.var.user.id,
   );
   return c.json({
-    starter: STARTER_TEMPLATES.map((template) => starterTemplateJson(template, true)),
+    // `sizes`: the presets each starter is laid out for, so the builder offers only those (the
+    // social starters refuse the email size with 400 size_not_supported). /v1/templates is unchanged.
+    starter: STARTER_TEMPLATES.map((template) => ({ ...starterTemplateJson(template, true), sizes: [...template.sizes] })),
     custom: custom.map((template) => ({ ...template, updated_at: iso(template.updated_at) })),
   });
 });

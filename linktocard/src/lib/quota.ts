@@ -66,6 +66,13 @@ export interface RenderCharge {
   r2Key: string;
   /** How long the image stays cached, i.e. how long the same cache key is not charged again. */
   ttlMs: number;
+  /**
+   * Charge once (email images): the tool_usage row that remembers this image was paid for
+   * (src/lib/open-fields.ts emailChargeBucket), kept ttlMs from the charge. It is written in the
+   * batch that takes the image, guarded by the take's own condition, so it exists if and only if
+   * the image was taken; see CHARGE_RECORD_* below.
+   */
+  chargeRecord?: { bucket: string; ttlMs: number };
 }
 
 /** A rendered PDF about to be stored; charged as one block of `units` images (pdfUnits(pages)). */
@@ -174,6 +181,27 @@ const SETTLE_ENDED_PLAN_SQL = `UPDATE users SET
 const LABEL_LEDGER_TOPUP_SQL = `UPDATE renders SET charged_to = 'topup' WHERE cache_key = ?3 AND EXISTS (${NEXT_TOPUP})`;
 const COUNT_TOPUP_USE_SQL = `UPDATE usage_periods SET topup_used = topup_used + 1 WHERE user_id = ?1 AND period_start = ?3 AND EXISTS (${NEXT_TOPUP})`;
 const TAKE_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - 1 WHERE id = (${NEXT_TOPUP})`;
+
+/*
+ * Charge once (email images): the record that an image was paid for. An image's ledger row says
+ * 'plan' from its claim, before anything is taken, and is deleted again when nothing was left, so
+ * the row is no proof of payment and the record is never written from it. It is written only here,
+ * inside the batch that takes the image: placed before the take and guarded by exactly the take's
+ * condition, like LABEL_LEDGER_TOPUP_SQL and COUNT_TOPUP_USE_SQL, so inside the batch (one
+ * transaction) the record and the take apply together or not at all. An unexpired record is kept
+ * as it is (its time is the first charge); an expired one the cleanup has not removed yet is
+ * replaced.
+ */
+// Allowance batch: ?1 user, ?2 period start, ?3 plan monthly images, ?4 bucket, ?5 record expiry, ?6 now.
+const CHARGE_RECORD_ALLOWANCE_SQL = `INSERT INTO tool_usage (bucket, count, expires_at)
+  SELECT ?4, 1, ?5 WHERE EXISTS (SELECT 1 FROM usage_periods WHERE user_id = ?1 AND period_start = ?2 AND used < MAX(0, ?3 + allowance_adjust))
+  ON CONFLICT (bucket) DO UPDATE SET count = excluded.count, expires_at = excluded.expires_at
+  WHERE tool_usage.expires_at <= ?6`;
+// Top-up batch: ?1 user, ?2 now, ?3 bucket, ?4 record expiry.
+const CHARGE_RECORD_TOPUP_SQL = `INSERT INTO tool_usage (bucket, count, expires_at)
+  SELECT ?3, 1, ?4 WHERE EXISTS (${NEXT_TOPUP})
+  ON CONFLICT (bucket) DO UPDATE SET count = excluded.count, expires_at = excluded.expires_at
+  WHERE tool_usage.expires_at <= ?2`;
 
 /*
  * PDFs: a block of ?4 images. In each batch the statements that label the ledger row and count
@@ -413,13 +441,17 @@ async function takeFromAllowance(
   period: Period,
   limit: number,
   now: number,
+  record: RenderCharge['chargeRecord'],
 ): Promise<{ taken: AllowanceRow | null; counters: Counters }> {
+  const recording = record ? [db.prepare(CHARGE_RECORD_ALLOWANCE_SQL).bind(userId, period.start, limit, record.bucket, now + record.ttlMs, now)] : [];
+  const take = 1 + recording.length;
   const results = await db.batch([
     db.prepare(OPEN_PERIOD_SQL).bind(userId, period.start, period.end),
+    ...recording,
     db.prepare(TAKE_FROM_ALLOWANCE_SQL).bind(userId, period.start, limit),
     countersStatement(db, userId, period, now),
   ]);
-  return { taken: rowsOf<AllowanceRow>(results, 1)[0] ?? null, counters: countersFrom(results, 2) };
+  return { taken: rowsOf<AllowanceRow>(results, take)[0] ?? null, counters: countersFrom(results, take + 1) };
 }
 
 async function takeFromTopup(
@@ -428,14 +460,18 @@ async function takeFromTopup(
   period: Period,
   cacheKey: string,
   now: number,
+  record: RenderCharge['chargeRecord'],
 ): Promise<{ taken: boolean; counters: Counters }> {
+  const recording = record ? [db.prepare(CHARGE_RECORD_TOPUP_SQL).bind(userId, now, record.bucket, now + record.ttlMs)] : [];
+  const take = 2 + recording.length;
   const results = await db.batch([
     db.prepare(LABEL_LEDGER_TOPUP_SQL).bind(userId, now, cacheKey),
     db.prepare(COUNT_TOPUP_USE_SQL).bind(userId, now, period.start),
+    ...recording,
     db.prepare(TAKE_FROM_TOPUP_SQL).bind(userId, now),
     countersStatement(db, userId, period, now),
   ]);
-  return { taken: results[2]?.meta.changes === 1, counters: countersFrom(results, 3) };
+  return { taken: results[take]?.meta.changes === 1, counters: countersFrom(results, take + 1) };
 }
 
 /** Records that a notice was sent for this allowance; true for exactly one caller per period and allowance. */
@@ -446,9 +482,10 @@ async function claimFlag(db: D1Database, sql: string, userId: string, period: Pe
 /**
  * Charges one image for a render that has just succeeded.
  *
- *   charged         one image was taken from the allowance or a top-up
- *   duplicate       an unexpired ledger row already covers this cache key: no charge
- *   quota_exceeded  nothing left; the ledger row was released again
+ *   charged         one image was taken from the allowance or a top-up (and render.chargeRecord,
+ *                   when given, was written in the same batch)
+ *   duplicate       an unexpired ledger row already covers this cache key: no charge, no record
+ *   quota_exceeded  nothing left; the ledger row was released again, no record
  *
  * If D1 fails after the ledger row is claimed the error propagates and the row
  * is intentionally left in place: we cannot know whether the charge committed,
@@ -459,7 +496,7 @@ export async function chargeRender(db: D1Database, user: QuotaUser, render: Rend
   const period = currentPeriod(user, now);
   if (!(await claimLedgerRow(db, user.id, period, render, now))) return { status: 'duplicate' };
 
-  const allowance = await takeFromAllowance(db, user.id, period, PLANS[planId].monthlyImages, now);
+  const allowance = await takeFromAllowance(db, user.id, period, PLANS[planId].monthlyImages, now, render.chargeRecord);
   if (allowance.taken) {
     const { used, allowance: limit, notified_90: notified90, notified_100: notified100 } = allowance.taken;
     const crossed90 = notified90 < limit && used * 10 >= limit * 9 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period, limit));
@@ -467,12 +504,60 @@ export async function chargeRender(db: D1Database, user: QuotaUser, render: Rend
     return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, allowance.counters), crossed90, crossed100 };
   }
 
-  const topup = await takeFromTopup(db, user.id, period, render.cacheKey, now);
+  const topup = await takeFromTopup(db, user.id, period, render.cacheKey, now, render.chargeRecord);
   const usage = summarize(planId, period, topup.counters);
   if (topup.taken) return { status: 'charged', chargedTo: 'topup', usage, crossed90: false, crossed100: false };
 
   await run(db, RELEASE_LEDGER_SQL, render.cacheKey, user.id, now);
   return { status: 'quota_exceeded', usage };
+}
+
+/*
+ * Charge once (email images, src/lib/images.ts): an image that was charged once and whose stored
+ * copy expired is rendered and stored again without a new charge while that charge is remembered
+ * (EMAIL_FIELDS.chargeMemoryDays, written by chargeRender's take batches from
+ * RenderCharge.chargeRecord, read by src/lib/open-fields.ts hasEmailCharge). The copy still gets a ledger row, so
+ * the daily cleanup deletes its R2 object with the row and an identical request meanwhile is a
+ * duplicate, but with charged_to 'none' and without moving any counter. It is claimed by the
+ * same rule as CLAIM_LEDGER_SQL: a new row, or the takeover of an expired one.
+ */
+const CLAIM_UNCHARGED_LEDGER_SQL = `INSERT INTO renders
+    (cache_key, user_id, site_id, source, template, width, height, format, bytes, r2_key, charged_to, period_start, created_at, expires_at)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'none', ?11, ?12, ?13)
+  ON CONFLICT (cache_key) DO UPDATE SET
+    user_id = excluded.user_id, site_id = excluded.site_id, source = excluded.source, template = excluded.template,
+    width = excluded.width, height = excluded.height, format = excluded.format, bytes = excluded.bytes,
+    r2_key = excluded.r2_key, charged_to = excluded.charged_to, period_start = excluded.period_start,
+    created_at = excluded.created_at, expires_at = excluded.expires_at
+  WHERE renders.expires_at <= excluded.created_at
+  RETURNING cache_key`;
+
+/**
+ * Records a render that is not charged because the image was paid for before (see above).
+ *
+ *   recorded   the ledger row is this render's: store the image, nothing was taken
+ *   duplicate  an unexpired ledger row already covers this cache key, as for chargeRender
+ */
+export async function recordUnchargedRender(db: D1Database, user: QuotaUser, render: RenderCharge, now: number): Promise<'recorded' | 'duplicate'> {
+  const period = currentPeriod(user, now);
+  const claimed = await first<{ cache_key: string }>(
+    db,
+    CLAIM_UNCHARGED_LEDGER_SQL,
+    render.cacheKey,
+    user.id,
+    render.siteId,
+    render.source,
+    render.template,
+    render.width,
+    render.height,
+    render.format,
+    render.bytes,
+    render.r2Key,
+    period.start,
+    now,
+    now + render.ttlMs,
+  );
+  return claimed !== null ? 'recorded' : 'duplicate';
 }
 
 function crossedThresholds(taken: AllowanceRow): { crossed90: boolean; crossed100: boolean; limit: number } {

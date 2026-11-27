@@ -8,7 +8,9 @@ import { emailOffer } from '../../src/render/templates/email-offer';
 describe('email starter templates in plain Node', () => {
   it.each([emailBanner, emailOffer])('$id imports without the Worker runtime and survives a JSON round trip', (template) => {
     expect(JSON.parse(JSON.stringify(template))).toEqual(template);
-    expect(Object.keys(template).sort()).toEqual(['css', 'description', 'fields', 'html', 'id', 'name', 'sample']);
+    // 'sizes' (the presets it is laid out for) was added by the owner decision of 2026-11-27 that
+    // refuses the email size for the social starters on the server.
+    expect(Object.keys(template).sort()).toEqual(['css', 'description', 'fields', 'html', 'id', 'name', 'sample', 'sizes']);
     for (const field of template.fields) expect(Object.keys(field).every((key) => ['name', 'description', 'example', 'required'].includes(key))).toBe(true);
   });
 

@@ -5,6 +5,7 @@ layout: doc
 order: 5.6
 nav: Bulk documents
 feature: batch
+unlaunched: **Not switched on yet on [[site.host]].** Bulk documents have not launched here: until they do, every `/v1/batches` request and every certificate revocation answers 503 `not_configured`, and verification pages answer 503.<!-- feature:no-pdf --> Bulk documents are PDFs, and PDF documents are not switched on here yet either.<!-- /feature:no-pdf -->
 ---
 
 A batch makes one PDF for every row of your data: the same template, a different row each time. Certificates for everyone who finished a course, an invoice for every customer of the month, a report for every location. You send the rows as JSON, the documents are made in the background, and you follow the progress, then download each PDF or all of them as ZIP files.
@@ -75,7 +76,7 @@ Poll every few seconds, not in a tight loop: the status request counts against t
 
 ## Templates and rows
 
-`template` is a PDF starter template (`[[pdf.templateIds]]`) or the id of one of your own templates (`t_...`). [PDF documents](/docs/pdf#starter-templates) lists the keys of every starter template. A template that does not exist on your account answers 404 `not_found`, like `POST /v1/pdf`.
+`template` is a PDF starter template (`[[pdf.templateIds]]`) or the id of one of your own templates (`t_...`).<!-- feature:pdf --> [PDF documents](/docs/pdf#starter-templates) lists the keys of every starter template.<!-- /feature:pdf --> A template that does not exist on your account answers 404 `not_found`, like `POST /v1/pdf`.
 
 Every row is a `data` object, with the same rules as `data` in `POST /v1/pdf`: at most [[pdf.maxDataKeys]] keys, values of at most [[pdf.maxDataValueChars]] characters, and an `items` list of at most [[pdf.maxItems]] entries for line items. A key the template does not use is ignored. A missing key prints as empty. The rows are checked before the batch starts; an error names the row, for example `rows[3]`, which is the fourth row (the list starts at 0).
 
@@ -234,7 +235,7 @@ Every document is counted like a PDF from `POST /v1/pdf`, by its own pages:
 - **Running out in the middle.** If the images run out while a batch runs, for example because its documents are longer than one block of pages or because other renders used the allowance, the documents that are left fail with `quota_exceeded`. The batch ends as `partial`, and the documents already made are kept. Add images, then start a new batch with the rows that failed.
 - **Failures count nothing.** A document that fails uses no images. When the renderer was busy or had a problem of its own, the document is tried again, at most [[batch.maxRowAttempts]] times in all; a document that fails because of its own content (too many pages, an image that cannot be loaded) is not tried again. A failure of the document in the browser counts toward your account's [daily cap on failed PDF renders](/docs/pdf#what-counts), which `POST /v1/pdf` shares. When that cap is reached, or the renderer asks for a longer wait than the document's tries allow, the document fails with that message instead of waiting.
 - **The same document twice counts once.** A row that gives exactly the same document as one that is still stored (same template, data, page setup and file name) is served from storage and uses no images, as with `POST /v1/pdf`. With verification on, every document has its own certificate ID, so none is the same as another.
-- **The free mark.** On the [[plan.free.name]] plan, every page of every document carries the "[[pdf.freeMark]]" line, as described in [PDF documents](/docs/pdf#the-free-footer-mark). The per-minute limit of [[plan.free.name]]-plan PDF renders does not apply to the documents of a batch, which the queue paces itself.
+- **The free mark.** On the [[plan.free.name]] plan, every page of every document carries the "[[pdf.freeMark]]" line<!-- feature:pdf -->, as described in [PDF documents](/docs/pdf#the-free-footer-mark)<!-- /feature:pdf -->. The per-minute limit of [[plan.free.name]]-plan PDF renders does not apply to the documents of a batch, which the queue paces itself.
 - **Unfinished documents.** A document that has still not been made [[batch.staleAfterDays]] days after its batch was accepted is failed by the daily clean-up with `internal_error`, uncharged.
 
 ## Certificates and verification
@@ -324,7 +325,7 @@ A record is kept for as long as your account exists. A revoked record is kept fo
 | Batches per page of `GET /v1/batches` | [[batch.listMaxLimit]] |
 | Revoked certificate records | Kept [[batch.revokedRetentionDays]] days after the revocation |
 
-Every other limit of a PDF, such as its HTML size and its images, is the one in [PDF documents](/docs/pdf#limits). The requests count against the API's [rate limits](/docs/limits#rate-limits) per IP address and per API key.
+Every other limit of a PDF, such as its HTML size and its images, is the one<!-- feature:pdf --> in [PDF documents](/docs/pdf#limits)<!-- /feature:pdf --><!-- feature:no-pdf --> of a `POST /v1/pdf` request<!-- /feature:no-pdf -->. The requests count against the API's [rate limits](/docs/limits#rate-limits) per IP address and per API key.
 
 ## API reference
 

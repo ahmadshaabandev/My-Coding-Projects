@@ -54,8 +54,12 @@ const DRAFTS: readonly Draft[] = [
   { name: 'integrations', feature: 'integrations', nav: 'Zapier, Make and n8n' },
 ];
 
-/** The site features of build v3 (contract: pdf, batch, toolkit, linkcards, email, previews), plus integrations for the connectors page. */
-const KNOWN_FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations'];
+/**
+ * The site features of build v3 (contract: pdf, batch, toolkit, linkcards, email, previews), plus integrations for the
+ * connectors page, and localpdf and apidocs (owner decision of 2026-11-27: the in-browser PDF pages and these docs
+ * pages, with their "unlaunched" notice, in production while the APIs stay off).
+ */
+const KNOWN_FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs'];
 
 /** The page as published (.md) once renamed, the draft (.md.draft) before. */
 function draftFile(name: Draft['name']): string {
@@ -272,7 +276,10 @@ describe('the v3 docs pages', () => {
     const orders = new Set(existing);
     for (const draft of DRAFTS) {
       const { data } = frontMatter(source(draft.name), draft.name);
-      expect(Object.keys(data).sort(), draft.name).toEqual(['description', 'feature', 'layout', 'nav', 'order', 'title']);
+      // unlaunched: the notice the page opens with when apidocs publishes it while its feature is off (2026-11-27).
+      // The connectors page has none: it stays out of production until the connectors are published (decision 6).
+      const keys = ['description', 'feature', 'layout', 'nav', 'order', 'title', ...(draft.name === 'integrations' ? [] : ['unlaunched'])];
+      expect(Object.keys(data).sort(), draft.name).toEqual(keys);
       expect(data.layout, draft.name).toBe('doc');
       expect(data.feature, draft.name).toBe(draft.feature);
       expect(data.nav, draft.name).toBe(draft.nav);

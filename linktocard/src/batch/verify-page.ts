@@ -15,11 +15,15 @@
  *     not to search engines. robots.txt must NOT disallow /v/, or crawlers could not read the
  *     noindex. Titles and link-preview tags carry no recipient name, so a shared link does not
  *     put one into a chat app's preview.
- *   - Header and footer are copies of site/partials (header.html, footer.html, logo.html) and the
- *     <head> follows site/layouts/base.html, with site.config.json's values. The footer keeps only
- *     what every site build has (all feature blocks dropped), because the Worker does not know
- *     which features the static site was built with. tests/verify-page.test.ts fails when the
- *     partials change, so this copy cannot drift silently.
+ *   - The header is a copy of site/partials (header.html, logo.html) and the <head> follows
+ *     site/layouts/base.html, with site.config.json's values. The footer is the static site's own:
+ *     the site build publishes the footer of its pages, with that build's feature links, as
+ *     /assets/partials/footer.html (scripts/build-site.ts FOOTER_ASSET), and loadSiteFooter() reads
+ *     it through env.ASSETS once per isolate. It is the build's own markup, so it is printed as it
+ *     is, after a check that it is one <footer class="site-footer"> with nothing a strict CSP would
+ *     block. When the asset is missing or fails the check, siteFooter() stands in: a copy of the
+ *     partial with only what every site build has (all feature blocks dropped).
+ *     tests/verify-page.test.ts fails when the partials change, so these copies cannot drift silently.
  *   - The status and the issuing account's domain are the only things Link To Card vouches for;
  *     the fixed disclaimer says so on every record.
  *   - Never cached (Cache-Control: no-store): a revocation shows on the next request.
@@ -44,9 +48,11 @@ export const VERIFY_PAGE_CSP =
 export interface VerifyContext {
   /** Public origin, e.g. https://linktocard.com (env.APP_URL). */
   appUrl: string;
-  /** env.SUPPORT_EMAIL: the report link and the footer. */
+  /** env.SUPPORT_EMAIL: the report link and the stand-in footer. */
   supportEmail: string;
   now: number;
+  /** The static site's footer (loadSiteFooter); null or absent: siteFooter() stands in. */
+  footer?: string | null;
 }
 
 /** GET /v/{id}.json */
@@ -131,7 +137,10 @@ export function siteHeader(): string {
   ].join('\n');
 }
 
-/** site/partials/footer.html without its feature blocks: only links every site build has. */
+/**
+ * The stand-in footer: site/partials/footer.html without its feature blocks, only links every site
+ * build has. Printed when the static site's own footer (loadSiteFooter) is not available.
+ */
 export function siteFooter(supportEmail: string, now: number): string {
   const email = escapeHtml(supportEmail);
   const year = new Date(now).getUTCFullYear();
@@ -187,6 +196,82 @@ export function siteFooter(supportEmail: string, now: number): string {
   ].join('\n');
 }
 
+/* ------------------------------------------------------------------ */
+/* The site's own footer, from the static assets                        */
+/* ------------------------------------------------------------------ */
+
+/** Where the site build publishes the footer of its pages (scripts/build-site.ts FOOTER_ASSET). */
+export const SITE_FOOTER_ASSET = '/assets/partials/footer.html';
+
+/** env.ASSETS answers any host; this one only names the request. */
+const ASSET_ORIGIN = 'https://assets.local';
+
+/** Far more than the footer needs (about 2 KB); anything larger is not the footer. */
+const MAX_FOOTER_CHARS = 32 * 1024;
+
+/** The part of the Workers static-assets binding (env.ASSETS) the footer needs. */
+export interface AssetFetcher {
+  fetch(input: Request): Promise<Response>;
+}
+
+/**
+ * True for markup the page may print unescaped as its footer: exactly one <footer class="site-footer">
+ * element, and nothing in it that runs, styles, frames, submits or loads from elsewhere. The page's
+ * CSP would block such things anyway; the check keeps a wrong file from reaching the page at all.
+ */
+export function isSiteFooter(html: string): boolean {
+  return (
+    html.length <= MAX_FOOTER_CHARS &&
+    /^<footer class="site-footer">[\s\S]*<\/footer>$/.test(html) &&
+    (html.match(/<\/?footer\b/gi) ?? []).length === 2 &&
+    !/<(?:script|style|iframe|frame|frameset|object|embed|applet|form|input|button|textarea|select|base|meta|link|img|image|use|foreignobject|animate|set|audio|video|source|picture|portal)\b/i.test(html) &&
+    !/\s(?:on[a-z]+|style|srcdoc|formaction)\s*=/i.test(html) &&
+    !/\s(?:href|src|xlink:href|action)\s*=\s*["']?\s*(?:javascript|vbscript|data):/i.test(html)
+  );
+}
+
+const footers = new WeakMap<AssetFetcher, Promise<string | null>>();
+
+async function fetchSiteFooter(assets: AssetFetcher): Promise<string | null> {
+  try {
+    let response = await assets.fetch(new Request(`${ASSET_ORIGIN}${SITE_FOOTER_ASSET}`, { redirect: 'manual' }));
+    // html_handling "auto-trailing-slash" may answer /x.html with a redirect to /x: follow it once, on the assets only.
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      await response.body?.cancel();
+      const next = location === null ? null : new URL(location, `${ASSET_ORIGIN}${SITE_FOOTER_ASSET}`);
+      if (next === null || next.origin !== ASSET_ORIGIN) return null;
+      response = await assets.fetch(new Request(next.href, { redirect: 'manual' }));
+    }
+    // A missing asset comes back as the site's 404 page (HTML, status 404): only a 200 counts.
+    if (response.status !== 200 || !(response.headers.get('content-type') ?? '').toLowerCase().startsWith('text/html')) {
+      await response.body?.cancel();
+      return null;
+    }
+    const html = (await response.text()).trim();
+    return isSiteFooter(html) ? html : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The footer of the static site as deployed with this Worker, or null when the asset is missing or
+ * is not a footer (then the page prints siteFooter()). Loaded once per isolate and assets binding;
+ * a miss is not kept, so the next request tries again.
+ */
+export function loadSiteFooter(assets: AssetFetcher | undefined): Promise<string | null> {
+  if (!assets) return Promise.resolve(null);
+  const cached = footers.get(assets);
+  if (cached) return cached;
+  const loading = fetchSiteFooter(assets).then((footer) => {
+    if (footer === null) footers.delete(assets);
+    return footer;
+  });
+  footers.set(assets, loading);
+  return loading;
+}
+
 interface Shell {
   /** Page title without the site name. */
   title: string;
@@ -234,7 +319,7 @@ function documentHtml(shell: Shell, ctx: VerifyContext): string {
     '<div id="content" tabindex="-1">',
     shell.main,
     '</div>',
-    siteFooter(ctx.supportEmail, ctx.now),
+    ctx.footer ?? siteFooter(ctx.supportEmail, ctx.now),
     '</body>',
     '</html>',
     '',

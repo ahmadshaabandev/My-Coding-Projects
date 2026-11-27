@@ -7,7 +7,7 @@ import { PLANS, TOPUP } from '../src/billing/plans';
 import { DAY_MS, LIMITS, RATE_LIMITS } from '../src/config';
 import { all, first, run } from '../src/db/client';
 import { FONTS } from '../src/render/fonts';
-import { STARTER_TEMPLATE_IDS } from '../src/render/templates';
+import { STARTER_TEMPLATE_IDS, getStarterTemplate } from '../src/render/templates';
 import type { Env, FontRow, RateLimitBinding } from '../src/types';
 import {
   ORIGIN,
@@ -441,8 +441,11 @@ describe('templates', () => {
     );
     expect(list.starter.map((starter) => starter.id)).toEqual([...STARTER_TEMPLATE_IDS]);
     for (const starter of list.starter) {
-      expect(Object.keys(starter).sort()).toEqual(['css', 'description', 'fields', 'html', 'id', 'name', 'sample']);
+      // `sizes` is new (review EXP-3): the builder offers a starter only the sizes it is laid out for.
+      expect(Object.keys(starter).sort()).toEqual(['css', 'description', 'fields', 'html', 'id', 'name', 'sample', 'sizes']);
       expect(typeof starter.html).toBe('string');
+      expect(starter.sizes).toEqual([...getStarterTemplate(String(starter.id))!.sizes]);
+      expect(starter.sizes).not.toContain('email');
     }
     expect(list.custom).toEqual([{ id: template.id, name: 'Launch card', version: 1, updated_at: template.updated_at }]);
     expect(await json(await dashboard(cookie, 'GET', `/api/templates/${template.id}`))).toEqual({ template });

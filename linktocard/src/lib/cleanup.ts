@@ -4,7 +4,9 @@
  * Stored PDFs have ledger rows like images and expire with them. Bulk documents: rows whose
  * queue message can no longer arrive are failed, finished batches go once their PDFs expired,
  * and certificate records BATCH.revokedRetentionDays after they were revoked. A deleted
- * account's batches, batch rows and certificate records go with it (in bounded steps first).
+ * account's batches, batch rows and certificate records go with it (in bounded steps first), and
+ * so do its email image charge records (tool_usage rows, src/lib/open-fields.ts "Charge once"),
+ * which have no foreign key to cascade from; expired ones go with the other tool_usage rows.
  *
  * Nothing here is needed for correctness - expired sessions, tokens and images
  * are already ignored by the code that reads them - it only keeps D1 and R2
@@ -15,6 +17,7 @@ import { failStaleRows, purgeExpiredBatches } from '../batch/store';
 import { BATCH, DAY_MS, PDF } from '../config';
 import { all, isMissingTableError, run } from '../db/client';
 import type { Env } from '../types';
+import { emailChargeRange } from './open-fields';
 
 export const CLEANUP_LIMITS = {
   /** Rows touched by any single statement. */
@@ -53,6 +56,8 @@ export const CLEANUP_LIMITS = {
   revokedCertificateDeletesPerRun: 20_000,
   /** Certificate records of deleted accounts deleted per run (their batches count against batchDeletesPerRun). */
   accountCertificateDeletesPerRun: 20_000,
+  /** Email image charge records (one per charged image, kept EMAIL_FIELDS.chargeMemoryDays) of deleted accounts deleted per run. */
+  accountEmailChargeDeletesPerRun: 20_000,
 } as const;
 
 const LOGIN_TOKEN_KEEP_MS = DAY_MS;
@@ -142,12 +147,27 @@ async function deleteAccountBatches(db: D1Database, userId: string, budget: Batc
 }
 
 /**
+ * One account's email image charge records, in bounded statements: tool_usage rows have no user
+ * id column to cascade from, so they are found by their bucket range. True when none is left.
+ */
+async function deleteAccountEmailCharges(db: D1Database, userId: string, budget: { left: number }): Promise<boolean> {
+  const { from, to } = emailChargeRange(userId);
+  for (;;) {
+    if (budget.left <= 0) return false;
+    const limit = Math.min(CLEANUP_LIMITS.rowsPerStatement, budget.left);
+    const changes = await run(db, 'DELETE FROM tool_usage WHERE bucket IN (SELECT bucket FROM tool_usage WHERE bucket > ?1 AND bucket < ?2 LIMIT ?3)', from, to, limit);
+    budget.left -= changes;
+    if (changes < limit) return true;
+  }
+}
+
+/**
  * Accounts the operator marked for deletion (users.deletion_requested_at; the
  * same command suspends them, so they already serve nothing). Files go first,
- * then bulk documents, rows last: every table that references users cascades,
- * and sign-in requests and the webhook log, which do not, are deleted by email
- * and id. An account with more files or batches than this run's budget is
- * finished by the next run.
+ * then bulk documents and email image charge records, rows last: every table
+ * that references users cascades, and sign-in requests and the webhook log,
+ * which do not, are deleted by email and id. An account with more files,
+ * batches or charge records than this run's budget is finished by the next run.
  */
 async function purgeDeletedAccounts(env: Pick<Env, 'DB' | 'BUCKET'>): Promise<number> {
   const accounts = await all<{ id: string; email: string }>(
@@ -157,10 +177,12 @@ async function purgeDeletedAccounts(env: Pick<Env, 'DB' | 'BUCKET'>): Promise<nu
   );
   const budget = { left: CLEANUP_LIMITS.r2DeletesPerRun };
   const batchBudget: BatchBudget = { batches: CLEANUP_LIMITS.batchDeletesPerRun, certificates: CLEANUP_LIMITS.accountCertificateDeletesPerRun };
+  const chargeBudget = { left: CLEANUP_LIMITS.accountEmailChargeDeletesPerRun };
   let purged = 0;
   for (const account of accounts) {
     if (!(await deleteAccountObjects(env.BUCKET, account.id, budget))) break;
     if (!(await deleteAccountBatches(env.DB, account.id, batchBudget))) break;
+    if (!(await deleteAccountEmailCharges(env.DB, account.id, chargeBudget))) break;
     await env.DB.batch([
       env.DB.prepare('DELETE FROM login_tokens WHERE email = ?1').bind(account.email),
       env.DB.prepare('DELETE FROM webhook_events WHERE user_id = ?1').bind(account.id),

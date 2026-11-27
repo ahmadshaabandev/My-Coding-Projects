@@ -31,13 +31,18 @@ function page(site: RenderedSite, outPath: string): string {
   return found.html;
 }
 
-/** The features of build v3 (pdf is older and has its own tests in site-features and pdf-site). */
-const V3: readonly Feature[] = ['batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations'];
+/**
+ * The features of build v3 (pdf is older and has its own tests in site-features and pdf-site).
+ * localpdf: since the owner decision of 2026-11-27 the in-browser pages have their own feature
+ * instead of "toolkit". apidocs publishes pages of other features (tests/node/production-site.test.ts).
+ */
+const V3: readonly Feature[] = ['batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf'];
 
 /** The pages each v3 feature publishes; the test below checks this against the front matter. */
 const PAGES_BY_FEATURE: Record<string, string[]> = {
   batch: ['docs/bulk.html'],
-  toolkit: ['docs/pdf-tools.html', 'tools/image-to-pdf.html', 'tools/merge-pdf.html'],
+  toolkit: ['docs/pdf-tools.html'],
+  localpdf: ['tools/image-to-pdf.html', 'tools/merge-pdf.html'],
   linkcards: ['docs/link-cards.html'],
   email: ['docs/email-images.html', 'guides/personalized-email-images.html'],
   previews: ['tools.html', 'tools/discord-embed-preview.html', 'tools/linkedin-post-preview.html', 'tools/slack-link-preview.html', 'tools/whatsapp-link-preview.html', 'tools/x-card-validator.html'],
@@ -95,6 +100,8 @@ const LEGAL: Record<string, { terms: string[]; privacy: string[] }> = {
 };
 
 const only = (...on: Feature[]): RenderedSite => renderSite({ env: { SITE_FEATURES: on.join(',') }, now: NOW });
+/** One v3 feature alone; localpdf needs a page for its API link, so it comes with toolkit, which adds no page of its own feature. */
+const alone = (feature: Feature): RenderedSite => (feature === 'localpdf' ? only('localpdf', 'toolkit') : only(feature));
 
 let off: RenderedSite;
 let all: RenderedSite;
@@ -102,7 +109,7 @@ const one: Record<string, RenderedSite> = {};
 beforeAll(() => {
   off = renderSite({ env: {}, now: NOW });
   all = renderSite({ env: { SITE_FEATURES: FEATURES.join(','), SITE_PDF: 'on' }, now: NOW });
-  for (const feature of V3) one[feature] = only(feature);
+  for (const feature of V3) one[feature] = alone(feature);
 });
 
 describe('the v3 pages', () => {
@@ -286,7 +293,9 @@ describe('the counting rules, limits and reference pages', () => {
 
   it('say on the pricing page that the in-browser tools and the preview checkers count nothing, only with their features', () => {
     expect(text(page(off, 'pricing.html'))).not.toMatch(/Merge PDF|one-app link preview/);
-    expect(text(page(one.toolkit!, 'pricing.html'))).toContain('tools run in your browser: no account, the files are not uploaded, and nothing is counted.');
+    // The in-browser tools are published with their own feature since 2026-11-27 (localpdf, not toolkit).
+    expect(text(page(one.localpdf!, 'pricing.html'))).toContain('tools run in your browser: no account, the files are not uploaded, and nothing is counted.');
+    expect(text(page(only('toolkit'), 'pricing.html'))).not.toMatch(/Merge PDF/);
     expect(text(page(one.previews!, 'pricing.html'))).toContain('The same goes for the one-app link preview checkers among the free tools');
   });
 });
@@ -357,7 +366,8 @@ describe('README.md and GO-LIVE.md', () => {
     for (const feature of ['batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations']) expect(goLive, feature).toContain(`| \`${feature}\` |`);
     expect(goLive).toContain('set `legalUpdated` to the launch day');
     expect(goLive).toContain('integrations/README.md');
-    expect(JSON.parse(read('package.json')).scripts['deploy:production']).toContain('SITE_FEATURES= SITE_PDF=off');
+    // Owner decision of 2026-11-27: production publishes the free pages and the API docs, no API feature.
+    expect(JSON.parse(read('package.json')).scripts['deploy:production']).toContain('SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off');
   });
 
   it('keep a changelog entry for build v3 that says where AI was used', () => {
@@ -365,5 +375,15 @@ describe('README.md and GO-LIVE.md', () => {
     expect(entry.length).toBeGreaterThan(200);
     expect(entry).toContain('Where AI was used:');
     expect(entry).toContain('not deployed');
+  });
+
+  it('keep a changelog entry for the owner decisions of 2026-11-27, and say what production waits for', () => {
+    const entry = readme.slice(readme.indexOf('- **2026-11-27: Owner decisions after build v3**'), readme.indexOf('- **2026-11-26: Build v3 tools**'));
+    expect(entry.length).toBeGreaterThan(200);
+    expect(entry).toContain('Where AI was used:');
+    expect(entry).toContain('SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off');
+    expect(readme).toContain('**Production publishes only the approved free pages**');
+    expect(goLive).toContain('**Still off, waiting for your words "PDF approved, enable it":**');
+    for (const migration of ['0006_pdf.sql', '0007_browser_usage_plan.sql', '0008_batches.sql']) expect(goLive, migration).toContain(migration);
   });
 });

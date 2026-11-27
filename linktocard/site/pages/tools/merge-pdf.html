@@ -2,7 +2,7 @@
 title: Merge PDF files free, in your browser, without uploading them
 description: Combine PDF files into one for free. This page merges them in your browser, so your files stay on your device. Drag them into order and download. No sign-up, no watermark.
 scripts: merge-pdf
-feature: toolkit
+feature: localpdf
 ---
 <main class="tool">
 
@@ -34,10 +34,12 @@ feature: toolkit
 <p id="local-result-text"></p>
 <a class="btn btn-secondary btn-sm" id="local-download" download="merged.pdf">Download</a>
 </div>
-<noscript><p class="alert alert-warn">This page needs JavaScript: the PDFs are merged by your browser. <a href="/docs/pdf-tools">POST /v1/pdf-tools/merge</a> does the same from a script.</p></noscript>
+<noscript><p class="alert alert-warn">This page needs JavaScript: the PDFs are merged by your browser.<!-- feature:toolkit --> <a href="/docs/pdf-tools">POST /v1/pdf-tools/merge</a> does the same from a script.<!-- /feature:toolkit --></p></noscript>
 </form>
 <p class="visually-hidden" id="local-status" role="status" aria-live="polite"></p>
+<!-- feature:toolkit -->
 <p class="local-api"><a class="link-arrow" href="#api">Automate this with the API</a></p>
+<!-- /feature:toolkit -->
 </div>
 </section>
 
@@ -63,7 +65,7 @@ feature: toolkit
 <li>It does not open password-protected (encrypted) PDFs, including ones that open without a password but restrict printing or changes. Remove the protection first.</li>
 <li>It does not copy XFA forms. Print or export such a form to a new PDF first.</li>
 <li>It does not carry over bookmarks, attachments or the document&rsquo;s title and author, and a fillable form may stop working as a form.</li>
-<li>It does not compress, split or reorder the pages inside a file. <a href="/docs/pdf-tools">The PDF toolkit API</a> merges chosen pages of each file.</li>
+<li>It does not compress, split or reorder the pages inside a file.<!-- feature:toolkit --> <a href="/docs/pdf-tools">The PDF toolkit API</a> merges chosen pages of each file.<!-- /feature:toolkit --></li>
 </ul>
 </div>
 </div>
@@ -74,6 +76,7 @@ feature: toolkit
 <p>Merging happens in this browser tab, with the memory and processor of your computer or phone. Your PDFs are not uploaded, so we never see them, their names or their contents, and nothing about them is counted or logged. The page keeps nothing after you close it; the merged PDF is wherever your browser saved the download.</p>
 <p>Because it all happens on your device, the limits are about memory, not money: up to [[localPdf.maxFiles]] files, [[localPdf.maxTotalMb]] MB together and [[localPdf.maxPages]] pages per merge. Very large jobs can make a phone&rsquo;s browser slow; merge them in smaller groups.</p>
 </div>
+<!-- feature:toolkit -->
 <div class="prose">
 <h3 id="api">Automate this with the API</h3>
 <p>To merge documents from your own app, send their addresses to <code>POST /v1/pdf-tools/merge</code> with an API key from your dashboard. <code>"pages"</code> takes some pages of a file, in the order you write them.</p>
@@ -90,6 +93,7 @@ feature: toolkit
   -o merged.pdf</code></pre></div>
 <p>Each started block of [[toolkit.pagesPerUnit]] pages of the result counts as one image of your plan. On the Free plan, every page of an API result carries a small &ldquo;[[pdf.freeMark]]&rdquo; line. <a class="link-arrow" href="/docs/pdf-tools">Read the PDF toolkit docs</a></p>
 </div>
+<!-- /feature:toolkit -->
 </div>
 </div>
 </section>
@@ -136,6 +140,7 @@ feature: toolkit
 </div>
 </section>
 
+<!-- feature:toolkit -->
 <section class="section cta-band">
 <div class="container cta">
 <div>
@@ -148,5 +153,20 @@ feature: toolkit
 </div>
 </div>
 </section>
+<!-- /feature:toolkit -->
+<!-- feature:no-toolkit -->
+<section class="section cta-band">
+<div class="container cta">
+<div>
+<h2>Share cards for every page, from one template.</h2>
+<p>[[site.name]] renders a [[size.og.width]] &times; [[size.og.height]] share card for every page of your site from one HTML and CSS template, and gives you the meta tags to paste.</p>
+</div>
+<div class="cluster">
+<a class="btn btn-primary" href="/login">Start free</a>
+<a class="btn btn-secondary" href="/docs">Read the docs</a>
+</div>
+</div>
+</section>
+<!-- /feature:no-toolkit -->
 
 </main>

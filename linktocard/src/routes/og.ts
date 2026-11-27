@@ -15,6 +15,16 @@
  * one of the site's unique renders of the UTC day; once they are used up, the
  * card is served with every open field at its default instead (one cached
  * card), so an email that was already sent never shows a broken image.
+ *
+ * Charge once: such a card is charged 1 image the first time it is rendered and
+ * never again while its charge is remembered (EMAIL_FIELDS.chargeMemoryDays): a
+ * copy whose stored period ended is rendered and stored again for free (and
+ * still takes one of the day's unique renders). Responses for these URLs carry
+ * x-ltc-credits-used (1 for the request that was charged, else 0) next to
+ * x-ltc-cache.
+ *
+ * A starter template answers 400 for a size it is not laid out for (the social
+ * starters at the email size), however the URL was signed.
  */
 import { Hono } from 'hono';
 import { EXTENSION_TO_FORMAT } from '../config';
@@ -23,6 +33,7 @@ import { ApiError } from '../lib/errors';
 import { featureEnabled } from '../lib/features';
 import { backgroundFor, etagFor, imageHeaders, matchesEtag, notModified } from '../lib/http';
 import {
+  assertTemplateSize,
   cardCacheKey,
   findStoredCard,
   getCard,
@@ -37,6 +48,7 @@ import {
 import {
   asOpenFieldsResult,
   describeOpenFieldsFailure,
+  hasEmailCharge,
   keepTemplateOpenFields,
   openFieldsCacheControl,
   reserveOpenFieldRender,
@@ -95,6 +107,7 @@ async function cardRequestFor(env: Env, url: URL, request: Request): Promise<OgC
   const size = parseSize(verified.params[SIZE_PARAM]);
   const template = await resolveTemplate(env.DB, owner.id, path.template, templateOptions(env));
   if (!template) throw templateNotFound();
+  assertTemplateSize(template, size, templateOptions(env));
   // Open fields the template does not have are dropped, so their values cannot vary the cache key.
   const open = verified.openFields.length > 0 ? keepTemplateOpenFields(verified, templateFields(template)) : verified;
   const { [SIZE_PARAM]: _size, ...data } = open.params;
@@ -109,6 +122,8 @@ async function cardRequestFor(env: Env, url: URL, request: Request): Promise<OgC
       source: 'og',
       siteId: site.id,
       renderRateLimitKey: site.id,
+      // Charged once (the default card served past the daily cap included): see the module comment.
+      ...(open.openFields.length > 0 ? { chargeOnce: true } : {}),
     },
     openFields: open.openFields,
     fallbackData,
@@ -144,13 +159,22 @@ ogRouter.get('/*', async (c) => {
     const stored = await findStoredCard(c.env, card, cacheKey, now, false);
     if (stored) {
       const headers = storedImageHeaders(stored.image, 'hit', now);
-      if (personalised) headers.set('cache-control', openFieldsCacheControl(stored.image.expiresAt, now));
+      if (personalised) {
+        headers.set('cache-control', openFieldsCacheControl(stored.image.expiresAt, now));
+        headers.set('x-ltc-credits-used', '0');
+      }
       headers.set('content-length', String(stored.image.bytes));
       return new Response(null, { headers });
     }
-    const usage = await getUsage(c.env.DB, card.user, now);
-    if (usage.total_remaining <= 0) throw quotaExceededError(c.env, usage);
-    return new Response(null, { headers: imageHeaders({ format: card.format, etag, cacheControl: 'no-store', cache: 'miss' }) });
+    // An email image that was charged before renders again for free: a GET would answer 200 even with no images left.
+    if (!(personalised && (await hasEmailCharge(c.env.DB, card.user.id, cacheKey, now)))) {
+      const usage = await getUsage(c.env.DB, card.user, now);
+      if (usage.total_remaining <= 0) throw quotaExceededError(c.env, usage);
+    }
+    const headers = imageHeaders({ format: card.format, etag, cacheControl: 'no-store', cache: 'miss' });
+    // HEAD never renders and never charges.
+    if (personalised) headers.set('x-ltc-credits-used', '0');
+    return new Response(null, { headers });
   }
 
   const background = backgroundFor(c);
@@ -161,12 +185,14 @@ ogRouter.get('/*', async (c) => {
     await reservation?.release();
     throw error;
   }
-  // Nothing new was charged (another request stored or paid for it first): the day's count is given back.
-  if (reservation?.allowed && (result.cached || result.usage === null)) await reservation.release();
+  // Nothing new was rendered and stored by this request (another request stored or paid for it first):
+  // the day's count is given back. A free render of an image charged before keeps it, like a charged one.
+  if (reservation?.allowed && (result.outcome === 'cached' || result.outcome === 'duplicate')) await reservation.release();
   const headers = storedImageHeaders(result.image, result.cached ? 'hit' : 'miss', now);
   if (personalised) {
     // The default card served past the cap must not stay in a mail proxy as this recipient's image.
     headers.set('cache-control', capped ? 'no-store, max-age=0' : openFieldsCacheControl(result.image.expiresAt, now));
+    headers.set('x-ltc-credits-used', String(result.creditsUsed));
     if (capped) headers.set('x-ltc-open-fields', 'daily-limit');
   }
   if (result.cached && conditional) return notModified(headers);
@@ -176,6 +202,7 @@ ogRouter.get('/*', async (c) => {
     // The copy at the edge answers repeat requests for this exact URL without reaching R2 or D1.
     const copyHeaders = new Headers(headers);
     copyHeaders.set('x-ltc-cache', 'hit');
+    if (personalised) copyHeaders.set('x-ltc-credits-used', '0');
     const copy = new Response(response.clone().body, { headers: copyHeaders });
     background(Promise.resolve().then(() => caches.default.put(url.href, copy)));
   }

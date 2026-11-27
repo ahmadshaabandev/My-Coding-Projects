@@ -426,6 +426,13 @@ export const EMAIL_FIELDS = {
   maxUniqueRendersPerDay: { free: openRendersPerDay('free'), starter: openRendersPerDay('starter'), pro: openRendersPerDay('pro') },
   /** Cache lifetime sent to email clients' image proxies. */
   maxAgeSeconds: 30 * 24 * 60 * 60,
+  /**
+   * Charge once: how long the record that an email image was charged is kept, from that charge.
+   * While it is kept, a copy whose stored period (the plan's cache days) ended is rendered and
+   * stored again without a new charge. The record is written in the batch that takes the image
+   * (src/lib/quota.ts CHARGE_RECORD_*) and read by src/lib/open-fields.ts hasEmailCharge.
+   */
+  chargeMemoryDays: 400,
 } as const;
 
 /** Kill switches of the v3 tools (env var names). */

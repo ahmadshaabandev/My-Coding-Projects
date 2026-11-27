@@ -9,6 +9,7 @@
 import { api } from './client.js';
 import { button, clear, codeBlock, copyButton, errorSlot, field, h, memory, segmented, showError, withBusy } from './dom.js';
 import {
+  allowedSizes,
   cardData,
   customTemplateFields,
   emailImageTag,
@@ -19,6 +20,8 @@ import {
   openFieldsSettings,
   sampleValue,
   signRequest,
+  sizeForTemplate,
+  sizeNote,
   sizeOption,
   starterValues,
 } from './helpers.js';
@@ -262,8 +265,27 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
     return { specs, values: initialValues(specs, memory.get(sampleKey(templateId)) ?? {}, sampleValue), lightValue: 'light' };
   }
 
+  /**
+   * Offers only the sizes the template is laid out for: a starter's own (the social starters refuse
+   * the email size on the server), every size for the user's own templates. A size the new template
+   * does not take falls back to og before anything is signed or previewed.
+   */
+  function applySizes(templateId) {
+    const starter = templates.starter.find((template) => template.id === templateId);
+    const allowed = allowedSizes(starter, ctx.config.sizes);
+    state.size = sizeForTemplate(state.size, allowed);
+    for (const input of sizeControl.querySelectorAll('input[type="radio"]')) {
+      input.disabled = !allowed.includes(input.value);
+      input.checked = input.value === state.size;
+    }
+    const note = starter ? sizeNote(starter, ctx.config.sizes) : null;
+    sizeHint.textContent = note ?? '';
+    sizeHint.hidden = note === null;
+  }
+
   async function selectTemplate(templateId) {
     state.templateId = templateId;
+    applySizes(templateId);
     fieldsError.hidden = true;
     try {
       const { specs, values, lightValue } = await fieldSpecs(templateId);
@@ -329,19 +351,22 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
     ),
   );
 
+  const sizeControl = segmented(
+    `${uid}-size`,
+    'Size',
+    ctx.config.sizes.map(sizeOption),
+    state.size,
+    (value) => {
+      state.size = value;
+      refresh();
+    },
+  );
+  // Under both controls, across the row: why a size cannot be picked for the selected starter.
+  const sizeHint = h('p', { class: 'hint builder-shape-note', hidden: true });
   const shape = h(
     'div',
     { class: 'builder-shape' },
-    segmented(
-      `${uid}-size`,
-      'Size',
-      ctx.config.sizes.map(sizeOption),
-      state.size,
-      (value) => {
-        state.size = value;
-        refresh();
-      },
-    ),
+    sizeControl,
     segmented(
       `${uid}-format`,
       'Format',
@@ -352,6 +377,7 @@ export function createBuilder(ctx, { sites, templates, compact = false, oncopied
         refresh();
       },
     ),
+    sizeHint,
   );
 
   const form = h(

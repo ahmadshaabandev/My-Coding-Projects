@@ -2,7 +2,7 @@
 // blocks and API paths; without it the site must look exactly as if PDFs did not exist.
 // Both builds go to temp directories so site/dist is left alone.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ const NOW = new Date('2026-11-25T12:00:00Z');
 const temp = mkdtempSync(join(tmpdir(), 'ltc-features-'));
 afterAll(() => rmSync(temp, { recursive: true, force: true }));
 
-/** The seven site features, with exactly `on` switched on. */
+/** The site features, with exactly `on` switched on. */
 const only = (...on: Feature[]): Record<Feature, boolean> => Object.fromEntries(FEATURES.map((feature) => [feature, on.includes(feature)])) as Record<Feature, boolean>;
 const ON = only('pdf');
 const OFF = only();
@@ -119,13 +119,22 @@ describe('applyFeatureBlocks', () => {
   });
 
   it('takes a comma list of known features in SITE_FEATURES, with SITE_PDF=on as another way to say "pdf"', () => {
-    expect(FEATURES).toEqual(['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations']);
+    // localpdf and apidocs: owner decision of 2026-11-27 (the in-browser PDF pages and the API docs pages go to
+    // production while the APIs stay off), so the in-browser pages no longer come with "toolkit".
+    expect(FEATURES).toEqual(['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs']);
     expect(siteFeatures({ SITE_FEATURES: 'toolkit' })).toEqual(only('toolkit'));
     expect(siteFeatures({ SITE_FEATURES: ' pdf , toolkit ' })).toEqual(only('pdf', 'toolkit'));
     expect(siteFeatures({ SITE_FEATURES: 'toolkit', SITE_PDF: 'on' })).toEqual(only('pdf', 'toolkit'));
     expect(siteFeatures({ SITE_FEATURES: FEATURES.join(',') })).toEqual(only(...FEATURES));
     expect(siteFeatures({ SITE_FEATURES: '', SITE_PDF: 'off' })).toEqual(OFF);
     expect(() => siteFeatures({ SITE_FEATURES: 'pdf,tooklit' })).toThrow(/SITE_FEATURES names an unknown feature "tooklit"/);
+  });
+
+  it('refuses "localpdf" without a feature that publishes /docs/pdf-tools, where its API link goes', () => {
+    expect(() => siteFeatures({ SITE_FEATURES: 'localpdf' })).toThrow(/"localpdf" needs "toolkit" or "apidocs" too/);
+    expect(() => siteFeatures({ SITE_FEATURES: 'previews,localpdf', SITE_PDF: 'on' })).toThrow(/"localpdf" needs "toolkit" or "apidocs" too/);
+    expect(siteFeatures({ SITE_FEATURES: 'localpdf,apidocs' })).toEqual(only('localpdf', 'apidocs'));
+    expect(siteFeatures({ SITE_FEATURES: 'localpdf,toolkit' })).toEqual(only('localpdf', 'toolkit'));
   });
 });
 
@@ -365,6 +374,73 @@ describe('the two builds', () => {
   });
 });
 
+describe('docs pages with an "unlaunched" notice', () => {
+  const contentDir = join(temp, 'unlaunched-content');
+  const write = (file: string, text: string): void => {
+    mkdirSync(join(contentDir, file, '..'), { recursive: true });
+    writeFileSync(join(contentDir, file), text);
+  };
+  beforeAll(() => {
+    write(
+      'docs/tool.md',
+      [
+        '---',
+        'title: A tool',
+        'description: A docs page of an API behind the batch feature.',
+        'layout: doc',
+        'order: 1',
+        'feature: batch',
+        'unlaunched: **Not switched on yet on [[site.host]].** Requests answer 503 `not_configured`.',
+        '---',
+        '## Usage',
+        '',
+        'See [the PDF page](/docs/pdfpage#post), [usage](/docs/tool#usage), [a missing part](/docs/tool#gone), [the guide](/docs/guide#intro), [the stylesheet](/assets/css/site.css), [the API](/v1/batches) and [elsewhere](https://example.com/).',
+        '',
+      ].join('\n'),
+    );
+    write('docs/pdfpage.md', '---\ntitle: PDF page\ndescription: A docs page behind the pdf feature.\nlayout: doc\norder: 2\nfeature: pdf\n---\n## Post\n');
+    write('docs/guide.md', '---\ntitle: Guide\ndescription: A docs page every build has.\nlayout: doc\norder: 3\n---\n## Intro\n');
+  });
+  const render = (features: string): RenderedSite => renderSite({ contentDir, env: { SITE_FEATURES: features }, now: NOW });
+  const article = (site: RenderedSite, outPath: string): string => {
+    const html = page(site, outPath);
+    return html.slice(html.indexOf('<article'), html.indexOf('</article>'));
+  };
+
+  it('are left out without their feature or apidocs, and built as usual with their feature', () => {
+    expect(render('').pages.some((built) => built.outPath === 'docs/tool.html')).toBe(false);
+    const own = render('batch');
+    expect(article(own, 'docs/tool.html')).not.toContain('not-switched-on');
+    expect(own.sitemap).toContain('/docs/tool</loc>');
+    expect(navOf(page(own, 'docs/guide.html'))).toContain('href="/docs/tool"');
+    expect(article(own, 'docs/tool.html')).toContain('<a href="/docs/tool#gone">a missing part</a>');
+  });
+
+  it('with apidocs: open with the notice, are noindex and out of the sitemap and navigation, and link only to what is built', () => {
+    const site = render('apidocs');
+    const body = article(site, 'docs/tool.html');
+    expect(body).toMatch(/^<article class="prose">\n<h1>A tool<\/h1>\n<p class="alert alert-warn" id="not-switched-on" role="note"><strong>Not switched on yet on linktocard\.com\.<\/strong> Requests answer 503 <code>not_configured<\/code>\.<\/p>/);
+    expect(page(site, 'docs/tool.html')).toContain('<meta name="robots" content="noindex">');
+    expect(site.pages.find((built) => built.outPath === 'docs/tool.html')?.indexed).toBe(false);
+    expect(site.sitemap).not.toContain('/docs/tool<');
+    expect(navOf(page(site, 'docs/guide.html'))).not.toContain('/docs/tool');
+    expect(page(site, 'docs/tool.html')).not.toContain('class="pager"');
+    // A page this build does not make, and an anchor the target lacks, become text; everything else stays a link.
+    expect(body).toContain('See the PDF page, <a href="/docs/tool#usage">usage</a>, a missing part, <a href="/docs/guide#intro">the guide</a>, <a href="/assets/css/site.css">the stylesheet</a>, <a href="/v1/batches">the API</a> and <a href="https://example.com/">elsewhere</a>.');
+    // Other pages are not touched.
+    expect(article(render('apidocs,pdf'), 'docs/tool.html')).toContain('<a href="/docs/pdfpage#post">the PDF page</a>');
+  });
+
+  it('refuse an "unlaunched" notice without a feature it stands for', () => {
+    for (const feature of ['', 'feature: no-batch\n', 'feature: apidocs\n']) {
+      const dir = join(temp, `unlaunched-bad-${feature.length}`);
+      mkdirSync(join(dir, 'docs'), { recursive: true });
+      writeFileSync(join(dir, 'docs/bad.md'), `---\ntitle: Bad\ndescription: A page whose notice stands for nothing.\nlayout: doc\n${feature}unlaunched: Off.\n---\nText.\n`);
+      expect(() => renderSite({ contentDir: dir, env: { SITE_FEATURES: 'apidocs' }, now: NOW }), feature).toThrow(/docs\/bad\.md: "unlaunched" needs a "feature"/);
+    }
+  });
+});
+
 describe('deploy scripts and the command line', () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
   const cli = (args: string[], env: Record<string, string>): { status: number | null; output: string } => {
@@ -376,11 +452,14 @@ describe('deploy scripts and the command line', () => {
     return { status: result.status, output: `${result.stdout}${result.stderr}` };
   };
 
-  it('builds staging with every feature and production with none of them', () => {
+  it('builds staging with every feature and production with the approved free pages only', () => {
     expect(pkg.scripts['deploy:staging']).toBe(`SITE_FEATURES=${FEATURES.join(',')} SITE_PDF=on npm run build:site && wrangler deploy --env staging`);
-    // Off in so many words: a SITE_PDF=on or SITE_FEATURES=... left exported in the shell must not
-    // publish those pages on production, where PDF_ENABLED and the v3 switches are "false".
-    expect(pkg.scripts['deploy:production']).toBe('npm run check:golive && SITE_FEATURES= SITE_PDF=off npm run build:site && wrangler deploy --env production');
+    // In so many words: a SITE_PDF=on or SITE_FEATURES=... left exported in the shell must not publish
+    // more on production, where PDF_ENABLED and the v3 switches are "false". Owner decision of
+    // 2026-11-27: the tool hub and the preview checkers (previews), Merge PDF and Image to PDF
+    // (localpdf) and the API docs pages with their "not switched on yet" notice (apidocs); no API
+    // feature (tests/node/production-site.test.ts audits that build).
+    expect(pkg.scripts['deploy:production']).toBe('npm run check:golive && SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off npm run build:site && wrangler deploy --env production');
     expect(pkg.scripts['build:site']).not.toContain('SITE_PDF');
     expect(pkg.scripts['build:site']).not.toContain('SITE_FEATURES');
   });

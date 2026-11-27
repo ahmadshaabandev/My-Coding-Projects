@@ -7,10 +7,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PLANS, TOPUP, formatCount, formatUsd } from '../../src/billing/plans';
-import { FORMATS, HTTP_CACHE, INSPECT, LIMITS, RATE_LIMITS, SIZES } from '../../src/config';
+import { EMAIL_FIELDS, FORMATS, HTTP_CACHE, INSPECT, LIMITS, RATE_LIMITS, SIZES } from '../../src/config';
 import { ERROR_STATUS } from '../../src/lib/errors';
 import type { SignedUrlFailure } from '../../src/lib/signed-url';
-import { STARTER_TEMPLATES, STARTER_TEMPLATE_IDS } from '../../src/render/templates';
+import { EMAIL_TEMPLATES, STARTER_TEMPLATES, STARTER_TEMPLATE_IDS } from '../../src/render/templates';
 import { renderSite, type RenderedSite } from '../../scripts/build-site';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -475,5 +475,48 @@ describe('openapi.yaml', () => {
     expect(openapi).toContain(`The body is over ${LIMITS.maxRequestBodyBytes / 1024} KB, or the template HTML or CSS is over ${LIMITS.maxHtmlBytes / 1024} KB.`);
     expect(openapi).toContain(`longer than ${LIMITS.renderTimeoutMs / 1000} seconds`);
     expect(LIMITS.maxCssBytes).toBe(LIMITS.maxHtmlBytes);
+  });
+});
+
+// Owner decision of 2026-11-27 (item 3): the five starter templates for social cards refuse the email
+// size on the server. Every page that lists the sizes says which ones they take, and the error.
+describe('sizes of the starter templates, as the docs state them', () => {
+  const sizeIds = Object.keys(SIZES);
+  const socialSizes = sizeIds.filter((id) => id !== 'email');
+  const list = STARTER_TEMPLATE_IDS.map((id) => `\`${id}\``).join(', ');
+
+  it('match the templates: the social starters take every size but email, the email starters every size', () => {
+    for (const template of STARTER_TEMPLATES) expect([...template.sizes], template.id).toEqual(socialSizes);
+    for (const template of EMAIL_TEMPLATES) expect([...template.sizes].sort(), template.id).toEqual([...sizeIds].sort());
+    expect(socialSizes).toEqual(['og', 'square', 'portrait']);
+  });
+
+  it('are stated with the 400 on the signed-URL, API, templates and overview pages', () => {
+    const takes = socialSizes.map((id) => `\`${id}\``);
+    const sizesPhrase = `${takes.slice(0, -1).join(', ')} and ${takes.at(-1)}`;
+    expect(source('docs/signed-urls.md')).toContain(`The five starter templates for social cards (${list}) take ${sizesPhrase}.`);
+    expect(source('docs/api.md')).toContain(`The five starter templates for social cards (${list}) take the ${sizesPhrase} sizes.`);
+    expect(source('docs/html-css-templates.md')).toContain(`They are made for social cards and take the ${sizesPhrase} sizes`);
+    expect(source('docs.md')).toContain('The starter templates take the first three; the `email` size is for your own templates');
+    for (const file of ['docs/signed-urls.md', 'docs/api.md', 'docs/html-css-templates.md']) {
+      expect(source(file), file).toContain('400 `invalid_request`');
+      expect(source(file), file).toContain('`size_not_supported`');
+    }
+    for (const file of ['docs/signed-urls.md', 'docs/api.md']) expect(source(file), file).toContain('`details.supported_sizes`');
+    // The email starters are named only where the email feature is on: not in this (all off) build.
+    for (const url of ['/docs', '/docs/signed-urls', '/docs/api', '/docs/html-css-templates']) {
+      expect(visibleText(article(url)), url).not.toContain('email-banner');
+      expect(visibleText(article(url)), url).toContain('email');
+    }
+  });
+
+  it('are stated in openapi.yaml, with the email charge-once numbers of src/config.ts', () => {
+    const openapi = read('openapi.yaml');
+    expect(openapi).toContain(`The five starter templates (${STARTER_TEMPLATE_IDS.join(', ')}) take ${socialSizes.slice(0, -1).join(', ')} and`);
+    expect(openapi.match(/size_not_supported/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+    const email = openapi.slice(openapi.indexOf('# feature:email'), openapi.indexOf('# /feature:email')).replace(/\s+/g, ' ');
+    expect(email).toContain(`at most ${EMAIL_FIELDS.maxOpenFields} template fields`);
+    expect(email).toContain(`for ${EMAIL_FIELDS.chargeMemoryDays} days from that count`);
+    expect(email).toContain('X-LTC-Credits-Used: 1 for the request that was counted, 0 otherwise');
   });
 });
