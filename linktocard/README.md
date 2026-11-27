@@ -51,7 +51,8 @@ Ahmad approved only the free pages for production; every v3 API stays off there.
   (`linktocard-batch-production`, idle while `BATCH_ENABLED` is off) and migrations `0006`-`0008`
   on 2026-11-27, before that day's deploy (GO-LIVE.md section 11a).
 - **Production publishes only the approved free pages** (owner decision of 2026-11-27; deployed to
-  staging and then production on 2026-11-27, production Worker version `f0eb445e`). Live checks
+  staging and then production on 2026-11-27, production Worker version `f0eb445e`; the audit fixes the
+  same day, production `bb46082a`, staging `909574bd`). Live checks
   that day: on staging, an email image counted 1 on its first open and 0 on four repeats (Free and
   Pro, 2 images for 7 opens), the five social starters answered 400 at the email size on
   `/v1/images`, `/api/sign` and `/api/preview` while inline HTML still rendered 1200 x 400, and a
@@ -680,8 +681,11 @@ it if it is wrong.
 
 ## Changelog
 
-- **2026-11-27: Fixes from the live audit of that day's deploy** (deployed to staging and
-  production the same day). An independent audit of the live sites confirmed six issues, and
+- **2026-11-27: Fixes from the live audit of that day's deploy** (deployed to staging, Worker
+  `909574bd`, and production, Worker `bb46082a`, the same day; checked live: on both sites every built
+  page is served byte for byte, and the legal, docs, `/v/` and revoke answers are the ones above; on
+  staging, 10 simultaneous first opens of one value at 24 of 25 slots all got that value, 1 image
+  counted, 1 slot taken, and the next value got the default card). An independent audit of the live sites confirmed six issues, and
   each fix was reviewed adversarially:
   - **Terms (F4).** Production had published the counterfeit-documents rule, the "always
     urgent" suspension and "and other files" under the old 25 November date. They are now `pdf`

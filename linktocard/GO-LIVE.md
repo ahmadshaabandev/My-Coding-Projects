@@ -461,7 +461,8 @@ Built and tested locally on 2026-11-26 and checked on staging the same day (READ
 tools" and "Not verified"). Each tool has a Worker switch in `wrangler.toml` and a site feature in
 `SITE_FEATURES`. Turning a tool on in production is your approval, one tool at a time.
 
-**What production has, by your decision of 2026-11-27** (deployed 2026-11-27, Worker version `f0eb445e`):
+**What production has, by your decision of 2026-11-27** (deployed 2026-11-27, Worker version `f0eb445e`;
+the audit fixes deployed the same day as `bb46082a`, to roll back to `f0eb445e` if needed):
 
 - **On since the deploy of 2026-11-27 (`npm run deploy:production`):** the site build
   `SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off`. It publishes the tools hub `/tools`, the
