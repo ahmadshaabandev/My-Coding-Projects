@@ -41,7 +41,7 @@ Contact for anything on this page: <[[site.supportEmail]]>
 | **Open-field values**: the short values, such as a first name, that an email platform puts into a personalized image's address for each reader, and the images made from them | They arrive when a reader's mail app, or its image proxy, loads the image, like any image request. |
 <!-- /feature:email -->
 | **Open Graph checker**: the page address you enter, the tags and measurements read from that page, and a count of checks per IP address (IPv6: per /64 network) for the current hour | You enter the address on the [Open Graph checker](/tools/og-checker), or send it to `GET /v1/inspect` with an API key, which counts checks per key for the day instead. |
-| **Website statistics**: which pages of this website are viewed, from which referring site, with which kind of browser and device, from which country, and how fast they load, counted by Cloudflare Web Analytics. It is cookieless: it sets no cookie, stores nothing on your device and does not fingerprint you. We see only totals, not individual visitors. | Reported by Cloudflare's analytics script when a page of this website loads in your browser. |
+| **Website statistics**: which pages of this website are viewed, from which referring site, with which kind of browser and device, from which country, and how fast they load, counted by Cloudflare Web Analytics so we can see how the website is used and how fast it is. It is cookieless: it sets no cookie and stores nothing on your device, and Cloudflare says it does not fingerprint visitors. Cloudflare works out the country from the connection's IP address. We see only totals, not individual visitors. | Reported by Cloudflare's analytics script when a page of this website loads in your browser. |
 | **Messages to us**: the email address and message you enter in the contact form, and emails you send to support | You send them to us. The contact form is not stored by the service; it is delivered to our support mailbox as an email. |
 | **Billing status**: which plan you are on, whether a subscription is active, and identifiers Paddle gives us for your customer and subscription records | Sent to us by Paddle when you buy, renew, cancel or are refunded. |
 
@@ -69,7 +69,7 @@ Please do not put sensitive personal information in card content. Text and image
 <!-- feature:batch -->
 - **To run verification pages:** showing each verified record to whoever opens its link, and looking into reports about records.
 <!-- /feature:batch -->
-- **To keep it secure and fair:** rate limiting, spotting abuse and investigating problems. This is what IP addresses are used for.
+- **To keep it secure and fair:** rate limiting, spotting abuse and investigating problems. This is what IP addresses are used for, apart from the country in the website statistics (section 2).
 - **To handle billing:** matching payments processed by Paddle to your account and plan.
 - **To contact you about your account:** sign-in links, warnings when your monthly allowance is nearly or fully used, replies to your messages, and essential service messages, such as changes to these terms or to your plan. We do not send marketing email.
 - **To meet legal obligations** where they apply.

@@ -197,8 +197,13 @@ npx wrangler r2 bucket lifecycle add linktocard-production expire-playground p/ 
       with automatic setup). Cloudflare injects its beacon script into the pages for browsers,
       `site/public/_headers` allows it, and the privacy policy names it. Checked in Chromium on
       2026-11-27: the beacon loads, reports to `/cdn-cgi/rum` (204), and sets no cookie or storage.
-      Verification pages keep a policy without script, so it is blocked there. If you turn it off
-      later, change the privacy policy's sentences that name it.
+      Verification pages keep a policy without script, so it is blocked there (the browser logs one
+      CSP violation on each `/v/` page; `/v/` is left as is by your decision). The beacon reports page
+      addresses without their query string (`?token=...` of a sign-in link, `?url=...` of a checker
+      never reach it; checked in Chromium). If you turn it off later, change the privacy policy's
+      sentences that name it. Privacy section 11 and Terms section 12 promise an email to account
+      holders before a significant change takes effect; on 2026-11-27 production had one account
+      (free plan), presumably yours.
 - [ ] Check the certificate: open https://linktocard.com and https://www.linktocard.com in a
       browser and look at the padlock. (The deploy session could not see the real certificate:
       its network proxy re-terminates TLS, and the token has no SSL read permission.)

@@ -691,10 +691,12 @@ it if it is wrong.
     `script-src https://static.cloudflareinsights.com`, `connect-src https://cloudflareinsights.com`.
     It reports to `/cdn-cgi/rum` on the same origin. The privacy policy names it as cookieless
     website statistics in section 2, in Cloudflare's row in section 4 and in the summary, which no
-    longer says "we do not use analytics". Its date stays 27 November 2026. Checked in Chromium
-    before the deploy: the beacon loads and reports (204), with no CSP violation, no console
-    error, no `Set-Cookie` and nothing in local or session storage. Verification pages keep their
-    no-script policy.
+    longer says "we do not use analytics". Section 3 adds the statistics' country as the one use of
+    IP addresses beyond security. Its date stays 27 November 2026. Checked in Chromium before the
+    deploy, on the pages under `site/public/_headers`: the beacon loads and reports (204) with no
+    CSP violation, no console error, no `Set-Cookie` and nothing in local or session storage. It
+    reports page addresses and referrers without their query string. On `/v/` pages their own
+    no-script policy blocks it, and the browser logs one CSP violation there (`/v/` is left as is).
   - **Terms.** The rule against counterfeit or misleading documents is in every build, dated 27
     November 2026. The suspension on report and "and other files" still wait for PDFs. The four
     `updated.<feature>` dates of the terms are gone: the page's own date is later in every build.
@@ -706,7 +708,8 @@ it if it is wrong.
   - **Staging.** The two throwaway test accounts of the launch checks were marked for deletion.
     The daily clean-up deletes them with their files and records.
 
-  Where AI was used: written and checked with AI tools (Claude Code); Ahmad reviews before release.
+  Where AI was used: written and checked with AI tools (Claude Code) and independent AI
+  reviewers. Ahmad decided both changes and reviews the published wording.
 - **2026-11-27: Fixes from the live audit of that day's deploy** (deployed to staging, Worker
   `909574bd`, and production, Worker `bb46082a`, the same day; checked live: on both sites every built
   page is served byte for byte, and the legal, docs, `/v/` and revoke answers are the ones above; on

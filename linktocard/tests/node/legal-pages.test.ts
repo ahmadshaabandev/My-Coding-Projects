@@ -155,10 +155,24 @@ describe('Cloudflare Web Analytics (owner decision of 2026-11-27)', () => {
   it("the site's CSP lets its beacon run and report, and allows no other new source", () => {
     // Cloudflare injects <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/...">
     // into every HTML page for browsers; on this proxied zone it reports to /cdn-cgi/rum ('self').
-    expect(directive('script-src')).toEqual(["'self'", 'https://cdn.paddle.com', 'https://challenges.cloudflare.com', 'https://static.cloudflareinsights.com']);
-    expect(directive('connect-src')).toEqual(["'self'", 'https://*.paddle.com', 'https://cloudflareinsights.com']);
-    // No inline script or eval for it.
-    expect(csp).not.toMatch(/'unsafe-eval'|script-src[^;]*'unsafe-inline'/);
+    // The whole policy is pinned: the two Web Analytics hosts are the only change of 2026-11-27.
+    const policy = Object.fromEntries(
+      csp.replace(/^\s*Content-Security-Policy:\s*/, '').split(';').map((part) => part.trim().split(/\s+/)).filter((part) => part[0]).map(([name, ...sources]) => [name, sources]),
+    );
+    expect(policy).toEqual({
+      'default-src': ["'self'"],
+      'script-src': ["'self'", 'https://cdn.paddle.com', 'https://challenges.cloudflare.com', 'https://static.cloudflareinsights.com'],
+      'style-src': ["'self'", "'unsafe-inline'", 'https://*.paddle.com'],
+      'img-src': ["'self'", 'data:', 'blob:', 'https://*.paddle.com'],
+      'font-src': ["'self'"],
+      'connect-src': ["'self'", 'https://*.paddle.com', 'https://cloudflareinsights.com'],
+      'frame-src': ['https://*.paddle.com', 'https://challenges.cloudflare.com'],
+      'form-action': ["'self'", 'mailto:'],
+      'base-uri': ["'self'"],
+      'object-src': ["'none'"],
+      'frame-ancestors': ["'none'"],
+    });
+    expect(directive('script-src')).not.toContain("'unsafe-inline'");
   });
 
   it('the privacy policy names it in both builds and no longer says that no analytics are used', () => {
@@ -166,7 +180,10 @@ describe('Cloudflare Web Analytics (owner decision of 2026-11-27)', () => {
       const privacy = text(mainOf(html(site, 'privacy.html')));
       expect(privacy).toContain('our only website analytics are cookieless Cloudflare Web Analytics');
       expect(privacy).not.toContain('we do not use analytics');
-      expect(privacy).toContain('counted by Cloudflare Web Analytics. It is cookieless: it sets no cookie, stores nothing on your device and does not fingerprint you. We see only totals, not individual visitors.');
+      expect(privacy).toContain('counted by Cloudflare Web Analytics so we can see how the website is used and how fast it is. It is cookieless: it sets no cookie and stores nothing on your device, and Cloudflare says it does not fingerprint visitors. Cloudflare works out the country from the connection');
+      expect(privacy).toContain('We see only totals, not individual visitors.');
+      // IP addresses: security, and the country of the statistics.
+      expect(privacy).toContain('This is what IP addresses are used for, apart from the country in the website statistics (section 2).');
       expect(privacy).toContain('Web Analytics, the cookieless statistics of this website');
       // Still true: the beacon sets no cookie (checked in Chromium on 2026-11-27: no Set-Cookie, no storage).
       expect(privacy).toContain('We use no analytics cookies, no advertising cookies and no tracking pixels.');
@@ -174,7 +191,11 @@ describe('Cloudflare Web Analytics (owner decision of 2026-11-27)', () => {
   });
 
   it("verification pages keep a policy without script, as the privacy policy says they load none", () => {
-    expect(read('src/batch/verify-page.ts')).not.toContain('cloudflareinsights');
+    // Their own policy (VERIFY_PAGE_CSP) has no script-src, so default-src 'none' blocks the injected beacon
+    // there; tests/verify-page.test.ts checks the policy the Worker actually sends.
+    const policy = /export const VERIFY_PAGE_CSP =\s*"([^"]+)"/.exec(read('src/batch/verify-page.ts'))?.[1] ?? '';
+    expect(policy).toMatch(/^default-src 'none';/);
+    expect(policy).not.toMatch(/script-src|cloudflareinsights/);
     expect(text(mainOf(html(staging, 'privacy.html')))).toContain('Verification pages set no cookie and load no script.');
   });
 });
@@ -230,13 +251,14 @@ describe('"Last updated"', () => {
     if (previous !== null) {
       expect(blobId(previous)).toBe(BLOBS_89270A7.privacy);
       const removed = previous.split('\n').filter((line) => !privacy.split('\n').includes(line));
-      expect(removed).toHaveLength(3);
+      expect(removed).toHaveLength(4);
       expect(removed.join('\n')).toContain('we do not use analytics or advertising trackers');
+      expect(removed.join('\n')).toContain('This is what IP addresses are used for.');
       expect(removed.join('\n')).toContain('if the Open Graph checker shows it');
       expect(removed.join('\n')).toContain('by a regular clean-up shortly afterwards');
       const added = privacy.split('\n').filter((line) => !previous.split('\n').includes(line));
-      expect(added).toHaveLength(4);
-      expect(added.filter((line) => line.includes('Cloudflare Web Analytics') || line.includes('Web Analytics, the cookieless statistics'))).toHaveLength(3);
+      expect(added).toHaveLength(5);
+      expect(added.filter((line) => /Web Analytics|website statistics/.test(line))).toHaveLength(4);
     }
     // The refund policy has not changed at all.
     expect(blobId(productionSource('refund'))).toBe(BLOBS_89270A7.refund);

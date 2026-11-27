@@ -1,5 +1,5 @@
 // Paddle overlay checkout, shared by the pricing page and the dashboard.
-// Paddle.js is the only third-party script on the site and is loaded only when
+// Paddle.js is loaded only when
 // a signed-in visitor actually starts a checkout.
 
 const PADDLE_JS = 'https://cdn.paddle.com/paddle/v2/paddle.js';
