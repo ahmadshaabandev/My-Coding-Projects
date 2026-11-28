@@ -2,6 +2,8 @@
 
 28 November 2026. Evidence collected on 27 November. Research and design proposal only. Nothing was built or deployed.
 
+**Update, 28 November:** the keyword lookups this report left open (section 7) are done. See [Link To Card keyword lookups](<Link To Card keyword lookups.md>). Chart demand is confirmed. Search demand for the label tool's free page is weaker than the score here implies.
+
 ## Bottom line
 
 **The evidence argues against the plan in one respect: a large catalogue of free tools does not pay.** Sites built that way earn almost nothing from their users, even with real traffic:
