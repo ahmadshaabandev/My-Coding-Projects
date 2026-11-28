@@ -45,6 +45,15 @@ Ahmad approved only the free pages for production; every v3 API stays off there.
   production). The site feature `charts` (four chart maker pages, `/docs/charts`, the home page tile)
   is in `deploy:staging` only and was checked against a local `wrangler dev` in headless Chromium;
   the site part is not deployed yet. Changelog, 2026-11-28.
+- **AI image tools are in the code, staging build only, not deployed to production** (owner's build
+  request "AI image tools on Cloudflare" of 2026-11-28: "Staging only until I approve."). Three
+  tools: an OG image generator, bulk blog covers and AI QR code art, plus `/docs/ai-images`. The
+  model (Black Forest Labs' FLUX.2 [klein] on Cloudflare Workers AI) draws only the background, from
+  a prompt made of our own words and enums; the text, logo and QR code are drawn by our renderer.
+  `AI_ENABLED` is `"false"` in production; the site feature `ai` is in `deploy:staging` only, and the
+  three tool pages carry `noindex` until `SITE_AI_INDEX=on`. The pages' scripts are a skeleton: not
+  yet wired to the routes, nothing has run in a browser. Checklist: [GO-LIVE-AI.md](GO-LIVE-AI.md).
+  Changelog, 2026-11-28.
 - **The top-up without a subscription is in the code, not deployed** (owner decision of
   2026-11-28). A Free account can buy the $8 top-up; it stays on Free, with the corner mark.
   Production keeps checkout closed, so there nothing can be bought and the pages say top-ups are
@@ -192,6 +201,9 @@ npm run smoke       # the whole product over HTTP against a real `wrangler dev`
   (`tests/node/v3-docs-draft.test.ts`, `tests/node/v3-site.test.ts`), the email pages, the preview
   pages, the dashboard Bulk tab, the in-browser PDF tools, the queue settings in `wrangler.toml` and
   the three connectors' copies of the service's choices (`tests/node/*-connector-sync.test.ts`).
+- AI images: in Node, `tests/node/ai-site.test.ts` (the three tool pages, `/docs/ai-images`, the legal
+  blocks and `SITE_AI_INDEX`/`SITE_WEB_RISK` in each build, every number against `AI` in
+  `src/config.ts`, the OpenAPI paths, the page script's request builders against the contract).
 - Chart images: `tests/charts-*.test.ts` in `workerd`; in Node, `tests/node/charts-site.test.ts` (the
   chart pages in each build, the documented Node signer against `src/charts/url.ts`, the field tables
   against `src/charts/spec.ts`, the chart maker's helpers, the OpenAPI numbers against `CHARTS`). The
@@ -260,6 +272,7 @@ they are set with `npx wrangler secret put <NAME> --env staging|production`.
 | `PDF_TOOLKIT_ENABLED` | `"true"` turns `/v1/pdf-tools/*` on. Its stored results are served under `/i/...pdf`, which needs `PDF_ENABLED` too |
 | `LINK_CARDS_ENABLED` | `"true"` turns `POST /v1/cards/from-url` and `/v1/link/...` on. Off: every `/v1/link/...` URL answers 503, stored cards included, so pages that use one show no image |
 | `EMAIL_FIELDS_ENABLED` | `"true"` makes signed card URLs read `open` as the list of open fields, `/api/sign` accept `open`, and the email starters `email-banner` and `email-offer` usable. Off: `open` is an ordinary signed parameter (though `/api/sign` never signs it as data), and the email starters answer 404. Turning it off breaks the open-field images of emails already sent (403) once caches let the request through |
+| `AI_ENABLED` | `"true"` turns every AI image route on (`/api/tools/ai/*`, `/api/ai/*`, `/v1/ai/*`); anything else and each answers 503 `not_configured`. `"true"` locally and on staging, `"false"` on production. `AI_PROVIDER` picks `workers-ai` (the `[ai]` binding) or `mock` (local and tests). `AI_DAILY_NEURON_BUDGET` and `AI_FREE_DAILY_NEURON_BUDGET` (optional) override the daily spend caps of `AI` in `src/config.ts`. The secret `WEB_RISK_API_KEY` (optional) adds Google Web Risk to the QR link check |
 | `CHARTS_ENABLED` | `"true"` turns the chart routes on: signed chart URLs (`GET /v1/chart/...`), `POST /v1/charts` and the free chart maker's endpoint (`POST /api/tools/chart`). Off: they answer 503 `not_configured`; a chart that is already stored keeps being served from `/i/...`. `"true"` locally and on staging, `"false"` on production |
 
 While any Paddle variable is empty, the site still works: the pricing page and dashboard
@@ -281,8 +294,9 @@ a build with that feature switch prints. A legal page shows the latest of `legal
 dates that apply to the build, so raising `legalUpdated` at a launch dates every legal page by
 itself. A date that is not a real day, an unknown feature, or the key on a page that is not
 `layout: legal` stops the build. Today `terms.md` has `updated: 2026-11-28` and `privacy.md` `updated: 2026-11-27` and
-`updated.charts: 2026-11-28`, so the production build shows the terms 28 November, the privacy policy
-27 November and the refund policy 25 November; the staging build shows the privacy policy 28 November.
+`updated.charts: 2026-11-28`, and both have `updated.ai: 2026-11-28` for their AI text, so the
+production build shows the terms 28 November, the privacy policy 27 November and the refund policy 25
+November; the staging build shows the privacy policy 28 November.
 
 `SITE_PDF` switches the PDF pages and blocks of the site (`feature: pdf` front matter,
 `<!-- feature:pdf -->` blocks): `on` builds them, `off` or unset leaves them out. Any other value
@@ -290,7 +304,7 @@ stops the build. `npm run deploy:staging` builds with `on`, `npm run deploy:prod
 `off`, so a value left exported in the shell cannot publish PDF pages on production.
 
 `SITE_FEATURES` is a comma list of the site features to publish, the same way: `pdf`, `batch`,
-`toolkit`, `linkcards`, `email`, `previews`, `integrations`, `localpdf`, `apidocs`, `charts`
+`toolkit`, `linkcards`, `email`, `previews`, `integrations`, `localpdf`, `apidocs`, `charts`, `ai`
 (`scripts/build-site.ts` `FEATURES`). An unknown name stops the build, and so do `batch` or
 `toolkit` without `pdf` (their documents are PDFs and their terms build on the PDF terms; GO-LIVE.md
 section 11c turns them on only after PDFs). `localpdf` publishes the
@@ -302,9 +316,26 @@ while that page's own feature is off: the notice opens the page under its headin
 the build does not publish are printed as text. Approving a tool later (its feature on) removes the
 notice and puts the page back in the navigation and the sitemap by itself. `deploy:staging` builds
 with all ten; `deploy:production` with `SITE_FEATURES=previews,localpdf,apidocs` (owner decision
-of 2026-11-27). `charts` publishes the chart pages, the home page tile, the `/tools` block, the
+of 2026-11-27). `deploy:staging` also has `ai`. `charts` publishes the chart pages, the home page tile, the `/tools` block, the
 counting rule, the chart rows of the rate-limit table, the two OpenAPI paths and the privacy
 policy's chart maker line; it has no `unlaunched` page, so a build without it has no trace of charts.
+`ai` publishes the three AI image tool pages (`/tools/og-image-generator`, `/tools/bulk-blog-covers`,
+`/tools/ai-qr-code-art`), `/docs/ai-images`, their tiles and `/tools` block, the AI rows of the API
+reference's error table and of `openapi.yaml`, and the AI text of the terms (section 4b) and the
+privacy policy; it has no `unlaunched` page either, so a build without it has no trace of the AI
+tools (`tests/node/production-site.test.ts`).
+
+Two build settings belong to `ai` and count only in a build that has it (a value left exported in
+the shell changes nothing in production's build). Each is `on`, or `off`/unset (the default); any
+other value stops the build.
+- `SITE_AI_INDEX=on` lets search engines index the three AI tool pages and lists them in
+  `sitemap.xml`. Off, they carry `<meta name="robots" content="noindex">` and stay out of the
+  sitemap (their front matter `noindex: no-ai-index`; `noindex: <switch>` works for any feature or
+  setting, `noindex: true` in every build). Turn it on only when Ahmad approves indexing.
+- `SITE_WEB_RISK=on` builds the `<!-- feature:webrisk -->` blocks of the privacy policy, which say
+  that QR links are also sent to Google Web Risk and name Google as a fourth outside company. Turn it
+  on only together with the Worker secret `WEB_RISK_API_KEY`, which is what makes the Worker ask Web
+  Risk. Settings switch blocks and `updated.<x>` dates like features; blocks still do not nest.
 A page can load a stylesheet of its own with `styles: <name>` in its front matter
 (`/assets/css/<name>.css`, linked at the start of the page's body, because `site/layouts/base.html`
 is copied by the verification page), as the chart pages load `chart-maker.css`. The terms and the privacy policy carry each feature's text in its own block, so a
@@ -457,6 +488,7 @@ and reaches the site through `[[tokens]]` (`scripts/v3-site-tokens.ts`, `scripts
 | Merge PDF and Image to PDF, in the browser (approved for production on 2026-11-27) | none (nothing reaches the Worker) | `localpdf` | |
 | The four docs pages above (bulk, PDF toolkit, link cards, email images) while their tool is off, with a notice (approved for production on 2026-11-27) | none | `apidocs` | |
 | Zapier, Make and n8n connectors | none | `integrations` (the page says "being prepared for listing") | `/docs/integrations`, `integrations/README.md` |
+| AI images: the OG image generator, bulk blog covers and AI QR code art (`/tools/og-image-generator`, `/tools/bulk-blog-covers`, `/tools/ai-qr-code-art`), `POST /v1/ai/covers`, `POST /v1/ai/qr`, presets, batches and signed cover URLs (build request of 2026-11-28; staging only; pages `noindex` until `SITE_AI_INDEX=on`) | `AI_ENABLED` | `ai` | `/docs/ai-images`, [GO-LIVE-AI.md](GO-LIVE-AI.md) |
 | Chart images: signed `/v1/chart/...` URLs, `POST /v1/charts`, and the free `/tools/chart-maker`, `/tools/pie-chart-maker`, `/tools/bar-graph-maker` and `/tools/line-graph-maker` (owner decision of 2026-11-28; staging only) | `CHARTS_ENABLED` | `charts` | `/docs/charts` |
 
 - **Bulk documents.** Rows are checked with `validatePdfData` before anything is stored; each row is
@@ -715,6 +747,32 @@ it if it is wrong.
   facts on the one-app preview pages beyond the sources their code comments cite.
 
 ## Changelog
+
+- **2026-11-28: AI image tools on the site, static side** (owner's build request "AI image tools on
+  Cloudflare": "Staging only until I approve."; staging build only, not deployed to production). The
+  Worker side is in `src/ai/` behind `AI_ENABLED` (`"false"` in production). This entry is the site.
+  - **Site feature `ai`**, added to `deploy:staging`; `deploy:production` is unchanged, so production
+    publishes no AI page, tile, link, sentence, script or OpenAPI path, and its terms and privacy
+    policy keep their text and dates (`updated.ai: 2026-11-28` dates the AI text on staging only).
+  - **Three tool pages**, each with what it does and how, the form fields of the contract, a
+    Turnstile container, a result area, a hidden "Examples" section to fill with real staging
+    outputs (an HTML comment says so; nothing is shown until then), a FAQ that says what the tool
+    does not do, and the shared `ai-tools.js` (a skeleton: request builders and the `/api/config`
+    check) and `ai-tools.css`. The QR page says that the code sits on a solid plate over the AI
+    picture, not blended into it. `/docs/ai-images` documents the API, credits, the free preview,
+    limits, errors, content rules and retention. Every number comes from `AI` in `src/config.ts`
+    through `scripts/ai-site-tokens.ts`.
+  - **Build settings** `SITE_AI_INDEX` (noindex and no sitemap entry for the three pages until `on`)
+    and `SITE_WEB_RISK` (the privacy policy's Google Web Risk sentence), both off by default.
+  - **Elsewhere, with the feature:** three tiles in the Images column ("Free + credits"), an "AI
+    images" block on `/tools`, terms section 4b (content rules, uploads, refusal and suspension,
+    reports, the QR caveat, the model), the privacy policy's Workers AI, R2, resolver and retention
+    text, the AI error rows of `/docs/api` and `openapi.yaml`, and true replacements for the "no AI"
+    sentences of the home page, `/docs`, the terms and the Bannerbear comparison.
+  - **Not done yet:** the page scripts against the live routes, the "Generate a cover" button in the
+    six checkers, the bulk numbers (feed items, CSV rows, presets) until `AI` has them, and screenshots.
+  - **Where AI was used:** all of it, as in "Where AI was used" below: the pages, docs, legal drafts,
+    tests and this entry were written by Claude Code from the build request and AI-SPEC.md.
 
 - **2026-11-28: Chart images on the site** (owner decision: "Chart images (API plus free chart
   maker): 1 credit per new chart, repeat views free"; staging build only, not deployed to

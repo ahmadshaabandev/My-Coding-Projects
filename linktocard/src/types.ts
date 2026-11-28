@@ -14,6 +14,11 @@ import type { ImageFormat, RateLimitName } from './config';
 /* Bindings                                                            */
 /* ------------------------------------------------------------------ */
 
+/** The part of the Workers AI binding this product uses (src/ai/provider.ts). */
+export interface AiBinding {
+  run(model: string, inputs: unknown, options?: Record<string, unknown>): Promise<unknown>;
+}
+
 /** Cloudflare Rate Limiting binding (declared in wrangler.toml). */
 export interface RateLimitBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -74,6 +79,17 @@ export interface Env extends Partial<Record<RateLimitName, RateLimitBinding>> {
   EMAIL_FIELDS_ENABLED?: string;
   /** Chart images (src/charts): must be exactly "true"; anything else and every chart route answers 503. */
   CHARTS_ENABLED?: string;
+  /** AI images (src/ai): must be exactly "true"; anything else and every AI route answers 503 before reading the body. */
+  AI_ENABLED?: string;
+  /** Which image provider runs: "workers-ai" (the AI binding) or "mock" (a gradient, no network; local and tests). */
+  AI_PROVIDER?: string;
+  /** Workers AI binding. Remote even under `wrangler dev`; unused while AI_PROVIDER is "mock". */
+  AI?: AiBinding;
+  /** Estimated neurons per UTC day for all AI images, and for the free previews; unset: AI.dailyNeuronBudget / AI.freeDailyNeuronBudget. */
+  AI_DAILY_NEURON_BUDGET?: string;
+  AI_FREE_DAILY_NEURON_BUDGET?: string;
+  /** Google Web Risk API key (secret). Unset: QR targets are checked by the Cloudflare resolver and the blocklist only. */
+  WEB_RISK_API_KEY?: string;
   /** Producer binding of the bulk-documents queue; the consumer is this Worker's queue() handler. */
   BATCH_QUEUE?: Queue<BatchQueueMessage>;
 

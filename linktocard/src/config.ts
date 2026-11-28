@@ -511,6 +511,7 @@ export const FEATURE_FLAGS = {
   linkcards: 'LINK_CARDS_ENABLED',
   emailfields: 'EMAIL_FIELDS_ENABLED',
   charts: 'CHARTS_ENABLED',
+  ai: 'AI_ENABLED',
 } as const;
 export type FeatureName = keyof typeof FEATURE_FLAGS;
 
@@ -532,4 +533,294 @@ export const LOCAL_PDF = {
    * times over while pdf-lib compresses them again). JPEGs are embedded without decoding.
    */
   maxImagePixels: 30_000_000,
+} as const;
+
+/*
+ * AI images (src/ai): "Fix my preview" covers (Tool 1) and scan-safe QR codes on an AI background
+ * (Tool 3). One model, Cloudflare Workers AI's FLUX.2 [klein] 4B. Owner's rules (BUILD REQUEST v3,
+ * 2026-11-28): staging only until approved (AI_ENABLED), no free-text prompt (the prompt is made of
+ * the enums below and validated hex colours only), and every generated image is checked before
+ * anyone sees it. Measured figures are from the trial of 2026-11-28 (AI-SPEC.md section 0).
+ */
+
+/** A model of the Workers AI provider. Only `selectable` models can be configured (AI.model). */
+export interface AiModel {
+  /** Workers AI model name. */
+  id: string;
+  /** How the binding takes input: a multipart form (FLUX.2) or a JSON object (FLUX.1). */
+  input: 'multipart' | 'json';
+  selectable: boolean;
+  /** Width and height the model accepts (klein-4b: 256-1920). Sizes asked for are multiples of sizeStep. */
+  minSide: number;
+  maxSide: number;
+  sizeStep: number;
+  /** Reference images per request, and the largest side of each (klein-4b: "smaller than 512x512"). */
+  maxRefs: number;
+  maxRefSide: number;
+  /**
+   * Neuron estimate for the daily budget only (the measured cost comes from Cloudflare's analytics):
+   * neuronsPerOutputMegapixel per started megapixel of output (1,000,000 pixels; the trial saw a
+   * 1216 x 640 and a 512 x 272 image each billed as one), plus neuronsPerInputTile per 512 x 512
+   * tile of reference input, pro rata (a 448 x 448 input added about 4.1).
+   */
+  neuronsPerOutputMegapixel: number;
+  neuronsPerInputTile: number;
+}
+
+export const AI_MODELS = {
+  'flux-2-klein-4b': {
+    id: '@cf/black-forest-labs/flux-2-klein-4b',
+    input: 'multipart',
+    selectable: true,
+    minSide: 256,
+    maxSide: 1920,
+    sizeStep: 16,
+    maxRefs: 4,
+    maxRefSide: 511,
+    neuronsPerOutputMegapixel: 104.2,
+    neuronsPerInputTile: 5.37,
+  },
+  // For comparison only (trial: 172.8 neurons for its fixed 1024 x 1024 output). Not selectable.
+  'flux-1-schnell': {
+    id: '@cf/black-forest-labs/flux-1-schnell',
+    input: 'json',
+    selectable: false,
+    minSide: 1024,
+    maxSide: 1024,
+    sizeStep: 1024,
+    maxRefs: 0,
+    maxRefSide: 0,
+    neuronsPerOutputMegapixel: 172.8,
+    neuronsPerInputTile: 0,
+  },
+} as const satisfies Record<string, AiModel>;
+export type AiModelId = keyof typeof AI_MODELS;
+
+export const AI_STYLES = ['soft-gradient', 'geometric', 'paper-cut', 'watercolor', 'neon-night', 'bold-flat', 'grain-minimal', 'photo-texture'] as const;
+export type AiStyle = (typeof AI_STYLES)[number];
+
+export const AI_MOTIFS = [
+  'abstract-shapes',
+  'waves',
+  'leaves',
+  'flowers',
+  'citrus',
+  'coffee-beans',
+  'mountains',
+  'desert-dunes',
+  'forest',
+  'city-lines',
+  'circuits',
+  'clouds',
+  'paper-stack',
+  'stars',
+  'tiles',
+  'bubbles',
+  'ribbons',
+  'prisms',
+  'sun-rays',
+  'snowflakes',
+] as const;
+export type AiMotif = (typeof AI_MOTIFS)[number];
+
+export const AI_LAYOUTS = ['left', 'center'] as const;
+export type AiLayout = (typeof AI_LAYOUTS)[number];
+
+/** The two cover sizes: the image delivered, and the size asked of the model (multiples of 16, cropped to fit). */
+export const AI_COVER_SIZES = {
+  cover: { width: 1200, height: 630, generate: { width: 1216, height: 640 } },
+  header: { width: 1200, height: 400, generate: { width: 1216, height: 400 } },
+} as const;
+export type AiCoverSize = keyof typeof AI_COVER_SIZES;
+
+export const AI = {
+  /** The provider and model in production use; AI_PROVIDER ("workers-ai" or "mock") picks the provider. */
+  provider: 'workers-ai:flux-2-klein-4b',
+  model: 'flux-2-klein-4b' satisfies AiModelId,
+  /** One model call (generation or check); a call still running after this answers 504 ai_timeout, never charged. */
+  timeoutMs: 30_000,
+
+  /* Sizes */
+  coverSizes: AI_COVER_SIZES,
+  /** Free cover preview: the cover drawn at this width, with the preview mark. */
+  previewCover: { width: 600, height: 315 },
+  /** QR backgrounds are square; the free QR preview and the paid QR image. */
+  qrBackground: { width: 1024, height: 1024 },
+  qrPreviewSide: 600,
+  qrPaidSide: 2048,
+
+  /* Credits: 1 per final cover, regenerated cover or paid QR code. */
+  creditsPerImage: 1,
+  /**
+   * Whether the Free plan's monthly allowance pays for AI images. false: only top-up credits do on
+   * the Free plan (each image costs real money and Free accounts cost nothing to make); Starter and
+   * Pro pay from their monthly allowance, then from top-ups. The owner's choice to confirm.
+   */
+  freePlanAllowance: false,
+
+  /* Free previews (no account): Turnstile, and these per client (IPv4 address or IPv6 /64) per UTC day. */
+  freePreviewsPerIpPerDay: 3,
+  /** Previews of one page (the checked page's URL, or the QR code's URL) per client per UTC day. */
+  freePreviewsPerPagePerIpPerDay: 1,
+  /** Free previews and the backgrounds behind them (so buying reuses that exact background) are kept this long. */
+  freePreviewTtlMs: DAY_MS,
+  /** An account's generated backgrounds (reusable with background_id) and its uploads are kept this long. */
+  backgroundTtlMs: DAY_MS,
+  uploadTtlMs: DAY_MS,
+
+  /* Spend cap (estimated neurons per UTC day, D1). AI_DAILY_NEURON_BUDGET and AI_FREE_DAILY_NEURON_BUDGET override. */
+  dailyNeuronBudget: 200_000,
+  freeDailyNeuronBudget: 20_000,
+  /** SUPPORT_EMAIL is told when a budget reaches these percentages, once per budget, percentage and UTC day. */
+  budgetAlertPercents: [80, 100],
+  /** Images generated per account per UTC day (covers, QR backgrounds, retries included). */
+  maxImagesPerAccountPerDay: 500,
+
+  /* Prompt words. Nothing else reaches the model: no title, description, URL or file name. */
+  styles: {
+    'soft-gradient': 'soft smooth colour gradients with gentle blurred light, calm and airy',
+    geometric: 'clean geometric shapes, circles, triangles and bands with crisp edges',
+    'paper-cut': 'layered paper-cut craft style with soft drop shadows between the layers',
+    watercolor: 'loose watercolour washes on textured paper, soft edges and light bleeding colour',
+    'neon-night': 'glowing neon light lines on a dark night background, soft glow',
+    'bold-flat': 'bold flat vector illustration with large simple shapes and no gradients',
+    'grain-minimal': 'minimal composition with fine film grain, lots of calm empty space',
+    'photo-texture': 'close-up photographic texture with shallow depth of field',
+  } satisfies Record<AiStyle, string>,
+  motifs: {
+    'abstract-shapes': 'soft abstract shapes',
+    waves: 'gentle ocean waves',
+    leaves: 'green leaves and stems',
+    flowers: 'simple flowers and petals',
+    citrus: 'slices of citrus fruit',
+    'coffee-beans': 'roasted coffee beans',
+    mountains: 'layered mountain ridges',
+    'desert-dunes': 'rolling sand dunes',
+    forest: 'tall forest trees',
+    'city-lines': 'abstract city skyline lines',
+    circuits: 'abstract circuit board traces and nodes',
+    clouds: 'soft clouds in the sky',
+    'paper-stack': 'stacked sheets of plain coloured paper without any writing',
+    stars: 'scattered stars and small planets',
+    tiles: 'patterned ceramic tiles',
+    bubbles: 'floating translucent bubbles',
+    ribbons: 'flowing silk ribbons',
+    prisms: 'glass prisms and light refractions',
+    'sun-rays': 'warm sun rays',
+    snowflakes: 'delicate snowflakes',
+  } satisfies Record<AiMotif, string>,
+  /** motif "auto": the first motif, in this order, with a word of the title that starts with one of its stems. */
+  motifKeywords: {
+    circuits: ['tech', 'software', 'code', 'coding', 'developer', 'api', 'data', 'program', 'engineer', 'javascript', 'python', 'web', 'app', 'startup', 'saas', 'ai'],
+    waves: ['ocean', 'sea', 'beach', 'surf', 'water', 'swim', 'sail', 'boat', 'wave'],
+    leaves: ['garden', 'plant', 'eco', 'sustainab', 'nature', 'leaf', 'leaves', 'green'],
+    flowers: ['flower', 'bloom', 'floral', 'spring', 'rose'],
+    citrus: ['lemon', 'orange', 'lime', 'fruit', 'juice', 'fresh', 'summer'],
+    'coffee-beans': ['coffee', 'cafe', 'espresso', 'latte', 'breakfast'],
+    mountains: ['mountain', 'hike', 'hiking', 'travel', 'adventure', 'outdoor', 'climb', 'ski'],
+    'desert-dunes': ['desert', 'sand', 'dune'],
+    forest: ['forest', 'wood', 'tree', 'camp'],
+    'city-lines': ['city', 'urban', 'architect', 'building', 'estate', 'property'],
+    clouds: ['cloud', 'weather', 'sky', 'dream'],
+    'paper-stack': ['writing', 'blog', 'newsletter', 'note', 'essay', 'story', 'journal'],
+    stars: ['night', 'star', 'space', 'astronom', 'launch', 'rocket'],
+    tiles: ['design', 'pattern', 'home', 'interior', 'kitchen'],
+    bubbles: ['clean', 'soap', 'bath', 'fizz'],
+    ribbons: ['event', 'gift', 'party', 'celebrat', 'anniversar'],
+    prisms: ['light', 'glass', 'crystal', 'physics', 'science'],
+    'sun-rays': ['sun', 'morning', 'energy', 'solar'],
+    snowflakes: ['winter', 'snow', 'christmas', 'frost'],
+  } satisfies Partial<Record<AiMotif, readonly string[]>>,
+  /** motif "auto" with no keyword in the title. */
+  defaultMotif: 'abstract-shapes' satisfies AiMotif,
+  layouts: {
+    left: 'wide composition: the left half is calm, plain and empty, the motif sits on the right side',
+    center: 'wide composition: a calm, plain, empty area in the centre, the motif around the edges',
+  } satisfies Record<AiLayout, string>,
+  qrLayout: 'square composition: a decorative frame of the motif around the edges and a large plain, empty, light centre',
+  /** Appended to every prompt. */
+  negativeSuffix:
+    'No text, no letters, no words, no numbers, no logos, no watermarks, no signatures, no people, no faces, no hands, no bodies, no documents, no forms, no screens, no user interfaces.',
+  /** Palette: up to this many colours, #rrggbb only. */
+  maxPaletteColours: 3,
+
+  /* Text drawn on a cover by Satori (never by the model): characters (code points). */
+  maxChars: { title: 120, description: 200, siteName: 60, alt: 300 },
+
+  /* Checks on images */
+  outputCheck: {
+    /** Every generated background is checked before it is used; off only for an operator's experiment. */
+    enabled: true,
+    model: '@cf/mistralai/mistral-small-3.1-24b-instruct',
+    /** Model calls per image: the first generation and this many retries with a new seed. */
+    retries: 1,
+    maxTokens: 200,
+    question:
+      'Inspect this image. Answer with JSON only, no prose: {"readable_text": true|false, "human_face": true|false, "person_or_body": true|false, "brand_logo": true|false, "document_or_form": true|false, "nudity": true|false}. readable_text is true if any readable letters, words or numbers appear.',
+    /** A generated background is refused when any of these is true (an answer that does not parse is a refusal too). */
+    rejectWhen: ['readable_text', 'document_or_form', 'human_face', 'person_or_body', 'brand_logo', 'nudity'],
+    /** Uploads: a reference image is checked like a background, without text; a logo may show its own name and mark. */
+    rejectUploadWhen: {
+      reference: ['document_or_form', 'human_face', 'person_or_body', 'brand_logo', 'nudity'],
+      logo: ['document_or_form', 'human_face', 'person_or_body', 'nudity'],
+    },
+    /**
+     * Neurons counted against the daily budget per check. NOT MEASURED: an upper estimate from
+     * Cloudflare's published price for this model and an image of about 1,500 input tokens.
+     * Replace with the staging measurement (aiInferenceAdaptiveGroups).
+     */
+    estimatedNeurons: 100,
+  },
+  /** Reference images are experimental (the trial showed weak style steering): off until switched on here. */
+  referencesEnabled: false,
+  uploads: {
+    types: ['image/png', 'image/jpeg'],
+    maxReferenceBytes: 300 * 1024,
+    maxReferenceSide: 512,
+    maxReferences: 3,
+    maxLogoBytes: 300 * 1024,
+    maxLogoSide: 1024,
+    /** Largest multipart body of POST /api/ai/uploads. */
+    maxRequestBytes: 320 * 1024,
+  },
+  /** JSON body of every AI route. */
+  maxRequestBodyBytes: 16 * 1024,
+
+  /* Tool 3: QR codes */
+  qr: {
+    maxUrlChars: 512,
+    /** Error correction Q (25% of the code may be damaged), a quiet zone of 4 modules on a solid light plate. */
+    ecc: 'Q',
+    quietZoneModules: 4,
+    /** Dark modules against the plate, WCAG contrast ratio. */
+    minContrast: 7,
+    /** The code's modules take at least this share of the image width. */
+    minWidthFraction: 0.42,
+    /** Scans at full size and at this fraction of it must decode to exactly the encoded URL. */
+    verifyScale: 1 / 3,
+  },
+  /** URL shorteners refused as QR targets (the host or a parent domain). Fixed list. */
+  shorteners: [
+    'bit.ly', 'bitly.com', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'is.gd', 'v.gd', 'buff.ly', 'rebrand.ly', 'cutt.ly',
+    'shorturl.at', 'tiny.cc', 'rb.gy', 'bl.ink', 't.ly', 's.id', 'lnkd.in', 'qrco.de', 'qr.net', 'qrs.ly', 'shorte.st',
+    'adf.ly', 'bc.vc', 'clck.ru', 'u.to', 'x.co', 'tr.im', 'soo.gd', 'trib.al', 'db.tt', 'youtu.be', 'amzn.to', 'fb.me',
+    'shorturl.com', 'urlz.fr', 'git.io', 'surl.li', 'tiny.one', 'short.gy',
+  ],
+  urlSafety: {
+    /** Cloudflare's security resolver (DNS over HTTPS): blocked domains answer 0.0.0.0 with EDE 16 "Censored". */
+    resolverUrl: 'https://security.cloudflare-dns.com/dns-query',
+    resolverTimeoutMs: 3000,
+    /** Google Web Risk Lookup API, used only when WEB_RISK_API_KEY is set. */
+    webRiskUrl: 'https://webrisk.googleapis.com/v1/uris:search',
+    webRiskThreatTypes: ['MALWARE', 'SOCIAL_ENGINEERING', 'UNWANTED_SOFTWARE'],
+    webRiskTimeoutMs: 3000,
+  },
+  abuse: {
+    maxReasonChars: 1000,
+    maxTargetChars: 600,
+    /** Reports per client per UTC day. */
+    reportsPerIpPerDay: 10,
+    /** Refusal and report rows are kept this long. */
+    retentionDays: 365,
+  },
 } as const;

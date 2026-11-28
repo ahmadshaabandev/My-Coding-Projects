@@ -504,7 +504,8 @@ export function quotaExceededError(env: Env, usage: UsageSummary): ApiError {
   );
 }
 
-function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: UsageSummary): Promise<void> {
+/** The 90% and 100% notice of the monthly allowance (also sent for AI images, src/ai/service.ts). */
+export function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: UsageSummary): Promise<void> {
   return sendEmail(env, {
     to: user.email,
     ...quotaWarningEmail({ percent, usage, appUrl: env.APP_URL, topUpOnSale: topUpOnSale(env, getPlan(usage.plan)) }),

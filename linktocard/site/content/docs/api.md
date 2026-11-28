@@ -525,6 +525,9 @@ Every error has the same shape, with an HTTP status that matches the code:
 | 401 | `unauthorized` | Not signed in. Returned by the dashboard's own endpoints, not by the endpoints on this page. |
 | 401 | `invalid_api_key` | The `Authorization` header is missing, or the key is wrong or revoked. |
 | 402 | `quota_exceeded` | The allowance for this period is used up and the card is not in the cache. `details.usage` is the usage object. See [Limits](/docs/limits#at-the-limit). |
+<!-- feature:ai -->
+| 402 | `ai_credits_required` | An AI image needs credits that pay for AI images, and only the monthly images of the [[plan.free.name]] plan are left. See [AI images](/docs/ai-images#what-counts). |
+<!-- /feature:ai -->
 | 403 | `invalid_signature` | A signed URL did not verify. `details.reason` says why; see [every 403 and its fix](/docs/signed-urls#every-403-and-its-fix). |
 | 403 | `account_suspended` | The account is suspended. Contact [[site.supportEmail]]. |
 <!-- feature:no-batch -->
@@ -540,6 +543,9 @@ Every error has the same shape, with an HTTP status that matches the code:
 | 403 | `forbidden` | A dashboard request was refused (for example one sent from another site), or `GET /v1/inspect` or a card from a link was given an address that is not on the public internet. |
 <!-- /feature:linkcards -->
 | 403 | `verification_required` | A free tool on the website asks for a quick human check before more requests this hour. `details.site_key` names the widget. Not returned by the endpoints on this page. |
+<!-- feature:ai -->
+| 403 | `turnstile_failed` | The check that the visitor is a person failed on a free AI image page. Not returned by the endpoints on this page. |
+<!-- /feature:ai -->
 | 404 | `not_found` | Unknown path, site, template or image, or an image whose cache period has ended. |
 <!-- feature:no-batch -->
 | 409 | `conflict` | A per-account maximum is reached or the item already exists. Returned by the dashboard, for example for more than [[limit.maxSites]] sites or [[limit.maxApiKeys]] API keys. |
@@ -558,21 +564,36 @@ Every error has the same shape, with an HTTP status that matches the code:
 | 422 | `template_error` | The template cannot be rendered as written: too many elements, a relative image URL, a shadow over the limit, and so on. The message says what to change. |
 | 422 | `image_fetch_failed` | An image the template refers to could not be loaded. `details.reason` and `details.url` say which and why. |
 | 422 | `page_fetch_failed` | `GET /v1/inspect` could not read the page: DNS, connection, timeout, redirects, an HTTP error or a response that is not HTML. `details.reason` says which. |
+<!-- feature:ai -->
+| 422 | `content_flagged` | Cloudflare Workers AI refused to make the AI image. Nothing was charged. |
+| 422 | `unclean_output` | The AI background failed the check for text, faces, people, logos, documents and nudity twice. Nothing was charged. |
+| 422 | `upload_refused` | A logo or reference image for AI images was refused: too large, not PNG or JPEG, or it failed the check. |
+| 422 | `url_refused` | The link of an AI QR code was refused. `details.reason` says why. |
+<!-- /feature:ai -->
 | 429 | `rate_limited` | Too many requests. Wait for the number of seconds in the `Retry-After` header. |
 | 500 | `render_failed` | The renderer failed on this card. Nothing was counted. If a template fails every time, send it to [[site.supportEmail]]. |
 | 500 | `internal_error` | Something failed on our side. Retry; if it continues, write to [[site.supportEmail]] with the `X-Request-Id`. |
+<!-- feature:ai -->
+| 502 | `ai_unavailable` | The AI model answered with an error. Nothing was charged. |
+<!-- /feature:ai -->
 <!-- feature:no-pdf -->
 | 503 | `not_configured` | A part of the service is not set up on this deployment, or not switched on yet. On `[[site.host]]`, only an API that is not switched on yet answers it. |
 <!-- /feature:no-pdf -->
 <!-- feature:pdf -->
 | 503 | `not_configured` | A part of the service is not set up on this deployment, for example PDF rendering while it is switched off there ("PDF rendering is not enabled yet."). |
 <!-- /feature:pdf -->
+<!-- feature:ai -->
+| 503 | `ai_busy` | The daily spending limit for AI images is reached. Nothing was charged; try again after 00:00 UTC. |
+<!-- /feature:ai -->
 <!-- feature:no-pdf -->
 | 504 | `render_timeout` | The render took longer than [[limit.renderTimeoutSeconds]] seconds, usually because a remote image was slow. Nothing was counted. |
 <!-- /feature:no-pdf -->
 <!-- feature:pdf -->
 | 504 | `render_timeout` | A card image took longer than [[limit.renderTimeoutSeconds]] seconds, usually because a remote image was slow; nothing was counted. A PDF took longer than [[pdf.renderTimeoutSeconds]] seconds to load or to print; nothing was charged, but it counts toward the daily cap on failed renders and is remembered for [[pdf.failedRenderMemoryMinutes]] minutes (see [PDF errors](/docs/pdf#errors)). |
 <!-- /feature:pdf -->
+<!-- feature:ai -->
+| 504 | `ai_timeout` | The AI model took longer than [[ai.timeoutSeconds]] seconds. Nothing was charged. |
+<!-- /feature:ai -->
 
 ## Rate limits
 

@@ -30,6 +30,9 @@ export default defineConfig({
       const migrations = await readD1Migrations(fileURLToPath(new URL('./src/db/migrations', import.meta.url)))
       return {
         wrangler: { configPath: './wrangler.toml' },
+        // The [ai] binding (Workers AI) is always remote; the pool must start offline, and the
+        // tests use the "mock" AI provider (AI_PROVIDER in wrangler.toml), which never calls it.
+        remoteBindings: false,
         miniflare: {
           // Test-only bindings. They override wrangler.toml [vars] and .dev.vars, so the
           // suite behaves the same on a laptop and in CI. None of these are real secrets.

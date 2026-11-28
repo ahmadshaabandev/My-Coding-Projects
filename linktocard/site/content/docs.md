@@ -64,7 +64,12 @@ To see what a page sends today, before or after you add a card, paste its addres
 - No screenshots. Nothing here opens a web page by its address to capture it: cards are drawn from your template, PDFs are printed from the HTML you send, and the checker reads a page's tags without drawing the page.
 - No video or GIF. A card request gives one still image; a PDF request gives one document.
 <!-- /feature:pdf -->
+<!-- feature:no-ai -->
 - No AI. Nothing is generated; the card shows exactly the text and images you send.
+<!-- /feature:no-ai -->
+<!-- feature:ai -->
+- No AI in cards, templates or PDFs: they show exactly the text and images you send. The [AI image tools](/docs/ai-images) are the one exception: a model draws a background picture, and your text is set on it by the card renderer.
+<!-- /feature:ai -->
 <!-- feature:no-pdf -->
 - No browser. Templates are drawn by a layout engine that understands a large part of CSS, but JavaScript never runs and some HTML is not supported. [HTML and CSS templates](/docs/html-css-templates) lists exactly what works.
 <!-- /feature:no-pdf -->
@@ -84,6 +89,9 @@ To see what a page sends today, before or after you add a card, paste its addres
 <!-- feature:email -->
 - [Email images](/docs/email-images): signed card URLs with open fields that an email platform fills in for each reader.
 <!-- /feature:email -->
+<!-- feature:ai -->
+- [AI images](/docs/ai-images): covers, newsletter headers and QR codes on backgrounds drawn by an AI model, presets, batches and signed cover URLs.
+<!-- /feature:ai -->
 <!-- feature:linkcards -->
 - [Cards from links](/docs/link-cards): a card made from a page's own title, description and icon, through the API or a signed link URL.
 <!-- /feature:linkcards -->

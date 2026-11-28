@@ -1,0 +1,180 @@
+---
+title: AI QR code art - a QR code on an AI background that still scans
+description: Put a QR code for your link on a picture drawn by an AI model. The code sits on a solid light plate over the picture, and every code is read back by a decoder before you see it. Free preview without an account.
+scripts: ai-tools
+styles: ai-tools
+feature: ai
+noindex: no-ai-index
+---
+<!--
+  AI tool 3, the scan-safe QR code (contract section 6, site feature "ai"). The form sends
+  POST /api/tools/ai/qr-preview (public, Turnstile) and, signed in, POST /api/ai/qr; the report form
+  sends POST /api/tools/ai/report. site/public/assets/js/ai-tools.js reads data-ai-tool. Numbers: AI in
+  src/config.ts through the ai tokens (scripts/ai-site-tokens.ts). noindex until SITE_AI_INDEX=on.
+-->
+<main class="tool ai-tool" data-ai-tool="qr">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free preview, then credits</p>
+<h1>AI QR code art.</h1>
+<p>Paste your link and choose a style. An AI model draws a square picture, and a real QR code for your link is placed on a solid light plate in the middle of it. The code is not blended into the picture: the plain plate around it is what lets phones read it. Every code is decoded by our server before you see it.</p>
+</div>
+<noscript><p class="alert alert-warn">This tool needs JavaScript. The <a href="/docs/ai-images#qr-codes">QR API</a> makes the same codes from your own code.</p></noscript>
+<p class="alert alert-info" id="ai-off" hidden>The AI image tools are not switched on here yet.</p>
+<form class="card card-pop ai-form" id="ai-form" novalidate data-max-palette="[[ai.raw.maxPaletteColors]]">
+<div class="ai-fields">
+<label class="field field-wide"><span class="label">Link *</span><input class="input" name="url" type="url" inputmode="url" required maxlength="[[ai.raw.maxUrlChars]]" autocomplete="off" spellcheck="false" placeholder="https://example.com/menu" aria-describedby="ai-url-hint"><span class="hint" id="ai-url-hint">An http or https address of up to [[ai.maxUrlChars]] characters: no user name or password in it, no IP address, no link shortener. The QR code holds the address itself, so it keeps working without us.</span></label>
+<label class="field"><span class="label">Style</span><select class="select" name="style">[[> ai-style-options]]</select></label>
+<fieldset class="field ai-palette">
+<legend class="label">Colours of the picture (up to [[ai.maxPaletteColors]])</legend>
+<div class="ai-palette-list" id="ai-palette"></div>
+</fieldset>
+</div>
+<div class="alert alert-info tool-verify" id="ai-verify">
+<p>A quick check that you are a person comes before each free preview.</p>
+<div class="tool-widget" id="ai-widget" data-ai-turnstile></div>
+</div>
+<div class="cluster ai-actions">
+<button class="btn btn-primary" id="ai-submit" type="submit">Make a free preview</button>
+</div>
+<p class="alert alert-danger" id="ai-error" role="alert" hidden></p>
+</form>
+
+<section class="card ai-result" id="ai-result" aria-labelledby="ai-result-title" hidden>
+<h2 class="label" id="ai-result-title">Preview</h2>
+<div class="ai-frame ai-frame-square"><img id="ai-image" alt="" hidden></div>
+<p class="hint" id="ai-verified"></p>
+<div class="cluster ai-actions">
+<a class="btn btn-primary" id="ai-buy" href="/login">Make it full size</a>
+<button class="btn btn-secondary" id="ai-again" type="button">Another picture</button>
+</div>
+</section>
+<p class="visually-hidden" id="ai-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">How it works</p>
+<h2>A real QR code on a plain plate, over a drawn picture.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>Why it scans</h3>
+<ul>
+<li>The QR code is made by an ordinary QR library, with error correction level [[ai.qrErrorCorrection]], not drawn by the AI model.</li>
+<li>It sits on a solid light plate with a quiet border of [[ai.qrQuietZoneModules]] modules. Its dark squares have a contrast of at least [[ai.qrMinContrast]]:1 against the plate, and the code takes at least [[ai.qrMinWidthPercent]]% of the image width.</li>
+<li>The AI model draws only the picture around the plate. Your link is not sent to it.</li>
+<li>Before you see the code, our server draws the image and reads it back with a QR decoder, at full size and at one third of the size. The decoded text must be exactly your link. If it is not, the code is made larger, then plain black on white. A code that still does not read back is never shown or charged.</li>
+<li>No check covers every phone camera, printer and screen. Scan the code with the phones you have before you print many copies.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>What you get</h3>
+<ul>
+<li><strong>Free preview:</strong> [[ai.qrPreviewPx]] &times; [[ai.qrPreviewPx]] PNG with a small corner mark. No account.</li>
+<li><strong>Full size:</strong> [[ai.qrFullPx]] &times; [[ai.qrFullPx]] PNG, plus the QR code alone as an SVG file, for [[ai.creditsPerImageText]].</li>
+<li>The code is static: it holds your address itself and does not pass through a redirect of ours, so it cannot be changed later and does not stop working if you leave.</li>
+<li>Links to domains that Cloudflare&rsquo;s security DNS resolver lists as malware or phishing are refused, as are links on our own blocklist.</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt ai-examples" id="examples" aria-labelledby="examples-title" hidden>
+<!--
+  EXAMPLES PLACEHOLDER (for the lead): put real QR images made on staging here, each pointing to a page
+  of this site, as
+  <figure class="ai-example"><img src="/assets/img/ai/..." alt="..." width="600" height="600" loading="lazy"><figcaption>style, which attempt passed</figcaption></figure>
+  inside .ai-example-list, then remove the hidden attribute of this section. Until then the section stays
+  hidden and shows nothing: no made-up example may appear here (tests/node/ai-site.test.ts).
+-->
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Examples</p>
+<h2 id="examples-title">QR codes made with this tool.</h2>
+</div>
+<div class="ai-example-list"></div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about AI QR codes.</h2>
+<p>Including what it does not do.</p>
+</div>
+<div class="faq">
+<details class="faq-item">
+<summary>Is the QR code part of the picture?</summary>
+<div>
+<p>No. The code sits on a solid light plate over the picture, with a plain border around it. A code blended into a picture can be hard for some phones to read; this one keeps the code plain so that it scans.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Will every phone read it?</summary>
+<div>
+<p>Every code is decoded on our server before you see it, at full size and at one third of the size, and only a code that reads back as exactly your link is shown. That catches codes our decoder cannot read, but no check covers every phone camera, printer, screen and light. Test it with your own phones first, especially before printing.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Can I change the link later?</summary>
+<div>
+<p>No. The codes are static: the address itself is in the code, with no redirect service of ours in between. To change the link, make a new code.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>Does the AI see my link?</summary>
+<div>
+<p>No. The image prompt is written by our server from the style and the colours you choose, in our own words. Your link is never part of it: the QR code is made from the link by our server, after the picture is drawn.</p>
+</div>
+</details>
+[[> ai-faq-people]]
+<details class="faq-item">
+<summary>Which links are refused?</summary>
+<div>
+<p>Anything that is not an http or https address, an address longer than [[ai.maxUrlChars]] characters, one with a user name or password in it, one whose host is an IP address, a known link shortener, a domain that Cloudflare&rsquo;s security DNS resolver lists as malware or phishing, and anything on our own blocklist. A refused link is recorded so that we can look into abuse.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>What is the free preview?</summary>
+<div>
+<p>A [[ai.qrPreviewPx]] &times; [[ai.qrPreviewPx]] PNG with a small corner mark, made after a quick check that you are a person. From one network you can make [[ai.freePreviewsPerPageText]] per link a day, and at most [[ai.freePreviewsPerDay]] free previews a day in all. It is kept for [[ai.previewHours]] hours.</p>
+</div>
+</details>
+[[> ai-faq-credits]]
+<details class="faq-item">
+<summary>What is kept, and for how long?</summary>
+<div>
+<p>A preview and the picture behind it are kept for [[ai.previewHours]] hours and then deleted. A full-size code and its SVG are kept until you delete them or your account is deleted. The link you entered is kept with the code. A refused link and a report are kept for [[ai.abuseRetentionDays]] days.</p>
+</div>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section" id="report">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">Abuse</p>
+<h2>Report this QR code.</h2>
+<p>Found a code made here that leads somewhere harmful or misleading? Tell us the link it opens, or the address of its image, and what is wrong. You can also email <a href="mailto:[[site.supportEmail]]">[[site.supportEmail]]</a>.</p>
+</div>
+<form class="card ai-report" id="ai-report" novalidate>
+<label class="field field-wide"><span class="label">Link or image address *</span><input class="input" name="url_or_id" required maxlength="[[ai.raw.maxReportTargetChars]]" autocomplete="off" spellcheck="false"></label>
+<label class="field field-wide"><span class="label">What is wrong *</span><textarea class="textarea textarea-short" name="reason" rows="3" required maxlength="[[ai.raw.maxReportChars]]"></textarea></label>
+<label class="field"><span class="label">Your email</span><input class="input" name="email" type="email" autocomplete="email" aria-describedby="ai-report-hint"><span class="hint" id="ai-report-hint">Optional, if you want an answer.</span></label>
+<div class="cluster ai-actions"><button class="btn btn-secondary" type="submit">Send the report</button></div>
+<p class="alert" id="ai-report-status" role="status" hidden></p>
+</form>
+</div>
+</section>
+
+[[> ai-tools-api]]
+
+</main>

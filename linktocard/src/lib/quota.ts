@@ -514,17 +514,29 @@ async function claimFlag(db: D1Database, sql: string, userId: string, period: Pe
  * is intentionally left in place: we cannot know whether the charge committed,
  * and removing the row could charge the customer twice for one image.
  */
-export async function chargeRender(db: D1Database, user: QuotaUser, render: RenderCharge, now: number): Promise<ChargeResult> {
+export async function chargeRender(
+  db: D1Database,
+  user: QuotaUser,
+  render: RenderCharge,
+  now: number,
+  options: { fromAllowance?: boolean } = {},
+): Promise<ChargeResult> {
   const planId = await planInForce(db, user, now);
   const period = currentPeriod(user, now);
   if (!(await claimLedgerRow(db, user.id, period, render, now))) return { status: 'duplicate' };
 
-  const allowance = await takeFromAllowance(db, user.id, period, PLANS[planId].monthlyImages, now, render.chargeRecord);
-  if (allowance.taken) {
-    const { used, allowance: limit, notified_90: notified90, notified_100: notified100 } = allowance.taken;
-    const crossed90 = notified90 < limit && used * 10 >= limit * 9 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period, limit));
-    const crossed100 = notified100 < limit && used >= limit && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, user.id, period, limit));
-    return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, allowance.counters), crossed90, crossed100 };
+  // fromAllowance false (AI images on the Free plan, src/ai/service.ts): only a top-up may pay.
+  if (options.fromAllowance !== false) {
+    const allowance = await takeFromAllowance(db, user.id, period, PLANS[planId].monthlyImages, now, render.chargeRecord);
+    if (allowance.taken) {
+      const { used, allowance: limit, notified_90: notified90, notified_100: notified100 } = allowance.taken;
+      const crossed90 = notified90 < limit && used * 10 >= limit * 9 && (await claimFlag(db, CLAIM_NOTIFIED_90_SQL, user.id, period, limit));
+      const crossed100 = notified100 < limit && used >= limit && (await claimFlag(db, CLAIM_NOTIFIED_100_SQL, user.id, period, limit));
+      return { status: 'charged', chargedTo: 'plan', usage: summarize(planId, period, allowance.counters), crossed90, crossed100 };
+    }
+  } else {
+    // The period's row holds the top-up counter (topup_used) that the take below adds to.
+    await run(db, OPEN_PERIOD_SQL, user.id, period.start, period.end);
   }
 
   const topup = await takeFromTopup(db, user.id, period, render.cacheKey, now, render.chargeRecord);

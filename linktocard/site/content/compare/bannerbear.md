@@ -67,7 +67,7 @@ Bannerbear does a great deal that [[site.name]] does not do and does not plan to
 <!-- /feature:pdf -->
 - **Batch rendering** of many images in one request<!-- feature:batch --> (our bulk documents make PDFs, one per row, not images)<!-- /feature:batch -->, and responsive templates that produce several sizes from one design.
 - **Automatic text fitting** as a built-in layer setting.
-- **AI features:** face and subject detection for cropping, background removal and generated backgrounds. We have no AI features.
+- **AI features:** face and subject detection for cropping, background removal and generated backgrounds.<!-- feature:no-ai --> We have no AI features.<!-- /feature:no-ai --><!-- feature:ai --> We have no face or subject detection and no background removal; our AI image tools only draw background pictures for covers and QR codes.<!-- /feature:ai -->
 - **More layer types:** QR codes, barcodes, star ratings, Lottie animations and audio waveforms.
 - **Asynchronous jobs with webhooks,** and workflows that chain several steps together.
 - **More control over on-demand URLs:** expiry dates, render caps, template-version pinning and a choice of signed or open URLs.
@@ -90,12 +90,7 @@ This is our view of where a narrow tool is a reasonable choice. It is not a list
 <!-- /feature:pdf -->
 - **You want one idea to learn:** a URL that returns an image.
 
-<!-- feature:no-pdf -->
-Be aware of our limits. [[site.name]] renders with Satori, not a browser, so it supports a subset of CSS and will not match Chrome pixel for pixel. It has three fixed sizes, no editor, no screenshots, no video or GIF and no AI. We offer no uptime guarantee.
-<!-- /feature:no-pdf -->
-<!-- feature:pdf -->
-Be aware of our limits. [[site.name]] renders cards with Satori, not a browser, so card templates support a subset of CSS and will not match Chrome pixel for pixel (PDFs are printed by Chrome). Cards come in three fixed sizes, and there is no editor, no screenshots, no video or GIF and no AI. We offer no uptime guarantee.
-<!-- /feature:pdf -->
+<!-- feature:no-pdf -->Be aware of our limits. [[site.name]] renders with Satori, not a browser, so it supports a subset of CSS and will not match Chrome pixel for pixel. It has three fixed sizes, no editor, no screenshots, no video or GIF<!-- /feature:no-pdf --><!-- feature:pdf -->Be aware of our limits. [[site.name]] renders cards with Satori, not a browser, so card templates support a subset of CSS and will not match Chrome pixel for pixel (PDFs are printed by Chrome). Cards come in three fixed sizes, and there is no editor, no screenshots, no video or GIF<!-- /feature:pdf --><!-- feature:no-ai --> and no AI<!-- /feature:no-ai --><!-- feature:ai --> and no AI other than the background pictures of the AI image tools<!-- /feature:ai -->. We offer no uptime guarantee.
 
 ## Pricing
 

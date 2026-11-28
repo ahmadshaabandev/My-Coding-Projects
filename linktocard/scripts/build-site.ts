@@ -12,11 +12,17 @@
  * so published prices and limits cannot drift from the enforced ones.
  *
  * Feature switches (FEATURES: pdf, batch, toolkit, linkcards, email, previews, integrations,
- * localpdf, apidocs, charts), so a feature can be published on staging before production. SITE_FEATURES
+ * localpdf, apidocs, charts, ai), so a feature can be published on staging before production. SITE_FEATURES
  * is a comma list of the features to publish; SITE_PDF=on is the older spelling of "pdf". SITE_PDF must be "on", "off" or unset (= off), and SITE_FEATURES may
  * name only known features; anything else stops the build, so a typo cannot silently publish
  * the wrong site. "batch" and "toolkit" need "pdf" (their documents are PDFs, and their legal text
  * builds on that of PDFs), and "localpdf" needs "toolkit" or "apidocs" (siteFeatures()).
+ *   - Build settings (SETTINGS: ai-index from SITE_AI_INDEX, webrisk from SITE_WEB_RISK) are "on" or off
+ *     like SITE_PDF, take effect only together with the "ai" feature, and switch blocks and front matter
+ *     like a feature: <!-- feature:webrisk --> ... <!-- /feature:webrisk -->, `updated.webrisk: ...`.
+ *   - `noindex: true` in front matter keeps a page out of sitemap.xml and marks it noindex in every
+ *     build; `noindex: <switch>` does so in the builds where that switch holds, so the AI tool pages
+ *     carry `noindex: no-ai-index` (noindex until SITE_AI_INDEX=on).
  *   - A page or Markdown file with `feature: pdf` in its front matter is built only when
  *     SITE_PDF is "on" (`feature: no-pdf`: only when it is off). A page that is not built is
  *     also absent from sitemap.xml and the docs navigation, which are made from built pages.
@@ -60,6 +66,7 @@ import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd, type Plan } from '../
 import { AUTH, BATCH, CHARTS, DAY_MS, EMAIL_FIELDS, FORMATS, HTTP_CACHE, LIMITS, LOCAL_PDF, PDF, RATE_LIMITS, SIZES, pdfUnits, type PdfFormat, type RateLimitName } from '../src/config';
 import { PDF_TEMPLATES, type PdfStarterTemplate } from '../src/pdf/templates';
 import { STARTER_TEMPLATES as RENDER_TEMPLATES } from '../src/render/templates';
+import { aiPartials, aiSiteTokens } from './ai-site-tokens';
 import { chartsSiteTokens } from './charts-site-tokens';
 import { emailSiteTokens } from './email-site-tokens';
 import { previewsSiteTokens } from './previews-site-tokens';
@@ -111,6 +118,8 @@ export interface RenderedSite {
   config: SiteConfig;
   /** The feature switches this build was made with. */
   features: SiteFeatures;
+  /** The build settings this build was made with (SETTINGS), each already false without the "ai" feature. */
+  settings: SiteSettings;
   pages: RenderedPage[];
   sitemap: string;
   /** openapi.yaml as published: the repository copy with the feature blocks applied. */
@@ -154,6 +163,8 @@ interface TokenContext {
   /** Partial name -> source (file partials may contain tokens and other partials). */
   partials: Record<string, string>;
   features: SiteFeatures;
+  /** The features and the build settings together: what feature blocks, `updated.<x>` and `noindex: <x>` read. */
+  switches: SiteSwitches;
 }
 
 interface PageSource {
@@ -240,11 +251,42 @@ function loadConfig(file: string, env: Record<string, string | undefined>): Site
  * Image to PDF pages, which need no server feature. apidocs: the docs pages with an `unlaunched`
  * notice, published with that notice while their own feature is off. charts: chart images, the four
  * free chart maker pages and /docs/charts (Worker switch CHARTS_ENABLED); it has no `unlaunched`
- * page, so a build without it has no trace of charts.
+ * page, so a build without it has no trace of charts. ai: the three AI image tools (/tools/og-image-generator,
+ * /tools/bulk-blog-covers, /tools/ai-qr-code-art), /docs/ai-images and their legal text (Worker switch
+ * AI_ENABLED); it has no `unlaunched` page either, so a build without it has no trace of the AI tools.
  */
-export const FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs', 'charts'] as const;
+export const FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs', 'charts', 'ai'] as const;
 export type Feature = (typeof FEATURES)[number];
 export type SiteFeatures = Record<Feature, boolean>;
+
+/**
+ * Build settings that are not features, each read from its environment variable: "on" turns it on,
+ * "off" or unset leaves it off, anything else stops the build. Both belong to the AI tools and count
+ * only in a build with the "ai" feature (siteSettings()), so a value left exported in the shell
+ * changes nothing in a build without them.
+ *   ai-index  SITE_AI_INDEX: the three AI tool pages are indexed and listed in sitemap.xml. Off (the
+ *             default): they carry noindex and stay out of the sitemap (their `noindex: no-ai-index`).
+ *   webrisk   SITE_WEB_RISK: the privacy policy says that QR code destinations are also checked with
+ *             Google Web Risk (its feature:webrisk blocks). Turn it on only when the Worker has
+ *             WEB_RISK_API_KEY, which is what makes the Worker ask Web Risk.
+ */
+export const SETTINGS = { 'ai-index': 'SITE_AI_INDEX', webrisk: 'SITE_WEB_RISK' } as const;
+export type Setting = keyof typeof SETTINGS;
+export type SiteSettings = Record<Setting, boolean>;
+/** Everything a feature block, an `updated.<x>` date or a `noindex: <x>` can name. */
+export type SiteSwitches = SiteFeatures & SiteSettings;
+const SWITCH_NAMES: readonly string[] = [...FEATURES, ...Object.keys(SETTINGS)];
+
+/** The build settings (SETTINGS) of this build. Each is false in a build without the "ai" feature. */
+export function siteSettings(env: Record<string, string | undefined>, features: SiteFeatures): SiteSettings {
+  const settings = {} as SiteSettings;
+  for (const [setting, variable] of Object.entries(SETTINGS) as Array<[Setting, string]>) {
+    const value = (env[variable] ?? '').trim();
+    if (value !== '' && value !== 'on' && value !== 'off') throw new Error(`${variable} must be "on" or "off" (or unset), not "${value}"`);
+    settings[setting] = value === 'on' && features.ai;
+  }
+  return settings;
+}
 
 /** The in-browser PDF engine, written by scripts/build-browser-bundles.mts before this build runs. */
 export const LOCAL_PDF_BUNDLE = 'assets/js/vendor/pdf-local.js';
@@ -269,6 +311,9 @@ const FEATURE_PUBLIC_FILES: Readonly<Record<string, Feature>> = {
   // The four chart maker pages (/tools/chart-maker and the pie, bar and line pages).
   'assets/js/chart-maker.js': 'charts',
   'assets/css/chart-maker.css': 'charts',
+  // The three AI image tool pages.
+  'assets/js/ai-tools.js': 'ai',
+  'assets/css/ai-tools.css': 'ai',
 };
 
 /**
@@ -304,7 +349,8 @@ export function siteFeatures(env: Record<string, string | undefined>): SiteFeatu
 }
 
 interface FeatureSwitch {
-  feature: Feature;
+  /** A feature, or a build setting (SETTINGS). */
+  feature: Feature | Setting;
   /** true for "pdf" (kept when on), false for "no-pdf" (kept when off). */
   when: boolean;
 }
@@ -312,13 +358,16 @@ interface FeatureSwitch {
 function parseSwitch(name: string, where: string): FeatureSwitch {
   const negated = name.startsWith('no-');
   const feature = negated ? name.slice('no-'.length) : name;
-  if (!(FEATURES as readonly string[]).includes(feature)) {
-    throw new Error(`${where}: unknown feature "${name}" (known: ${FEATURES.flatMap((known) => [known, `no-${known}`]).join(', ')})`);
+  if (!SWITCH_NAMES.includes(feature)) {
+    throw new Error(`${where}: unknown feature "${name}" (known: ${SWITCH_NAMES.flatMap((known) => [known, `no-${known}`]).join(', ')})`);
   }
-  return { feature: feature as Feature, when: !negated };
+  return { feature: feature as Feature | Setting, when: !negated };
 }
 
-const switchedOn = (rule: FeatureSwitch, features: SiteFeatures): boolean => features[rule.feature] === rule.when;
+/** Switches a caller leaves out (a build setting, when only features are given) are off. */
+type Switches = Readonly<Partial<SiteSwitches>>;
+
+const switchedOn = (rule: FeatureSwitch, switches: Switches): boolean => (switches[rule.feature] ?? false) === rule.when;
 
 /** A marker: <!-- feature:x --> or <!-- /feature:x --> in HTML and Markdown; a whole "# feature:x" comment line in YAML. */
 const FEATURE_MARKERS = {
@@ -348,7 +397,7 @@ function removeRange(text: string, start: number, end: number): string {
  * Throws, naming the file and line, on an unknown feature, a nested, unclosed or
  * mismatched block, and on anything left over that looks like a marker.
  */
-export function applyFeatureBlocks(text: string, features: SiteFeatures, file: string, syntax: 'html' | 'yaml' = 'html'): string {
+export function applyFeatureBlocks(text: string, features: Switches, file: string, syntax: 'html' | 'yaml' = 'html'): string {
   // Real markers blanked out (positions kept), whatever still looks like one is a typo.
   const masked = text.replace(FEATURE_MARKERS[syntax], (marker) => ' '.repeat(marker.length));
   const stray = STRAY_MARKERS[syntax].exec(masked);
@@ -566,7 +615,7 @@ function buildTokens(config: SiteConfig, now: Date): Record<string, string> {
   };
   for (const id of PLAN_ORDER) Object.assign(tokens, planTokens(PLANS[id]));
   // The v3 modules print the numbers of their own pages; no token name is defined twice.
-  for (const extra of [pdfTokens(), localPdfTokens(), v3SiteTokens(), previewsSiteTokens(), emailSiteTokens(), chartsSiteTokens()]) {
+  for (const extra of [pdfTokens(), localPdfTokens(), v3SiteTokens(), previewsSiteTokens(), emailSiteTokens(), chartsSiteTokens(), aiSiteTokens()]) {
     for (const [name, value] of Object.entries(extra)) {
       if (Object.hasOwn(tokens, name)) throw new Error(`token [[${name}]] is defined twice`);
       tokens[name] = value;
@@ -991,7 +1040,7 @@ function walk(dir: string): string[] {
  * in the set, and neither is a page the build leaves out. The home page's tool grid prints a tile
  * only for a tool whose page is in it (scripts/tools-site.ts).
  */
-function launchedUrls(paths: Paths, features: SiteFeatures): Set<string> {
+function launchedUrls(paths: Paths, features: SiteSwitches): Set<string> {
   const urls = new Set<string>();
   const add = (root: string, extension: string): void => {
     for (const rel of walk(root).filter((file) => file.endsWith(extension))) {
@@ -1005,7 +1054,7 @@ function launchedUrls(paths: Paths, features: SiteFeatures): Set<string> {
   return urls;
 }
 
-function loadPartials(paths: Paths, features: SiteFeatures): Record<string, string> {
+function loadPartials(paths: Paths, features: SiteSwitches): Record<string, string> {
   const partials: Record<string, string> = {
     // The home page's tool grid, its filter chips and the labels of its legend (site/tools.catalog.ts).
     ...toolPartials(features, launchedUrls(paths, features)),
@@ -1021,6 +1070,8 @@ function loadPartials(paths: Paths, features: SiteFeatures): Record<string, stri
     'pdf-limits-table': pdfLimitsTable(),
     'pdf-templates': pdfTemplateList(),
     'pdf-format-options': pdfFormatOptions(),
+    // The style and motif <option>s of the AI image pages (scripts/ai-site-tokens.ts).
+    ...aiPartials(),
   };
   const dir = join(paths.siteDir, 'partials');
   for (const file of walk(dir).filter((name) => name.endsWith('.html'))) {
@@ -1035,12 +1086,14 @@ function tokenContext(paths: Paths, options: BuildOptions): { config: SiteConfig
   const env = options.env ?? process.env;
   const config = loadConfig(join(paths.siteDir, 'site.config.json'), env);
   const features = siteFeatures(env);
+  const switches: SiteSwitches = { ...features, ...siteSettings(env, features) };
   const ctx: TokenContext = {
     tokens: buildTokens(config, options.now ?? new Date()),
     legalUpdated: config.legalUpdated,
     placeholders: placeholderTokens(config),
-    partials: loadPartials(paths, features),
+    partials: loadPartials(paths, switches),
     features,
+    switches,
   };
   return { config, ctx };
 }
@@ -1125,7 +1178,7 @@ function pageUpdated(data: Record<string, string>, layout: Layout, ctx: TokenCon
     if (layout !== 'legal') throw new Error(`${source}: "${key}" is only for legal pages (layout: legal), which print a "Last updated" date`);
     if (!isIsoDate(value)) throw new Error(`${source}: "${key}" must be a YYYY-MM-DD date, not "${value}"`);
     const rule = match[1] === undefined ? null : parseSwitch(match[1], `${source}: "${key}"`);
-    if ((rule === null || switchedOn(rule, ctx.features)) && value > latest) latest = value;
+    if ((rule === null || switchedOn(rule, ctx.switches)) && value > latest) latest = value;
   }
   return latest;
 }
@@ -1137,7 +1190,7 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
   if (/(^|\/)index\.html$/.test(outPath) && !(kind === 'page' && outPath === 'index.html')) {
     throw new Error(`${source}: would emit ${outPath}; pages are flat files (write docs.md, not docs/index.md)`);
   }
-  const text = applyFeatureBlocks(readFileSync(join(root, rel), 'utf8'), ctx.features, source);
+  const text = applyFeatureBlocks(readFileSync(join(root, rel), 'utf8'), ctx.switches, source);
   const { data, body } = parseFrontMatter(text, source);
   const rule = data.feature === undefined ? null : parseSwitch(data.feature, source);
   if (data.unlaunched !== undefined) {
@@ -1145,7 +1198,7 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
     if (rule === null || !rule.when || rule.feature === 'apidocs') throw new Error(`${source}: "unlaunched" needs a "feature" (not no-..., not apidocs) to stand for`);
     if (data.unlaunched.trim() === '') throw new Error(`${source}: "unlaunched" must say what is not switched on`);
   }
-  const ownFeature = rule === null || switchedOn(rule, ctx.features);
+  const ownFeature = rule === null || switchedOn(rule, ctx.switches);
   const unlaunched = !ownFeature && data.unlaunched !== undefined && ctx.features.apidocs;
   if (!ownFeature && !unlaunched) return null;
   const layout = (data.layout ?? (kind === 'content' ? 'page' : 'site')) as Layout;
@@ -1159,6 +1212,8 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
   if (!LAYOUTS.includes(layout)) throw new Error(`${source}: unknown layout "${layout}" (use ${LAYOUTS.join(', ')})`);
   const order = data.order === undefined ? Number.MAX_SAFE_INTEGER : Number(data.order);
   if (Number.isNaN(order)) throw new Error(`${source}: "order" must be a number`);
+  // `noindex: true` in every build, `noindex: <switch>` (no-ai-index, ...) in the builds where the switch holds.
+  const noindex = data.noindex === undefined ? false : data.noindex === 'true' || switchedOn(parseSwitch(data.noindex, `${source}: "noindex"`), ctx.switches);
   const expanded = expand(body, pageCtx, source, 'html');
   const content = kind === 'content' ? renderMarkdown(expanded) : expanded;
   return {
@@ -1171,7 +1226,7 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
     nav: field('nav') || title,
     order,
     // Not advertised while the API it documents is off: no sitemap entry, noindex.
-    indexed: data.noindex !== 'true' && !unlaunched,
+    indexed: !noindex && !unlaunched,
     scripts: (data.scripts ?? '').split(',').map((name) => name.trim()).filter(Boolean),
     styles: (data.styles ?? '').split(',').map((name) => name.trim()).filter(Boolean),
     content: unlaunched ? unlaunchedNotice(data.unlaunched ?? '', pageCtx, source) + content : content,
@@ -1291,7 +1346,7 @@ export function listTokens(options: BuildOptions = {}): TokenListing {
 }
 
 /** openapi.yaml as published: the paths and schemas of features that are off are left out. */
-function renderOpenapi(features: SiteFeatures): string {
+function renderOpenapi(features: SiteSwitches): string {
   return applyFeatureBlocks(readFileSync(join(ROOT, 'openapi.yaml'), 'utf8'), features, 'openapi.yaml', 'yaml');
 }
 
@@ -1299,7 +1354,7 @@ function renderWith(paths: Paths, config: SiteConfig, ctx: TokenContext): Render
   const layoutFile = (name: string): string => join(paths.siteDir, 'layouts', `${name}.html`);
   const layout = (name: string): string => {
     const file = display(layoutFile(name));
-    return expand(applyFeatureBlocks(readFileSync(layoutFile(name), 'utf8'), ctx.features, file), ctx, file, 'html');
+    return expand(applyFeatureBlocks(readFileSync(layoutFile(name), 'utf8'), ctx.switches, file), ctx, file, 'html');
   };
   const layouts = { base: layout('base'), site: '', page: layout('page'), doc: layout('doc'), legal: layout('legal') };
   const sources = loadPages(paths, ctx);
@@ -1317,7 +1372,8 @@ function renderWith(paths: Paths, config: SiteConfig, ctx: TokenContext): Render
   // The same expansion as [[> footer]] in site/layouts/base.html, so the asset is byte for byte the pages' footer.
   const footerFile = display(join(paths.siteDir, 'partials', 'footer.html'));
   const footer = ctx.partials.footer === undefined ? null : expand('[[> footer]]', ctx, footerFile, 'html');
-  return { config, features: ctx.features, pages, sitemap: renderSitemap(sources, config), openapi: renderOpenapi(ctx.features), footer };
+  const settings = Object.fromEntries(Object.keys(SETTINGS).map((setting) => [setting, ctx.switches[setting as Setting]])) as SiteSettings;
+  return { config, features: ctx.features, settings, pages, sitemap: renderSitemap(sources, config), openapi: renderOpenapi(ctx.switches), footer };
 }
 
 /** Renders every page in memory. Throws (naming the file) on an unknown token, partial or layout. */
@@ -1447,7 +1503,8 @@ function main(argv: string[]): number {
   if (argv.includes('--check-golive')) return checkGoLive();
   const site = buildSite();
   const switches = FEATURES.map((feature) => `${feature} ${site.features[feature] ? 'on' : 'off'}`).join(', ');
-  console.log(`Built ${site.pages.length} pages into ${display(site.outDir)} (${site.config.url}; features: ${switches})`);
+  const settings = (Object.keys(SETTINGS) as Setting[]).map((setting) => `${setting} ${site.settings[setting] ? 'on' : 'off'}`).join(', ');
+  console.log(`Built ${site.pages.length} pages into ${display(site.outDir)} (${site.config.url}; features: ${switches}; settings: ${settings})`);
   const placeholders = findPlaceholders(site);
   if (placeholders.length > 0) {
     console.warn(`Note: placeholders remain (${placeholders.map(({ value }) => value).join(', ')}). Run "npm run build:site -- --check-golive" before go-live.`);

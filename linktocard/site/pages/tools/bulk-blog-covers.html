@@ -1,0 +1,162 @@
+---
+title: Bulk blog covers - a cover image for every post, from your feed or a CSV
+description: Make a cover image or a newsletter header for every post at once. Save a brand preset, then give it your RSS or Atom feed, a CSV file or a list through the API. An AI model draws each background; your titles are set on it as real text.
+scripts: ai-tools
+styles: ai-tools
+feature: ai
+noindex: no-ai-index
+---
+<!--
+  AI tool 2, bulk covers and newsletter headers (contract section 5, site feature "ai"). Signed in,
+  the form saves a brand preset (POST /api/ai/presets) and starts a batch (POST /api/ai/batches);
+  the free preview of one title uses POST /api/tools/ai/cover-preview with Turnstile.
+  site/public/assets/js/ai-tools.js reads data-ai-tool. Numbers: AI in src/config.ts through the ai
+  tokens (scripts/ai-site-tokens.ts). noindex until SITE_AI_INDEX=on.
+-->
+<main class="tool ai-tool" data-ai-tool="bulk">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free preview, then credits</p>
+<h1>Bulk blog covers.</h1>
+<p>Save your style once as a brand preset. Then give it your blog&rsquo;s feed, a CSV file or a list, and get a cover for every post: [[ai.coverWidth]] &times; [[ai.coverHeight]] for link previews, or [[ai.headerWidth]] &times; [[ai.headerHeight]] for newsletter headers. An AI model draws each background, and our card renderer sets each title on it as real text. Each finished cover costs [[ai.creditsPerImageText]].</p>
+</div>
+<noscript><p class="alert alert-warn">This tool needs JavaScript. The <a href="/docs/ai-images#batches">batches API</a> does the same from your own code.</p></noscript>
+<p class="alert alert-info" id="ai-off" hidden>The AI image tools are not switched on here yet.</p>
+<form class="card card-pop ai-form" id="ai-form" novalidate data-max-palette="[[ai.raw.maxPaletteColors]]">
+<fieldset class="ai-step">
+<legend class="label">1. Brand preset</legend>
+<div class="ai-fields">
+<label class="field"><span class="label">Preset name *</span><input class="input" name="name" required autocomplete="off" placeholder="Blog"></label>
+<label class="field"><span class="label">Size</span><select class="select" name="size"><option value="cover" selected>Cover, [[ai.coverWidth]] &times; [[ai.coverHeight]]</option><option value="header">Newsletter header, [[ai.headerWidth]] &times; [[ai.headerHeight]]</option></select></label>
+<label class="field"><span class="label">Style</span><select class="select" name="style">[[> ai-style-options]]</select></label>
+<label class="field"><span class="label">Motif</span><select class="select" name="motif">[[> ai-motif-options]]</select></label>
+<fieldset class="field ai-layout">
+<legend class="label">Empty area for the text</legend>
+<label><input type="radio" name="layout" value="left" checked> Left half</label>
+<label><input type="radio" name="layout" value="center"> Centre</label>
+</fieldset>
+<fieldset class="field ai-palette">
+<legend class="label">Colours (up to [[ai.maxPaletteColors]])</legend>
+<div class="ai-palette-list" id="ai-palette"></div>
+</fieldset>
+<label class="field"><span class="label">Logo</span><input class="input" name="logo" type="file" accept="image/png,image/jpeg" aria-describedby="ai-logo-hint"><span class="hint" id="ai-logo-hint">Optional. PNG or JPEG, at most [[ai.maxLogoKb]] KB and [[ai.maxLogoPx]] &times; [[ai.maxLogoPx]] pixels. Drawn by our renderer on top; never sent to the AI model.</span></label>
+<label class="field" data-ai-references hidden><span class="label">Reference images</span><input class="input" name="references" type="file" accept="image/png,image/jpeg" multiple aria-describedby="ai-ref-hint"><span class="hint" id="ai-ref-hint">Optional and experimental: up to [[ai.maxReferences]] pictures whose look the model may follow. They steer the style only weakly. Larger files are made smaller in your browser before upload.</span></label>
+<label class="check field-wide"><input type="checkbox" name="rights" value="yes"> The logo and reference images are mine, or I may use them. They show no person, face, document or other company&rsquo;s logo.</label>
+</div>
+</fieldset>
+<fieldset class="ai-step">
+<legend class="label">2. Posts</legend>
+<div class="ai-fields">
+<label class="field field-wide"><span class="label">Feed address</span><input class="input" name="rss_url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/feed.xml" aria-describedby="ai-feed-hint"><span class="hint" id="ai-feed-hint">An RSS or Atom feed. It is read once by our server, like a page the Open Graph checker reads.</span></label>
+<label class="field field-wide"><span class="label">Or a CSV file</span><input class="input" name="csv" type="file" accept=".csv,text/csv" aria-describedby="ai-csv-hint"><span class="hint" id="ai-csv-hint">Columns <code>title</code>, then optionally <code>description</code> and <code>url</code>.</span></label>
+</div>
+</fieldset>
+<div class="alert alert-info tool-verify" id="ai-verify">
+<p>Try the preset on one title first: a free preview, after a quick check that you are a person.</p>
+<div class="tool-widget" id="ai-widget" data-ai-turnstile></div>
+</div>
+<div class="cluster ai-actions">
+<button class="btn btn-secondary" id="ai-try" type="button">Preview the first title</button>
+<button class="btn btn-primary" id="ai-submit" type="submit">Make the covers</button>
+</div>
+<p class="hint">Making the covers needs an account. <a href="/login">Sign in</a></p>
+<p class="alert alert-danger" id="ai-error" role="alert" hidden></p>
+</form>
+
+<section class="card ai-result" id="ai-result" aria-labelledby="ai-result-title" hidden>
+<h2 class="label" id="ai-result-title">Progress</h2>
+<div class="ai-frame ai-frame-cover"><img id="ai-image" alt="" hidden></div>
+<p id="ai-progress"></p>
+<div class="meter" id="ai-meter" hidden><span></span></div>
+<div class="cluster ai-actions">
+<a class="btn btn-primary" id="ai-zip" href="/dashboard" aria-disabled="true">Download the ZIP</a>
+</div>
+</section>
+<p class="visually-hidden" id="ai-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">How it works</p>
+<h2>One preset, a cover for every post.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>Presets and posts</h3>
+<ul>
+<li>A brand preset holds a style, colours, a motif rule, the text layout, the size, and optionally a logo and reference images.</li>
+<li>With the motif rule &ldquo;auto&rdquo;, our server picks a motif for each post from a fixed list of keywords found in its title. The title itself is not sent to the AI model.</li>
+<li>Posts come from a feed, a CSV file, or a list sent to the API.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>The job</h3>
+<ul>
+<li>The covers are made one by one in the background. You can close the page: the dashboard shows the progress, and we email you when the job has finished.</li>
+<li>Each finished cover costs [[ai.creditsPerImageText]], taken when it is stored. When your credits run out, the job pauses and says so; it does not charge more than you have.</li>
+<li>When it has finished, download every cover in one ZIP file.</li>
+<li>From your own code, the same presets work with <code>POST /v1/ai/batches</code>, and a signed cover URL makes a cover the first time it is opened. <a href="/docs/ai-images">AI images docs</a></li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt ai-examples" id="examples" aria-labelledby="examples-title" hidden>
+<!--
+  EXAMPLES PLACEHOLDER (for the lead): put real covers of one preset made on staging here, as
+  <figure class="ai-example"><img src="/assets/img/ai/..." alt="..." width="1200" height="630" loading="lazy"><figcaption>post title, preset</figcaption></figure>
+  inside .ai-example-list, then remove the hidden attribute of this section. Until then the section stays
+  hidden and shows nothing: no made-up example may appear here (tests/node/ai-site.test.ts).
+-->
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Examples</p>
+<h2 id="examples-title">Covers from one preset.</h2>
+</div>
+<div class="ai-example-list"></div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about bulk covers.</h2>
+<p>Including what it does not do.</p>
+</div>
+<div class="faq">
+[[> ai-faq-text]]
+[[> ai-faq-background]]
+[[> ai-faq-people]]
+<details class="faq-item">
+<summary>Is there a free preview?</summary>
+<div>
+<p>Yes, of one title with your preset: a [[ai.previewWidth]] &times; [[ai.previewHeight]] PNG with a small corner mark, after a quick check that you are a person, kept for [[ai.previewHours]] hours. It counts toward the [[ai.freePreviewsPerDay]] free previews a day from one network. The covers of a job are not free.</p>
+</div>
+</details>
+[[> ai-faq-credits]]
+<details class="faq-item">
+<summary>What is kept, and for how long?</summary>
+<div>
+<p>The covers are kept until you delete them or your account is deleted. A preset, with its logo and reference images, is kept until you delete it or your account. The feed is read once. The titles and descriptions of a job are kept with the job.</p>
+</div>
+</details>
+<details class="faq-item">
+<summary>How many covers can I make?</summary>
+<div>
+<p>At most [[ai.maxImagesPerAccountPerDay]] AI images per account per UTC day, counting every background drawn, redrawn ones included. When the day&rsquo;s spending limit for AI images on our side is reached, no new AI image is made until 00:00 UTC, and nothing is charged for the wait.</p>
+</div>
+</details>
+[[> ai-faq-logo]]
+</div>
+</div>
+</section>
+
+[[> ai-tools-api]]
+
+</main>

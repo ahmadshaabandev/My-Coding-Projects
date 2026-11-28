@@ -53,6 +53,12 @@ export const TOOL_ICONS = {
   plug: '<path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path class="a" d="M12 17v4"/>',
   /** A bar chart. */
   chart: '<path d="M3 3v18h18"/><path class="a" d="M8 17v-5M12.5 17V7M17 17v-8"/>',
+  /** A card with a four-pointed spark: the AI background behind a card's text. */
+  'ai-card': '<rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M6 14h6M6 17h4"/><path class="af" d="m17 6.5 1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1z"/>',
+  /** Two cards, one in front of the other: many covers. */
+  covers: '<rect x="6" y="3" width="16" height="11" rx="2"/><rect class="k" x="2" y="9" width="16" height="11" rx="2"/><path class="a" d="M5.5 16.5h7"/>',
+  /** Three square corner marks and two modules: a QR code. */
+  qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path class="a" d="M14 14h3v3h-3zM18 18h3v3h-3z"/>',
 } as const;
 
 export type ToolIconId = keyof typeof TOOL_ICONS;

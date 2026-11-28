@@ -1,0 +1,30 @@
+/*
+ * The three AI image tools (/tools/og-image-generator, /tools/bulk-blog-covers, /tools/ai-qr-code-art),
+ * loaded by those pages only (front matter `styles: ai-tools`), so no other build carries it. Colours,
+ * type and spacing come from the tokens of site.css. Phones: one column in source order.
+ */
+.ai-form { display: grid; gap: var(--space-5); }
+.ai-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.ai-form legend.label { display: block; margin-bottom: var(--space-3); padding: 0; }
+.ai-step { display: grid; gap: var(--space-3); }
+.ai-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4) var(--space-5); align-items: start; }
+.ai-fields .field-wide { grid-column: 1 / -1; }
+.ai-layout label, .ai-palette-list label { display: inline-flex; align-items: center; gap: var(--space-2); margin-right: var(--space-4); }
+.ai-palette-list { display: flex; flex-wrap: wrap; gap: var(--space-3); min-height: 2.5rem; }
+.ai-palette-list input[type="color"] { width: 2.75rem; height: 2.5rem; padding: 0.15rem; border: 2px solid var(--ink); border-radius: 0.5rem; background: var(--surface); cursor: pointer; }
+.ai-actions { margin-top: var(--space-2); }
+.ai-result { display: grid; gap: var(--space-3); margin-top: var(--space-6); }
+.ai-result > h2.label { margin: 0; font: 600 var(--text-sm)/1.5 var(--font-sans); letter-spacing: 0; }
+.ai-frame { display: grid; place-items: center; overflow: hidden; border: 2px solid var(--ink); border-radius: 0.75rem; background: var(--paper-2); }
+.ai-frame img { display: block; width: 100%; height: auto; }
+.ai-frame-cover { aspect-ratio: 1200 / 630; }
+.ai-frame-square { aspect-ratio: 1; max-width: 32rem; }
+.ai-meta pre { white-space: pre-wrap; word-break: break-all; }
+.ai-example-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: var(--space-5); }
+.ai-example { margin: 0; }
+.ai-example img { display: block; width: 100%; height: auto; border: 2px solid var(--ink); border-radius: 0.75rem; }
+.ai-example figcaption { margin-top: var(--space-2); color: var(--text-muted); font-size: var(--text-sm); }
+.ai-report { display: grid; gap: var(--space-4); max-width: 40rem; }
+@media (max-width: 40rem) {
+  .ai-fields { grid-template-columns: minmax(0, 1fr); }
+}

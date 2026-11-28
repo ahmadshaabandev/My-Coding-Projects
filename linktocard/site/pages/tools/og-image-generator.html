@@ -1,0 +1,149 @@
+---
+title: OG image generator - an AI background with your title on top
+description: Make an Open Graph image for a page. An AI model draws a background in the style and colours you choose, and your title, description and site name are set on it as real text. Free preview without an account.
+scripts: ai-tools
+styles: ai-tools
+feature: ai
+noindex: no-ai-index
+---
+<!--
+  AI tool 1, the cover generator (contract section 4, site feature "ai"). The form sends
+  POST /api/tools/ai/cover-preview (public, Turnstile) and, signed in, POST /api/ai/covers;
+  site/public/assets/js/ai-tools.js reads data-ai-tool and does the rest. Every number comes from AI in
+  src/config.ts through the ai tokens (scripts/ai-site-tokens.ts). noindex until SITE_AI_INDEX=on.
+-->
+<main class="tool ai-tool" data-ai-tool="cover">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free preview, then credits</p>
+<h1>OG image generator.</h1>
+<p>Choose a style and up to [[ai.maxPaletteColors]] colours. An AI model draws a background picture, and our card renderer sets your title, description and site name on it as real text. The preview is free and needs no account. The full-size [[ai.coverWidth]] &times; [[ai.coverHeight]] image costs [[ai.creditsPerImageText]].</p>
+</div>
+<noscript><p class="alert alert-warn">This tool needs JavaScript: it sends your choices to our server and shows the image the server makes. The <a href="/docs/ai-images">AI images API</a> makes the same covers from your own code.</p></noscript>
+<p class="alert alert-info" id="ai-off" hidden>The AI image tools are not switched on here yet.</p>
+<form class="card card-pop ai-form" id="ai-form" novalidate data-max-palette="[[ai.raw.maxPaletteColors]]">
+<div class="ai-fields">
+<label class="field field-wide"><span class="label">Title *</span><input class="input" name="title" required maxlength="[[ai.raw.maxTitleChars]]" autocomplete="off" placeholder="How we cut our build time in half"></label>
+<label class="field field-wide"><span class="label">Description</span><textarea class="textarea textarea-short" name="description" rows="2" maxlength="[[ai.raw.maxDescriptionChars]]" autocomplete="off"></textarea></label>
+<label class="field"><span class="label">Site name</span><input class="input" name="site_name" maxlength="[[ai.raw.maxSiteNameChars]]" autocomplete="off" placeholder="example.com"></label>
+<label class="field"><span class="label">Page address</span><input class="input" name="url" type="url" inputmode="url" maxlength="[[ai.raw.maxUrlChars]]" autocomplete="off" spellcheck="false" placeholder="https://example.com/blog/post" aria-describedby="ai-url-hint"><span class="hint" id="ai-url-hint">Optional. Nothing is fetched from it, and it is not sent to the AI model.</span></label>
+<input type="hidden" name="check_id">
+</div>
+<div class="ai-fields">
+<label class="field"><span class="label">Style</span><select class="select" name="style">[[> ai-style-options]]</select></label>
+<label class="field"><span class="label">Motif</span><select class="select" name="motif">[[> ai-motif-options]]</select></label>
+<fieldset class="field ai-layout">
+<legend class="label">Empty area for the text</legend>
+<label><input type="radio" name="layout" value="left" checked> Left half</label>
+<label><input type="radio" name="layout" value="center"> Centre</label>
+</fieldset>
+<fieldset class="field ai-palette">
+<legend class="label">Colours (up to [[ai.maxPaletteColors]])</legend>
+<div class="ai-palette-list" id="ai-palette"></div>
+<p class="hint">The colours are sent to the model as colour words and hex codes.</p>
+</fieldset>
+</div>
+<div class="alert alert-info tool-verify" id="ai-verify">
+<p>A quick check that you are a person comes before each free preview.</p>
+<div class="tool-widget" id="ai-widget" data-ai-turnstile></div>
+</div>
+<div class="cluster ai-actions">
+<button class="btn btn-primary" id="ai-submit" type="submit">Make a free preview</button>
+</div>
+<p class="alert alert-danger" id="ai-error" role="alert" hidden></p>
+</form>
+
+<section class="card ai-result" id="ai-result" aria-labelledby="ai-result-title" hidden>
+<h2 class="label" id="ai-result-title">Preview</h2>
+<div class="ai-frame ai-frame-cover"><img id="ai-image" alt="" hidden></div>
+<p class="hint" id="ai-expires"></p>
+<div class="cluster ai-actions">
+<a class="btn btn-primary" id="ai-buy" href="/login">Make it full size</a>
+<button class="btn btn-secondary" id="ai-again" type="button">Another preview</button>
+</div>
+<div class="code-block ai-meta" id="ai-meta" hidden><button class="copy-btn" type="button" data-copy>Copy</button><pre><code id="ai-meta-code"></code></pre></div>
+</section>
+<p class="visually-hidden" id="ai-status" role="status" aria-live="polite"></p>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">How it works</p>
+<h2>The AI draws the background. Your text is set on top.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>From your choices to an image</h3>
+<ol>
+<li>You choose a style, colours, a motif and where the text goes.</li>
+<li>Our server writes the image prompt from those choices only, in our own words. Your title, description, site name and page address are not part of it.</li>
+<li>Black Forest Labs&rsquo; FLUX.2 [klein] model, run by Cloudflare Workers AI, draws a background with a calm, empty area where the text will go.</li>
+<li>A second model looks at the background before you see it. If it finds readable text, a face, a person, a brand logo, a document or nudity, the background is drawn once more with a new seed, and refused if it fails again. Nothing is charged for a refused background.</li>
+<li>Our card renderer, the same one that draws every [[site.name]] card, puts a shade behind the text for contrast and sets your title, description and site name on the background, with your logo if you add one.</li>
+</ol>
+</div>
+<div class="prose">
+<h3>What you get</h3>
+<ul>
+<li><strong>Free preview:</strong> [[ai.previewWidth]] &times; [[ai.previewHeight]] PNG with a small corner mark, kept for [[ai.previewHours]] hours. No account.</li>
+<li><strong>Full size:</strong> [[ai.coverWidth]] &times; [[ai.coverHeight]] PNG, made from the background you previewed, with the meta tags to paste: <code>og:image</code>, its width, height and alt text, <code>twitter:card</code> and <code>twitter:image</code>.</li>
+<li>On the [[plan.free.name]] plan the full-size image carries the corner mark, like every image made on that plan. Starter and Pro images have no mark.</li>
+<li>Many pages at once: <a href="/tools/bulk-blog-covers">bulk blog covers</a> makes one cover for every post of a feed or a CSV file.</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section section-alt ai-examples" id="examples" aria-labelledby="examples-title" hidden>
+<!--
+  EXAMPLES PLACEHOLDER (for the lead): put real covers made on staging here, as
+  <figure class="ai-example"><img src="/assets/img/ai/..." alt="..." width="1200" height="630" loading="lazy"><figcaption>style, colours, motif</figcaption></figure>
+  inside .ai-example-list, then remove the hidden attribute of this section. Until then the section stays
+  hidden and shows nothing: no made-up example may appear here (tests/node/ai-site.test.ts).
+-->
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Examples</p>
+<h2 id="examples-title">Covers made with this tool.</h2>
+</div>
+<div class="ai-example-list"></div>
+</div>
+</section>
+
+<section class="section section-alt" id="faq">
+<div class="container faq-grid">
+<div class="section-head">
+<p class="eyebrow">FAQ</p>
+<h2>Questions about the OG image generator.</h2>
+<p>Including what it does not do.</p>
+</div>
+<div class="faq">
+[[> ai-faq-text]]
+[[> ai-faq-background]]
+[[> ai-faq-people]]
+<details class="faq-item">
+<summary>What is the free preview?</summary>
+<div>
+<p>A [[ai.previewWidth]] &times; [[ai.previewHeight]] PNG with a small corner mark, made after a quick check that you are a person. From one network you can make [[ai.freePreviewsPerPageText]] per page a day, and at most [[ai.freePreviewsPerDay]] previews a day in all. It is kept for [[ai.previewHours]] hours, together with the full-size background behind it, so that the full-size image you then make shows the same background.</p>
+</div>
+</details>
+[[> ai-faq-credits]]
+<details class="faq-item">
+<summary>What is kept, and for how long?</summary>
+<div>
+<p>A preview and the background behind it are kept for [[ai.previewHours]] hours and then deleted. A full-size cover is kept until you delete it or your account is deleted, because a cover named in your meta tags must not disappear. A logo you upload is kept for [[ai.uploadHours]] hours for the covers you make with it, unless you save it in a brand preset; then it is kept until you delete the preset or your account.</p>
+</div>
+</details>
+[[> ai-faq-logo]]
+</div>
+</div>
+</section>
+
+[[> ai-tools-api]]
+
+</main>

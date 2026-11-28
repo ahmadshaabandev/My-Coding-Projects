@@ -3,6 +3,7 @@ title: Terms of Service
 description: The terms that apply when you use [[site.name]], a hosted API that renders social-card images from HTML and CSS.
 layout: legal
 updated: 2026-11-28
+updated.ai: 2026-11-28
 ---
 
 Last updated: [[legal.updated]]
@@ -38,7 +39,12 @@ The service has deliberate limits, and you should rely only on what is described
 - Card images are rendered with the open-source Satori and resvg libraries on Cloudflare Workers. That is not a web browser. It supports a subset of HTML and CSS, does not run JavaScript, and will not always match a browser pixel for pixel.
 - PDF documents are rendered by Cloudflare Browser Run, which runs a headless Chrome browser on Cloudflare's network, from the HTML the service sends it, with JavaScript turned off and no network access. A PDF will not always look exactly like the same HTML in your own browser.
 <!-- /feature:pdf -->
+<!-- feature:no-ai -->
 - There is no visual editor, no website screenshots, no video or GIF output, and no AI or face generation.
+<!-- /feature:no-ai -->
+<!-- feature:ai -->
+- There is no visual editor, no website screenshots, no video or GIF output, and no face generation. AI is used only by the AI image tools, and only to draw background pictures (section 4b).
+<!-- /feature:ai -->
 - Technical limits (for example on template size and render time) are listed in the documentation and are part of these terms.
 
 The service also includes a free Open Graph checker, on the website and as `GET /v1/inspect`. It fetches only the one page you ask it to check, that site's `robots.txt` and the image the page names, and it reports what it finds. Its results are a guide: other apps fetch pages and draw previews in their own way, and we do not promise that a link will look the same there.
@@ -62,6 +68,10 @@ It can also make a card from what a web page that you name says about itself, su
 
 Signed image URLs can also have open fields, short values such as a first name that an email platform fills in for each reader when it sends an email.
 <!-- /feature:email -->
+<!-- feature:ai -->
+
+It also offers AI image tools: covers, newsletter headers and QR codes on a background picture drawn by an AI model (section 4b). The model draws only the background. Your text, your logo and the QR code are drawn by the service's own renderer.
+<!-- /feature:ai -->
 
 ## 3. Your account
 
@@ -118,6 +128,27 @@ The page confirms only that your account created the record. We do not check who
 
 Anyone can report a record from its page. A record reported as false or misleading is handled like a counterfeit document (section 4): while we look into it, the records of the account involved are not shown.
 <!-- /feature:batch -->
+<!-- feature:ai -->
+
+## 4b. AI images
+
+The outputs of the AI image tools are made by Black Forest Labs' FLUX.2 [klein] model, run by Cloudflare Workers AI.
+
+You may not use the AI image tools to make, or to try to make:
+
+- nudity or sexual content;
+- the face of a real person, a face swap, an avatar or any other likeness of a person;
+- the logo or mark of a brand that you do not own or may not use;
+- documents, identity documents or anything that resembles a verification document, such as a passport, an ID card, a driving licence, a certificate, a ticket, a badge, or a bank or utility statement;
+- anything that impersonates a person, a brand or an organisation;
+- QR codes that mislead people about where they lead, or that lead to phishing, malware or any other page made to deceive or harm the people who scan them.
+
+When you upload a logo or a reference image, you promise that it is yours or that you have the right to use it in this way, and that it shows no person, no face, no document and no logo of a brand you do not own.
+
+Each background picture is checked automatically before it is used, and each QR code is read back by a decoder before you get it. These checks can miss things, so look at an image before you use it. A QR code that passed our check is not guaranteed to scan on every device, camera, printer or screen: test it before you print it.
+
+We may refuse to make an image, remove an image or a QR code made with the service, and suspend or close an account that breaks these rules. Section 4 applies to how we act: where the matter is urgent, such as a QR code that leads to phishing or malware, we act at once and tell you afterwards. Anyone can report an AI image or a QR code made with the service, from the tool page or at <[[site.supportEmail]]>, and we look into every report.
+<!-- /feature:ai -->
 
 ## 5. Your content and ours
 
@@ -162,6 +193,10 @@ Anyone can report a record from its page. A record reported as false or misleadi
 **Personalized email images:** each distinct set of open-field values is one image, counted when it is first rendered, from the allowance of the account that owns the site. Each site can render only a limited number of new ones per day; the documentation lists the numbers.
 
 <!-- /feature:email -->
+<!-- feature:ai -->
+**AI images:** each full-size AI image counts as [[ai.creditsPerImageImages]] when it is made: a cover, a newsletter header, a QR code, each finished cover of a batch and the first view of a signed cover URL. [[ai.paidByText]] Previews, and requests that are refused or fail, are not counted. AI images made on the Free plan carry its small mark.
+
+<!-- /feature:ai -->
 Unused monthly images do not carry over to the next month. We do not charge overage fees: when a paid plan's allowance and any top-ups are used up, new images are not rendered until the next billing period, a top-up or an upgrade. Prices are in US dollars and exclude tax, which Paddle adds at checkout where it applies.
 
 ## 7. Payment

@@ -58,6 +58,15 @@ tags:
       /v1/chart/... URL or POST /v1/charts. A chart counts one image the first time it is drawn;
       repeat views are free. Human documentation: https://linktocard.com/docs/charts
   # /feature:charts
+  # feature:ai
+  - name: AI images
+    description: |
+      Covers, newsletter headers and QR codes on a background drawn by an AI model (Black Forest Labs'
+      FLUX.2 [klein], run by Cloudflare Workers AI). The model draws the background only, from a prompt
+      written by the server from enums and colours; no text of the request reaches it. Each full-size
+      image costs 1 credit; refused, flagged and failed requests are never charged. Human
+      documentation: https://linktocard.com/docs/ai-images
+  # /feature:ai
 paths:
   /v1/images:
     post:
@@ -1804,6 +1813,305 @@ paths:
         "504":
           $ref: "#/components/responses/RenderTimeout"
   # /feature:charts
+  # feature:ai
+  /v1/ai/covers:
+    post:
+      tags: [AI images]
+      operationId: createAiCover
+      summary: Make one AI cover or newsletter header, with its meta tags.
+      description: |
+        Draws a background from style, palette, motif and layout (or reuses the background of a free
+        preview named by background_id), checks it, sets the text on it with the card renderer, stores
+        the PNG until it is deleted, and answers with its URL and the meta tags to paste. Costs 1
+        credit: from the monthly images of Starter and Pro, or from top-up images on any plan; the
+        monthly images of the Free plan do not pay for AI images (402 ai_credits_required). On the
+        Free plan the image carries the corner mark. Refused, flagged and failed requests are never
+        charged.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiCoverRequest"
+      responses:
+        "200":
+          description: The stored cover.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiCover"
+        "400":
+          description: invalid_request (an unknown field, style or motif, a colour that is not #rrggbb, too many colours).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/AiPaymentRequired"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "422":
+          $ref: "#/components/responses/AiUnprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/AiUnavailable"
+        "503":
+          $ref: "#/components/responses/AiNotAvailable"
+        "504":
+          $ref: "#/components/responses/AiTimeout"
+  /v1/ai/qr:
+    post:
+      tags: [AI images]
+      operationId: createAiQr
+      summary: Make a QR code for one link on an AI background, read back before it is returned.
+      description: |
+        A real QR code (error correction Q) on a solid light plate with a quiet zone of 4 modules,
+        dark modules at a contrast of at least 7:1, at least 42% of the image width, over a square AI
+        background. The image is rendered and decoded at full size and at one third of the size; the
+        decoded text must equal the URL exactly, otherwise the code is made larger, then black on
+        white. A code that does not read back is never returned or charged. Static: the URL itself is
+        in the code. Costs 1 credit, like a cover.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiQrRequest"
+      responses:
+        "200":
+          description: The stored QR image and the QR layer as SVG.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiQr"
+        "400":
+          description: invalid_request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/AiPaymentRequired"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "422":
+          $ref: "#/components/responses/AiUnprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/AiUnavailable"
+        "503":
+          $ref: "#/components/responses/AiNotAvailable"
+        "504":
+          $ref: "#/components/responses/AiTimeout"
+  /v1/ai/presets:
+    get:
+      tags: [AI images]
+      operationId: listAiPresets
+      summary: The account's brand presets (made and changed in the dashboard).
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: Every preset of the account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiPresetList"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "503":
+          $ref: "#/components/responses/AiNotAvailable"
+  /v1/ai/batches:
+    post:
+      tags: [AI images]
+      operationId: createAiBatch
+      summary: Make a cover for every item of a feed, a CSV text or a list, in the background.
+      description: |
+        One cover per item, made one by one through the queue. Each finished cover costs 1 credit,
+        taken when it is stored. When the credits run out the batch pauses with a status that says so.
+        A feed is fetched once by the server (first 100 items); a CSV text or a list takes up to 500
+        items.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiBatchRequest"
+      responses:
+        "200":
+          description: The batch, as GET /v1/ai/batches/{batch_id} describes it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiBatch"
+        "400":
+          description: invalid_request (no preset, no source or more than one, too many items).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/AiPaymentRequired"
+        "422":
+          $ref: "#/components/responses/PageFetchFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/AiNotAvailable"
+    get:
+      tags: [AI images]
+      operationId: listAiBatches
+      summary: The account's AI batches.
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: The batches, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiBatchList"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "503":
+          $ref: "#/components/responses/AiNotAvailable"
+  /v1/ai/batches/{batch_id}:
+    get:
+      tags: [AI images]
+      operationId: getAiBatch
+      summary: The progress of one AI batch.
+      security:
+        - apiKey: []
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The batch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiBatch"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AiNotAvailable"
+  /v1/ai/batches/{batch_id}/zip:
+    get:
+      tags: [AI images]
+      operationId: getAiBatchZip
+      summary: The finished covers of a batch in one ZIP file.
+      security:
+        - apiKey: []
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: A ZIP archive of the finished covers.
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AiNotAvailable"
+  /v1/ai/cover/{site_id}.png:
+    get:
+      tags: [AI images]
+      operationId: getSignedAiCover
+      summary: A signed AI cover URL, for <meta property="og:image">.
+      description: |
+        Public. Authenticated by the "sig" query parameter, made with the site secret exactly as for
+        a card URL (/docs/signed-urls#the-signed-message): the path, the sorted parameter names joined
+        with ",", then one "name=value" line per parameter, joined with "\n". The first request makes
+        the cover from the preset and charges 1 credit once; later requests are served from storage
+        and are not charged.
+      security: []
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          description: Site id from the dashboard.
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9_-]{1,64}$"
+        - name: preset
+          in: query
+          required: true
+          description: A brand preset id of the site's account.
+          schema:
+            type: string
+        - name: title
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: description
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sig
+          in: query
+          required: true
+          description: The signature, 64 hexadecimal characters.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: The cover.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "402":
+          $ref: "#/components/responses/AiPaymentRequired"
+        "403":
+          description: invalid_signature or account_suspended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/AiUnprocessable"
+        "502":
+          $ref: "#/components/responses/AiUnavailable"
+        "503":
+          $ref: "#/components/responses/AiNotAvailable"
+        "504":
+          $ref: "#/components/responses/AiTimeout"
+  # /feature:ai
 components:
   securitySchemes:
     apiKey:
@@ -3019,6 +3327,11 @@ components:
         payload_too_large 413, unsupported_media_type 415, template_error 422,
         image_fetch_failed 422, page_fetch_failed 422, rate_limited 429,
         render_failed 500, internal_error 500, not_configured 503, render_timeout 504.
+        # feature:ai
+        AI images: ai_credits_required 402, turnstile_failed 403, content_flagged 422,
+        unclean_output 422, upload_refused 422, url_refused 422, ai_unavailable 502,
+        ai_busy 503, ai_timeout 504. turnstile_failed is returned only by the free AI pages.
+        # /feature:ai
         unauthorized is returned only by the dashboard's own endpoints, verification_required
         only by the free tools on the website, and gone is reserved.
       enum:
@@ -3028,11 +3341,17 @@ components:
         - unauthorized
         - invalid_api_key
         - quota_exceeded
+        # feature:ai
+        - ai_credits_required
+        # /feature:ai
         - invalid_signature
         - account_suspended
         - plan_required
         - forbidden
         - verification_required
+        # feature:ai
+        - turnstile_failed
+        # /feature:ai
         - not_found
         - conflict
         - gone
@@ -3041,11 +3360,26 @@ components:
         - template_error
         - image_fetch_failed
         - page_fetch_failed
+        # feature:ai
+        - content_flagged
+        - unclean_output
+        - upload_refused
+        - url_refused
+        # /feature:ai
         - rate_limited
         - render_failed
         - internal_error
+        # feature:ai
+        - ai_unavailable
+        # /feature:ai
         - not_configured
+        # feature:ai
+        - ai_busy
+        # /feature:ai
         - render_timeout
+        # feature:ai
+        - ai_timeout
+        # /feature:ai
     Error:
       type: object
       required: [error]
@@ -3221,6 +3555,205 @@ components:
         usage:
           $ref: "#/components/schemas/Usage"
     # /feature:charts
+    # feature:ai
+    AiStyle:
+      type: string
+      enum: [soft-gradient, geometric, paper-cut, watercolor, neon-night, bold-flat, grain-minimal, photo-texture]
+    AiPalette:
+      type: array
+      maxItems: 3
+      description: Colours as #rrggbb, sent to the model as colour words and hex codes.
+      items:
+        type: string
+        pattern: "^#[0-9a-fA-F]{6}$"
+    AiCoverRequest:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          type: string
+          description: Set on the cover by the card renderer. Never sent to the model.
+        description:
+          type: string
+        site_name:
+          type: string
+        style:
+          $ref: "#/components/schemas/AiStyle"
+        palette:
+          $ref: "#/components/schemas/AiPalette"
+        motif:
+          type: string
+          description: auto (a fixed keyword table picks a motif from words of the title, on the server) or one motif of /docs/ai-images.
+          default: auto
+        layout:
+          type: string
+          enum: [left, center]
+          default: left
+        preset_id:
+          type: string
+          description: A brand preset whose settings are used; the request's fields override them.
+        logo_id:
+          type: string
+          description: A logo uploaded in the dashboard, drawn on top. Never sent to the model.
+        background_id:
+          type: string
+          description: The background of a free preview of the last 24 hours, reused as it is.
+        size:
+          type: string
+          enum: [cover, header]
+          default: cover
+          description: cover is 1200x630, header 1200x400.
+    AiCover:
+      type: object
+      required: [id, url, width, height, credits_used, meta_tags, usage]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          format: uri
+          description: The PNG, kept until it is deleted.
+        width:
+          type: integer
+        height:
+          type: integer
+        credits_used:
+          type: integer
+          enum: [1]
+        meta_tags:
+          type: string
+          description: og:image, og:image:width, og:image:height, og:image:alt, twitter:card and twitter:image, as HTML.
+        usage:
+          $ref: "#/components/schemas/Usage"
+    AiQrRequest:
+      type: object
+      additionalProperties: false
+      required: [url, style]
+      properties:
+        url:
+          type: string
+          format: uri
+          maxLength: 512
+          description: http or https; no user:password@, no IP-address host, not a known URL shortener.
+        style:
+          $ref: "#/components/schemas/AiStyle"
+        palette:
+          $ref: "#/components/schemas/AiPalette"
+        background_id:
+          type: string
+          description: The background of a free QR preview of the last 24 hours.
+    AiQr:
+      type: object
+      required: [id, png_url, svg_url, verified, credits_used]
+      properties:
+        id:
+          type: string
+        png_url:
+          type: string
+          format: uri
+          description: 2048x2048 PNG.
+        svg_url:
+          type: string
+          format: uri
+          description: The QR layer alone, as SVG.
+        verified:
+          type: boolean
+          enum: [true]
+        credits_used:
+          type: integer
+          enum: [1]
+    AiPreset:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        style:
+          $ref: "#/components/schemas/AiStyle"
+        palette:
+          $ref: "#/components/schemas/AiPalette"
+        motif:
+          type: string
+        layout:
+          type: string
+          enum: [left, center]
+        size:
+          type: string
+          enum: [cover, header]
+    AiPresetList:
+      type: object
+      required: [presets]
+      properties:
+        presets:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/AiPreset"
+    AiBatchItem:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        url:
+          type: string
+    AiBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [preset_id, source]
+      properties:
+        preset_id:
+          type: string
+        source:
+          description: Exactly one of rss_url, csv or items.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [rss_url]
+              properties:
+                rss_url:
+                  type: string
+                  format: uri
+                  description: An RSS or Atom feed, fetched once; its first 100 items are used.
+            - type: object
+              additionalProperties: false
+              required: [csv]
+              properties:
+                csv:
+                  type: string
+                  description: CSV text with the columns title, then optionally description and url. Up to 500 rows.
+            - type: object
+              additionalProperties: false
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  maxItems: 500
+                  items:
+                    $ref: "#/components/schemas/AiBatchItem"
+    AiBatch:
+      type: object
+      description: The batch and its progress. The fields are listed in /docs/ai-images#batches.
+      required: [id]
+      properties:
+        id:
+          type: string
+      additionalProperties: true
+    AiBatchList:
+      type: object
+      required: [batches]
+      properties:
+        batches:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiBatch"
+    # /feature:ai
   responses:
     ImageFile:
       description: The image.
@@ -3633,3 +4166,35 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     # /feature:charts
+    # feature:ai
+    AiPaymentRequired:
+      description: quota_exceeded (no credits left), or ai_credits_required (only the Free plan's monthly images are left, and they do not pay for AI images). Nothing was made or charged.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    AiUnprocessable:
+      description: content_flagged (Cloudflare Workers AI refused the picture), unclean_output (the background failed the check twice), url_refused (details.reason, for example blocked_domain, shortener or not_http) or upload_refused. Never charged.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    AiUnavailable:
+      description: ai_unavailable. The model answered with an error. Never charged.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    AiNotAvailable:
+      description: not_configured (the AI image tools are switched off on this deployment), or ai_busy (the daily spending limit for AI images is reached; try again after 00:00 UTC). Never charged.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    AiTimeout:
+      description: ai_timeout. The model took longer than 30 seconds. Never charged.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    # /feature:ai

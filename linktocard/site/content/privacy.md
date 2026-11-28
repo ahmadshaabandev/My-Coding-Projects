@@ -4,6 +4,7 @@ description: What personal data [[site.name]] collects, why, who processes it, h
 layout: legal
 updated: 2026-11-27
 updated.charts: 2026-11-28
+updated.ai: 2026-11-28
 ---
 
 Last updated: [[legal.updated]]
@@ -44,6 +45,11 @@ Contact for anything on this page: <[[site.supportEmail]]>
 <!-- feature:charts -->
 | **Free chart maker**: the chart you enter (its type, labels, numbers and titles), which our server uses only to draw the image and send it straight back to your browser; neither the chart nor the image is stored, only a count of requests per IP address (IPv6: per /64 network) for the rate limit | You enter it on the [chart maker](/tools/chart-maker) pages. |
 <!-- /feature:charts -->
+<!-- feature:ai -->
+| **AI images**: your choices (style, colours, motif, layout, size), the text set on an image (title, description, site name), the link of a QR code, the logos and reference images you upload, your brand presets, the items of a batch (from a feed, a CSV file or a list), and the previews, backgrounds and images made from them | You enter them on the AI tool pages, in the dashboard or through the API. A feed is read by our server from the address you give. |
+| **Free AI previews**: a count of previews per IP address (IPv6: per /64 network) and per page or QR link, for the current day (UTC) | Created when you make a free preview on an AI tool page. |
+| **Refused QR links and abuse reports**: a QR link the service refused and why, and what a report says, with the email address if you give one | Created when a link is refused, or when you send a report from an AI tool page or by email. |
+<!-- /feature:ai -->
 | **Open Graph checker**: the page address you enter, the tags and measurements read from that page, and a count of checks per IP address (IPv6: per /64 network) for the current hour | You enter the address on the [Open Graph checker](/tools/og-checker), or send it to `GET /v1/inspect` with an API key, which counts checks per key for the day instead. |
 | **Website statistics**: which pages of this website are viewed, from which referring site, with which kind of browser and device, from which country, and how fast they load, counted by Cloudflare Web Analytics so we can see how the website is used and how fast it is. It is cookieless: it sets no cookie and stores nothing on your device, and Cloudflare says it does not fingerprint visitors. Cloudflare works out the country from the connection's IP address. We see only totals, not individual visitors. | Reported by Cloudflare's analytics script when a page of this website loads in your browser. |
 | **Messages to us**: the email address and message you enter in the contact form, and emails you send to support | You send them to us. The contact form is not stored by the service; it is delivered to our support mailbox as an email. |
@@ -73,6 +79,9 @@ Please do not put sensitive personal information in card content. Text and image
 <!-- feature:batch -->
 - **To run verification pages:** showing each verified record to whoever opens its link, and looking into reports about records.
 <!-- /feature:batch -->
+<!-- feature:ai -->
+- **To keep AI images safe:** checking each picture and each QR link before you get it, and looking into refused links and reports.
+<!-- /feature:ai -->
 - **To keep it secure and fair:** rate limiting, spotting abuse and investigating problems. This is what IP addresses are used for, apart from the country in the website statistics (section 2).
 - **To handle billing:** matching payments processed by Paddle to your account and plan.
 - **To contact you about your account:** sign-in links, warnings when your monthly allowance is nearly or fully used, replies to your messages, and essential service messages, such as changes to these terms or to your plan. We do not send marketing email.
@@ -82,18 +91,33 @@ We do not use your data for advertising, do not build profiles of you, and do no
 
 ## 4. Who processes data for us
 
-We use three outside companies. Each receives only what it needs for its job.
+We use <!-- feature:no-webrisk -->three<!-- /feature:no-webrisk --><!-- feature:webrisk -->four<!-- /feature:webrisk --> outside companies. Each receives only what it needs for its job.
 
 | Company | What it does | What it receives |
 | --- | --- | --- |
 | **Cloudflare** | Hosting, database (D1), object storage (R2) and network; Turnstile, the check that tells people from bots, if a free tool on the website shows it; Web Analytics, the cookieless statistics of this website | Everything stored in or passing through the service: account data, templates, uploaded fonts, rendered images, checker results, and request data such as IP addresses. When Turnstile is shown, the data its widget collects in your browser to tell a person from a bot. |
 | **Resend** | Email delivery | Your email address and the content of the emails we send you, such as sign-in links and usage warnings. Messages sent with the contact form also pass through Resend on their way to our support mailbox. |
 | **Paddle** | Payments, as our reseller and Merchant of Record | The details you enter at checkout, including payment details. Paddle decides how to handle payment data in its own right, as an independent controller; see [Paddle's privacy notice](https://www.paddle.com/legal/privacy). |
+<!-- feature:webrisk -->
+| **Google** | Google Web Risk, a list of unsafe web addresses that the AI QR code tool checks links against | The link of each QR code you ask for. |
+<!-- /feature:webrisk -->
 
 <!-- feature:pdf -->
 To make a PDF, the service sends the document's HTML, with your data filled in and its images already embedded, to Cloudflare Browser Run, Cloudflare's browser service, which prints it and returns the PDF. Cloudflare is already our host, so no further company receives your document. We ask Browser Run not to cache the result. The free PDF tools work the same way.
 
 <!-- /feature:pdf -->
+<!-- feature:ai -->
+To make an AI image, the service sends Cloudflare Workers AI the image prompt that our server writes from your choices (our own words and the colours you picked) and, if you use them, your reference images. It never sends the text you set on the image, the page you make it for or the link of a QR code. The picture that comes back, and each reference image, also go to a second model on Cloudflare Workers AI that checks them for text, faces, people, logos, documents and nudity. Cloudflare is already our host, so no further company receives them. In its Workers AI model catalogue, on the page of the FLUX.2 [klein] 4B model that draws the pictures, Cloudflare lists that model as zero data retention.
+
+The uploads, previews, backgrounds and finished AI images are stored in Cloudflare R2, our object storage, for the times in section 5.
+
+To check the link of a QR code, our server asks Cloudflare's security DNS resolver about its domain name; only the domain name is sent, not the rest of the link.
+
+<!-- /feature:ai -->
+<!-- feature:webrisk -->
+The whole link of each QR code is also sent to Google Web Risk, which answers whether Google lists it as unsafe.
+
+<!-- /feature:webrisk -->
 When a card references an image hosted somewhere else, the service requests that image from that host, in the way any web client would.
 <!-- feature:toolkit -->
 
@@ -133,6 +157,15 @@ We may also disclose data if the law requires it, or if it is needed to protect 
 <!-- feature:email -->
 - **Personalized email images:** each image, and so the value it shows, for the cache period of the site owner's plan, like any card. Which new personalized images each site rendered on each UTC day (the site id and a one-way hash of each image, no text from the image): until the end of the next day (UTC); the daily clean-up then deletes them. For each email image we count, we keep a record that it was counted: your account id and a one-way hash of the image's content, no text from the image. It is kept for [[email.chargeMemoryDays]] days from that count so the image is not counted again, and is deleted with your account.
 <!-- /feature:email -->
+<!-- feature:ai -->
+- **AI previews,** and the full-size background behind each: [[ai.previewHours]] hours, then deleted.
+- **Full-size AI images** (covers, newsletter headers, QR codes and their SVG files): until you delete them or your account is deleted, because an image named in a page's meta tags must not disappear.
+- **Logos and reference images:** [[ai.uploadHours]] hours, for the images you make with them, unless you save them in a brand preset; then until you delete the preset or your account. **Brand presets:** until you delete them or your account.
+- **Backgrounds drawn for your account** and not used in a full-size image: [[ai.backgroundHours]] hours.
+- **AI batches:** the items of a batch are kept with the batch.
+- **Counts of free AI previews** per IP address or network: until the end of that day (UTC).
+- **Refused QR links and abuse reports:** [[ai.abuseRetentionDays]] days.
+<!-- /feature:ai -->
 - **Previews from the playground on the home page:** about one day.
 - **Open Graph checker results** (the address checked and the tags and measurements read from it): 10 minutes. The count of checks per IP address or network: until the end of that hour; per API key: until the end of that day (UTC). Expired entries are deleted by the daily clean-up, normally within a day.
 - **Sign-in links:** valid for a few minutes, and usable once.
@@ -175,6 +208,10 @@ The free PDF tools set no cookie either, and may ask for the same Turnstile chec
 Verification pages set no cookie and load no script.
 
 <!-- /feature:batch -->
+<!-- feature:ai -->
+The AI image pages set no cookie either, and show the Turnstile check described below before each free preview.
+
+<!-- /feature:ai -->
 The Open Graph checker sets no cookie. If it asks you to confirm that you are a person, that check is Cloudflare Turnstile, which runs in a frame loaded from Cloudflare. What it stores in your browser is decided by Cloudflare and described in Cloudflare's own documentation, not by this page.
 
 ## 8. Where data is processed

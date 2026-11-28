@@ -16,6 +16,7 @@ const NAMES: Record<FeatureName, string> = {
   linkcards: 'Cards from links are',
   emailfields: 'Open fields for email images are',
   charts: 'Chart images are',
+  ai: 'AI images are',
 };
 
 /** 503 not_configured: what a switched-off feature answers. */

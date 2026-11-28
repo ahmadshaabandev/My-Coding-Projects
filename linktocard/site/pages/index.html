@@ -241,12 +241,14 @@ const url = `[[site.url]]${path}?${query}`;</code></pre></div>
 <summary>What is [[site.name]], and what is it not?</summary>
 <div>
 <p>It renders Open Graph and social card images from HTML and CSS templates, either through a signed URL you put in your meta tags or through an API call.</p>
-<!-- feature:no-pdf -->
-<p>It is not a visual editor: templates are code. It does not take screenshots of web pages, it does not make video or GIFs, and it does not generate images with AI.</p>
-<!-- /feature:no-pdf -->
 <!-- feature:pdf -->
 <p>It also turns HTML templates into PDF documents, such as invoices, receipts and certificates of completion, through the same kind of API call or signed link.</p>
-<p>It is not a visual editor: templates are code. It still does not take screenshots of web pages, it does not make video or GIFs, and it does not generate images with AI.</p>
+<!-- /feature:pdf -->
+<p>It is not a visual editor: templates are code. It <!-- feature:pdf -->still <!-- /feature:pdf -->does not take screenshots of web pages, it does not make video or GIFs<!-- feature:no-ai -->, and it does not generate images with AI<!-- /feature:no-ai -->.</p>
+<!-- feature:ai -->
+<p>Its AI image tools are the one place where AI is used: a model draws the background picture of a cover or a QR code, and your text is set on it by the same renderer as every card. The model never sees your text.</p>
+<!-- /feature:ai -->
+<!-- feature:pdf -->
 <p>Card images are still drawn without a browser. PDFs are rendered by Cloudflare Browser Run, which runs headless Chrome on Cloudflare&rsquo;s network, from the HTML you send, with JavaScript turned off. It never opens a web page by its address.</p>
 <!-- /feature:pdf -->
 </div>
