@@ -1,26 +1,26 @@
 # Next tools for Link To Card: evidence, ranking and a homepage proposal
 
-27 November 2026. Research and design proposal only. Nothing was built or deployed.
+28 November 2026. Evidence collected on 27 November. Research and design proposal only. Nothing was built or deployed.
 
 ## Bottom line
 
 **The evidence argues against the plan in one respect: a large catalogue of free tools does not pay.** Sites built that way earn almost nothing from their users, even with real traffic:
 
 - 10015.io has 311 tools, five years of history and about 150,000 Google visits a month by its own listing. Its payment-verified revenue is **$2,755 in total**, almost all of it since February 2026 at about $250 a month. That money comes from makers paying to be featured, not from tool users ([TrustMRR](https://trustmrr.com/startup/10015-io)).
-- Two new in-browser PDF toolkits reach 14,000 to 21,000 visitors a month after seven to nine months and earn **$0 and $205 a month** ([PDFWix](https://trustmrr.com/startup/pdfwix), [OxygenPDF](https://trustmrr.com/startup/oxygenpdf)).
+- Two new in-browser PDF toolkits reach 14,000 to 21,000 visitors a month after seven to nine months and earn **$0 and about $200 a month** ([PDFWix](https://trustmrr.com/startup/pdfwix), [OxygenPDF](https://trustmrr.com/startup/oxygenpdf)).
 - A builder with 112 browser PDF tools reported zero paying customers ([Indie Hackers](https://www.indiehackers.com/post/112-browser-based-pdf-tools-0-paying-customers-what-would-you-do-4ecc43af2a)).
 
 Free tools are worth adding only where the free page leads to a paid step that a business repeats. So I recommend adding three to five tools, not thirty.
 
 **No idea came out "strong".** All ten were "possible" after the first round. The verification round weakened eight and raised no verdict. Six remain possible, one is a traffic play only, and three are weak or close to it. Scores run from 19 to 25 out of 35.
 
-**The top three by score:**
+**The top three:**
 
 1. **Chart images**: an API plus a free chart maker page (25/35).
 2. **Label sheets and name badges from a spreadsheet**, with a Google Sheets add-on (25/35).
-3. **Fill and sign a PDF**, with a signature maker (24/35).
+3. **Email signature generator** (23/35).
 
-Ranks 3 to 6 sit within one point of each other: fill and sign, PDF page tools, the email signature generator and image to SVG. Treat that order as a judgement, not a measurement.
+Fill and sign a PDF and the PDF page tools score 24, one point above the email signature. I left them out of the top three because both fail your test that people already pay: comparable sellers of our size earn under $300 a month. Fill and sign is the runner-up. Ranks 3 to 6 sit within one point of each other, so treat that order as a judgement, not a measurement.
 
 **Two things outrank every new tool.** Checkout is still off in production until Paddle approves the domain, and the paid tools already built (PDFs, bulk documents, the PDF toolkit, email images) are still switched off there. Nothing in this report earns money before those change.
 
@@ -30,7 +30,7 @@ My confidence is moderate that the top two belong at the top and low in the orde
 
 ## How this was researched and what the labels mean
 
-Nine researchers each completed one group of ideas. A tenth, on AI image tools and re-tests of earlier rejections, ran out of search budget and only opened revenue and Cloudflare pages. Eight verifiers then tried to refute the key figures and fill gaps. Three reviewers checked this report against the evidence, and I corrected what they found.
+Nine researchers each completed one group of ideas. A tenth, on AI image tools and re-tests of earlier rejections, ran out of search budget and only opened revenue and Cloudflare pages. Eight verifiers then tried to refute the key figures and fill gaps. Three reviewers checked this report against the evidence, a second check followed, and I corrected what both found. The second check found no wrong revenue figure.
 
 Three kinds of page could be opened directly: TrustMRR startup pages, Cloudflare's documentation, and the four tool sites you named. Everything else was read from search-result summaries, because this environment cannot open other sites. That applies to every Semrush, Ahrefs and Similarweb figure and to every vendor price and review.
 
@@ -93,14 +93,14 @@ The rows are in rank order. Section 3 gives the scores.
 |---|---|---|---|---|
 | 1 | **Chart images** | Turns chart data in a URL or API call into a PNG for emails, PDFs and chat messages, where JavaScript charts do not run. Free chart maker page. | Developers and no-code builders who send reports | Image-Charts: **recurring revenue of $6,072 a month from 48 subscriptions, $76,455 in the last 12 months, $547,600 since 2017** (verified, [TrustMRR](https://trustmrr.com/startup/image-charts)). QuickChart says it is profitable; its revenue is unknown. |
 | 2 | **Labels and name badges from a spreadsheet** | Turns rows of a CSV or sheet into print-ready label sheets, name badges and place cards, with an optional QR code or barcode per label. Free page in the browser; paid API, saved layouts and a Google Sheets add-on. | Office staff, teachers, small shops, event organisers | Foxy Labels sells at **$39 a year or $99 lifetime** (price, seen in two search summaries of its pricing page; its Marketplace listing still says $89 lifetime, [Foxy Labels](https://foxylabels.com/pricing)) and shows **1M+ installs** (store, [Marketplace](https://workspace.google.com/marketplace/app/foxy_labels/534005213458)). No revenue figure exists for any label tool. |
-| 3 | **Fill and sign a PDF**, with a signature maker | Fill a form and add a drawn or typed signature in the browser, with no upload and no account. Paid: fill the same form for every row of a spreadsheet. | People with a one-off form; businesses that fill forms in bulk | pdfFiller: about $106M a year from about 860,000 customers (self-reported, [TechStartups](https://techstartups.com/2026/10/24/this-ugly-website-generates-106-million-a-year-from-860000-paying-customers-heres-how/)). Small sellers earn little: SignWith $246 and PDF Editify $171 in 30 days (verified, [SignWith](https://trustmrr.com/startup/signwith), [PDF Editify](https://trustmrr.com/startup/pdf-editify)). |
-| 4 | **PDF page tools**: split and organise, PDF to JPG | Split, rotate, delete and reorder pages, and turn pages into images, all in the browser. | Nobody pays a small site for these. The existing toolkit API covers split and page ranges only. | iLovePDF Premium is $5 to $9 a month (price, [iLovePDF](https://www.ilovepdf.com/pricing)). Small toolkits: $0 and $205 a month (verified, above). |
+| 3 | **Fill and sign a PDF**, with a signature maker | Fill a form and add a drawn or typed signature in the browser, with no upload and no account. Paid: fill the same form for every row of a spreadsheet. | People with a one-off form; businesses that fill forms in bulk | pdfFiller: about $106M a year from about 860,000 customers (self-reported, [TechStartups](https://techstartups.com/2026/10/24/this-ugly-website-generates-106-million-a-year-from-860000-paying-customers-heres-how/)). Small sellers earn little: SignWith $246 and PDF Editify about $230 in 30 days (verified, [SignWith](https://trustmrr.com/startup/signwith), [PDF Editify](https://trustmrr.com/startup/pdf-editify)). |
+| 4 | **PDF page tools**: split and organise, PDF to JPG | Split, rotate, delete and reorder pages, and turn pages into images, all in the browser. | Nobody pays a small site for these. The existing toolkit API covers split and page ranges only. | iLovePDF Premium is $5 to $9 a month (price, [iLovePDF](https://www.ilovepdf.com/pricing)). Small toolkits: $0 and about $200 a month (verified, above). |
 | 5 | **Email signature generator** | Builds an HTML signature to paste into Gmail, Outlook or Apple Mail. Paid: no "made with" line, hosted logo, team signatures from a CSV, a banner slot. | Freelancers, small businesses, small teams | SyncSignature: **recurring revenue of $2,833 a month from 137 subscriptions, $37,164 in the last 12 months, sold through Paddle** (verified, [TrustMRR](https://trustmrr.com/startup/syncsignature)). MySignature: $55K a month (self-reported, January 2024, [Starter Story](https://www.starterstory.com/stories/mysignature-84b72d95-8f5a-474d-aeb0-f295e20dddcf)). |
 | 6 | **Image to SVG** | Traces a logo or drawing into a vector file for cutting machines and print. | Crafters and print sellers | VectoSolve: **recurring revenue of $1,617 a month from 262 subscriptions** (verified, page frozen on 24 November, [TrustMRR](https://trustmrr.com/startup/vectosolve)). Its last full month, October, was 31% below its June 2026 peak. Vectorizer.AI: $9.99 a month (price, [Vectorizer.AI](https://www.vectorizer.ai/pricing)). |
-| 7 | **QR tickets with check-in** | One ticket per guest from a list, each with a QR code, plus a phone page that scans and marks the ticket used. | Small organisers: schools, clubs, venues, workshops | Ticket Generator charges **$0.25 to $0.60 per ticket** (price, the same on four listings, [G2](https://www.g2.com/products/ticket-generator/pricing)). qrTicket: $6,601 in 12 months, $568 in the last 30 days and falling (verified, [TrustMRR](https://trustmrr.com/startup/qrticket)). |
-| 8 | **Email countdown timer** | An animated GIF that counts down to a deadline, re-drawn each time the email is opened. | Email marketers and online shops | CountdownMail sells five tiers at about $7 to $199 a month (price, [CountdownMail](https://countdownmail.com/pricing)). No verified revenue exists. Estimates for NiftyImages range from $1.1M to $25M a year ([Latka](https://getlatka.com/companies/niftyimages.com), [LeadIQ](https://www.leadiq.com/c/niftyimages/5a1dacb02300005b00a20f66)), so none is reliable. |
+| 7 | **QR tickets with check-in** | One ticket per guest from a list, each with a QR code, plus a phone page that scans and marks the ticket used. Event tickets only: no travel tickets, boarding passes, parking or fine notices, and no template that copies a known ticketing brand. | Small organisers: schools, clubs, venues, workshops | Ticket Generator charges **$0.25 to $0.60 per ticket** (price, the same on four listings, [G2](https://www.g2.com/products/ticket-generator/pricing)). qrTicket: $6,601 in 12 months, $568 in the last 30 days and falling (verified, [TrustMRR](https://trustmrr.com/startup/qrticket)). |
+| 8 | **Email countdown timer** | An animated GIF that counts down to a deadline, re-drawn each time the email is opened. | Email marketers and online shops | CountdownMail sells five tiers at about $7 to $199 a month (price, [CountdownMail](https://countdownmail.com/pricing)). No verified revenue exists. Estimates for NiftyImages range from $1.4M a year ([Latka](https://getlatka.com/companies/niftyimages.com), seen in the first round only) to $10M–$25M ([LeadIQ](https://www.leadiq.com/c/niftyimages/5a1dacb02300005b00a20f66)), so none is reliable. |
 | 9 | **Whole-site share audit and monitoring** | Reads a sitemap, checks every page's share tags and image the way social crawlers do, and alerts when one breaks. One click makes the missing images. | Agencies and content teams with hundreds of pages | OpenGraph.io sells scheduled monitoring on paid plans; its API plans are $25 and $100 a month (price, [OpenGraph.io](https://www.opengraph.io/pricing)). Nobody publishes revenue from this. Four small audit tools earned $712 to $1,609 in total (verified, [SchemaReports](https://trustmrr.com/startup/schemareports), [Landing Boost](https://trustmrr.com/startup/landing-boost)). A fifth earned $12,153 in total and now has recurring revenue of $148 a month (verified, [GetWebsite.Report](https://trustmrr.com/startup/getwebsite-report)). |
-| 10 | **Carousel maker** for LinkedIn and Instagram | Slides from templates as a PDF and PNGs, with an API and bulk from CSV. | Creators, consultants, small agencies | PostNitro: $200,520 in total, but its monthly revenue fell about 70% between February and August 2026, its page is frozen and it is for sale (verified, [TrustMRR](https://trustmrr.com/startup/postnitro)). SuperCarousels: recurring revenue of $411 a month (verified, [TrustMRR](https://trustmrr.com/startup/supercarousels)). |
+| 10 | **Carousel maker** for LinkedIn and Instagram | Slides from templates as a PDF and PNGs, with an API and bulk from CSV. | Creators, consultants, small agencies | PostNitro: $200,520 in total, but recurring revenue of only $490 a month from 14 subscriptions when its page froze on 18 September. Its monthly revenue fell about 70% between February and August 2026 and it is for sale (verified, [TrustMRR](https://trustmrr.com/startup/postnitro)). SuperCarousels: recurring revenue of $411 a month (verified, [TrustMRR](https://trustmrr.com/startup/supercarousels)). |
 
 ### 2b. Search demand, competitors and our edge
 
@@ -110,10 +110,10 @@ Every volume below is an estimate read from a search summary. The country is not
 |---|---|---|---|---|
 | 1 | Chart images | "graph maker" **33,100** and "chart maker" **8,100** a month ([Semrush](https://www.semrush.com/website/chartgo.com/overview/)). The table was garbled in the summaries and one printed 433,100 for the first, so both need confirming. quickchart.io gets about 310,000 visits a month, 17 to 22% from Google ([Semrush](https://www.semrush.com/website/quickchart.io/overview/)). "chart image api" and "charts in email": unknown. | QuickChart: a free tier of 1,000 or 10,000 charts a month (its own pages disagree), then $40 a month described as unlimited ([QuickChart](https://www.quickchart.io/pricing/)). Image-Charts: free with watermark, then $89 to $99 a month, "unlimited charts with every plan". | Charts inside our own PDFs and emails, and a $9 plan with no watermark. **We lose on volume**: both incumbents sell unlimited charts. |
 | 2 | Labels and badges | Keyword volumes: **unknown**. Proxies: Foxy Labels 1M+ installs (store); a second add-on shows 5.52M+ users (store, not re-verified, [Marketplace](https://workspace.google.com/marketplace/app/avery_label_merge/687713670524)); avery.com about 3.0M visits a month in early 2025, mostly brand searches ([Semrush](https://cw.semrush.com/website/avery.com/overview)). | Avery Design & Print: free. Foxy Labels: $39 a year, $99 lifetime, free to 100 labels. Labelmaker: $29.99 a year (not re-verified). | A purchase with nothing to activate; a print-alignment setting; runs in the browser. These answer the complaints in section 4.2. |
-| 3 | Fill and sign | "sign pdf" **22,200** a month in the US (one source, [seodata.dev](https://www.seodata.dev/keyword/create-pdf-signature)). "pdf filler" 74,000 in the US, largely a search for the company pdfFiller ([Semrush](https://www.semrush.com/website/pdffiller.com/overview/)). "signature generator": unverified. | pdfFiller and DocHub: subscriptions. Smallpdf: 2 free signings a month, then $12 to $15 a month (third-party listings, not re-verified, [Capterra](https://www.capterra.com/p/172606/Smallpdf/pricing/)). Adobe: sign-in required. | Local processing, no account, no trial that turns into a charge; bulk fill through the toolkit that already exists. |
-| 4 | PDF page tools | "pdf to jpg" **246,000** a month on Semrush against 3.4M on Ahrefs ([Semrush](https://www.semrush.com/website/pdf.io/overview/), [Ahrefs](https://ahrefs.com/websites/pdf.io)). "split pdf" **40,500** against 336,000 ([Semrush](https://www.semrush.com/website/maxai.co/overview/), [Ahrefs](https://ahrefs.com/websites/pdf24.org)). One summary labelled the larger figures as India. Rotate, delete and extract: unknown. | iLovePDF, Smallpdf, Adobe, PDF24, Sejda. | Nothing is uploaded. That is no longer rare. |
-| 5 | Email signature | "email signature generator" **14,800** and **14,400** a month on two Semrush snapshots ([mysignature.io page](https://www.semrush.com/website/mysignature.io/overview/), [mail-signatures.com page](https://semrush.com/website/mail-signatures.com/overview)); "free email signature generator" about 13,600; "email signature maker" 8,100; "email signature template" 8,100. | HubSpot and CodeTwo: free. WiseStamp: $9 a month billed yearly (not re-verified, [WiseStamp](https://www.wisestamp.com/pricing/)). MySignature: about $6 a user a month. Signature Hound: $2.99 to $21.99 a month ([Signature Hound](https://signaturehound.com/plans)). SyncSignature: $6 a month. | A one-year price instead of a subscription; no account for the free version; a banner drawn by the existing image engine. |
-| 6 | Image to SVG | "png to svg" **40,500** on one Semrush page and **79,900** on another ([picsvg.com page](https://tr.semrush.com/website/picsvg.com/overview), [svgtrace.com page](https://ja.semrush.com/website/svgtrace.com/overview)); "svg converter" about 27,100; "vectorize image" about 39,900 ([vectorizer.ai page](https://www.semrush.com/website/vectorizer.ai/overview)). The tables were flattened in the summaries, so these are rough. | Vectorizer.AI: $9.99 a month. Craft marketplaces give PNG to SVG away free ([Design Bundles](https://designbundles.net/png-to-svg-converter)). | None that is strong. |
+| 3 | Fill and sign | "sign pdf" **22,200** a month in the US (one source, first round only, not re-verified, [seodata.dev](https://www.seodata.dev/keyword/create-pdf-signature)). "pdf filler" 74,000 in the US, partly a brand search for the company pdfFiller, so it is left out of the demand score ([Semrush](https://www.semrush.com/website/pdffiller.com/overview/)). "signature generator": unverified. | pdfFiller and DocHub: subscriptions. Smallpdf: 2 free signings a month, then $12 to $15 a month (third-party listings, not re-verified, [Capterra](https://www.capterra.com/p/172606/Smallpdf/pricing/)). Adobe: sign-in required to create or download a signature (third-party tutorials, not re-verified). | Local processing, no account, no trial that turns into a charge; bulk fill through the toolkit that already exists. |
+| 4 | PDF page tools | "pdf to jpg" **246,000** a month on Semrush against 3.4M on Ahrefs ([Semrush](https://www.semrush.com/website/pdf.io/overview/), [Ahrefs](https://ahrefs.com/websites/pdf.io)). "split pdf" **40,500** against 336,000 ([Semrush](https://www.semrush.com/website/maxai.co/overview/), [Ahrefs](https://ahrefs.com/websites/pdf24.org)). One summary labelled the larger figures as India. Rotate, delete and extract: unknown. | iLovePDF: free, Premium $5 to $9 a month. Smallpdf: $12 to $15 a month (third-party listings, not re-verified). Adobe, PDF24 and Sejda: free tiers; prices not collected. | Nothing is uploaded. That is no longer rare. |
+| 5 | Email signature | "email signature generator" **14,800** and **14,400** a month on two Semrush snapshots ([mysignature.io page](https://www.semrush.com/website/mysignature.io/overview/), [mail-signatures.com page](https://semrush.com/website/mail-signatures.com/overview)); "free email signature generator" about 13,600; "email signature maker" 8,100; "email signature template" 8,100. | HubSpot and CodeTwo: free. WiseStamp: $9 a month billed yearly (not re-verified, [WiseStamp](https://www.wisestamp.com/pricing/)). MySignature: about $6 a user a month billed yearly (third-party listing; its own pages show $1.50 to $6). Signature Hound: $2.99 to $21.99 a month ([Signature Hound](https://signaturehound.com/plans)). SyncSignature: $6 a month. | No account for the free version; a banner drawn by the existing image engine; and, if decision 3 allows it, a one-year price instead of a subscription. Reviewers of WiseStamp and MySignature report charges after cancelling and refused refunds on yearly plans ([Trustpilot](https://www.trustpilot.com/review/wisestamp.com?page=3), [Trustpilot](https://nl.trustpilot.com/review/mysignature.io)). |
+| 6 | Image to SVG | "png to svg" **40,500** on one Semrush page and **79,900** on another ([picsvg.com page](https://tr.semrush.com/website/picsvg.com/overview), [svgtrace.com page](https://ja.semrush.com/website/svgtrace.com/overview)); "svg converter" about 27,100; "vectorize image" about 39,900 ([vectorizer.ai page](https://www.semrush.com/website/vectorizer.ai/overview)). The tables were flattened in the summaries, so these are rough. VectoSolve, founded in October 2025, shows 14,587 visitors and 547,433 Google impressions in 30 days from its connected Search Console ([TrustMRR](https://trustmrr.com/startup/vectosolve)). | Vectorizer.AI: $9.99 a month. Craft marketplaces give PNG to SVG away free ([Design Bundles](https://designbundles.net/png-to-svg-converter)). | None that is strong. |
 | 7 | QR tickets | **Unknown.** Search results for ticket and raffle terms are free template pages from Canva, Microsoft and Avery. Ticket Generator has only 23 G2 reviews ([G2](https://www.g2.com/products/ticket-generator/reviews_and_filters)). | Ticket Generator: $0.25 to $0.60 a ticket. Eventbrite: free for free tickets; 3.7% + $1.79 on paid ones (third-party article, [Checkout Page](https://checkoutpage.com/blog/eventbrite-fees)). | One or two credits a ticket, on the verification pages already built. |
 | 8 | Email countdown | **Unknown after seven attempts.** Vendor sites get 14,000 to 79,000 visits a month on snapshots from 2024 to early 2026 ([Similarweb](https://www.similarweb.com/website/motionmailapp.com/), [Similarweb](https://www.similarweb.com/de/website/sendtric.com/competitors/)). The newest estimate for the largest, Sendtric, is about 36,000. | CountdownMail: free with watermark and unlimited views, then about $7 to $199. Sendtric: free without watermark to 10,000 views a month ([Sendtric](https://www.sendtric.com/pricing/)). | Prepaid credits that fall back to a watermark instead of an overage bill. |
 | 9 | Site share audit | Keyword volumes: **unknown**. metatags.io gets about 214,000 visits a month ([Semrush](https://www.semrush.com/website/metatags.io/overview/)). opengraph.xyz gets roughly 91,000 to 101,000; the newer figure's period is unclear and the older is from 2024 ([Similarweb](https://www.similarweb.com/website/opengraph.xyz/vs/ogp.me/)). | OpenGraph.io Site Audit: 5 pages free, price not found ([OpenGraph.io](https://www.opengraph.io/site-audit)). Little Warden: $34.99 to $199.99 a month (third-party review, not re-verified, [European Purpose](https://europeanpurpose.com/tool/little-warden)). opengraph.xyz now sells share images itself, with a $59 lifetime deal ([AppSumo](https://appsumo.com/products/opengraph/)). | Fetches without JavaScript, as the platforms do; one click to make the missing images. Competitors are closing both. |
@@ -126,10 +126,10 @@ Build effort is in working days for one experienced developer, for the first ver
 | # | Idea | Build effort | Running cost per 1,000 uses | How it ties into credits and plans |
 |---|---|---|---|---|
 | 1 | Chart images | 8–12 days. | About $0.013 per 1,000 new charts (400 ms CPU assumed); $0.0007 per 1,000 repeat views. | 1 credit per new chart; repeat views free, like cards. Watermark on Free. |
-| 2 | Labels and badges | 6–9 days for the free page and API. The Sheets add-on is 8–12 more. Google's verification then takes 2–4 weeks typically, with stalls of 8 weeks or more reported in autumn 2026. | Free page: $0. API: about $0.006 per 1,000 sheets (50 ms CPU assumed). | Free pages: free, up to 100 labels a run. Paid: 1 credit per sheet, with unlimited labels, logos, saved layouts and the add-on unlocked for paying accounts. |
-| 3 | Fill and sign | 5–7 days, plus 1–1.5 for the signature maker. | $0 in the browser. Bulk fill: about $0.008 per 1,000 files (assumed). | Free page: free. Bulk fill from a spreadsheet: page credits through the existing toolkit. |
+| 2 | Labels and badges | 6–9 days for the free page and API. The Sheets add-on is 8–12 more. Google's verification then takes 2–4 weeks typically, with stalls of 8 weeks or more reported in autumn 2026. | Free page: $0. API: about $0.006 per 1,000 sheets (50 ms CPU assumed). | Free pages and the add-on: free, up to 100 labels a run. Paid: 1 credit per sheet, with unlimited labels, logos and saved layouts unlocked for paying accounts. |
+| 3 | Fill and sign | 5–7 days for the free page, plus 1–1.5 for the signature maker. The bulk-fill step is not included and was not estimated. | $0 in the browser. Bulk fill: about $0.008 per 1,000 files (assumed). | Free page: free. Bulk fill from a spreadsheet: page credits through the existing toolkit. |
 | 4 | PDF page tools | 3–4 days for split and organise; 2–3 for PDF to JPG. | $0. | Free pages: free. Split and page ranges already exist in the toolkit API at its page credits. Rotate and PDF to JPG are not in the API, so they stay free only unless new API work is added. |
-| 5 | Email signature | 7–9 days for the free page; 12–16 in total with accounts, hosted images, team signatures and the banner slot. | About $0.01 per 1,000 signatures made, then $0.0007 per 1,000 image views. | A paid plan removes the "made with" line and hosts the images. Team signatures from a CSV: 1 credit each. Banner: existing email image credits. |
+| 5 | Email signature | 7–9 days for the free page; 12–16 in total with accounts, hosted images, team signatures and the banner slot. | About $0.01 per 1,000 signatures made, then $0.0007 per 1,000 image views. | A paid plan, or the $8 top-up if decision 3 allows it, removes the "made with" line and hosts the images. Team signatures from a CSV: 1 credit each. Banner: existing email image credits. |
 | 6 | Image to SVG | 6–9 days, with tracing quality as the uncertain part. | About $0 in the browser. | Needs its own pack price. Five credits a file would earn about 2 cents. |
 | 7 | QR tickets | 7–10 days. | About $0.011 per 1,000 tickets made and scanned once (100 ms CPU assumed). | 1 credit per ticket; 2 with check-in switched on. Scans are free. |
 | 8 | Email countdown | 9–13 days. | About $0.007 to $0.019 per 1,000 uncached views (measured in Node, not yet on a Worker). | Needs its own rate, about 1 credit per 100 views. The market sells 1,000 views for $0.02 to $0.07. |
@@ -144,13 +144,15 @@ Each criterion is scored from 1 to 5 by one rule, applied to all ten ideas:
 |---|---|---|---|---|---|
 | **Demand**: the largest sourced search phrase the free page would target, leaving out brand searches | 100,000+ a month, or 5M+ confirmed installs | 30,000–100,000, or 1M+ confirmed installs | 10,000–30,000 | Under 10,000, or no phrase but a traffic figure for the category | Nothing sourced |
 | **Willingness to pay**: a comparable seller of our size | Verified recurring revenue above $5,000 a month in a market with room | Verified $1,000–$5,000 a month, or more in a very small market | Confirmed prices; verified sellers at $300–$1,000 a month, or no revenue published | Verified small sellers earn under $300 a month | No payer found |
-| **SEO traffic potential** | Newcomers shown ranking for the main terms | Not used | Main terms taken, but a marketplace or a verified newcomer with 10,000+ search visitors a month shows a route | Main terms held by free giants or old sites; long-tail only | No route shown |
+| **SEO traffic potential** | Newcomers shown ranking for the main terms | Not used | Main terms taken, but a marketplace or a verified newcomer with 10,000+ search visitors a month shows a route | Main terms held by free giants or old sites, or bought with ads; long-tail only | No route shown |
 | **Build ease**: midpoint of the days in table 2c, rounded up | 4 or fewer | 5–8 | 9–12 | 13–18 | More than 18 |
 | **Running cost** per 1,000 uses | $0.02 or less | Up to $0.10 | Up to $0.50 | Up to $2 | More than $2 |
 | **Fit**: reuses an engine, same buyer, spends credits | All three | Two | One | None, but adjacent | A different audience that needs its own pricing |
 | **Competition gap** | Repeated complaints we can fix, and no free tool covers the need | Documented complaints we can fix, but a free or well-liked tool covers most of the need | A pricing or packaging gap only | A small gap that competitors are closing, or we lose on something important | None |
 
-Ties are broken by willingness to pay, then fit.
+Willingness to pay uses recurring revenue where the seller has subscriptions, and revenue in the last 30 days where it does not. Ties are broken by willingness to pay, then fit.
+
+Your brief requires that people already pay for a tool. So an idea needs at least 3 on willingness to pay to be in the top three.
 
 | Rank | Idea | Demand | Pay | SEO | Build | Cost | Fit | Gap | **Total** | Verdict after verification | Confidence |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -165,18 +167,22 @@ Ties are broken by willingness to pay, then fit.
 | 9 | Site share audit | 2 | 2 | 2 | 2 | 5 | 5 | 2 | **20** | Possible only as a feature that feeds card sales | Low |
 | 10 | Carousel maker | 2 | 3 | 2 | 3 | 3 | 4 | 2 | **19** | Weak as a traffic play | Moderate |
 
-Five notes on the scores:
+**The top three are ranks 1, 2 and 5.** Fill and sign and the PDF page tools score 24, but both score 2 on willingness to pay, so they are out. Of the two ideas at 23, the email signature wins the tie on fit.
 
-- **Chart images** depends on the "graph maker" figure of 33,100. If that reading is wrong and "chart maker" at 8,100 is the largest phrase, its total falls to 23.
+Seven notes on the scores:
+
+- **Chart images** depends on the "graph maker" figure of 33,100. If that reading is wrong and "chart maker" at 8,100 is the largest phrase, its total falls to 23. It would still be in the top three, behind labels.
 - **Labels** is scored with the Google Sheets add-on included, because its demand evidence is add-on installs. That makes it 14 to 21 days. The free page and API alone are 6 to 9 days.
-- **Email signature** has the best pairing of sourced demand and verified payment of any idea. It ranks fifth because the paid version takes 12 to 16 days and free tools hold the search results.
-- **Fill and sign** scores 2 on SEO, not 3 like the page tools, because its search terms are also bought with ads.
+- **Fill and sign** scores 2 on SEO, not 3 like the page tools, because its search terms are bought with ads and theirs are not.
+- **Fill and sign** is at the top of its build band, and its estimate leaves out the bulk-fill step. If that step takes a day or more, its total falls to 23. If "pdf filler" were counted as demand, its total would rise to 25. Neither changes the top three.
+- **Email signature** has the most dependable evidence of the ten. Its head term was seen on two Semrush snapshots and its seller's revenue is verified through Paddle. Chart images and image to SVG score higher on demand, but their volumes were read from garbled tables.
+- **QR tickets** gets the full fit score because ticket issuers are the people who already issue certificates and bulk documents.
 - **Image to SVG** scores 23 but I rate it weak. The score counts each criterion equally. Its audience is crafters, who have no reason to buy cards or PDFs, and five credits a file would earn about 2 cents.
 
 What the verification round changed:
 
 - **Chart images.** The revenue figure held, but both incumbents sell unlimited charts. Our credits only win for small users.
-- **Fill and sign.** The "signature generator" volume of 49,500 came from one unsourced page and could not be confirmed.
+- **Fill and sign.** The "signature generator" volume of 49,500 came from one unsourced page and could not be confirmed. The "sign pdf" figure of 22,200 behind its demand score was not seen again and has no second source.
 - **PDF page tools.** The headline volumes were probably India or worldwide figures. Semrush shows figures 8 to 14 times smaller for the same words, with no country shown. The US volumes are still unknown.
 - **QR tickets.** Paddle's prohibited list names "competition/event tickets" ([Paddle](https://www.paddle.com/help/start/intro-to-paddle/what-am-i-not-allowed-to-sell-on-paddle)). A tool that makes tickets and never sells them is arguably outside that wording. That is an interpretation, so it needs Paddle's written answer.
 - **Email countdown.** Apple Mail freezes the timer at first load ([CountdownMail](https://countdownmail.com/blog/apple-mail-ios-15-timer-caching)), free tiers are generous, and the niche is small: Sendtric has 6 reviews on G2. Paddle's list also bans "Mass Marketing Products", so a timer for bulk email needs Paddle's written answer too.
@@ -196,7 +202,7 @@ For labels and the email signature, the evidence held and came out slightly firm
 
 **Suggested price.** 1 credit per new chart, with repeat views free. Starter at $9 covers 2,000 charts and Pro at $29 covers 10,000. Both are below the $40 and $89 paid entry prices. But QuickChart's free tier already covers 1,000 or 10,000 charts a month. The realistic buyer is someone already using our email or PDF tools who wants a few hundred charts without a watermark.
 
-**Why it ranks first.** It has the best fit of any idea. It reuses the image pipeline, sells to the buyer we already have, and its paid step runs on the image API that is already live. Its one comparable seller has verified recurring revenue. A test in Node drew a chart in two steps, Apache ECharts in 16 to 51 ms and the bundled image library in 16 to 76 ms. That still has to be repeated inside a Worker.
+**Why it ranks first.** It has the top fit score, shared only with QR tickets and the site share audit. It reuses the image pipeline, sells to the buyer we already have, and its paid step runs on the image API that is already live. Its one comparable seller has verified recurring revenue. A test in Node drew a chart in two steps, Apache ECharts in 16 to 51 ms and the bundled image library in 16 to 76 ms. That still has to be repeated inside a Worker.
 
 **Main risks.**
 
@@ -215,7 +221,7 @@ For labels and the email signature, the evidence held and came out slightly firm
 
 Target phrases: "print labels from Excel", "labels from Google Sheets", "name tag maker", "name badge template", "barcode label maker", "bulk QR code generator". **The volume of every one of these is unknown** and should be looked up before building. Pages for the most common sheet sizes would say "compatible with Avery 5160" and carry a no-affiliation line. Both large add-ons word it that way.
 
-**The paid upgrade.** The free pages handle up to 100 labels a run, with text and one QR code or barcode per label. Foxy Labels uses the same cap. Paying unlocks unlimited labels, logos and images, saved layouts, the API, and later the Google Sheets add-on.
+**The paid upgrade.** The free pages handle up to 100 labels a run, with text and one QR code or barcode per label. Foxy Labels uses the same cap. Paying unlocks unlimited labels, logos and images, saved layouts and the API. The Google Sheets add-on, when it exists, follows the same free cap.
 
 **Suggested price.** 1 credit per sheet. The offer for this audience is the $8 top-up: 1,000 sheets, valid for a year, with no licence to activate. That sits well under $39 a year. It requires one change: letting people without a subscription buy the top-up.
 
@@ -231,17 +237,43 @@ Target phrases: "print labels from Excel", "labels from Google Sheets", "name ta
 - No label tool has a revenue figure anywhere. Willingness to pay rests on list prices and install counts.
 - Avery's free tool and add-ons with millions of installs already serve the need.
 - The Sheets add-on needs Google's OAuth verification. I could not confirm whether a developer in Lebanon can publish. Google lets developers bill on their own site ([Google](https://support.google.com/marketplace/answer/6067029)).
-- Name badges must stay event name tags. Staff IDs, student IDs and press passes fall under your exclusion.
+- Name badges must stay event name tags. Staff IDs, student IDs and press passes fall under your exclusion. Labels must not imitate postage or carrier shipping labels.
 
-### 4.3 Fill and sign a PDF
+### 4.3 Email signature generator
+
+**Free pages and keywords.** `/tools/email-signature-generator`, with Gmail and Outlook versions only if each has its own install guide.
+
+| Keyword | Monthly searches (Semrush, country not shown) |
+|---|---|
+| email signature generator | 14,400 and 14,800 on two snapshots |
+| free email signature generator | about 13,600 |
+| email signature maker | 8,100 |
+| email signature template | 8,100 |
+| gmail signature generator, outlook signature generator | unknown |
+
+**The paid upgrade.** Remove the "made with" line, host the logo and photo, keep several signatures, make a whole team's signatures from a CSV, and add a banner slot drawn by the existing email images.
+
+**Suggested price.** A feature of any paid plan. Team signatures cost 1 credit each. If decision 3 allows it, the $8 top-up would also unlock a brand-free signature for a year. Comparable one-time prices are $12 (Sigmint) and $19 (esigna).
+
+**Why it is in the top three.** It ranks fifth by score, but it is the highest-scoring idea after the first two where people already pay a seller of our size. SyncSignature's revenue is verified through its Paddle key, and MySignature names Paddle as its reseller in a Trustpilot reply, so Paddle accepts the category. The complaints are about billing, not design. WiseStamp scores 2.5 out of 5 on Trustpilot over 118 reviews, for trouble cancelling and charges after cancelling. Signature Hound ended its free service in June 2024 ([Signature Hound](https://signaturehound.com/subscriptions)).
+
+**Main risks.**
+
+- The search results are held by free tools from HubSpot and CodeTwo and by ten-year-old incumbents. Four recent entrants earned $4 to $778 in total ([esigna](https://trustmrr.com/startup/esigna), [Sigmint](https://trustmrr.com/startup/sigmint)).
+- Conversion is low: SyncSignature has 137 payers among about 40,000 claimed users, about 0.3%, after three years.
+- The paid version is the slowest build of the three: 12 to 16 days.
+- Hosted logos must stay online for as long as old emails exist, and they can be abused to fake another company's branding. Hosting should require an account.
+- Signatures have to be tested by hand in Outlook, Gmail and Apple Mail.
+
+### 4.4 The runner-up: fill and sign a PDF
 
 **Free pages and keywords.** `/tools/fill-and-sign-pdf` and `/tools/signature-maker`. Both run in the browser, like the existing Merge PDF page.
 
 | Keyword | Monthly searches |
 |---|---|
-| sign pdf | 22,200 in the US (one source, seodata.dev) |
-| pdf signature | 18,100 in the US (same source) |
-| pdf filler | 74,000 in the US, largely a search for the company |
+| sign pdf | 22,200 in the US (one source, seodata.dev; not re-verified) |
+| pdf signature | 18,100 in the US (same source; not re-verified) |
+| pdf filler | 74,000 in the US, partly a search for the company |
 | create online signature, make a digital signature | 2,400 and 5,400 in the US (same source) |
 | signature generator, signature maker | unverified |
 
@@ -249,11 +281,11 @@ Target phrases: "print labels from Excel", "labels from Google Sheets", "name ta
 
 **Suggested price.** The free page costs nothing and needs no account. Bulk fill uses the toolkit's existing rate of 1 credit per started 10 pages.
 
-**Why it ranks third.** It is cheap to build and the complaints point at a real gap. Reviewers of pdfFiller and Smallpdf describe trials that turned into charges and paywalls that appear after the work is done ([Trustpilot](https://ie.trustpilot.com/review/pdffiller.com?page=2), [Trustpilot](https://ca.trustpilot.com/review/smallpdf.com)). That gap is against the subscription sites. iLovePDF, which is free and well liked, already covers most people ([Trustpilot](https://ca.trustpilot.com/review/ilovepdf.com)).
+**Why it is close.** It scores 24, and it is cheap to build and the complaints point at a real gap. Reviewers of pdfFiller and Smallpdf describe trials that turned into charges and paywalls that appear after the work is done ([Trustpilot](https://ie.trustpilot.com/review/pdffiller.com?page=2), [Trustpilot](https://ca.trustpilot.com/review/smallpdf.com)). That gap is against the subscription sites. iLovePDF, which is free and well liked, already covers most people ([Trustpilot](https://ca.trustpilot.com/review/ilovepdf.com)).
 
 **Main risks.**
 
-- The commercial search terms are bought with ads, and small sellers earn under $250 a month.
+- The commercial search terms are bought with ads, and small sellers earn under $250 a month. That is why it is not in the top three.
 - The page must not claim to be a legally binding e-signature service. It places an image of a signature on the user's own file and keeps no audit trail.
 - People will use it on government and tax forms. Whether that is acceptable under your rule on government documents is your decision. The tool fills a form the user already has; it does not make one.
 - Large PDFs can exhaust memory on phones.
@@ -289,7 +321,7 @@ Use compact rows in category columns, not large cards. Each row has an icon, the
 │ X card validator  F │ Card from a link  P │ Image to PDF      F │ Invoice generator F │ Signed URLs     P │
 │ LinkedIn preview  F │ Email images      P │ Split, organise  F* │ Certificate gen.  F │ Zapier          P │
 │ Slack preview     F │ Chart images     ◐* │ PDF to JPG       F* │ Bulk documents    P │ Make            P │
-│ Discord preview   F │ Email countdown  ◐* │ Fill and sign    F* │ QR tickets       ◐* │ n8n             P │
+│ Discord preview   F │ Email countdown  ◐* │ Fill and sign    ◐* │ QR tickets       ◐* │ n8n             P │
 │ WhatsApp preview  F │ Email signature  ◐* │ PDF toolkit API   P │ Labels, badges   ◐* │ Google Sheets  ◐* │
 │ Site share audit ◐* │ Carousel maker   ◐* │                     │                     │                   │
 │                     │ Image to SVG     ◐* │                     │                     │                   │
@@ -300,7 +332,7 @@ Use compact rows in category columns, not large cards. Each row has an icon, the
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The 33 entries are the 21 that exist today, plus 12 tiles for the ten ideas in this report. Of the 21, 11 are free tool pages and 10 are paid features and connectors. The names and counts are illustrative.
+The 33 entries are the 21 that are built today, plus 12 tiles for the ten ideas in this report. Of the 21, 11 are free tool pages and 10 are paid features and connectors. About half are live in production now: the six previews, Merge PDF, Image to PDF, the share card builder, the API and signed URLs. The rest are built and switched off there. The names and counts are illustrative.
 
 The details:
 
@@ -336,10 +368,9 @@ The wireframe and screenshots are in the `next-tools-assets` folder beside this 
 
 ### Where the new tools fit
 
-The wireframe shows all ten ideas so you can see the layout at its fullest. If you build only the top three, the grid has 24 rows, and 25 once the Google Sheets add-on exists:
+The wireframe shows all ten ideas so you can see the layout at its fullest. If you build only the top three, the grid has 24 rows with every switch on, and 25 once the Google Sheets add-on exists. With today's production switches it would have about 14.
 
-- **Images** gains Chart images.
-- **PDF · files** gains Fill and sign.
+- **Images** gains Chart images and Email signature.
 - **PDF · documents** gains Labels and badges.
 - **Automation** gains Google Sheets when the add-on exists.
 
@@ -389,11 +420,11 @@ One lead is worth an hour of checking. The only small PDF domains this research 
 
 ## 8. Decisions for you
 
-1. **Which tools to build, if any.** The top two are chart images and labels. The third place is close between fill and sign and the email signature generator: fill and sign is half the work, and the email signature has the better payment proof.
+1. **Which tools to build, if any.** The top three are chart images, labels and the email signature generator. Fill and sign is the alternative to the third: it is half the work, but small sellers of it earn very little.
 2. **The homepage direction.** Compact rows in category columns, with the readable layout on phones.
-3. **Whether people without a subscription may buy the $8 top-up**, and what it unlocks once its credits expire after 365 days. The label tool depends on it.
+3. **Whether people without a subscription may buy the $8 top-up**, and what it unlocks once its credits expire after 365 days. The label tool and the email signature's one-year price both depend on it.
 4. **Whether to ask Paddle in writing about ticket-making tools and email countdown timers.** Without that answer I would build neither.
-5. **Whether filling government forms in the browser is acceptable** under your rule on government documents. Fill and sign depends on it.
+5. **Whether filling government forms in the browser is acceptable** under your rule on government documents. This matters only if you choose fill and sign.
 6. **The keyword lookups in section 7**, before any build starts.
 
 ## 9. Sources
@@ -424,6 +455,8 @@ Every link used in this report, grouped by kind. The four reference tool sites w
 - https://trustmrr.com/startup/getwebsite-report
 - https://trustmrr.com/startup/postnitro
 - https://trustmrr.com/startup/supercarousels
+- https://trustmrr.com/startup/esigna
+- https://trustmrr.com/startup/sigmint
 - https://trustmrr.com/startup/twittershots
 - https://trustmrr.com/startup/qr-code-ai
 - https://trustmrr.com/startup/click-dash
@@ -506,6 +539,7 @@ Every link used in this report, grouped by kind. The four reference tool sites w
 - https://www.capterra.com/p/172606/Smallpdf/pricing/
 - https://www.wisestamp.com/pricing/
 - https://signaturehound.com/plans
+- https://www.trustpilot.com/review/wisestamp.com?page=3
 - https://checkoutpage.com/blog/eventbrite-fees
 - https://www.sendtric.com/pricing/
 - https://www.opengraph.io/site-audit
@@ -513,6 +547,7 @@ Every link used in this report, grouped by kind. The four reference tool sites w
 - https://appsumo.com/products/opengraph/
 - https://socialrails.com/blog/postnitro-pricing
 - https://pricingsaas.com/companies/contentdrips
+- https://signaturehound.com/subscriptions
 - https://dev.to/xcropio/twitter-x-api-pricing-2026-pay-per-use-rates-enterprise-and-cost-per-tweet-2eam
 
 
@@ -520,6 +555,7 @@ Every link used in this report, grouped by kind. The four reference tool sites w
 
 - https://workspace.google.com/marketplace/app/foxy_labels/534005213458
 - https://workspace.google.com/marketplace/app/avery_label_merge/687713670524
+- https://nl.trustpilot.com/review/mysignature.io
 - https://designbundles.net/png-to-svg-converter
 - https://www.g2.com/products/ticket-generator/reviews_and_filters
 - https://countdownmail.com/blog/apple-mail-ios-15-timer-caching
