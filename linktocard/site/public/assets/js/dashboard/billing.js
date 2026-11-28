@@ -1,34 +1,16 @@
 // The plan card on the overview: usage meter, what the plan includes, and the
 // billing actions. New subscriptions and top-ups go through Paddle's overlay
 // checkout; plan changes and the customer portal go through the API.
-import { checkoutAction, openCheckout } from '../checkout.js';
+import { canBuyTopUp, checkoutAction, openCheckout, recallCheckout, rememberCheckout } from '../checkout.js';
 import { api } from './client.js';
 import { alertBox, button, confirmDialog, errorSlot, h, showError, withBusy } from './dom.js';
-import { billingActions, checkoutSettled, checkoutSnapshot, formatCount, formatDate, pdfUsageLine, pollUntil, usageView } from './helpers.js';
-
-const CHECKOUT_MEMO = 'ltc:checkout';
+import { billingActions, checkoutSettled, checkoutSnapshot, formatCount, formatDate, moreImagesHint, pdfUsageLine, pollUntil, usageView } from './helpers.js';
 
 const planOf = (config, id) => config.plans.find((plan) => plan.id === id);
 const priceLine = (plan) => `$${plan.price_usd} a month, ${formatCount(plan.monthly_images)} images`;
 
-function rememberCheckout(snapshot) {
-  try {
-    sessionStorage.setItem(CHECKOUT_MEMO, JSON.stringify(snapshot));
-  } catch {
-    // Without storage the return page falls back to "the plan is no longer Free".
-  }
-}
-
-function recallCheckout() {
-  try {
-    const snapshot = JSON.parse(sessionStorage.getItem(CHECKOUT_MEMO) ?? 'null');
-    sessionStorage.removeItem(CHECKOUT_MEMO);
-    if (snapshot) return snapshot;
-  } catch {
-    // Fall through to the default.
-  }
-  return { item: 'starter', plan: 'free', topup_remaining: 0 };
-}
+/** Without a stored snapshot (session storage is blocked) the return page assumes a first subscription, as before. */
+const UNKNOWN_CHECKOUT = { item: 'starter', plan: 'free', topup_remaining: 0 };
 
 /**
  * After Paddle sends the customer back (/dashboard?checkout=success): waits
@@ -36,7 +18,7 @@ function recallCheckout() {
  * happened either way.
  */
 export function checkoutReturnNotice(ctx) {
-  const before = recallCheckout();
+  const before = recallCheckout() ?? UNKNOWN_CHECKOUT;
   const notice = alertBox('info', 'Thanks! Paddle confirmed the checkout. Updating your account…');
   pollUntil(
     () => api.get('/api/me'),
@@ -68,6 +50,9 @@ function usageBlock(ctx) {
   const view = usageView(usage);
   const reset = formatDate(usage.period_end);
   const pdfLine = pdfUsageLine(usage, ctx.config);
+  const actions = billingActions(ctx.me.user, ctx.config);
+  // A top-up is named only where one is in play: its button is offered below, or the account holds a balance.
+  const topUpInPlay = usage.topup_remaining > 0 || actions.some((action) => action.type === 'checkout' && action.item === 'topup');
   const meter = h('progress', {
     class: `meter${view.level === 'ok' ? '' : ` meter-${view.level}`}`,
     max: usage.limit,
@@ -95,9 +80,11 @@ function usageBlock(ctx) {
     view.exhausted
       ? alertBox('danger', h('strong', {}, 'This period\'s images are used up. '), `New cards answer with an error until ${reset}. Cards that were already rendered keep working.`)
       : view.level === 'warn'
-        ? alertBox('warn', `You have used ${view.percent}% of this period's images. When they run out, new cards answer with an error until ${reset}.${billingActions(ctx.me.user, ctx.config).length > 0 ? (ctx.me.user.plan === 'free' ? ' Upgrade below to keep them coming.' : ' A top-up below adds more.') : ''}`)
+        ? alertBox('warn', `You have used ${view.percent}% of this period's images. When they run out, new cards answer with an error until ${reset}.${moreImagesHint(actions)}`)
         : null,
-    usage.watermark ? h('p', { class: 'hint' }, 'Cards made on the Free plan carry a small Link To Card mark in the corner. Paid plans remove it.') : null,
+    usage.watermark
+      ? h('p', { class: 'hint' }, `Cards made on the Free plan carry a small Link To Card mark in the corner. Paid plans remove it.${topUpInPlay ? ' A top-up adds images only: the mark stays.' : ''}`)
+      : null,
   );
 }
 
@@ -195,10 +182,12 @@ function billingBlock(ctx, { primary }) {
     return button(label, { variant, 'data-checkout': action.item, onclick: (event) => checkout(action.item, event.currentTarget) });
   });
 
+  const topUp = `A top-up is ${formatCount(config.topup.images)} extra images for $${config.topup.price_usd}, valid for ${config.topup.valid_days} days and used only after the monthly allowance. It is a one-time payment that you start yourself.`;
+  // On Free the top-up sits next to the upgrades, so the text says what it does not change.
   const explain =
     user.plan === 'free'
-      ? `${starter.name}: ${priceLine(starter)}. ${pro.name}: ${priceLine(pro)}. No watermark on either.`
-      : `A top-up is ${formatCount(config.topup.images)} extra images for $${config.topup.price_usd}, valid for ${config.topup.valid_days} days and used only after the monthly allowance. It is a one-time payment that you start yourself.`;
+      ? `${starter.name}: ${priceLine(starter)}. ${pro.name}: ${priceLine(pro)}. No watermark on either.${canBuyTopUp(config, user.plan) ? ` ${topUp} It does not change your plan: you stay on Free, and cards keep the corner mark.` : ''}`
+      : topUp;
 
   return h(
     'div',

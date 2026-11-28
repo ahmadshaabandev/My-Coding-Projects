@@ -635,7 +635,9 @@ describe('units and quota', () => {
     expect(response.status).toBe(402);
     const error = await errorOf(response);
     expect(error.code).toBe('quota_exceeded');
-    expect(error.message).toMatch(/^A PDF toolkit result counts as at least 1 image and is charged as one block, from the monthly allowance; not enough is left \(0 of the 100 images on the Free plan/);
+    // A Free account can hold a top-up since 2026-11-28, so the message names both places a block can come from, and offers one.
+    expect(error.message).toMatch(/^A PDF toolkit result counts as at least 1 image and is charged as one block, from the monthly allowance or from a single top-up; not enough is left \(0 of the 100 images on the Free plan/);
+    expect(error.message).toMatch(/Stored PDFs and images keep working; to make new ones now, upgrade or buy a top-up at https:\/\/linktocard\.test\/pricing\.$/);
     expect(error.details).toMatchObject({ units_needed: 1, usage: { remaining: 0 } });
     expect(seen).toEqual([]);
   });

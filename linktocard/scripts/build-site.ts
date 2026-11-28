@@ -385,6 +385,38 @@ function planTokens(plan: Plan): Record<string, string> {
   };
 }
 
+/** "Free", "Starter and Pro", "Free, Starter and Pro". */
+const nameList = (names: string[]): string => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+/**
+ * Who can buy the top-up and what it does not change, in words, from `topUps` and `watermark` of
+ * each plan (src/billing/plans.ts). The pages print these tokens instead of naming plans by hand,
+ * so the site follows a change of the plans:
+ *   topup.plans          "every plan, Free included" when every plan can buy one, otherwise the
+ *                        names of the plans that can ("Starter and Pro"). Reads after "On" and "on".
+ *   topup.keepsPlan      a top-up adds images and changes nothing else; names the plans whose
+ *                        output keeps its watermark (the Free plan).
+ *   topup.keepsPlanShort the same in one short sentence.
+ */
+function topUpTokens(): Record<string, string> {
+  const plans = PLAN_ORDER.map((id) => PLANS[id]);
+  const buyers = plans.filter((plan) => plan.topUps);
+  if (buyers.length === 0) throw new Error('src/billing/plans.ts: no plan can buy the top-up, but the site describes one');
+  const free = buyers.filter((plan) => plan.priceUsd === 0).map((plan) => plan.name);
+  const everyPlan = free.length > 0 ? `every plan, ${nameList(free)} included` : 'every plan';
+  const marked = nameList(buyers.filter((plan) => plan.watermark).map((plan) => plan.name));
+  const addsOnly = 'A top-up adds images and nothing else: it is not a subscription and it does not change your plan.';
+  return {
+    'topup.plans': buyers.length === plans.length ? everyPlan : nameList(buyers.map((plan) => plan.name)),
+    'topup.keepsPlan': marked
+      ? `${addsOnly} On ${marked}, what you make with top-up images still carries the watermark, and the other ${marked} limits still apply.`
+      : addsOnly,
+    'topup.keepsPlanShort': marked
+      ? `A top-up adds images only: it does not change your plan, and on ${marked} the watermark stays.`
+      : 'A top-up adds images only: it does not change your plan.',
+  };
+}
+
 /** A byte limit in KB or MB as the site prints it: "256", "1.5". */
 const inUnits = (bytes: number, unit: number): string => String(Math.round((bytes / unit) * 100) / 100);
 
@@ -492,6 +524,7 @@ function buildTokens(config: SiteConfig, now: Date): Record<string, string> {
     'topup.images': formatCount(TOPUP.images),
     'topup.validDays': String(TOPUP.validDays),
     'topup.paddleName': TOPUP.paddleProductName,
+    ...topUpTokens(),
     'limit.maxHtmlKb': String(LIMITS.maxHtmlBytes / KB),
     'limit.maxCssKb': String(LIMITS.maxCssBytes / KB),
     'limit.maxNodes': formatCount(LIMITS.maxNodes),
@@ -632,8 +665,32 @@ const fontAllowance = (plan: Plan): string =>
     ? 'Bundled fonts only'
     : `${plural(plan.fonts.maxFiles, 'custom font file')}, up to ${plan.fonts.maxBytesPerFile / MB} MB each`;
 
+/**
+ * Checkout is a switch of the Worker (CHECKOUT_ENABLED), not of this build, so a page cannot know
+ * at build time whether anything can be bought. An element with this attribute ships hidden and
+ * site/public/assets/js/site.js shows it while GET /api/config reports no Paddle configuration.
+ * It marks the sentences that say a top-up can be bought: any account can buy one, the Free plan
+ * included, and Free accounts exist while checkout is still closed.
+ */
+export const CLOSED_NOTE_ATTR = 'data-checkout-closed';
+
+/** [[> topup-closed-note]]: put after a sentence that says a top-up can be bought. */
+export const TOPUP_CLOSED_NOTE = `<span ${CLOSED_NOTE_ATTR} hidden>Top-ups are not on sale yet.</span>`;
+
 const topUpAllowance = (plan: Plan): string =>
   plan.topUps ? `${formatUsd(TOPUP.priceUsd)} per ${formatCount(TOPUP.images)} images` : 'Not available';
+
+/**
+ * The top-up line of a plan card. On a plan whose images carry the watermark it says that a
+ * top-up does not take it away. The line ends with a note that only shows while checkout is
+ * closed (CLOSED_NOTE_ATTR), so the card of a plan that is open now does not promise a purchase
+ * that cannot be made yet.
+ */
+function topUpCardLine(plan: Plan): string {
+  if (!plan.topUps) return escapeHtml('No top-ups: a hard stop at the limit');
+  const line = `Top-ups: ${topUpAllowance(plan)}${plan.watermark ? '; the watermark stays' : ''}`;
+  return `${escapeHtml(line)}<span ${CLOSED_NOTE_ATTR} hidden> (coming soon)</span>`;
+}
 
 /** What a plan's PDFs look like: the Free plan prints the mark in every page's footer (src/pdf/service.ts planMark). */
 const pdfMarkLine = (plan: Plan): string => (plan.watermark ? `PDFs carry a “${PDF.freeMark}” footer line` : 'PDFs without a footer mark');
@@ -641,14 +698,15 @@ const pdfMarkLine = (plan: Plan): string => (plan.watermark ? `PDFs carry a “$
 /** "Start free" is the one primary action on the site, so the paid plans get the quieter button. */
 function planCard(plan: Plan, site: SiteFeatures): string {
   const paid = plan.paddleProductName !== null;
+  // Each entry is HTML: plain text is escaped here, the top-up line brings its own note.
   const features = [
     `Rendered images cached for ${plan.cacheDays} days`,
     plan.watermark ? 'Small watermark in one corner' : 'No watermark',
     ...(site.pdf ? [pdfMarkLine(plan)] : []),
     fontAllowance(plan),
-    plan.topUps ? `Top-ups: ${topUpAllowance(plan)}` : 'No top-ups: a hard stop at the limit',
-    plan.support,
-  ];
+  ]
+    .map(escapeHtml)
+    .concat(topUpCardLine(plan), escapeHtml(plan.support));
   const action = paid
     ? `<a class="btn btn-secondary btn-block" href="/pricing?checkout=${plan.id}" data-checkout="${plan.id}">Choose ${escapeHtml(plan.name)}</a>`
     : '<a class="btn btn-primary btn-block" href="/login">Start free</a>';
@@ -660,7 +718,7 @@ function planCard(plan: Plan, site: SiteFeatures): string {
 <p class="plan-price"><span class="plan-amount">${formatUsd(plan.priceUsd)}</span> <span class="plan-period">per month</span></p>
 <p class="plan-quota"><strong>${formatCount(plan.monthlyImages)}</strong> images per month</p>
 <ul class="plan-features">
-${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('\n')}
+${features.map((feature) => `<li>${feature}</li>`).join('\n')}
 </ul>
 ${action}
 <p class="plan-billing">${smallPrint}</p>
@@ -909,6 +967,7 @@ function walk(dir: string): string[] {
 
 function loadPartials(paths: Paths, features: SiteFeatures): Record<string, string> {
   const partials: Record<string, string> = {
+    'topup-closed-note': TOPUP_CLOSED_NOTE,
     'pricing-table': pricingTable(features),
     'limits-table': limitsTable(features),
     'rate-limits-table': rateLimitsTable(features),

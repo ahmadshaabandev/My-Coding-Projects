@@ -2,7 +2,7 @@
 // buttons open Paddle's overlay checkout. While the deployment has no Paddle
 // configuration (live payments not approved yet), they say "Coming soon" instead.
 import { errorMessage } from './api.js';
-import { checkoutAction, openCheckout, readyPaddle } from './checkout.js';
+import { checkoutAction, checkoutSnapshot, openCheckout, readyPaddle, rememberCheckout } from './checkout.js';
 
 export { checkoutAction };
 
@@ -45,6 +45,9 @@ function init() {
       const action = checkoutAction({ item, user: me?.user ?? null, config, origin: location.origin });
       if (action.type === 'redirect') return location.assign(action.url);
       if (action.type === 'message') return show(action.message);
+      // The dashboard, where Paddle sends the customer back, waits for what this checkout buys:
+      // a new plan, or more top-up images on an account that stays on its plan.
+      rememberCheckout(checkoutSnapshot(item, me));
       await openCheckout(action);
     } catch (failure) {
       show(failure.message || 'Checkout could not be started.');

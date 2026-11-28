@@ -1,5 +1,9 @@
 // Pure helpers for the dashboard: no DOM and no fetch, so every rule here is
 // covered by tests/node/dashboard.test.ts.
+import { canBuyTopUp, checkoutSnapshot } from '../checkout.js';
+
+// The pricing page takes the same snapshot before its own checkouts (checkout.js).
+export { checkoutSnapshot };
 
 export const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -346,22 +350,33 @@ const CHANGEABLE = ['active', 'trialing', 'past_due'];
 /**
  * The billing buttons an account gets, in display order. Empty when Paddle is
  * not configured: the dashboard then says so instead of showing dead buttons.
+ * The top-up button follows `top_ups` of the account's plan in /api/config
+ * (src/billing/plans.ts): a Free account gets it after the two upgrades.
  */
 export function billingActions(user, config) {
   if (!config?.paddle) return [];
   const portal = user.has_billing ? [{ type: 'portal' }] : [];
+  const topUp = canBuyTopUp(config, user.plan) ? [{ type: 'checkout', item: 'topup' }] : [];
   if (user.plan === 'free') {
-    return [{ type: 'checkout', item: 'starter' }, { type: 'checkout', item: 'pro' }, ...portal];
+    return [{ type: 'checkout', item: 'starter' }, { type: 'checkout', item: 'pro' }, ...topUp, ...portal];
   }
   const change = CHANGEABLE.includes(user.subscription?.status)
     ? [{ type: 'change-plan', plan: user.plan === 'starter' ? 'pro' : 'starter' }]
     : [];
-  return [{ type: 'checkout', item: 'topup' }, ...change, ...portal];
+  return [...topUp, ...change, ...portal];
 }
 
-/** What to remember before a checkout opens, so the return page knows what "done" looks like. */
-export function checkoutSnapshot(item, me) {
-  return { item, plan: me.user.plan, topup_remaining: me.usage.topup_remaining };
+/**
+ * What the "nearly used up" warning adds about getting more images, from the buttons the
+ * account has below it. Empty when there is nothing to buy (checkout closed).
+ */
+export function moreImagesHint(actions) {
+  const upgrade = actions.some((action) => action.type === 'checkout' && action.item !== 'topup');
+  const topUp = actions.some((action) => action.type === 'checkout' && action.item === 'topup');
+  if (upgrade && topUp) return ' Upgrade or buy a top-up below to keep them coming.';
+  if (upgrade) return ' Upgrade below to keep them coming.';
+  if (topUp) return ' A top-up below adds more.';
+  return '';
 }
 
 /** True once /api/me shows what the checkout bought: another plan, or more top-up images. */

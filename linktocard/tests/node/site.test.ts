@@ -739,13 +739,33 @@ describe('browser scripts (pure parts)', () => {
     });
   });
 
-  it('never opens a second subscription, limits top-ups to paid plans and survives missing Paddle config', async () => {
+  it('never opens a second subscription, sells the top-up to the plans plans.ts allows and survives missing Paddle config', async () => {
     const { checkoutAction } = await load<Pricing>('pricing.js');
     const free = { id: 'u_1', email: 'a@example.com', plan: 'free' };
     const paid = { ...free, plan: 'starter' };
-    expect(checkoutAction({ item: 'pro', user: paid, config, origin })).toEqual({ type: 'redirect', url: '/dashboard#billing' });
-    expect(checkoutAction({ item: 'topup', user: paid, config, origin }).type).toBe('checkout');
-    expect(checkoutAction({ item: 'topup', user: free, config, origin }).message).toMatch(/Starter and Pro/);
+    // /api/config lists each plan with `top_ups` from src/billing/plans.ts; the page follows it.
+    const plans = PLAN_ORDER.map((id) => ({ id, name: PLANS[id].name, top_ups: PLANS[id].topUps }));
+    const sells = { ...config, plans };
+    expect(checkoutAction({ item: 'pro', user: paid, config: sells, origin })).toEqual({ type: 'redirect', url: '/dashboard#billing' });
+    expect(checkoutAction({ item: 'topup', user: paid, config: sells, origin }).type).toBe('checkout');
+    // Owner decision of 2026-11-28: a Free account buys the same top-up, with the same price id.
+    expect(PLANS.free.topUps).toBe(true);
+    expect(checkoutAction({ item: 'topup', user: free, config: sells, origin })).toEqual({
+      type: 'checkout',
+      environment: 'sandbox',
+      token: 'test_token',
+      options: {
+        items: [{ priceId: 'pri_t', quantity: 1 }],
+        customer: { email: 'a@example.com' },
+        customData: { user_id: 'u_1' },
+        settings: { displayMode: 'overlay', successUrl: 'https://linktocard.com/dashboard?checkout=success' },
+      },
+    });
+    // The rule is the plan's flag, not the plan's name: a plan without top-ups is told which plans have them.
+    const paidOnly = { ...config, plans: plans.map((plan) => ({ ...plan, top_ups: plan.id !== 'free' })) };
+    expect(checkoutAction({ item: 'topup', user: free, config: paidOnly, origin })).toEqual({ type: 'message', message: 'Top-ups are available on the Starter and Pro plans.' });
+    expect(checkoutAction({ item: 'topup', user: paid, config: paidOnly, origin }).type).toBe('checkout');
+    expect(checkoutAction({ item: 'topup', user: free, config, origin })).toEqual({ type: 'message', message: 'Top-ups are not available.' });
     expect(checkoutAction({ item: 'starter', user: free, config: { paddle: null }, origin })).toEqual({
       type: 'message',
       message: 'Checkout is not configured yet.',

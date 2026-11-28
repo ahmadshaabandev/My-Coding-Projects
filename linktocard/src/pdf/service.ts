@@ -30,7 +30,8 @@
  * PDF_PENDING_STALE_MS and its place counts as a failure (src/pdf/guard.ts). The free tools run
  * steps 6-9 only: never stored, never counted against an account.
  */
-import { PLAN_ORDER, formatCount, getPlan } from '../billing/plans';
+import { quotaRemedy, topUpOnSale } from '../billing/offers';
+import { formatCount, getPlan } from '../billing/plans';
 import { DAY_MS, PDF, pdfUnits } from '../config';
 import { first, isMissingColumnError, run } from '../db/client';
 import { randomId, sha256Hex } from '../lib/crypto';
@@ -430,18 +431,19 @@ export function storedPdfHeaders(pdf: StoredPdf, cache: 'hit' | 'miss', now: num
 /* Quota                                                               */
 /* ------------------------------------------------------------------ */
 
-/** 402 for a PDF: what it counts as, why it does not fit, when the allowance comes back. Same JSON as images. */
-export function pdfQuotaError(env: Pick<Env, 'APP_URL'>, usage: UsageSummary, units: number, atLeast: boolean): ApiError {
+/**
+ * 402 for a PDF: what it counts as, why it does not fit, when the allowance comes back. Same JSON as
+ * images. A top-up is named as a remedy only while one can be bought here (src/billing/offers.ts).
+ */
+export function pdfQuotaError(env: Env, usage: UsageSummary, units: number, atLeast: boolean): ApiError {
   const plan = getPlan(usage.plan);
-  const canUpgrade = PLAN_ORDER.indexOf(plan.id) < PLAN_ORDER.length - 1;
-  const remedy = [canUpgrade ? 'upgrade' : null, plan.topUps ? 'buy a top-up' : null].filter((part) => part !== null).join(' or ');
-  const pricing = `${env.APP_URL.replace(/\/+$/, '')}/pricing`;
+  const remedy = quotaRemedy(env, plan);
   const from = plan.topUps ? 'the monthly allowance or from a single top-up' : 'the monthly allowance';
   return new ApiError(
     'quota_exceeded',
     `${atLeast ? 'A PDF counts as at least' : 'This PDF counts as'} ${units} images and is charged as one block, from ${from}; not enough is left ` +
       `(${formatCount(usage.remaining)} of the ${formatCount(usage.limit)} images on the ${plan.name} plan this period). ` +
-      `The allowance resets on ${iso(usage.period_end)}. Stored PDFs and images keep working; to render new ones now, ${remedy} at ${pricing}.`,
+      `The allowance resets on ${iso(usage.period_end)}. Stored PDFs and images keep working${remedy ? `; to render new ones now, ${remedy}` : ''}.`,
     { details: { usage: usageJson(usage), units_needed: units } },
   );
 }
@@ -449,7 +451,7 @@ export function pdfQuotaError(env: Pick<Env, 'APP_URL'>, usage: UsageSummary, un
 function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: UsageSummary): Promise<void> {
   return sendEmail(env, {
     to: user.email,
-    ...quotaWarningEmail({ percent, usage, appUrl: env.APP_URL }),
+    ...quotaWarningEmail({ percent, usage, appUrl: env.APP_URL, topUpOnSale: topUpOnSale(env, getPlan(usage.plan)) }),
     // The same key as images (src/lib/images.ts): one notice per account, threshold and period.
     idempotencyKey: `quota-${percent}-${user.id}-${usage.period_start}-${usage.limit}`,
   }).then((result) => {

@@ -12,13 +12,14 @@ scripts: pricing
 <h1>Sized by rendered images.</h1>
 <p>Three plans, each a fixed monthly price for a set number of images, and one optional top-up that you buy by hand. There is no metered billing and no overage. Prices are in USD and exclude tax; Paddle, our reseller and Merchant of Record, adds any applicable sales tax or VAT at checkout.</p>
 </div>
-<p class="alert alert-info" id="coming-soon" role="note" hidden>Paid plans are coming soon. The [[plan.free.name]] plan is open now: [[plan.free.images]] images a month, no card required.</p>
+<p class="alert alert-info" id="coming-soon" role="note" hidden>Paid plans and top-ups are coming soon. The [[plan.free.name]] plan is open now: [[plan.free.images]] images a month, no card required.</p>
 <p class="alert alert-warn" id="checkout-notice" role="alert" hidden></p>
 [[> pricing-table]]
 <div class="topup" id="top-up">
 <div>
 <h3>[[topup.price]] top-up: [[topup.images]] extra images</h3>
-<p>For [[plan.starter.name]] and [[plan.pro.name]] accounts. Top-up images are used only after the month's allowance is used up and stay valid for [[topup.validDays]] days from purchase. A top-up is a one-time payment that you start yourself. It is never bought or billed automatically.</p>
+<p>For accounts on [[topup.plans]]. Top-up images are used only after the month's allowance is used up and stay valid for [[topup.validDays]] days from purchase. A top-up is a one-time payment that you start yourself. It is never bought or billed automatically.</p>
+<p>[[topup.keepsPlan]]</p>
 <p class="plan-billing">Billed by Paddle as &ldquo;[[topup.paddleName]]&rdquo;.</p>
 </div>
 <a class="btn btn-secondary" href="/pricing?checkout=topup" data-checkout="topup">Buy a top-up</a>

@@ -32,7 +32,13 @@ export interface Plan {
   fonts: { maxFiles: number; maxBytesPerFile: number };
   /** Support promise, printed verbatim. */
   support: string;
-  /** Whether the manual 1,000-image top-up can be bought on this plan. */
+  /**
+   * Whether the manual top-up (TOPUP) can be bought on this plan. Every plan can since the owner's
+   * decision of 2026-11-28 ("$8 top-up without a subscription: yes, allow it"). A top-up adds images
+   * and nothing else: the account stays on its plan, so on Free the corner mark, the cache days and
+   * the per-plan limits stay as they are. The site, the 402 messages and the quota emails read this
+   * flag; none of them names the plans by hand.
+   */
   topUps: boolean;
   /** Env var that holds this plan's Paddle price id (pri_...). */
   paddlePriceEnv: 'PADDLE_PRICE_STARTER' | 'PADDLE_PRICE_PRO' | null;
@@ -51,7 +57,7 @@ export const PLANS: Record<PlanId, Plan> = {
     watermark: true,
     fonts: { maxFiles: 0, maxBytesPerFile: 0 },
     support: 'Docs and best-effort email',
-    topUps: false,
+    topUps: true,
     paddlePriceEnv: null,
   },
   starter: {
@@ -86,7 +92,8 @@ export const PLAN_ORDER: PlanId[] = ['free', 'starter', 'pro'];
 
 /**
  * Manual, one-time top-up. Never auto-billed: it is only ever bought by the
- * customer clicking "Buy top-up" and completing a Paddle checkout.
+ * customer clicking "Buy top-up" and completing a Paddle checkout. It needs no
+ * subscription: any plan with `topUps` can buy it, the Free plan included.
  */
 export const TOPUP = {
   name: 'Top-up',

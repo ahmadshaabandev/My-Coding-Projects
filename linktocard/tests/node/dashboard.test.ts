@@ -44,7 +44,8 @@ interface Helpers {
   renderSummary(render: Render, names?: Record<string, string>): Record<'template' | 'via' | 'size' | 'format' | 'bytes' | 'counted', string>;
   usageView(usage: Usage): { percent: number; level: string; exhausted: boolean };
   pdfUsageLine(usage: Usage & { pdf?: unknown }, config: { pdf_enabled?: boolean } | null): string | null;
-  billingActions(user: User, config: { paddle: unknown } | null): BillingAction[];
+  billingActions(user: User, config: { paddle: unknown; plans?: Array<{ id: string; top_ups: boolean }> } | null): BillingAction[];
+  moreImagesHint(actions: BillingAction[]): string;
   checkoutSnapshot(item: string, me: Me): Snapshot;
   checkoutSettled(before: Snapshot, me: Me): boolean;
   pollUntil<T>(
@@ -258,21 +259,40 @@ describe('usage and billing', () => {
     expect(billing).toContain("pdfLine ? h('p', { class: 'usage-pdf' }, pdfLine) : null,");
   });
 
-  const configured = { paddle: { environment: 'sandbox', client_token: 'test_token', prices: { starter: 'pri_s', pro: 'pri_p', topup: 'pri_t' } } };
+  // /api/config lists each plan with `top_ups` from src/billing/plans.ts; the buttons follow it.
+  const plans = (['free', 'starter', 'pro'] as const).map((id) => ({ id, top_ups: PLANS[id].topUps }));
+  const configured = { paddle: { environment: 'sandbox', client_token: 'test_token', prices: { starter: 'pri_s', pro: 'pri_p', topup: 'pri_t' } }, plans };
   const free: User = { id: 'u_1', email: 'a@example.com', plan: 'free', has_billing: false, subscription: null };
   const starter: User = { ...free, plan: 'starter', has_billing: true, subscription: { status: 'active' } };
 
   it('offers no billing buttons at all when Paddle is not configured', () => {
-    expect(helpers.billingActions(free, { paddle: null })).toEqual([]);
+    // Production while checkout is closed: no "Buy top-up" for anyone, whatever plans.ts allows.
+    expect(helpers.billingActions(free, { paddle: null, plans })).toEqual([]);
+    expect(helpers.billingActions(starter, { paddle: null, plans })).toEqual([]);
     expect(helpers.billingActions(starter, null)).toEqual([]);
   });
 
-  it('offers a Free account the two upgrades, and the portal only if it ever paid', () => {
+  it('offers a Free account the two upgrades and the top-up, and the portal only if it ever paid', () => {
+    // Owner decision of 2026-11-28: the top-up needs no subscription.
+    expect(PLANS.free.topUps).toBe(true);
     expect(helpers.billingActions(free, configured)).toEqual([
       { type: 'checkout', item: 'starter' },
       { type: 'checkout', item: 'pro' },
+      { type: 'checkout', item: 'topup' },
     ]);
+    // A Free account that bought a top-up has a Paddle customer, so it can open the portal for its receipts.
     expect(helpers.billingActions({ ...free, has_billing: true }, configured).at(-1)).toEqual({ type: 'portal' });
+  });
+
+  it('takes the top-up button from the plan flag, not from the plan name', () => {
+    const paidOnly = { ...configured, plans: plans.map((plan) => ({ ...plan, top_ups: plan.id !== 'free' })) };
+    expect(helpers.billingActions(free, paidOnly)).toEqual([
+      { type: 'checkout', item: 'starter' },
+      { type: 'checkout', item: 'pro' },
+    ]);
+    expect(helpers.billingActions(starter, paidOnly)[0]).toEqual({ type: 'checkout', item: 'topup' });
+    const none = { ...configured, plans: plans.map((plan) => ({ ...plan, top_ups: false })) };
+    expect(helpers.billingActions(starter, none)).toEqual([{ type: 'change-plan', plan: 'pro' }, { type: 'portal' }]);
   });
 
   it('offers a paid account a top-up, the other plan and the portal', () => {
@@ -287,6 +307,27 @@ describe('usage and billing', () => {
     }
   });
 
+  it('ends the "nearly used up" warning with what the buttons below it sell', () => {
+    expect(helpers.moreImagesHint(helpers.billingActions(free, configured))).toBe(' Upgrade or buy a top-up below to keep them coming.');
+    expect(helpers.moreImagesHint(helpers.billingActions(starter, configured))).toBe(' A top-up below adds more.');
+    expect(helpers.moreImagesHint([{ type: 'checkout', item: 'starter' }, { type: 'checkout', item: 'pro' }])).toBe(' Upgrade below to keep them coming.');
+    // Checkout closed: nothing to buy, so nothing is promised.
+    expect(helpers.moreImagesHint(helpers.billingActions(free, { paddle: null, plans }))).toBe('');
+    expect(helpers.moreImagesHint([{ type: 'portal' }])).toBe('');
+  });
+
+  it('says on the plan card what a top-up does not change, and only where a top-up is in play', () => {
+    const billing = readFileSync(join(ROOT, 'site/public/assets/js/dashboard/billing.js'), 'utf8');
+    // The Free account's hint under the buttons: the upgrades, then the top-up and that the plan and the mark stay.
+    expect(billing).toContain('It does not change your plan: you stay on Free, and cards keep the corner mark.');
+    expect(billing).toContain("${canBuyTopUp(config, user.plan) ? ` ${topUp} It does not change your plan");
+    // The mark line names a top-up only when its button is offered or the account holds a balance.
+    expect(billing).toContain("const topUpInPlay = usage.topup_remaining > 0 || actions.some((action) => action.type === 'checkout' && action.item === 'topup');");
+    expect(billing).toContain("Paid plans remove it.${topUpInPlay ? ' A top-up adds images only: the mark stays.' : ''}");
+    // Checkout closed: the old notice, which already covers top-ups.
+    expect(billing).toContain('Paid plans and top-ups are coming soon, so there is nothing to buy here yet.');
+  });
+
   it('knows when a checkout has reached the account', () => {
     const before = helpers.checkoutSnapshot('pro', { user: { plan: 'free' }, usage: { topup_remaining: 0 } });
     expect(before).toEqual({ item: 'pro', plan: 'free', topup_remaining: 0 });
@@ -296,6 +337,12 @@ describe('usage and billing', () => {
     const topup = helpers.checkoutSnapshot('topup', { user: { plan: 'starter' }, usage: { topup_remaining: 250 } });
     expect(helpers.checkoutSettled(topup, { user: { plan: 'starter' }, usage: { topup_remaining: 250 } })).toBe(false);
     expect(helpers.checkoutSettled(topup, { user: { plan: 'starter' }, usage: { topup_remaining: 250 + TOPUP.images } })).toBe(true);
+
+    // A Free account's top-up: the plan never changes, so "done" is the images arriving.
+    const freeTopUp = helpers.checkoutSnapshot('topup', { user: { plan: 'free' }, usage: { topup_remaining: 0 } });
+    expect(freeTopUp).toEqual({ item: 'topup', plan: 'free', topup_remaining: 0 });
+    expect(helpers.checkoutSettled(freeTopUp, { user: { plan: 'free' }, usage: { topup_remaining: 0 } })).toBe(false);
+    expect(helpers.checkoutSettled(freeTopUp, { user: { plan: 'free' }, usage: { topup_remaining: TOPUP.images } })).toBe(true);
   });
 
   it('polls until done, waits between attempts and gives up after about 30 seconds', async () => {
@@ -361,7 +408,11 @@ describe('copyable examples', () => {
 describe('shared checkout helper', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  const config = { paddle: { environment: 'sandbox', client_token: 'test_token', prices: { starter: 'pri_s', pro: 'pri_p', topup: 'pri_t' } } };
+  // As GET /api/config answers: the Paddle values, and each plan with `top_ups` from src/billing/plans.ts.
+  const config = {
+    paddle: { environment: 'sandbox', client_token: 'test_token', prices: { starter: 'pri_s', pro: 'pri_p', topup: 'pri_t' } },
+    plans: (['free', 'starter', 'pro'] as const).map((id) => ({ id, name: PLANS[id].name, top_ups: PLANS[id].topUps })),
+  };
   const origin = 'https://linktocard.com';
 
   it('is the same function on the pricing page and in the dashboard', async () => {
@@ -381,6 +432,9 @@ describe('shared checkout helper', () => {
     });
     const topup = checkoutAction({ item: 'topup', user: { id: 'u_7', email: 'me@example.com', plan: 'pro' }, config, origin });
     expect(topup.options).toMatchObject({ items: [{ priceId: 'pri_t', quantity: 1 }], customData: { user_id: 'u_7' } });
+    // The same checkout for an account without a subscription (owner decision of 2026-11-28).
+    const freeTopup = checkoutAction({ item: 'topup', user: { id: 'u_8', email: 'free@example.com', plan: 'free' }, config, origin });
+    expect(freeTopup.options).toMatchObject({ items: [{ priceId: 'pri_t', quantity: 1 }], customer: { email: 'free@example.com' }, customData: { user_id: 'u_8' } });
   });
 
   it('initializes Paddle once, in the sandbox when configured so, and opens every checkout', async () => {

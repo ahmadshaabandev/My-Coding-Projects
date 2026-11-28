@@ -178,7 +178,7 @@ const url = `[[site.url]]${path}?${query}`;</code></pre></div>
 <p>Each plan is a fixed monthly price for a set number of rendered images. There is no metered billing and no overage. Prices are in USD and exclude tax. Paddle, our reseller and Merchant of Record, adds any applicable sales tax or VAT at checkout.</p>
 </div>
 [[> pricing-table]]
-<p class="section-foot">Busy month? On [[plan.starter.name]] and [[plan.pro.name]], a [[topup.price]] top-up adds [[topup.images]] images. You buy it yourself; nothing is ever billed automatically. <a href="/pricing">Full pricing, top-ups and limits</a></p>
+<p class="section-foot">Busy month? On [[topup.plans]], a [[topup.price]] top-up adds [[topup.images]] images. You buy it yourself; nothing is ever billed automatically. [[topup.keepsPlanShort]] [[> topup-closed-note]] <a href="/pricing">Full pricing, top-ups and limits</a></p>
 </div>
 </section>
 
@@ -225,7 +225,7 @@ const url = `[[site.url]]${path}?${query}`;</code></pre></div>
 <summary>What happens when I reach my limit?</summary>
 <div>
 <p>New renders stop and the API answers HTTP 402 until your next billing period. Images that are already rendered and still cached keep being served.</p>
-<p>On [[plan.free.name]] that is a hard stop. On [[plan.starter.name]] and [[plan.pro.name]] you can buy a top-up of [[topup.images]] images for [[topup.price]], or change plan. Nothing is ever charged automatically beyond your subscription.</p>
+<p>On [[topup.plans]], you can buy a top-up of [[topup.images]] images for [[topup.price]], or change plan. [[topup.keepsPlanShort]] Nothing is ever charged automatically beyond your subscription. [[> topup-closed-note]]</p>
 </div>
 </details>
 <details class="faq-item">

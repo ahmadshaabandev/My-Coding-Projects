@@ -41,7 +41,8 @@
  */
 import { Hono, type MiddlewareHandler } from 'hono';
 import { requireApiKey } from '../auth/middleware';
-import { PLAN_ORDER, formatCount, getPlan } from '../billing/plans';
+import { quotaRemedy, topUpOnSale } from '../billing/offers';
+import { formatCount, getPlan } from '../billing/plans';
 import { DAY_MS, LIMITS, PDF, PDF_TOOLKIT, pdfToolkitUnits, type PdfToolkitOp } from '../config';
 import { toHex } from '../lib/crypto';
 import { quotaWarningEmail, sendEmail } from '../lib/email';
@@ -493,18 +494,19 @@ async function loadInputs(env: Env, user: UserRow, request: ToolkitRequest, now:
 
 const images = (n: number): string => `${formatCount(n)} image${n === 1 ? '' : 's'}`;
 
-/** 402 for a toolkit result: what it counts as, why it does not fit, when the allowance comes back. Same details as PDFs. */
-function toolkitQuotaError(env: Pick<Env, 'APP_URL'>, usage: UsageSummary, units: number, atLeast: boolean): ApiError {
+/**
+ * 402 for a toolkit result: what it counts as, why it does not fit, when the allowance comes back.
+ * Same details as PDFs. A top-up is named as a remedy only while one can be bought here (src/billing/offers.ts).
+ */
+function toolkitQuotaError(env: Env, usage: UsageSummary, units: number, atLeast: boolean): ApiError {
   const plan = getPlan(usage.plan);
-  const canUpgrade = PLAN_ORDER.indexOf(plan.id) < PLAN_ORDER.length - 1;
-  const remedy = [canUpgrade ? 'upgrade' : null, plan.topUps ? 'buy a top-up' : null].filter((part) => part !== null).join(' or ');
-  const pricing = `${env.APP_URL.replace(/\/+$/, '')}/pricing`;
+  const remedy = quotaRemedy(env, plan);
   const from = plan.topUps ? 'the monthly allowance or from a single top-up' : 'the monthly allowance';
   return new ApiError(
     'quota_exceeded',
     `${atLeast ? `A PDF toolkit result counts as at least ${images(units)}` : `This result counts as ${images(units)}`} and is charged as one block, from ${from}; not enough is left ` +
       `(${formatCount(usage.remaining)} of the ${formatCount(usage.limit)} images on the ${plan.name} plan this period). ` +
-      `The allowance resets on ${iso(usage.period_end)}. Stored PDFs and images keep working; to make new ones now, ${remedy} at ${pricing}.`,
+      `The allowance resets on ${iso(usage.period_end)}. Stored PDFs and images keep working${remedy ? `; to make new ones now, ${remedy}` : ''}.`,
     { details: { usage: usageJson(usage), units_needed: units } },
   );
 }
@@ -512,7 +514,7 @@ function toolkitQuotaError(env: Pick<Env, 'APP_URL'>, usage: UsageSummary, units
 function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: UsageSummary): Promise<void> {
   return sendEmail(env, {
     to: user.email,
-    ...quotaWarningEmail({ percent, usage, appUrl: env.APP_URL }),
+    ...quotaWarningEmail({ percent, usage, appUrl: env.APP_URL, topUpOnSale: topUpOnSale(env, getPlan(usage.plan)) }),
     // The key images and PDFs use (src/lib/images.ts, src/pdf/service.ts): one notice per account, threshold and period.
     idempotencyKey: `quota-${percent}-${user.id}-${usage.period_start}-${usage.limit}`,
   }).then((result) => {

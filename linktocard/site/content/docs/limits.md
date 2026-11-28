@@ -69,6 +69,8 @@ When the monthly allowance and any top-ups are used up, new renders stop. There 
 }
 ```
 
+The message ends with what you can do at that moment: upgrade, buy a top-up, or both. It names a top-up only while top-ups are on sale.
+
 Your page itself is not affected. A link that is shared while its card answers 402 gets no picture.
 
 You are warned before this happens: an email goes to the account address when 90% of the monthly allowance is used, and another at 100%. [`GET /v1/usage`](/docs/api#get-v1-usage) and the dashboard show the current numbers at any time.
@@ -77,12 +79,12 @@ The allowance starts again at `period_end`: the first day of the next calendar m
 
 ## Top-ups
 
-On [[plan.starter.name]] and [[plan.pro.name]] you can buy a top-up of [[topup.images]] images for [[topup.price]] in the dashboard.
+On [[topup.plans]], you can buy a top-up of [[topup.images]] images for [[topup.price]] in the dashboard. [[> topup-closed-note]]
 
 - A top-up is a one-time purchase that you make yourself. Nothing is ever bought or charged automatically when you reach the limit.
 - Top-up images are used only after the monthly allowance of the period is used up.
 - They are valid for [[topup.validDays]] days from the purchase and do carry over from month to month within that time.
-- Top-ups are not available on [[plan.free.name]]. There the limit is a hard stop until the next month, or until you upgrade.
+- [[topup.keepsPlan]]
 
 <!-- feature:pdf -->
 ## PDF documents

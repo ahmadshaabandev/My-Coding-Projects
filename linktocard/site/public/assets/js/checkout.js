@@ -8,7 +8,7 @@ const PADDLE_JS = 'https://cdn.paddle.com/paddle/v2/paddle.js';
  * Decides what a click on a checkout button does. Pure, so the rules are testable:
  *   signed out                      -> sign in first, then come back and open the checkout
  *   already on a paid plan          -> change plan in the dashboard (never a second subscription)
- *   top-up without a paid plan      -> explain
+ *   top-up on a plan without them   -> explain (plans.ts decides; today every plan can buy one)
  *   Paddle not configured           -> explain
  *   otherwise                       -> open the overlay checkout
  */
@@ -16,7 +16,7 @@ export function checkoutAction({ item, user, config, origin }) {
   if (!user) return { type: 'redirect', url: `/login?next=/pricing${encodeURIComponent(`?checkout=${item}`)}` };
   const paid = Boolean(user.plan) && user.plan !== 'free';
   if (item !== 'topup' && paid) return { type: 'redirect', url: '/dashboard#billing' };
-  if (item === 'topup' && !paid) return { type: 'message', message: `Top-ups are available on the ${topUpPlanNames(config)} plans.` };
+  if (item === 'topup' && !canBuyTopUp(config, user.plan)) return { type: 'message', message: topUpPlansMessage(config) };
   const paddle = config?.paddle;
   const priceId = paddle?.prices?.[item];
   if (!paddle?.client_token || !priceId) return { type: 'message', message: 'Checkout is not configured yet.' };
@@ -33,10 +33,60 @@ export function checkoutAction({ item, user, config, origin }) {
   };
 }
 
-/** Names of the plans that can buy a top-up, from /api/config (which reads src/billing/plans.ts). */
-function topUpPlanNames(config) {
+/**
+ * Whether an account on this plan can buy a top-up: `top_ups` of its plan in /api/config, which
+ * reads src/billing/plans.ts. An account without a plan name counts as Free. A plan the config
+ * does not list cannot.
+ */
+export function canBuyTopUp(config, planId) {
+  const id = planId || 'free';
+  return (config?.plans ?? []).some((plan) => plan.id === id && plan.top_ups === true);
+}
+
+/** Says which plans can buy a top-up, by the names in /api/config. */
+function topUpPlansMessage(config) {
   const names = (config?.plans ?? []).filter((plan) => plan.top_ups).map((plan) => plan.name);
-  return names.length > 0 ? names.join(' and ') : 'Starter and Pro';
+  if (names.length === 0) return 'Top-ups are not available.';
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Top-ups are available on the ${list} plan${names.length === 1 ? '' : 's'}.`;
+}
+
+/* ------------------------------------------------------------------ */
+/* What a checkout was for, kept for the page Paddle sends the customer back to */
+/* ------------------------------------------------------------------ */
+
+const CHECKOUT_MEMO = 'ltc:checkout';
+
+/** What to remember before a checkout opens, so the return page knows what "done" looks like. */
+export function checkoutSnapshot(item, me) {
+  return { item, plan: me.user.plan, topup_remaining: me.usage.topup_remaining };
+}
+
+/**
+ * Stores the snapshot for /dashboard?checkout=success. The pricing page and the dashboard both
+ * call it: without it the return page would wait for a plan change after a top-up, which never
+ * comes for an account that stays on its plan. `storage` is for tests; the browser's
+ * sessionStorage is read inside the try, because touching it can throw where storage is blocked.
+ */
+export function rememberCheckout(snapshot, storage) {
+  try {
+    (storage ?? sessionStorage).setItem(CHECKOUT_MEMO, JSON.stringify(snapshot));
+  } catch {
+    // Without storage the return page falls back to its default (dashboard/billing.js).
+  }
+}
+
+/** The stored snapshot, read once, or null when there is none. */
+export function recallCheckout(storage) {
+  try {
+    const store = storage ?? sessionStorage;
+    const snapshot = JSON.parse(store.getItem(CHECKOUT_MEMO) ?? 'null');
+    store.removeItem(CHECKOUT_MEMO);
+    if (snapshot && typeof snapshot === 'object') return snapshot;
+  } catch {
+    // Fall through.
+  }
+  return null;
 }
 
 function loadPaddle() {

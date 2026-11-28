@@ -47,7 +47,8 @@ describe('pricing buttons while checkout is off', () => {
     const source = readFileSync(join(ROOT, 'site/public/assets/js/pricing.js'), 'utf8');
     expect(source).toMatch(/if \(config && !config\.paddle\) \{\s*markComingSoon\(document\)/);
     const page = readFileSync(join(ROOT, 'site/pages/pricing.html'), 'utf8');
-    expect(page).toContain('<p class="alert alert-info" id="coming-soon" role="note" hidden>Paid plans are coming soon.');
+    // Top-ups are named too: since 2026-11-28 a Free account can buy one, and the Free plan is open while checkout is not.
+    expect(page).toContain('<p class="alert alert-info" id="coming-soon" role="note" hidden>Paid plans and top-ups are coming soon. The [[plan.free.name]] plan is open now:');
     expect(readFileSync(join(ROOT, 'site/pages/index.html'), 'utf8')).toMatch(/^scripts: playground, pricing$/m);
   });
 });

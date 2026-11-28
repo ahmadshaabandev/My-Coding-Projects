@@ -3,7 +3,10 @@
 //     v3, which the owner approved, plus one line the owner published on 2026-11-27: the rule against
 //     counterfeit or misleading documents, in every build. The rest of the terms text that came with
 //     PDF documents (suspension on report, "and other files") waits in feature:pdf blocks, and
-//     staging keeps it. The terms are dated 2026-11-27 (front matter `updated`) in every build.
+//     staging keeps it. On 2026-11-28 two lines of section 6 changed in every build, because the
+//     owner opened the top-up to accounts without a subscription ("$8 top-up without a
+//     subscription: yes, allow it"): the Free line and the Top-up line. The terms are dated
+//     2026-11-28 (front matter `updated`) in every build.
 //   - The privacy policy keeps its two changes that are no feature's text (Turnstile "if a free tool
 //     on the website shows it", which the preview checkers can show, and "the daily clean-up") and
 //     names Cloudflare Web Analytics (owner decision of 2026-11-27), so it has its own date: front
@@ -87,6 +90,24 @@ const featureDates = (source: string): string[] => (source.split(/^---$/m)[1] ??
 /** The line the owner published in every build on 2026-11-27 (it was feature:pdf text before). */
 const COUNTERFEIT_RULE =
   '- create counterfeit or misleading documents in any form the service produces, such as fake invoices or receipts, bank statements, utility bills, identity documents, or certificates that claim to come from an issuer that did not issue them;';
+/**
+ * The two lines of section 6 that changed on 2026-11-28, each with its text in 89270a7. The owner's
+ * decision of that day lets an account without a subscription buy the top-up, which made both
+ * untrue: a Free account with a top-up keeps rendering past its monthly allowance, and the top-up
+ * is no longer "available on paid plans".
+ */
+const TOPUP_WITHOUT_SUBSCRIPTION: ReadonlyArray<{ now: string; before: string }> = [
+  {
+    now: '- **Free:** [[plan.free.images]] images per month. Free-plan images carry a small mark in one corner. When the monthly allowance and any top-up you bought are used up, new images are not rendered until the next month: it is a hard stop, and nothing is charged automatically.',
+    before:
+      '- **Free:** [[plan.free.images]] images per month. Free-plan images carry a small mark in one corner. When the monthly allowance is used up, new images are not rendered until the next month: it is a hard stop, and there are no charges.',
+  },
+  {
+    now: '- **Top-up (optional):** [[topup.price]] for [[topup.images]] extra images, available on [[topup.plans]]. A top-up is only ever bought by you, by hand. It is never billed automatically. Top-up images are used after your monthly allowance runs out and stay valid for [[topup.validDays]] days from purchase. A top-up adds images only: it does not change your plan, and Free-plan images keep their mark.',
+    before:
+      '- **Top-up (optional):** [[topup.price]] for [[topup.images]] extra images, available on paid plans. A top-up is only ever bought by you, by hand. It is never billed automatically. Top-up images are used after your monthly allowance runs out and stay valid for [[topup.validDays]] days from purchase.',
+  },
+];
 
 let production: RenderedSite;
 let staging: RenderedSite;
@@ -96,13 +117,20 @@ beforeAll(() => {
 });
 
 describe('the Terms of Service', () => {
-  it('are, in production, the text of 89270a7 plus the counterfeit rule, and nothing else', () => {
+  it('are, in production, the text of 89270a7 plus the counterfeit rule and the two top-up lines of 2026-11-28, and nothing else', () => {
     // The production source differs from 89270a7 by its date (front matter, which a build does not
-    // print) and by the one line the owner published on 2026-11-27, right after the fraud rule.
+    // print), by the one line the owner published on 2026-11-27, right after the fraud rule, and by
+    // the Free and Top-up lines of section 6, rewritten on 2026-11-28 for the top-up without a subscription.
     const source = productionSource('terms');
     expect(featureDates(source)).toEqual([]);
-    expect(source).toMatch(/^---\n[\s\S]*?^updated: 2026-11-27$[\s\S]*?^---$/m);
+    expect(source).toMatch(/^---\n[\s\S]*?^updated: 2026-11-28$[\s\S]*?^---$/m);
     const lines = source.replace(/^updated: \d{4}-\d{2}-\d{2}\n/m, '').split('\n');
+    for (const line of TOPUP_WITHOUT_SUBSCRIPTION) {
+      const index = lines.indexOf(line.now);
+      expect(index, `in the production terms: ${line.now.slice(0, 24)}`).toBeGreaterThan(0);
+      expect(lines).not.toContain(line.before);
+      lines[index] = line.before;
+    }
     const at = lines.indexOf(COUNTERFEIT_RULE);
     expect(at, 'the counterfeit rule is in the production terms').toBeGreaterThan(0);
     expect(lines[at - 1]).toMatch(/^- commit fraud, phishing or impersonation/);
@@ -201,24 +229,27 @@ describe('Cloudflare Web Analytics (owner decision of 2026-11-27)', () => {
 });
 
 describe('"Last updated"', () => {
-  it('is 27 November 2026 on the terms and the privacy policy and 25 November 2026 on the refund policy, in both builds', () => {
+  it('is 28 November 2026 on the terms, 27 November 2026 on the privacy policy and 25 November 2026 on the refund policy, in both builds', () => {
     for (const site of [production, staging]) {
-      expect(lastUpdated(html(site, 'terms.html'))).toEqual(['27 November 2026']);
+      expect(lastUpdated(html(site, 'terms.html'))).toEqual(['28 November 2026']);
       expect(lastUpdated(html(site, 'privacy.html'))).toEqual(['27 November 2026']);
       expect(lastUpdated(html(site, 'refund.html'))).toEqual(['25 November 2026']);
     }
     // The site-wide date is unchanged; the terms and the privacy policy have a date of their own.
+    // The top-up decision of 2026-11-28 changed the terms only: the privacy policy and the refund
+    // policy say nothing that it made untrue.
     expect(siteConfig.legalUpdated).toBe('2026-11-25');
-    for (const page of ['terms', 'privacy']) expect(read(`site/content/${page}.md`), page).toMatch(/^---\n[\s\S]*?^updated: 2026-11-27$[\s\S]*?^---$/m);
+    expect(read('site/content/terms.md')).toMatch(/^---\n[\s\S]*?^updated: 2026-11-28$[\s\S]*?^---$/m);
+    expect(read('site/content/privacy.md')).toMatch(/^---\n[\s\S]*?^updated: 2026-11-27$[\s\S]*?^---$/m);
     expect(read('site/content/refund.md').split(/^---$/m)[1]).not.toMatch(/^updated:/m);
     for (const page of ['terms', 'privacy', 'refund']) expect(featureDates(read(`site/content/${page}.md`)), page).toEqual([]);
   });
 
-  it('of the terms is 27 November 2026 in every build: the counterfeit rule is in all of them', () => {
+  it('of the terms is 28 November 2026 in every build: the two top-up lines are in all of them', () => {
     const terms = (env: Record<string, string>): string[] => lastUpdated(html(renderSite({ env, now: NOW }), 'terms.html'));
     const envs: Record<string, string>[] = [{}, { SITE_PDF: 'on' }, { SITE_FEATURES: 'linkcards', SITE_PDF: 'off' }, { SITE_FEATURES: 'pdf,batch,toolkit,email' }];
     for (const env of envs) {
-      expect(terms(env), JSON.stringify(env)).toEqual(['27 November 2026']);
+      expect(terms(env), JSON.stringify(env)).toEqual(['28 November 2026']);
     }
   });
 

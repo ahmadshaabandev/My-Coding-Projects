@@ -206,58 +206,109 @@ describe('quotaWarningEmail', () => {
 
   const topUpPrice = `${formatCount(TOPUP.images)} images for ${formatUsd(TOPUP.priceUsd)}`;
   const NO_AUTO_BILLING = 'We never charge for extra usage automatically.';
+  const STAYS_FREE = 'A top-up adds images only. You stay on the Free plan, so what you make still carries the small Link To Card mark.';
 
-  it('90% on Free: says how much is used and that the stop is lifted by a reset or an upgrade', () => {
-    const email = quotaWarningEmail({ percent: 90, usage: usage('free', 90), appUrl: APP_URL });
+  // The emails as they were before 2026-11-28, word for word: what a Free account gets while this
+  // deployment's checkout is closed (topUpOnSale false), so nothing is offered that cannot be bought.
+  it('90% on Free while top-ups are not on sale: the stop is lifted by a reset or an upgrade, no top-up is named', () => {
+    const email = quotaWarningEmail({ percent: 90, usage: usage('free', 90), appUrl: APP_URL, topUpOnSale: false });
     expect(email.subject).toBe('You have used 90% of your Link To Card images for this period');
     expect(email.text).toContain('On your Free plan, this billing period has 100 images. You have used 90 of them.');
     expect(email.text).toContain('resets on 1 December 2026 (UTC)');
-    expect(email.text).toContain('new images stop rendering until it resets or you upgrade to a paid plan');
+    expect(email.text).toContain('When the allowance is used up, new images stop rendering until it resets or you upgrade to a paid plan.');
     expect(email.text.toLowerCase()).not.toContain('top-up');
   });
 
-  it('90% on a paid plan: explains the top-up balance and the manual top-up', () => {
-    const email = quotaWarningEmail({ percent: 90, usage: usage('starter', 1800, 250), appUrl: APP_URL });
-    expect(email.text).toContain('On your Starter plan, this billing period has 2,000 images. You have used 1,800 of them.');
-    expect(email.text).toContain('new images are taken from your top-up balance');
-    expect(email.text).toContain('Your top-up balance is 250 images.');
-    expect(email.text).toContain(topUpPrice);
-    expect(email.text).toContain(NO_AUTO_BILLING);
-  });
-
-  it('100% on Free: a hard stop until the reset or an upgrade, with no top-up offer', () => {
-    const email = quotaWarningEmail({ percent: 100, usage: usage('free', 100), appUrl: APP_URL });
+  it('100% on Free while top-ups are not on sale: a stop until the reset or an upgrade, no top-up is named', () => {
+    const email = quotaWarningEmail({ percent: 100, usage: usage('free', 100), appUrl: APP_URL, topUpOnSale: false });
     expect(email.subject).toBe('You have used all 100 images of your Link To Card Free plan');
     expect(email.text).toContain('New images will not render until the allowance resets or you upgrade to a paid plan.');
     expect(email.text).toContain('1 December 2026 (UTC)');
     expect(email.text.toLowerCase()).not.toContain('top-up');
   });
 
+  // Owner decision of 2026-11-28: a Free account can buy the top-up too.
+  it('90% on Free: offers the manual top-up, keeps the upgrade, and says the Free mark stays', () => {
+    const email = quotaWarningEmail({ percent: 90, usage: usage('free', 90), appUrl: APP_URL, topUpOnSale: true });
+    expect(email.text).toContain('On your Free plan, this billing period has 100 images. You have used 90 of them.');
+    expect(email.text).toContain(
+      'When the allowance is used up, new images are taken from your top-up balance. Without a top-up balance, new images stop rendering until the allowance resets or you upgrade to a paid plan. Your top-up balance is 0 images.',
+    );
+    expect(email.text).toContain(`You can buy a top-up of ${topUpPrice} (plus tax where it applies) in the dashboard.`);
+    expect(email.text).toContain('one-time purchase that you make yourself');
+    expect(email.text).toContain(NO_AUTO_BILLING);
+    expect(email.text).toContain(STAYS_FREE);
+  });
+
+  it('100% on Free without a balance: a stop, the manual top-up or an upgrade, and the Free mark stays', () => {
+    const email = quotaWarningEmail({ percent: 100, usage: usage('free', 100), appUrl: APP_URL, topUpOnSale: true });
+    expect(email.subject).toBe('You have used all 100 images of your Link To Card Free plan');
+    expect(email.text).toContain('You have no top-up balance, so new images will not render until the allowance resets or you upgrade to a paid plan.');
+    expect(email.text).toContain(topUpPrice);
+    expect(email.text).toContain(NO_AUTO_BILLING);
+    expect(email.text).toContain(STAYS_FREE);
+  });
+
+  it('100% on Free with a top-up balance: rendering continues from the balance, on the Free plan', () => {
+    const email = quotaWarningEmail({ percent: 100, usage: usage('free', 100, 640), appUrl: APP_URL, topUpOnSale: true });
+    expect(email.text).toContain('New images are now taken from your top-up balance. Your top-up balance is 640 images.');
+    expect(email.text).toContain('When it runs out, new images stop rendering until the allowance resets or you upgrade to a paid plan.');
+    expect(email.text).toContain(STAYS_FREE);
+    // A balance is explained even where no further top-up can be bought.
+    const closed = quotaWarningEmail({ percent: 100, usage: usage('free', 100, 640), appUrl: APP_URL, topUpOnSale: false });
+    expect(closed.text).toContain('New images are now taken from your top-up balance. Your top-up balance is 640 images.');
+    expect(closed.text).not.toContain('You can buy a top-up');
+  });
+
+  it('90% on a paid plan: explains the top-up balance and the manual top-up', () => {
+    const email = quotaWarningEmail({ percent: 90, usage: usage('starter', 1800, 250), appUrl: APP_URL, topUpOnSale: true });
+    expect(email.text).toContain('On your Starter plan, this billing period has 2,000 images. You have used 1,800 of them.');
+    expect(email.text).toContain(
+      'When the allowance is used up, new images are taken from your top-up balance. Without a top-up balance, new images stop rendering until the allowance resets. Your top-up balance is 250 images.',
+    );
+    expect(email.text).toContain(topUpPrice);
+    expect(email.text).toContain(NO_AUTO_BILLING);
+    // Paid plans carry no mark, so there is nothing to say about it.
+    expect(email.text).not.toContain('mark');
+  });
+
   it('100% on a paid plan with a top-up balance: rendering continues from the balance', () => {
-    const email = quotaWarningEmail({ percent: 100, usage: usage('pro', 10_000, 1), appUrl: APP_URL });
+    const email = quotaWarningEmail({ percent: 100, usage: usage('pro', 10_000, 1), appUrl: APP_URL, topUpOnSale: true });
     expect(email.subject).toBe('You have used all 10,000 images of your Link To Card Pro plan');
     expect(email.text).toContain('New images are now taken from your top-up balance. Your top-up balance is 1 image.');
-    expect(email.text).toContain('When it runs out, new images stop rendering');
+    expect(email.text).toContain('When it runs out, new images stop rendering until the allowance resets.');
     expect(email.text).toContain(NO_AUTO_BILLING);
   });
 
   it('100% on a paid plan without a balance: a stop, plus the manual top-up and never automatic billing', () => {
-    const email = quotaWarningEmail({ percent: 100, usage: usage('starter', 2000), appUrl: APP_URL });
+    const email = quotaWarningEmail({ percent: 100, usage: usage('starter', 2000), appUrl: APP_URL, topUpOnSale: true });
     expect(email.text).toContain('You have no top-up balance, so new images will not render until the allowance resets.');
     expect(email.text).toContain(topUpPrice);
     expect(email.text).toContain('one-time purchase that you make yourself');
     expect(email.text).toContain(NO_AUTO_BILLING);
+    expect(email.text).not.toContain('mark');
+  });
+
+  it('a paid plan while top-ups are not on sale: no offer, and no sentence left half empty', () => {
+    const at90 = quotaWarningEmail({ percent: 90, usage: usage('pro', 9000), appUrl: APP_URL, topUpOnSale: false });
+    expect(at90.text).toContain('When the allowance is used up, new images stop rendering until it resets.');
+    const at100 = quotaWarningEmail({ percent: 100, usage: usage('pro', 10_000), appUrl: APP_URL, topUpOnSale: false });
+    expect(at100.text).toContain('New images will not render until the allowance resets.');
+    for (const email of [at90, at100]) expect(email.text.toLowerCase()).not.toContain('top-up');
   });
 
   it('links only to the dashboard and keeps HTML and text in step', () => {
     for (const percent of [90, 100] as const) {
       for (const plan of ['free', 'starter', 'pro'] as const) {
-        const email = quotaWarningEmail({ percent, usage: usage(plan, PLANS[plan].monthlyImages), appUrl: `${APP_URL}/` });
-        expect(hrefs(email.html)).toEqual([`${APP_URL}/dashboard`]);
-        expect(email.text).toContain(`${APP_URL}/dashboard`);
-        expect(email.html).toContain('1 December 2026 (UTC)');
-        expect(email.subject).not.toMatch(/[\r\n]/);
-        expectPlain(email.html);
+        for (const topUpOnSale of [true, false]) {
+          const email = quotaWarningEmail({ percent, usage: usage(plan, PLANS[plan].monthlyImages), appUrl: `${APP_URL}/`, topUpOnSale });
+          expect(hrefs(email.html)).toEqual([`${APP_URL}/dashboard`]);
+          expect(email.text).toContain(`${APP_URL}/dashboard`);
+          expect(email.html).toContain('1 December 2026 (UTC)');
+          expect(email.subject).not.toMatch(/[\r\n]/);
+          expect(email.text).not.toMatch(/ {2}|\.\./);
+          expectPlain(email.html);
+        }
       }
     }
   });

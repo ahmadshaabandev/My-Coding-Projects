@@ -300,9 +300,20 @@ describe('POST /v1/images', () => {
     const error = await errorOf(refused);
     expect(error.code).toBe('quota_exceeded');
     expect(error.message).toContain('100 images on the Free plan');
-    expect(error.message).toContain(`${ORIGIN}/pricing`);
-    expect(error.message).not.toContain('top-up');
+    // Since 2026-11-28 a Free account can buy the top-up, so the message offers it (checkout is open in the test bindings).
+    expect(error.message).toContain(`to render new ones now, upgrade or buy a top-up at ${ORIGIN}/pricing.`);
     expect(error.details?.usage).toMatchObject({ plan: 'free', used: 100, remaining: 0, total_remaining: 0 });
+
+    // While checkout is closed, as in production today, the message is the one from before: it names no top-up.
+    const closed = await call(
+      '/v1/images',
+      { method: 'POST', headers: { ...bearer(secret), 'content-type': 'application/json' }, body: JSON.stringify(tiny('After the limit')) },
+      { ...env, CHECKOUT_ENABLED: 'false' },
+    );
+    expect(closed.status).toBe(402);
+    const closedError = await errorOf(closed);
+    expect(closedError.message.endsWith(`Images that are already cached keep working; to render new ones now, upgrade at ${ORIGIN}/pricing.`)).toBe(true);
+    expect(closedError.message).not.toContain('top-up');
 
     const stillThere: ImageJson = await (await postImage(secret, tiny('Before the limit'))).json();
     expect(stillThere).toMatchObject({ id: cachedBefore.id, cached: true });

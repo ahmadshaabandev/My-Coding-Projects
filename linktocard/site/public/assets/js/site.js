@@ -43,3 +43,21 @@ if (docsMenu) {
   wide.addEventListener('change', sync);
   sync();
 }
+
+// Sentences that say something can be bought end with a note that ships hidden
+// (data-checkout-closed, scripts/build-site.ts). Checkout is a switch of the server, so the
+// note is shown here while GET /api/config reports no Paddle configuration: the same test the
+// pricing page uses for its "Coming soon" buttons. A page without such a note asks nothing.
+const closedNotes = document.querySelectorAll('[data-checkout-closed]');
+if (closedNotes.length > 0) {
+  fetch('/api/config', { credentials: 'same-origin' })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((config) => {
+      if (config && !config.paddle) {
+        for (const note of closedNotes) note.hidden = false;
+      }
+    })
+    .catch(() => {
+      // Without an answer the page stays as built.
+    });
+}

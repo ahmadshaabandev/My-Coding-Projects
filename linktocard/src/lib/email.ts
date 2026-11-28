@@ -10,7 +10,7 @@
  * Every message here is plain and transactional: no marketing, no tracking
  * pixels, no remote images.
  */
-import { PLANS, TOPUP, formatCount, formatUsd } from '../billing/plans';
+import { PLANS, TOPUP, formatCount, formatUsd, type Plan } from '../billing/plans';
 import type { Env, UsageSummary } from '../types';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -165,62 +165,58 @@ function utcDate(epochMs: number): string {
   return `${date} (UTC)`;
 }
 
-/** Top-ups are bought by hand; the copy must never read as if extra usage were billed automatically. */
-function topUpOffer(): string {
-  return (
+/**
+ * Top-ups are bought by hand; the copy must never read as if extra usage were billed automatically.
+ * On a plan whose images carry the mark it also says that a top-up does not take the mark away,
+ * so nobody buys one expecting that.
+ */
+function topUpOffer(plan: Plan): string {
+  const offer =
     `You can buy a top-up of ${formatCount(TOPUP.images)} images for ${formatUsd(TOPUP.priceUsd)} (plus tax where it applies) in the dashboard. ` +
-    'A top-up is a one-time purchase that you make yourself. We never charge for extra usage automatically.'
-  );
+    'A top-up is a one-time purchase that you make yourself. We never charge for extra usage automatically.';
+  if (!plan.watermark) return offer;
+  return `${offer} A top-up adds images only. You stay on the ${plan.name} plan, so what you make still carries the small ${PRODUCT} mark.`;
 }
 
 function images(count: number): string {
   return `${formatCount(count)} ${count === 1 ? 'image' : 'images'}`;
 }
 
-function quotaBlocks(percent: 90 | 100, usage: UsageSummary): Block[] {
+/**
+ * `topUpOnSale`: this plan can buy a top-up and checkout is open on this deployment
+ * (src/billing/offers.ts). Without it the email offers none. A balance the account already
+ * holds is always explained, on any plan.
+ */
+function quotaBlocks(percent: 90 | 100, usage: UsageSummary, topUpOnSale: boolean): Block[] {
   const plan = PLANS[usage.plan];
   const reset = utcDate(usage.period_end);
   // usage.limit is this period's allowance, which a plan change inside the period can adjust.
   const allowance = `On your ${plan.name} plan, this billing period has ${images(usage.limit)}.`;
   const balance = `Your top-up balance is ${images(usage.topup_remaining)}.`;
+  const hasBalance = usage.topup_remaining > 0;
+  const offer: Block[] = topUpOnSale ? [{ kind: 'paragraph', text: topUpOffer(plan) }] : [];
+  // A plan that costs nothing has a second way past the limit.
+  const orUpgrade = plan.priceUsd === 0 ? ' or you upgrade to a paid plan' : '';
 
   if (percent === 90) {
     const status = `${allowance} You have used ${formatCount(usage.used)} of them. The allowance resets on ${reset}.`;
-    if (!plan.topUps) {
-      return [
-        { kind: 'paragraph', text: status },
-        { kind: 'paragraph', text: 'When the allowance is used up, new images stop rendering until it resets or you upgrade to a paid plan.' },
-      ];
-    }
-    return [
-      { kind: 'paragraph', text: status },
-      {
-        kind: 'paragraph',
-        text: `When the allowance is used up, new images are taken from your top-up balance. Without a top-up balance, new images stop rendering until the allowance resets. ${balance}`,
-      },
-      { kind: 'paragraph', text: topUpOffer() },
-    ];
+    const next =
+      hasBalance || topUpOnSale
+        ? `When the allowance is used up, new images are taken from your top-up balance. Without a top-up balance, new images stop rendering until the allowance resets${orUpgrade}. ${balance}`
+        : `When the allowance is used up, new images stop rendering until it resets${orUpgrade}.`;
+    return [{ kind: 'paragraph', text: status }, { kind: 'paragraph', text: next }, ...offer];
   }
 
   const status = `${allowance} All of them are used. The allowance resets on ${reset}.`;
-  if (!plan.topUps) {
-    return [
-      { kind: 'paragraph', text: status },
-      { kind: 'paragraph', text: 'New images will not render until the allowance resets or you upgrade to a paid plan.' },
-    ];
-  }
-  const consequence =
-    usage.topup_remaining > 0
-      ? `New images are now taken from your top-up balance. ${balance} When it runs out, new images stop rendering until the allowance resets.`
-      : 'You have no top-up balance, so new images will not render until the allowance resets.';
-  return [
-    { kind: 'paragraph', text: status },
-    { kind: 'paragraph', text: consequence },
-    { kind: 'paragraph', text: topUpOffer() },
-  ];
+  const consequence = hasBalance
+    ? `New images are now taken from your top-up balance. ${balance} When it runs out, new images stop rendering until the allowance resets${orUpgrade}.`
+    : topUpOnSale
+      ? `You have no top-up balance, so new images will not render until the allowance resets${orUpgrade}.`
+      : `New images will not render until the allowance resets${orUpgrade}.`;
+  return [{ kind: 'paragraph', text: status }, { kind: 'paragraph', text: consequence }, ...offer];
 }
 
-export function quotaWarningEmail(input: { percent: 90 | 100; usage: UsageSummary; appUrl: string }): EmailContent {
+export function quotaWarningEmail(input: { percent: 90 | 100; usage: UsageSummary; appUrl: string; topUpOnSale: boolean }): EmailContent {
   const { percent, usage } = input;
   const plan = PLANS[usage.plan];
   const subject =
@@ -229,7 +225,7 @@ export function quotaWarningEmail(input: { percent: 90 | 100; usage: UsageSummar
       : `You have used all ${images(usage.limit)} of your ${PRODUCT} ${plan.name} plan`;
   const heading = percent === 90 ? 'You are close to your image allowance' : 'Your image allowance is used up';
   return compose(subject, heading, [
-    ...quotaBlocks(percent, usage),
+    ...quotaBlocks(percent, usage, input.topUpOnSale),
     { kind: 'link', label: 'Open the dashboard', url: `${input.appUrl.replace(/\/+$/, '')}/dashboard` },
     { kind: 'note', text: `This notice is sent once per billing period, when usage reaches ${percent}%.` },
   ]);

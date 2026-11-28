@@ -2,7 +2,7 @@
 title: Terms of Service
 description: The terms that apply when you use [[site.name]], a hosted API that renders social-card images from HTML and CSS.
 layout: legal
-updated: 2026-11-27
+updated: 2026-11-28
 ---
 
 Last updated: [[legal.updated]]
@@ -135,10 +135,10 @@ Anyone can report a record from its page. A record reported as false or misleadi
 
 ## 6. Plans, quotas and what counts as an image
 
-- **Free:** [[plan.free.images]] images per month. Free-plan images carry a small mark in one corner. When the monthly allowance is used up, new images are not rendered until the next month: it is a hard stop, and there are no charges.
+- **Free:** [[plan.free.images]] images per month. Free-plan images carry a small mark in one corner. When the monthly allowance and any top-up you bought are used up, new images are not rendered until the next month: it is a hard stop, and nothing is charged automatically.
 - **Starter:** [[plan.starter.price]] per month, [[plan.starter.images]] images per month.
 - **Pro:** [[plan.pro.price]] per month, [[plan.pro.images]] images per month.
-- **Top-up (optional):** [[topup.price]] for [[topup.images]] extra images, available on paid plans. A top-up is only ever bought by you, by hand. It is never billed automatically. Top-up images are used after your monthly allowance runs out and stay valid for [[topup.validDays]] days from purchase.
+- **Top-up (optional):** [[topup.price]] for [[topup.images]] extra images, available on [[topup.plans]]. A top-up is only ever bought by you, by hand. It is never billed automatically. Top-up images are used after your monthly allowance runs out and stay valid for [[topup.validDays]] days from purchase. A top-up adds images only: it does not change your plan, and Free-plan images keep their mark.
 
 **What counts as one image:** one image is one newly rendered output, in one size and format. Once rendered, an image is cached and served again without counting for the cache period of your plan: [[plan.free.cacheDays]] days on Free, [[plan.starter.cacheDays]] days on Starter and [[plan.pro.cacheDays]] days on Pro. After that period, or if the content of the card changes, it is rendered and counted again.
 

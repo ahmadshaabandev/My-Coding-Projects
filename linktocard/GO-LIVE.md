@@ -230,6 +230,7 @@ each sale (check the current rate on Paddle's pricing page).
 ## 6. Paddle live
 
 **State on 2026-11-23: live account and code ready; checkout closed until Paddle approves the domain.**
+For the day Paddle approves, follow [GO-LIVE-PAID.md](GO-LIVE-PAID.md): the short checklist that opens checkout and switches on the paid tools, in order.
 
 Done through the Paddle API with a temporary setup key (additive only, nothing edited or deleted):
 

@@ -264,8 +264,8 @@ build prints, `updated.<feature>: YYYY-MM-DD` (`updated.batch`, `updated.no-pdf`
 a build with that feature switch prints. A legal page shows the latest of `legalUpdated` and the
 dates that apply to the build, so raising `legalUpdated` at a launch dates every legal page by
 itself. A date that is not a real day, an unknown feature, or the key on a page that is not
-`layout: legal` stops the build. Today `privacy.md` and `terms.md` have `updated: 2026-11-27`, so
-both builds show the terms and the privacy policy 27 November and the refund policy 25 November.
+`layout: legal` stops the build. Today `terms.md` has `updated: 2026-11-28` and `privacy.md` `updated: 2026-11-27`, so
+both builds show the terms 28 November, the privacy policy 27 November and the refund policy 25 November.
 
 `SITE_PDF` switches the PDF pages and blocks of the site (`feature: pdf` front matter,
 `<!-- feature:pdf -->` blocks): `on` builds them, `off` or unset leaves them out. Any other value
@@ -289,7 +289,9 @@ of 2026-11-27). The terms and the privacy policy carry each feature's text in it
 feature's legal text goes live only with that feature (`tests/node/v3-site.test.ts`). The production
 Terms are the owner-approved text of commit `89270a7` once the blocks are applied, plus the rule
 against counterfeit or misleading documents, which the owner published in every build on
-2026-11-27 (the "always urgent" suspension and "and other files" are still `pdf` text). The refund
+2026-11-27 (the "always urgent" suspension and "and other files" are still `pdf` text), and with
+the Free and Top-up lines of section 6 rewritten on 2026-11-28 for the top-up without a
+subscription (not deployed yet; the changelog quotes both lines). The refund
 policy is unchanged from `89270a7` (`tests/node/legal-pages.test.ts`). The privacy policy has
 wording that belongs to no feature and is true in production: Turnstile is shown "if a free tool on
 the website shows it" (the one-app preview pages can), expired entries are "deleted by the daily
@@ -526,7 +528,12 @@ storage.
 - Unused monthly quota does not roll over.
 - At the limit, new renders answer HTTP 402 with a JSON error. There is no overage billing.
   Stored images keep being served.
-- A top-up is 1,000 images for $8, bought by hand on a paid plan, never automatically.
+- A top-up is 1,000 images for $8, bought by hand on any plan, the Free plan included (owner
+  decision of 2026-11-28), never automatically. It adds images and nothing else: a Free account
+  that buys one stays on Free, with the corner mark, the 7 cache days and the Free limits.
+  Which plans can buy one is `topUps` in `src/billing/plans.ts`; the site, the 402 messages and
+  the quota emails read that flag. A 402 or an email offers a top-up only while checkout is open
+  on the deployment (`src/billing/offers.ts`).
 - Dashboard previews and the homepage playground are not counted.
 - Emails go out once at 90% and once at 100% of the allowance in each period (once more after
   an upgrade inside the period, for the new allowance).
@@ -600,7 +607,7 @@ it if it is wrong.
 
 | Topic | What was assumed | Where |
 | --- | --- | --- |
-| Top-up validity | Used only after the monthly allowance, valid 365 days from purchase, paid plans only | `src/billing/plans.ts` |
+| Top-up validity | Used only after the monthly allowance, valid 365 days from purchase. Any plan can buy one, Free included (decided by the owner on 2026-11-28; it was paid plans only before) | `src/billing/plans.ts` |
 | Custom fonts | Starter: 3 files up to 2 MB. Pro: 20 files up to 5 MB. TTF, OTF, WOFF (not WOFF2) | `src/billing/plans.ts` |
 | Per-account caps | 50 templates, 10 sites, 10 API keys | `src/config.ts` |
 | Rate limits | 300/min per IP, 120/min per key or site, 30/min playground, 60/min preview, 5/min sign-in, 20 sign-in emails per hour per client | `src/config.ts`, `wrangler.toml` |
@@ -686,6 +693,54 @@ it if it is wrong.
 
 ## Changelog
 
+- **2026-11-28: The top-up without a subscription** (owner decision: "$8 top-up without a
+  subscription: yes, allow it"; not deployed). A Free account can buy the same one-time top-up as
+  Starter and Pro: `topUps` is `true` on the Free plan in `src/billing/plans.ts`. Nothing about the
+  top-up changed (price, size, validity, used only after the monthly allowance, never billed
+  automatically), nothing in Paddle changed (the same `PADDLE_PRICE_TOPUP`, no catalog or webhook
+  change), and nothing else about Free changed: an account that buys a top-up stays on Free, with
+  the corner mark, 7 cache days, no custom fonts and the Free limits. Whether images paid by a
+  top-up should lose the mark is an open question for the owner; it is not built.
+  - **What already worked.** The quota engine and the webhook never looked at the plan: a
+    completed top-up transaction credited any account, and a Free account with top-up images
+    rendered from them. Only the site and the browser refused the purchase.
+  - **Browser.** `checkoutAction` (`site/public/assets/js/checkout.js`) and the dashboard's buttons
+    (`billingActions`) read `top_ups` of the account's plan from `/api/config` instead of testing
+    for the Free plan. A Free account gets "Upgrade to Starter", "Upgrade to Pro" and "Buy top-up".
+    The pricing page now stores what a checkout was for, as the dashboard did: before, a top-up
+    started on `/pricing` by an account that stays on its plan would have left the return page
+    waiting for a plan change.
+  - **Messages.** `src/billing/offers.ts` decides what a 402 `quota_exceeded` message and a quota
+    email may offer: an upgrade below the highest plan, and a top-up on a plan with `topUps` only
+    while checkout is open on the deployment. While checkout is closed, as in production, the 402
+    and the emails of a Free account read word for word as before.
+  - **Site.** The pages say who can buy a top-up through the tokens `[[topup.plans]]`,
+    `[[topup.keepsPlan]]` and `[[topup.keepsPlanShort]]`, computed from `topUps` and `watermark`
+    of each plan, so no page names the plans by hand. Checkout is a switch of the Worker, not of
+    the build, so each sentence that says a top-up can be bought ends with a hidden note
+    (`data-checkout-closed`: "Top-ups are not on sale yet.", "(coming soon)" on the plan cards)
+    that `site.js` shows while `/api/config` reports no Paddle configuration. The pricing page's
+    notice for that state now reads "Paid plans and top-ups are coming soon."
+  - **Terms.** Two lines of section 6, in every build, dated 28 November 2026. Free, before:
+    "When the monthly allowance is used up, new images are not rendered until the next month: it
+    is a hard stop, and there are no charges." Now: "When the monthly allowance and any top-up you
+    bought are used up, new images are not rendered until the next month: it is a hard stop, and
+    nothing is charged automatically." Top-up, before: "... extra images, available on paid
+    plans. ..." Now: "... extra images, available on every plan, Free included. ..." with one
+    sentence added at the end: "A top-up adds images only: it does not change your plan, and
+    Free-plan images keep their mark." The privacy policy and the refund policy are unchanged.
+  - **Tests.** New: `tests/topup-free.test.ts` (through the Worker: a completed transaction
+    credits a Free account; at its limit it renders from the top-up, charged to it, with the same
+    bytes as a Free image from the allowance; the 402 and the emails with checkout open and
+    closed; a refund) and `tests/node/topup-site.test.ts` (the built pages of the production,
+    staging and all-off builds, the hidden notes and `site.js`, the checkout rule and its memo).
+    Changed because the rule changed: `tests/email.test.ts`, `tests/api.test.ts`,
+    `tests/pdftools-route.test.ts`, `tests/node/site.test.ts`, `tests/node/dashboard.test.ts`,
+    `tests/node/coming-soon.test.ts`, `tests/node/legal-pages.test.ts`.
+  - **Not verified.** A real sandbox checkout of the top-up by a Free account. The two halves are
+    each proven on staging with other accounts (a Free account's first checkout carries its
+    account id; a top-up's `transaction.completed` credits), and the tests replay Paddle's
+    example event for a Free account. `scripts/seed-paddle-sandbox.md` step 5 has the check.
 - **2026-11-27: Owner decisions on analytics and the Terms** (deployed to staging, Worker
   `eea07147`, and production, Worker `65d05a46`, the same day; rollback `bb46082a`). Checked live on
   production: in Chromium the beacon loads and reports on every page tried, with no CSP violation,

@@ -23,7 +23,8 @@
  * The dashboard preview and the playground render through the same renderer
  * but skip steps 2-6: they are watermarked, never stored here and never counted.
  */
-import { getPlan, PLAN_ORDER, formatCount } from '../billing/plans';
+import { quotaRemedy, topUpOnSale } from '../billing/offers';
+import { getPlan, formatCount } from '../billing/plans';
 import {
   CONTENT_TYPES,
   DAY_MS,
@@ -460,16 +461,17 @@ export async function cardCacheKey(request: Pick<CardRequest, 'user' | 'template
   );
 }
 
-/** 402 that says what ran out, when it comes back and where to get more. */
-export function quotaExceededError(env: Pick<Env, 'APP_URL'>, usage: UsageSummary): ApiError {
+/**
+ * 402 that says what ran out, when it comes back and where to get more. A top-up is named only
+ * while one can be bought here (src/billing/offers.ts).
+ */
+export function quotaExceededError(env: Env, usage: UsageSummary): ApiError {
   const plan = getPlan(usage.plan);
-  const canUpgrade = PLAN_ORDER.indexOf(plan.id) < PLAN_ORDER.length - 1;
-  const remedy = [canUpgrade ? 'upgrade' : null, plan.topUps ? 'buy a top-up' : null].filter((part) => part !== null).join(' or ');
-  const pricing = `${env.APP_URL.replace(/\/+$/, '')}/pricing`;
+  const remedy = quotaRemedy(env, plan);
   return new ApiError(
     'quota_exceeded',
     `The monthly allowance of ${formatCount(usage.limit)} images on the ${plan.name} plan is used up. ` +
-      `It resets on ${iso(usage.period_end)}. Images that are already cached keep working; to render new ones now, ${remedy} at ${pricing}.`,
+      `It resets on ${iso(usage.period_end)}. Images that are already cached keep working${remedy ? `; to render new ones now, ${remedy}` : ''}.`,
     { details: { usage: usageJson(usage) } },
   );
 }
@@ -477,7 +479,7 @@ export function quotaExceededError(env: Pick<Env, 'APP_URL'>, usage: UsageSummar
 function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: UsageSummary): Promise<void> {
   return sendEmail(env, {
     to: user.email,
-    ...quotaWarningEmail({ percent, usage, appUrl: env.APP_URL }),
+    ...quotaWarningEmail({ percent, usage, appUrl: env.APP_URL, topUpOnSale: topUpOnSale(env, getPlan(usage.plan)) }),
     // One notice per account, threshold and period even if two isolates race.
     idempotencyKey: `quota-${percent}-${user.id}-${usage.period_start}-${usage.limit}`,
   }).then((result) => {
