@@ -495,6 +495,8 @@ the audit fixes deployed the same day as `bb46082a`, then the analytics and Term
   (`pdf`, `batch`, `toolkit`, `email`) left out of `deploy:production`.
 - **Not approved:** cards from links (`LINK_CARDS_ENABLED = "false"`, site feature `linkcards`) and
   publishing the Zapier, Make and n8n connectors (site feature `integrations` off).
+- **Built on 2026-11-28, staging only:** chart images (`CHARTS_ENABLED = "false"` under
+  `[env.production.vars]`). They go to production only when you say so.
 - **Unchanged:** Paddle, the webhook and `CHECKOUT_ENABLED`.
 
 ### 11a. Before the next deploy of each environment (whatever it is for)

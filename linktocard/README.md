@@ -252,6 +252,7 @@ they are set with `npx wrangler secret put <NAME> --env staging|production`.
 | `PDF_TOOLKIT_ENABLED` | `"true"` turns `/v1/pdf-tools/*` on. Its stored results are served under `/i/...pdf`, which needs `PDF_ENABLED` too |
 | `LINK_CARDS_ENABLED` | `"true"` turns `POST /v1/cards/from-url` and `/v1/link/...` on. Off: every `/v1/link/...` URL answers 503, stored cards included, so pages that use one show no image |
 | `EMAIL_FIELDS_ENABLED` | `"true"` makes signed card URLs read `open` as the list of open fields, `/api/sign` accept `open`, and the email starters `email-banner` and `email-offer` usable. Off: `open` is an ordinary signed parameter (though `/api/sign` never signs it as data), and the email starters answer 404. Turning it off breaks the open-field images of emails already sent (403) once caches let the request through |
+| `CHARTS_ENABLED` | `"true"` turns the chart routes on: signed chart URLs (`GET /v1/chart/...`), `POST /v1/charts` and the free chart maker's endpoint (`POST /api/tools/chart`). Off: they answer 503 `not_configured`; a chart that is already stored keeps being served from `/i/...`. `"true"` locally and on staging, `"false"` on production |
 
 While any Paddle variable is empty, the site still works: the pricing page and dashboard
 show that checkout is not available yet instead of opening a broken overlay.
