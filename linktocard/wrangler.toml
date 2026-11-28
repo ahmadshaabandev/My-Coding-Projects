@@ -63,6 +63,14 @@ PDF_TOOLKIT_ENABLED = "true"
 LINK_CARDS_ENABLED = "true"
 # Chart images (src/charts): "true" turns the chart routes on. Off in production.
 CHARTS_ENABLED = "true"
+# AI images (src/ai): "true" turns every AI route on. Locally and in tests the "mock" provider draws
+# a gradient and calls no model, so nothing is billed (src/ai/provider.ts).
+AI_ENABLED = "true"
+AI_PROVIDER = "mock"
+
+# Workers AI (src/ai). Unused while AI_PROVIDER is "mock" or AI_ENABLED is not "true".
+[ai]
+binding = "AI"
 
 [[d1_databases]]
 binding = "DB"
@@ -165,6 +173,12 @@ PDF_TOOLKIT_ENABLED = "true"
 LINK_CARDS_ENABLED = "true"
 # Chart images (src/charts): "true" turns the chart routes on. Off in production.
 CHARTS_ENABLED = "true"
+# AI images (src/ai): on for staging only until the owner approves them.
+AI_ENABLED = "true"
+AI_PROVIDER = "workers-ai"
+
+[env.staging.ai]
+binding = "AI"
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -271,6 +285,12 @@ PDF_TOOLKIT_ENABLED = "false"
 LINK_CARDS_ENABLED = "false"
 # Chart images stay off in production until they are approved: every chart route answers 503.
 CHARTS_ENABLED = "false"
+# AI images stay off in production until they are approved: every AI route answers 503.
+AI_ENABLED = "false"
+AI_PROVIDER = "workers-ai"
+
+[env.production.ai]
+binding = "AI"
 
 [[env.production.d1_databases]]
 binding = "DB"
