@@ -70,6 +70,8 @@ function tiles(html: string): Tile[] {
 }
 
 const ids = (site: RenderedSite): string[] => tiles(home(site)).map((tile) => tile.id);
+/** The pages a tile stands for: the page it links to and the other pages of the same tool (Tool.pages). */
+const tilePages = (tile: Tile): string[] => [toolPagePath(tile.href), ...(TOOLS.find((tool) => tool.id === tile.id)?.pages ?? [])];
 const featuresOf = (site: RenderedSite): Feature[] => FEATURES.filter((feature) => site.features[feature]);
 const LABEL_TEXTS = Object.values(TOOL_LABELS).map((label) => label.text);
 
@@ -121,7 +123,7 @@ describe('the home page with every feature of the staging build', () => {
   it('has exactly one tile for every built page under /tools/', () => {
     const toolPages = staging.pages.filter((entry) => entry.url.startsWith('/tools/')).map((entry) => entry.url);
     expect(toolPages.length).toBeGreaterThanOrEqual(11);
-    for (const url of toolPages) expect(all.filter((tile) => toolPagePath(tile.href) === url), url).toHaveLength(1);
+    for (const url of toolPages) expect(all.filter((tile) => tilePages(tile).includes(url)), url).toHaveLength(1);
   });
 
   it('prints each tile as one link with an icon, a name, a one-line description and a label from the allowed set', () => {
@@ -159,7 +161,7 @@ describe('the home page with every feature of the staging build', () => {
     const listed = [...main.matchAll(/<dt><a href="([^"]+)">/g)].map((match) => match[1] ?? '');
     expect(listed.length).toBeGreaterThanOrEqual(12);
     for (const href of listed) {
-      const tile = all.find((entry) => entry.href === href);
+      const tile = all.find((entry) => entry.href === href || tilePages(entry).includes(href));
       expect(tile, href).toBeDefined();
       expect(tile?.free, href).toBe(true);
     }
@@ -171,7 +173,7 @@ describe('every build', () => {
     ['staging', staging],
     ['production', production],
     ['no feature', plain],
-    ...['pdf', 'pdf,batch', 'pdf,toolkit', 'linkcards', 'email', 'previews', 'integrations', 'apidocs', 'localpdf,apidocs', 'localpdf,toolkit,pdf'].map(
+    ...['pdf', 'pdf,batch', 'pdf,toolkit', 'linkcards', 'email', 'previews', 'integrations', 'apidocs', 'localpdf,apidocs', 'localpdf,toolkit,pdf', 'charts'].map(
       (features): [string, RenderedSite] => [features, build({ SITE_FEATURES: features })],
     ),
   ];
@@ -196,7 +198,7 @@ describe('every build', () => {
       const expected = TOOLS.filter((tool) => tool.features.every((feature) => site.features[feature])).map((tool) => tool.id);
       expect(ids(site).sort(), name).toEqual(expected.sort());
       for (const entry of site.pages.filter((built) => built.url.startsWith('/tools/'))) {
-        expect(tiles(home(site)).filter((tile) => toolPagePath(tile.href) === entry.url), `${name}: ${entry.url}`).toHaveLength(1);
+        expect(tiles(home(site)).filter((tile) => tilePages(tile).includes(entry.url)), `${name}: ${entry.url}`).toHaveLength(1);
       }
     }
   });
@@ -262,7 +264,7 @@ describe('the home page of the production build', () => {
 
   it('has no tile for a tool whose feature is off, although "apidocs" publishes that tool\'s docs page with its notice', () => {
     const off = TOOLS.filter((tool) => !tool.features.every((feature) => production.features[feature]));
-    expect(off.map((tool) => tool.id).sort()).toEqual(['bulk-documents', 'certificate-generator', 'email-images', 'html-to-pdf', 'invoice-generator', 'link-cards', 'pdf-toolkit', 'workflows']);
+    expect(off.map((tool) => tool.id).sort()).toEqual(['bulk-documents', 'certificate-generator', 'chart-images', 'email-images', 'html-to-pdf', 'invoice-generator', 'link-cards', 'pdf-toolkit', 'workflows']);
     for (const tool of off) {
       expect(html, tool.id).not.toContain(`data-tool="${tool.id}"`);
       expect(html.slice(html.indexOf('id="tool-grid"'), html.indexOf('id="tool-status"')), tool.id).not.toContain(`href="${tool.href}"`);

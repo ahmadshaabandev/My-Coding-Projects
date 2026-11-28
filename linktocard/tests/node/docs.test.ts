@@ -424,7 +424,8 @@ describe('openapi.yaml', () => {
     ];
     expect(v3).toHaveLength(16);
     expect(pathsOf(site.openapi)).toEqual(published);
-    expect(pathsOf(openapi)).toEqual([...published.slice(0, 5), '/v1/pdf', '/v1/pdf/{site_id}/{template}.pdf', published[5], '/i/{account_id}/{id}.pdf', ...v3]);
+    // feature:charts (2026-11-28) comes last.
+    expect(pathsOf(openapi)).toEqual([...published.slice(0, 5), '/v1/pdf', '/v1/pdf/{site_id}/{template}.pdf', published[5], '/i/{account_id}/{id}.pdf', ...v3, '/v1/charts', '/v1/chart/{site_id}.{ext}']);
   });
 
   it('names the real site and refers only to components it defines', () => {

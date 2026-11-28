@@ -51,6 +51,13 @@ tags:
       Cards made from a page's own metadata: POST /v1/cards/from-url and signed /v1/link/... URLs.
       Human documentation: https://linktocard.com/docs/link-cards
   # /feature:linkcards
+  # feature:charts
+  - name: Charts
+    description: |
+      Chart images: a chart described as JSON, drawn as a PNG, JPEG or WebP image, through a signed
+      /v1/chart/... URL or POST /v1/charts. A chart counts one image the first time it is drawn;
+      repeat views are free. Human documentation: https://linktocard.com/docs/charts
+  # /feature:charts
 paths:
   /v1/images:
     post:
@@ -1605,6 +1612,198 @@ paths:
         "504":
           $ref: "#/components/responses/RenderTimeout"
   # /feature:linkcards
+  # feature:charts
+  /v1/charts:
+    post:
+      tags: [Charts]
+      operationId: createChart
+      summary: Draw one chart image, or return it from storage.
+      description: |
+        Draws the chart and stores it for the plan's cache period, or returns the stored image when
+        the same chart (account, chart JSON in canonical form, format) was drawn before. A chart counts
+        one image the first time it is drawn. When its stored copy has expired, it is drawn and stored
+        again without counting, for as long as the count is remembered (see /docs/charts#what-counts).
+        A chart counted through a signed URL is not counted again here, and the other way round. Same
+        rate limits as POST /v1/images.
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChartRequest"
+            examples:
+              line:
+                summary: A line chart for an email
+                value:
+                  type: line
+                  title: Visitors per month
+                  labels: [Jan, Feb, Mar, Apr]
+                  series:
+                    - name: Website
+                      data: [1200, 1350, 1280, 1610]
+                  width: 600
+                  height: 300
+                  scale: 2
+                  format: png
+      responses:
+        "200":
+          description: The stored chart image.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChartImage"
+        "400":
+          description: invalid_request (the chart JSON is refused; the message names the field and details.field holds its path) or unsupported_format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/InvalidApiKey"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          $ref: "#/components/responses/AccountSuspended"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ChartsNotConfigured"
+        "504":
+          $ref: "#/components/responses/RenderTimeout"
+  /v1/chart/{site_id}.{ext}:
+    get:
+      tags: [Charts]
+      operationId: getSignedChart
+      summary: A signed chart URL, for an <img>.
+      description: |
+        Public. Authenticated by the "sig" query parameter: the lowercase hexadecimal
+        HMAC-SHA256, keyed with the site secret, of these lines joined with "\n":
+
+          1. the path, e.g. /v1/chart/s_4k2j9x0q1m7c8d5e.png
+          2. c
+          3. "c=" followed by the chart JSON as it is in the URL, decoded (not URL-encoded)
+
+        The URL takes "c" and "sig" and nothing else. The signature is checked before the chart
+        is read. The first request draws, stores and counts the chart; later requests are served
+        from storage and are not counted, and a request after the stored copy expired draws it
+        again without counting while the count is remembered. HEAD never draws and never counts.
+      security: []
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          description: Site id from the dashboard.
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9_-]{1,64}$"
+          example: s_4k2j9x0q1m7c8d5e
+        - name: ext
+          in: path
+          required: true
+          description: File extension; chooses the output format. jpg and jpeg both give JPEG.
+          schema:
+            type: string
+            enum: [png, jpg, jpeg, webp]
+        - name: c
+          in: query
+          required: true
+          description: The chart JSON (ChartRequest without "format") as text on one line, as JSON.stringify writes it, URL-encoded.
+          schema:
+            type: string
+          example: '{"type":"bar","labels":["Q1","Q2"],"series":[{"data":[120,145]}]}'
+        - name: sig
+          in: query
+          required: true
+          description: The signature, 64 hexadecimal characters.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: If-None-Match
+          in: header
+          required: false
+          description: An ETag from an earlier response; a match answers 304.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The image.
+          headers:
+            Cache-Control:
+              description: public, max-age=N, up to 30 days and never past the stored copy's expiry, so mail apps and image proxies can keep it.
+              schema:
+                type: string
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-LTC-Cache:
+              $ref: "#/components/headers/X-LTC-Cache"
+            X-LTC-Credits-Used:
+              description: 1 for the request that counted the chart, 0 otherwise.
+              schema:
+                type: string
+                enum: ["0", "1"]
+            Cross-Origin-Resource-Policy:
+              description: cross-origin, so any site may embed the image.
+              schema:
+                type: string
+                enum: [cross-origin]
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: Not modified (If-None-Match matched).
+        "400":
+          description: invalid_request (the chart JSON is refused; the message names the field and details.field holds its path). Answered after the signature is verified.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
+        "403":
+          description: |
+            invalid_signature (details.reason is one of missing_sig, malformed_sig, duplicate_param,
+            unknown_param, missing_chart, bad_value, url_too_long, signature_mismatch), or
+            account_suspended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "503":
+          $ref: "#/components/responses/ChartsNotConfigured"
+        "504":
+          $ref: "#/components/responses/RenderTimeout"
+  # /feature:charts
 components:
   securitySchemes:
     apiKey:
@@ -2868,6 +3067,160 @@ components:
               type: object
               description: Present for some errors, for example reason, usage, unknown_fields, limit.
               additionalProperties: true
+    # feature:charts
+    ChartRequest:
+      type: object
+      required: [type, labels, series]
+      additionalProperties: false
+      description: |
+        The chart JSON (https://linktocard.com/docs/charts#the-chart-json). Unknown fields are refused
+        at every level. Text is one line; colours are "#rgb" or "#rrggbb"; no field is read as an
+        address. The "c" parameter of a signed chart URL is the same object without "format".
+      properties:
+        type:
+          type: string
+          enum: [bar, line, area, pie, doughnut]
+        title:
+          type: string
+        subtitle:
+          type: string
+        labels:
+          type: array
+          minItems: 1
+          maxItems: 200
+          description: One per bar, point or slice, in order. At most 24 for pie and doughnut.
+          items:
+            oneOf:
+              - type: string
+              - type: number
+        series:
+          type: array
+          minItems: 1
+          maxItems: 12
+          description: Exactly one for pie and doughnut.
+          items:
+            $ref: "#/components/schemas/ChartSeries"
+        options:
+          $ref: "#/components/schemas/ChartOptions"
+        width:
+          type: integer
+          minimum: 200
+          maximum: 1200
+          default: 600
+        height:
+          type: integer
+          minimum: 200
+          maximum: 1200
+          default: 400
+        scale:
+          type: integer
+          enum: [1, 2]
+          default: 1
+          description: The image is width x scale by height x scale pixels.
+        format:
+          type: string
+          enum: [png, jpeg, jpg, webp]
+          default: png
+          description: POST /v1/charts only; a signed chart URL takes the format from its extension.
+    ChartSeries:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: Defaults to "Series 1", "Series 2", ...
+        data:
+          type: array
+          description: One number per label. Pie and doughnut charts refuse negative numbers.
+          items:
+            type: number
+        color:
+          type: string
+          pattern: "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
+    ChartOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        horizontal:
+          type: boolean
+          default: false
+          description: Bar charts only; other types ignore it.
+        stacked:
+          type: boolean
+          default: false
+          description: Bar and area charts only; other types ignore it.
+        legend:
+          type: boolean
+          description: Defaults to true for pie, doughnut and charts with more than one series, else false.
+        values:
+          type: boolean
+          default: false
+        x_title:
+          type: string
+        y_title:
+          type: string
+        prefix:
+          type: string
+        suffix:
+          type: string
+        decimals:
+          type: integer
+          minimum: 0
+          maximum: 4
+        min:
+          type: number
+        max:
+          type: number
+        theme:
+          type: string
+          enum: [light, dark]
+          default: light
+        background:
+          type: string
+          description: '"#rgb", "#rrggbb", or "transparent" (PNG only).'
+    ChartImage:
+      type: object
+      required: [id, url, width, height, format, bytes, cached, credits_used, created_at, expires_at, warnings, usage]
+      properties:
+        id:
+          type: string
+          description: 64 hexadecimal characters. The same chart on the same account always has the same id.
+        url:
+          type: string
+          format: uri
+          description: Public URL of the image. Works until expires_at.
+        width:
+          type: integer
+          description: Pixels, the chart's width times scale.
+        height:
+          type: integer
+          description: Pixels, the chart's height times scale.
+        format:
+          $ref: "#/components/schemas/Format"
+        bytes:
+          type: integer
+        cached:
+          type: boolean
+          description: false when this request drew the chart, true when it was already stored.
+        credits_used:
+          type: integer
+          enum: [0, 1]
+          description: 1 for the request that counted the chart, 0 otherwise.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        warnings:
+          type: array
+          description: Things that could not be drawn as given, such as text no font covers.
+          items:
+            type: string
+        usage:
+          $ref: "#/components/schemas/Usage"
+    # /feature:charts
   responses:
     ImageFile:
       description: The image.
@@ -3272,3 +3625,11 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     # /feature:linkcards
+    # feature:charts
+    ChartsNotConfigured:
+      description: 'not_configured. Chart images are not enabled on this deployment ("Chart images are not enabled yet.").'
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    # /feature:charts

@@ -31,6 +31,9 @@
  *               already.
  *   icon        A key of TOOL_ICONS (site/tool-icons.ts). Draw a new pictogram there when none
  *               fits: neutral shapes only, never another company's logo or mark.
+ *   pages       Optional. Other pages under /tools/ that are the same tool opened on another
+ *               setting (the pie, bar and line pages of the chart maker). They get no tile of
+ *               their own: the tool's tile stands for them.
  *
  * What the build does with it:
  *   - A tile is printed only when every feature of its entry is on AND the page behind its href
@@ -40,7 +43,7 @@
  *   - A column without tiles is not printed, and neither is its filter chip. The counts on the
  *     column headings and the chips are counted from the tiles that were printed.
  *   - tests/node/home-tools.test.ts checks every entry: each page under /tools/ has exactly one
- *     tile, each href resolves, the labels come from TOOL_LABELS.
+ *     tile (its href, or one of its `pages`), each href resolves, the labels come from TOOL_LABELS.
  */
 import type { Feature } from '../scripts/build-site';
 import type { ToolIconId } from './tool-icons';
@@ -87,6 +90,7 @@ export interface Tool {
   features: readonly Feature[];
   keywords: string;
   icon: ToolIconId;
+  pages?: readonly string[];
 }
 
 export const TOOLS: readonly Tool[] = [
@@ -198,6 +202,18 @@ export const TOOLS: readonly Tool[] = [
     features: ['email'],
     keywords: 'personalized personalised newsletter banner merge tag open field',
     icon: 'envelope',
+  },
+  {
+    id: 'chart-images',
+    name: 'Chart images',
+    description: 'Bar, line and pie as PNG',
+    href: '/tools/chart-maker',
+    category: 'images',
+    label: 'both',
+    features: ['charts'],
+    keywords: 'chart maker graph maker bar graph line graph pie chart doughnut area png email report',
+    icon: 'chart',
+    pages: ['/tools/pie-chart-maker', '/tools/bar-graph-maker', '/tools/line-graph-maker'],
   },
 
   // ------------------------------------------------------------ PDF, files

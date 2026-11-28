@@ -232,9 +232,12 @@ describe('"Last updated"', () => {
   it('is 28 November 2026 on the terms, 27 November 2026 on the privacy policy and 25 November 2026 on the refund policy, in both builds', () => {
     for (const site of [production, staging]) {
       expect(lastUpdated(html(site, 'terms.html'))).toEqual(['28 November 2026']);
-      expect(lastUpdated(html(site, 'privacy.html'))).toEqual(['27 November 2026']);
+      // The chart maker's line (feature "charts", staging only) is dated 28 November 2026 with
+      // `updated.charts`, so only a build with that feature shows the later date.
+      expect(lastUpdated(html(site, 'privacy.html'))).toEqual([site.features.charts ? '28 November 2026' : '27 November 2026']);
       expect(lastUpdated(html(site, 'refund.html'))).toEqual(['25 November 2026']);
     }
+    expect(staging.features.charts && !production.features.charts).toBe(true);
     // The site-wide date is unchanged; the terms and the privacy policy have a date of their own.
     // The top-up decision of 2026-11-28 changed the terms only: the privacy policy and the refund
     // policy say nothing that it made untrue.
@@ -242,7 +245,9 @@ describe('"Last updated"', () => {
     expect(read('site/content/terms.md')).toMatch(/^---\n[\s\S]*?^updated: 2026-11-28$[\s\S]*?^---$/m);
     expect(read('site/content/privacy.md')).toMatch(/^---\n[\s\S]*?^updated: 2026-11-27$[\s\S]*?^---$/m);
     expect(read('site/content/refund.md').split(/^---$/m)[1]).not.toMatch(/^updated:/m);
-    for (const page of ['terms', 'privacy', 'refund']) expect(featureDates(read(`site/content/${page}.md`)), page).toEqual([]);
+    // The one feature date: the chart maker's line of the privacy policy (feature "charts", not in production).
+    const featureDatesOf: Record<string, string[]> = { terms: [], privacy: ['updated.charts: 2026-11-28'], refund: [] };
+    for (const page of ['terms', 'privacy', 'refund']) expect(featureDates(read(`site/content/${page}.md`)), page).toEqual(featureDatesOf[page]);
   });
 
   it('of the terms is 28 November 2026 in every build: the two top-up lines are in all of them', () => {
@@ -271,7 +276,8 @@ describe('"Last updated"', () => {
     // feature's: Turnstile, the clean-up and Cloudflare Web Analytics. The same line also dates the
     // privacy text of the feature blocks written on 26 and 27 November (staging), so it must stay
     // even if those sentences were reverted, until a raised legalUpdated covers that text.
-    const privacy = productionSource('privacy').replace(/^updated: .*\n/m, '');
+    // `updated.<feature>` lines date text that production does not print (chart maker: updated.charts).
+    const privacy = productionSource('privacy').replace(/^updated: .*\n/m, '').replace(/^updated\.[a-z-]+: .*\n/gm, '');
     expect(blobId(privacy)).not.toBe(BLOBS_89270A7.privacy);
     const visible = text(mainOf(html(production, 'privacy.html')));
     expect(visible).toContain('Turnstile, the check that tells people from bots, if a free tool on the website shows it');

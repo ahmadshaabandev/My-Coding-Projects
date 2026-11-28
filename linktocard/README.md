@@ -40,6 +40,11 @@ Ahmad approved only the free pages for production; every v3 API stays off there.
 - **The home page as a grid of every tool is in the code, not deployed** (owner decision of
   2026-11-28). Its first screen lists every tool the build publishes, from `site/tools.catalog.ts`.
   Checked in headless Chromium only. Changelog, 2026-11-28.
+- **Chart images (API plus free chart maker) are in the code, not in production** (owner decision
+  of 2026-11-28). The Worker routes are on staging (`CHARTS_ENABLED` `"true"` there, `"false"` in
+  production). The site feature `charts` (four chart maker pages, `/docs/charts`, the home page tile)
+  is in `deploy:staging` only and was checked against a local `wrangler dev` in headless Chromium;
+  the site part is not deployed yet. Changelog, 2026-11-28.
 - **The top-up without a subscription is in the code, not deployed** (owner decision of
   2026-11-28). A Free account can buy the $8 top-up; it stays on Free, with the corner mark.
   Production keeps checkout closed, so there nothing can be bought and the pages say top-ups are
@@ -186,7 +191,10 @@ npm run smoke       # the whole product over HTTP against a real `wrangler dev`
   `tests/cards-*.test.ts`, `tests/email-*.test.ts`; in Node, the v3 docs and site statements
   (`tests/node/v3-docs-draft.test.ts`, `tests/node/v3-site.test.ts`), the email pages, the preview
   pages, the dashboard Bulk tab, the in-browser PDF tools, the queue settings in `wrangler.toml` and
-  the three connectors' copies of the service's choices (`tests/node/*-connector-sync.test.ts`). The
+  the three connectors' copies of the service's choices (`tests/node/*-connector-sync.test.ts`).
+- Chart images: `tests/charts-*.test.ts` in `workerd`; in Node, `tests/node/charts-site.test.ts` (the
+  chart pages in each build, the documented Node signer against `src/charts/url.ts`, the field tables
+  against `src/charts/spec.ts`, the chart maker's helpers, the OpenAPI numbers against `CHARTS`). The
   connectors' own suites run in their folders (`integrations/README.md`), not in `npm test`.
 - `npm run smoke` starts `wrangler dev` on port 8799 with a throw-away database, signs in,
   creates a key and a site, renders, checks caching and counting, checks that every PDF
@@ -272,8 +280,9 @@ build prints, `updated.<feature>: YYYY-MM-DD` (`updated.batch`, `updated.no-pdf`
 a build with that feature switch prints. A legal page shows the latest of `legalUpdated` and the
 dates that apply to the build, so raising `legalUpdated` at a launch dates every legal page by
 itself. A date that is not a real day, an unknown feature, or the key on a page that is not
-`layout: legal` stops the build. Today `terms.md` has `updated: 2026-11-28` and `privacy.md` `updated: 2026-11-27`, so
-both builds show the terms 28 November, the privacy policy 27 November and the refund policy 25 November.
+`layout: legal` stops the build. Today `terms.md` has `updated: 2026-11-28` and `privacy.md` `updated: 2026-11-27` and
+`updated.charts: 2026-11-28`, so the production build shows the terms 28 November, the privacy policy
+27 November and the refund policy 25 November; the staging build shows the privacy policy 28 November.
 
 `SITE_PDF` switches the PDF pages and blocks of the site (`feature: pdf` front matter,
 `<!-- feature:pdf -->` blocks): `on` builds them, `off` or unset leaves them out. Any other value
@@ -281,7 +290,7 @@ stops the build. `npm run deploy:staging` builds with `on`, `npm run deploy:prod
 `off`, so a value left exported in the shell cannot publish PDF pages on production.
 
 `SITE_FEATURES` is a comma list of the site features to publish, the same way: `pdf`, `batch`,
-`toolkit`, `linkcards`, `email`, `previews`, `integrations`, `localpdf`, `apidocs`
+`toolkit`, `linkcards`, `email`, `previews`, `integrations`, `localpdf`, `apidocs`, `charts`
 (`scripts/build-site.ts` `FEATURES`). An unknown name stops the build, and so do `batch` or
 `toolkit` without `pdf` (their documents are PDFs and their terms build on the PDF terms; GO-LIVE.md
 section 11c turns them on only after PDFs). `localpdf` publishes the
@@ -292,8 +301,13 @@ while that page's own feature is off: the notice opens the page under its headin
 `noindex`, left out of `sitemap.xml` and of the docs navigation and pager, and its links to pages
 the build does not publish are printed as text. Approving a tool later (its feature on) removes the
 notice and puts the page back in the navigation and the sitemap by itself. `deploy:staging` builds
-with all nine; `deploy:production` with `SITE_FEATURES=previews,localpdf,apidocs` (owner decision
-of 2026-11-27). The terms and the privacy policy carry each feature's text in its own block, so a
+with all ten; `deploy:production` with `SITE_FEATURES=previews,localpdf,apidocs` (owner decision
+of 2026-11-27). `charts` publishes the chart pages, the home page tile, the `/tools` block, the
+counting rule, the chart rows of the rate-limit table, the two OpenAPI paths and the privacy
+policy's chart maker line; it has no `unlaunched` page, so a build without it has no trace of charts.
+A page can load a stylesheet of its own with `styles: <name>` in its front matter
+(`/assets/css/<name>.css`, linked at the start of the page's body, because `site/layouts/base.html`
+is copied by the verification page), as the chart pages load `chart-maker.css`. The terms and the privacy policy carry each feature's text in its own block, so a
 feature's legal text goes live only with that feature (`tests/node/v3-site.test.ts`). The production
 Terms are the owner-approved text of commit `89270a7` once the blocks are applied, plus the rule
 against counterfeit or misleading documents, which the owner published in every build on
@@ -443,6 +457,7 @@ and reaches the site through `[[tokens]]` (`scripts/v3-site-tokens.ts`, `scripts
 | Merge PDF and Image to PDF, in the browser (approved for production on 2026-11-27) | none (nothing reaches the Worker) | `localpdf` | |
 | The four docs pages above (bulk, PDF toolkit, link cards, email images) while their tool is off, with a notice (approved for production on 2026-11-27) | none | `apidocs` | |
 | Zapier, Make and n8n connectors | none | `integrations` (the page says "being prepared for listing") | `/docs/integrations`, `integrations/README.md` |
+| Chart images: signed `/v1/chart/...` URLs, `POST /v1/charts`, and the free `/tools/chart-maker`, `/tools/pie-chart-maker`, `/tools/bar-graph-maker` and `/tools/line-graph-maker` (owner decision of 2026-11-28; staging only) | `CHARTS_ENABLED` | `charts` | `/docs/charts` |
 
 - **Bulk documents.** Rows are checked with `validatePdfData` before anything is stored; each row is
   rendered and charged exactly like `POST /v1/pdf` (ledger source `batch`) by the queue consumer,
@@ -701,6 +716,41 @@ it if it is wrong.
 
 ## Changelog
 
+- **2026-11-28: Chart images on the site** (owner decision: "Chart images (API plus free chart
+  maker): 1 credit per new chart, repeat views free"; staging build only, not deployed to
+  production). The Worker side (renderer, charging, signed URL, API, free endpoint) is in
+  `src/charts/` and `src/routes/charts.ts` behind `CHARTS_ENABLED`. This entry is the site.
+  - **Site feature `charts`**, added to `deploy:staging`; `deploy:production` is unchanged, so
+    production publishes no chart page, link, sentence, script or OpenAPI path
+    (`tests/node/production-site.test.ts`).
+  - **Four free pages, one script, one endpoint.** `/tools/chart-maker` (opens on a bar chart),
+    `/tools/pie-chart-maker`, `/tools/bar-graph-maker` and `/tools/line-graph-maker` share
+    `site/partials/chart-maker.html`, `site/public/assets/js/chart-maker.js` and
+    `site/public/assets/css/chart-maker.css`, and post to `POST /api/tools/chart`. A table with add
+    and remove for rows and series, pasting a tab- or comma-separated block, title, options, size
+    presets (one for 600 pixel wide emails), a preview drawn by the server, "Download PNG" from the
+    image already shown and "Copy chart JSON". The preview sends at most one request every two
+    seconds, the newest input only; a 429 says when it tries again, a refused chart shows the
+    server's message and marks the cell, and the last good image stays. Each page has its own text
+    on its chart type, how to enter the data, and what the tool does not do. The image is shown from
+    a `blob:` URL, which `img-src` already allowed: no change to the Content-Security-Policy.
+  - **`/docs/charts`**: the chart JSON with every field, default and limit (tokens from `CHARTS`,
+    `scripts/charts-site-tokens.ts`), signed chart URLs with a Node.js signer, `POST /v1/charts`,
+    what counts, the Free mark, an email example, errors and what is not supported.
+  - **Elsewhere, with the feature:** the "Chart images" tile (Images, "Free + credits"; the catalogue
+    has a new `pages` field so the pie, bar and line pages need no tiles of their own), a "Charts"
+    block on `/tools`, a counting rule, a section of `/docs/limits`, the chart scopes of the
+    rate-limit table (`CHARTS.rateLimitScopes`), a line on `/pricing` and `/docs/api`, the two
+    paths in `openapi.yaml`, and one line of the privacy policy, dated 28 November 2026 with
+    `updated.charts`, so production's date does not move.
+  - **Checked** in headless Chromium against a local `wrangler dev` at 1366 x 768 and 390 x 844:
+    typing, editing a cell, pasting a block, switching type, a refused chart, the download (no second
+    request), no horizontal scroll on the phone. Not looked at in Safari or Firefox, or on a real
+    phone.
+  - **Tests:** `tests/node/charts-site.test.ts` (new); `home-tools`, `production-site` and
+    `site-features` follow the new feature.
+  Where AI was used: written and checked with AI tools (Claude Code). Ahmad decided the feature and
+  reviews the published wording before anything goes to production.
 - **2026-11-28: The home page leads with every tool** (owner decision: "compact rows in category
   columns", in the look of the old page; not deployed). The first screen of `/` is a grid of tool
   tiles under the one h1, "Every tool, one click away.": a search box, filter chips with counts, a
@@ -1045,6 +1095,8 @@ src/billing/            plans and Paddle
 src/db/migrations/      D1 schema
 site/                   pages, layouts, partials, Markdown content, static assets
 site/tools.catalog.ts   every tool the home page lists, one entry each (icons: site/tool-icons.ts)
+site/partials/chart-maker*.html  the free chart maker, shared by the four chart pages (script: assets/js/chart-maker.js)
+src/charts/             chart images: validation, renderer, signed URLs, charging (routes: src/routes/charts.ts)
 site/src-browser/       the in-browser PDF engine, bundled by scripts/build-browser-bundles.mts
 scripts/                site build, sample renders, smoke test, Paddle catalog instructions
 integrations/           Zapier, Make and n8n connectors, each its own package (not published)

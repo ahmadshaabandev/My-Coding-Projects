@@ -18,7 +18,7 @@
     "probes": "PROBES=1 vitest run --silent=false",
     "build:dry": "npm run build:site && wrangler deploy --dry-run --outdir dist",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "deploy:staging": "SITE_FEATURES=pdf,batch,toolkit,linkcards,email,previews,integrations,localpdf,apidocs SITE_PDF=on npm run build:site && wrangler deploy --env staging",
+    "deploy:staging": "SITE_FEATURES=pdf,batch,toolkit,linkcards,email,previews,integrations,localpdf,apidocs,charts SITE_PDF=on npm run build:site && wrangler deploy --env staging",
     "deploy:production": "npm run check:golive && SITE_FEATURES=previews,localpdf,apidocs SITE_PDF=off npm run build:site && wrangler deploy --env production",
     "check:golive": "tsx scripts/build-site.ts --check-golive",
     "deploy:www": "wrangler deploy -c redirect/wrangler.toml"

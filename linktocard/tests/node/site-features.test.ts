@@ -121,7 +121,7 @@ describe('applyFeatureBlocks', () => {
   it('takes a comma list of known features in SITE_FEATURES, with SITE_PDF=on as another way to say "pdf"', () => {
     // localpdf and apidocs: owner decision of 2026-11-27 (the in-browser PDF pages and the API docs pages go to
     // production while the APIs stay off), so the in-browser pages no longer come with "toolkit".
-    expect(FEATURES).toEqual(['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs']);
+    expect(FEATURES).toEqual(['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs', 'charts']);
     expect(siteFeatures({ SITE_FEATURES: 'linkcards' })).toEqual(only('linkcards'));
     expect(siteFeatures({ SITE_FEATURES: ' pdf , toolkit ' })).toEqual(only('pdf', 'toolkit'));
     expect(siteFeatures({ SITE_FEATURES: 'toolkit', SITE_PDF: 'on' })).toEqual(only('pdf', 'toolkit'));
@@ -147,7 +147,7 @@ describe('applyFeatureBlocks', () => {
       expect(siteFeatures({ SITE_FEATURES: `${feature},pdf` }), feature).toEqual(only('pdf', feature));
     }
     // The other features need nothing.
-    for (const feature of ['linkcards', 'email', 'previews', 'integrations', 'apidocs'] as const) expect(siteFeatures({ SITE_FEATURES: feature }), feature).toEqual(only(feature));
+    for (const feature of ['linkcards', 'email', 'previews', 'integrations', 'apidocs', 'charts'] as const) expect(siteFeatures({ SITE_FEATURES: feature }), feature).toEqual(only(feature));
   });
 });
 

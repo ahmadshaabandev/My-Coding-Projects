@@ -602,6 +602,7 @@ For each tool you approve, in one change:
 | Merge PDF and Image to PDF (in the browser) | nothing; approved for production on 2026-11-27 | none | `localpdf` | both make a PDF from two files |
 | The docs pages of tools that are off, with their notice | nothing; approved for production on 2026-11-27 | none | `apidocs` | each opens with its notice |
 | Connectors page | the connectors published (below) or still "being prepared" | none | `integrations` | the page's status line matches reality |
+| Chart images | your OK (below) | `CHARTS_ENABLED` | `charts` | `/tools/chart-maker` draws a chart; one signed chart URL and one `POST /v1/charts` each answer, and their second request says `X-LTC-Credits-Used: 0` |
 
 - **Connectors.** Publishing them is your work in your own accounts; the steps, the accounts each
   platform needs and what could not be tested here are in `integrations/README.md` ("Publishing:
@@ -609,6 +610,19 @@ For each tool you approve, in one change:
   switch the tool on first or leave the step out of that version. `/docs/integrations` says the
   connectors are being prepared for listing; when one is listed, change that text and the test in
   `tests/node/v3-docs-draft.test.ts` that forbids saying so.
+- **Chart images (built 2026-11-28, staging only; waits for your OK).** Nothing about charts
+  reaches production until you say so. To switch them on later, in one change: `CHARTS_ENABLED`
+  to `"true"` under `[env.production.vars]` in `wrangler.toml`; `charts` added to `SITE_FEATURES=`
+  of `deploy:production` (`previews,localpdf,apidocs,charts`); and the tests that pin the
+  production build updated on purpose: `tests/node/site-features.test.ts` (the script),
+  `tests/node/production-site.test.ts` (the approved pages: the four chart pages and `/docs/charts`
+  join them, and the chart phrases leave its list of switched-off words),
+  `tests/node/home-tools.test.ts` (the production tiles), `tests/node/charts-site.test.ts` (its
+  production checks) and `tests/node/forbidden-deps.test.ts` (each switch `"false"` in production).
+  The privacy policy has a chart maker line dated with `updated.charts` (28 November 2026), so the
+  production privacy policy's date moves with it: update the date pins of
+  `tests/node/legal-pages.test.ts` and `tests/node/site.test.ts` too. No migration is needed (the
+  charge records are rows of `tool_usage`).
 - **Cost.** A batch's documents are PDFs: Browser Run time, the daily alarm and the free brake
   (section 10) cover them, the failed-render cap counts them per account like `POST /v1/pdf`, and
   each environment's queue consumer renders at most `BATCH.maxConsumerConcurrency` rows at a time,

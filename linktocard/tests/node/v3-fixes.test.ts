@@ -73,7 +73,7 @@ describe('site wording (CC-1, CC-2, CC-4, CC-5)', () => {
     for (const name of Object.keys(RATE_LIMITS) as RateLimitName[]) expect(rateLimitScope(name, none)).toBe(RATE_LIMITS[name].scope);
     const every = siteFeatures({ SITE_FEATURES: FEATURES.join(',') });
     expect(rateLimitScope('RL_KEY', every)).toBe(
-      'per API key (POST /v1/images, POST /v1/cards/from-url, every /v1/batches request, POST /v1/certificates/{id}/revoke) and per site (uncached signed-URL renders)',
+      'per API key (POST /v1/images, POST /v1/cards/from-url, every /v1/batches request, POST /v1/certificates/{id}/revoke) and per site (uncached signed-URL renders); also POST /v1/charts (per API key) and uncached signed chart URLs (per site)',
     );
     expect(rateLimitScope('RL_IP', every)).toMatch(/; also GET \/v\/\{id\} and \/v\/\{id\}\.json$/);
     const limits = page(all, 'docs/limits.html');

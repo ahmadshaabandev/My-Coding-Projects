@@ -1,0 +1,65 @@
+---
+title: Line graph maker - make a line chart image, free
+description: Free line graph maker with no sign-up. Enter values over time or paste them from a spreadsheet, compare several series, and download the line chart as a PNG image.
+scripts: chart-maker
+styles: chart-maker
+feature: charts
+---
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Line graph maker.</h1>
+<p>Enter your values in time order, or paste them from a spreadsheet, and download the line chart as a PNG. No account needed.</p>
+</div>
+<div class="chart-tool" data-chart-start="line">
+[[> chart-maker]]
+</div>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About line charts</p>
+<h2>When a line chart works, and when it does not.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>Good for</h3>
+<ul>
+<li>Change over time: visitors per month, revenue per week, a price over the years.</li>
+<li>Comparing the trends of a few series on one chart, each in its own colour.</li>
+<li>Many points: a line stays readable where bars would get thin. Some labels on the axis are left out when they do not fit; the points are all drawn.</li>
+<li>An <strong>area</strong> chart, the line with the area under it filled, to stress the amount. Stacked, it shows how parts build a total over time.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>Better as another chart</h3>
+<ul>
+<li>Categories with no order, such as regions or products: a <a href="/tools/bar-graph-maker">bar chart</a>. A line between them suggests a change that is not there.</li>
+<li>The parts of one whole at one moment: a <a href="/tools/pie-chart-maker">pie chart</a> or a stacked bar.</li>
+<li>Many series that cross each other: beyond a few lines, the chart is hard to read. Show fewer series, or one chart each.</li>
+</ul>
+</div>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>How to enter the data</h3>
+<ul>
+<li>One row per point in time, oldest first, with its label in the first column: <code>Jan</code>, <code>2026-03</code>, <code>Week 12</code>.</li>
+<li>Labels are text. The chart draws them in the order of the table, evenly spaced, and does not read them as dates, so a missing month is not shown as a gap: add its row.</li>
+<li>Every point needs a value. A row with an empty cell is refused with a message that names it.</li>
+<li>One column per line. Give each a name at the top, and the legend shows it.</li>
+</ul>
+</div>
+[[> chart-maker-limits]]
+</div>
+</div>
+</section>
+
+[[> chart-maker-api]]
+
+</main>

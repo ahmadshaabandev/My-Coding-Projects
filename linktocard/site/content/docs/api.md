@@ -32,6 +32,10 @@ The PDF toolkit has its own page: [`POST /v1/pdf-tools/{operation}`](/docs/pdf-t
 
 Cards from links have their own page: [`POST /v1/cards/from-url` and signed `/v1/link/...` URLs](/docs/link-cards).
 <!-- /feature:linkcards -->
+<!-- feature:charts -->
+
+Chart images have their own page: [`POST /v1/charts` and signed `/v1/chart/...` URLs](/docs/charts).
+<!-- /feature:charts -->
 
 ## Conventions
 

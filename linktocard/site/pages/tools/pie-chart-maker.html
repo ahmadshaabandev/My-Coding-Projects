@@ -1,0 +1,65 @@
+---
+title: Pie chart maker - make a pie or doughnut chart image, free
+description: Free pie chart maker with no sign-up. Enter each slice and its value or paste them from a spreadsheet, choose pie or doughnut, and download the chart as a PNG image.
+scripts: chart-maker
+styles: chart-maker
+feature: charts
+---
+<main class="tool">
+
+<section class="section page-top tool-top">
+<div class="container">
+<div class="section-head">
+<p class="eyebrow">Free tool</p>
+<h1>Pie chart maker.</h1>
+<p>Enter each slice and its value, or paste them from a spreadsheet, and download the pie chart as a PNG. No account needed.</p>
+</div>
+<div class="chart-tool" data-chart-start="pie">
+[[> chart-maker]]
+</div>
+</div>
+</section>
+
+<section class="section">
+<div class="container tool-about">
+<div class="section-head">
+<p class="eyebrow">About pie charts</p>
+<h2>When a pie chart works, and when it does not.</h2>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>Good for</h3>
+<ul>
+<li>The parts of one whole: how a budget is split, where orders come from, the answers to one question.</li>
+<li>A few slices whose sizes differ clearly. Each slice gets its own colour, and the legend names them.</li>
+<li>A doughnut chart is the same chart with a hole in the middle. It reads the same way; choose the look you prefer.</li>
+</ul>
+</div>
+<div class="prose">
+<h3>Better as another chart</h3>
+<ul>
+<li>Many slices, or slices of nearly the same size: a <a href="/tools/bar-graph-maker">bar chart</a>, because lengths are easier to compare than angles.</li>
+<li>The same parts in several groups or years: a stacked bar chart, one bar per group.</li>
+<li>Values over time: a <a href="/tools/line-graph-maker">line chart</a>.</li>
+<li>Numbers that are not parts of a whole, such as prices or scores: a bar chart.</li>
+</ul>
+</div>
+</div>
+<div class="tool-columns">
+<div class="prose">
+<h3>How to enter the data</h3>
+<ul>
+<li>One row per slice: its label and its value. The chart works out each slice&rsquo;s share from the values, so they do not have to be percentages.</li>
+<li>Values must be zero or more; a negative value is refused with a message that names its row.</li>
+<li>With <strong>Show values</strong>, each slice shows its value, with the prefix or suffix, such as <code>%</code>. When a value does not fit in its slice and the legend is on, the values are shown in the legend instead.</li>
+<li>A pie uses the first series only. Extra columns stay in the table, dimmed, for the other chart types.</li>
+</ul>
+</div>
+[[> chart-maker-limits]]
+</div>
+</div>
+</section>
+
+[[> chart-maker-api]]
+
+</main>

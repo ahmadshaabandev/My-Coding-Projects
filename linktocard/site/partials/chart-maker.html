@@ -1,0 +1,91 @@
+<!--
+  The free chart maker, shared by the four chart pages (site/pages/tools/chart-maker.html,
+  pie-chart-maker.html, bar-graph-maker.html, line-graph-maker.html). Each page wraps it in
+  <div class="chart-tool" data-chart-start="TYPE">, which picks the type and the example data it
+  opens on. site/public/assets/js/chart-maker.js builds the table and sends the chart to
+  POST /api/tools/chart; site/public/assets/css/chart-maker.css lays it out. Every limit comes from
+  CHARTS in src/config.ts through the charts tokens (scripts/charts-site-tokens.ts).
+-->
+<noscript><p class="alert alert-warn chart-noscript">This chart maker needs JavaScript: it sends your chart to our server and shows the image the server draws. Without JavaScript, nothing here works. The <a href="/docs/charts">chart API</a> makes the same images from your own code.</p></noscript>
+<form class="card card-pop chart-form" id="chart-form" novalidate data-max-series="[[charts.raw.maxSeries]]" data-max-points="[[charts.raw.maxPoints]]" data-max-slices="[[charts.raw.maxSlices]]" data-max-label-chars="[[charts.raw.maxLabelChars]]" data-max-name-chars="[[charts.raw.maxSeriesNameChars]]">
+
+<div class="chart-head">
+<fieldset class="chart-types">
+<legend class="label">Chart type</legend>
+<div class="chart-type-list">
+<label><input type="radio" name="type" value="bar" checked><span>Bar</span></label>
+<label><input type="radio" name="type" value="line"><span>Line</span></label>
+<label><input type="radio" name="type" value="area"><span>Area</span></label>
+<label><input type="radio" name="type" value="pie"><span>Pie</span></label>
+<label><input type="radio" name="type" value="doughnut"><span>Doughnut</span></label>
+</div>
+</fieldset>
+<label class="field chart-title"><span class="label">Title</span><input class="input" name="title" maxlength="[[charts.raw.maxTitleChars]]" autocomplete="off"></label>
+</div>
+
+<section class="chart-preview" aria-labelledby="chart-preview-label">
+<h2 class="label" id="chart-preview-label">Preview</h2>
+<div class="chart-frame" id="chart-frame">
+<img class="chart-img" id="chart-img" alt="" hidden>
+<p class="chart-empty" id="chart-empty">The chart appears here.</p>
+</div>
+<p class="chart-status" id="chart-status" role="status" aria-live="polite"></p>
+<div class="chart-actions">
+<a class="btn btn-primary" id="chart-download" download="chart.png" aria-disabled="true">Download PNG</a>
+<button class="btn btn-secondary" id="chart-copy" type="button">Copy chart JSON</button>
+</div>
+<p class="hint chart-size-note" id="chart-size-note"></p>
+<div class="alert alert-danger chart-error" id="chart-error" aria-live="polite" hidden></div>
+<ul class="chart-warnings hint" id="chart-warnings" hidden></ul>
+<details class="chart-json">
+<summary>Chart JSON</summary>
+<pre><code id="chart-json-code"></code></pre>
+</details>
+</section>
+
+<fieldset class="chart-data">
+<legend class="label">Data</legend>
+<p class="hint">One row per label, one column per series. To fill the table from a spreadsheet, copy the cells, with the series names in the first row, and paste them into any cell. Tab- and comma-separated text both work.</p>
+<div class="table-wrap chart-table-wrap">
+<table class="chart-table" id="chart-table">
+<thead></thead>
+<tbody></tbody>
+</table>
+</div>
+<div class="cluster chart-table-actions">
+<button class="btn btn-secondary btn-sm" type="button" id="chart-add-row">Add row</button>
+<button class="btn btn-secondary btn-sm" type="button" id="chart-add-series">Add series</button>
+</div>
+<p class="hint" id="chart-pie-note" hidden></p>
+<p class="hint">Up to [[charts.maxSeries]] series and [[charts.maxPoints]] rows ([[charts.maxSlices]] for a pie or doughnut chart). Write numbers with a dot for decimals: <code>1250.5</code>, or <code>1,250.5</code> with commas between thousands.</p>
+</fieldset>
+
+<fieldset class="chart-options">
+<legend class="label">Options</legend>
+<div class="chart-checks">
+<label class="check"><input type="checkbox" name="stacked"> Stacked</label>
+<label class="check"><input type="checkbox" name="horizontal"> Horizontal bars</label>
+<label class="check"><input type="checkbox" name="values"> Show values</label>
+<label class="check"><input type="checkbox" name="legend" checked> Legend</label>
+</div>
+<div class="chart-option-grid">
+<label class="field"><span class="label">Prefix</span><input class="input" name="prefix" maxlength="[[charts.raw.maxAffixChars]]" placeholder="$" autocomplete="off"></label>
+<label class="field"><span class="label">Suffix</span><input class="input" name="suffix" maxlength="[[charts.raw.maxAffixChars]]" placeholder="%" autocomplete="off"></label>
+<fieldset class="field chart-theme">
+<legend class="label">Theme</legend>
+<div class="segmented">
+<label><input type="radio" name="theme" value="light" checked><span>Light</span></label>
+<label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+</div>
+</fieldset>
+<label class="field"><span class="label">Size</span><select class="select" name="size">
+<option value="600x300">Email, 600 x 300</option>
+<option value="[[charts.defaultWidth]]x[[charts.defaultHeight]]" selected>Standard, [[charts.defaultWidth]] x [[charts.defaultHeight]]</option>
+<option value="800x450">Wide, 800 x 450</option>
+<option value="600x600">Square, 600 x 600</option>
+</select></label>
+</div>
+<p class="hint">Prefix and suffix go around every number on the chart, such as <code>$</code> or <code>%</code>. Stacked works for bar and area charts, horizontal for bar charts.</p>
+</fieldset>
+
+</form>

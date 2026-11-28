@@ -116,6 +116,12 @@ A card made from a page counts one image, like any card. Reading the page counts
 Each distinct set of open-field values is one card. Each site can render at most [[email.dailyFree]] new ones a day on [[plan.free.name]], [[email.dailyStarter]] on [[plan.starter.name]] and [[email.dailyPro]] on [[plan.pro.name]]; past that, new values get the default image. See [Email images](/docs/email-images#the-daily-limit-per-site).
 
 <!-- /feature:email -->
+<!-- feature:charts -->
+## Chart images
+
+A new chart counts one image the first time it is drawn; repeat views are free. A chart has at most [[charts.maxSeries]] series and [[charts.maxPoints]] labels ([[charts.maxSlices]] for a pie or doughnut chart), is [[charts.minWidth]] to [[charts.maxWidth]] pixels wide and [[charts.minHeight]] to [[charts.maxHeight]] high, and its JSON is at most [[charts.maxJsonKb]] KB. [Chart images](/docs/charts#the-chart-json) lists every limit, with [what counts](/docs/charts#what-counts).
+
+<!-- /feature:charts -->
 ## Rate limits
 
 Rate limits are short-term request limits that protect the service. They are not part of your allowance.

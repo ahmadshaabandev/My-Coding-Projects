@@ -3,6 +3,7 @@ title: Privacy Policy
 description: What personal data [[site.name]] collects, why, who processes it, how long it is kept and how to ask for it to be corrected or deleted.
 layout: legal
 updated: 2026-11-27
+updated.charts: 2026-11-28
 ---
 
 Last updated: [[legal.updated]]
@@ -40,6 +41,9 @@ Contact for anything on this page: <[[site.supportEmail]]>
 <!-- feature:email -->
 | **Open-field values**: the short values, such as a first name, that an email platform puts into a personalized image's address for each reader, and the images made from them | They arrive when a reader's mail app, or its image proxy, loads the image, like any image request. |
 <!-- /feature:email -->
+<!-- feature:charts -->
+| **Free chart maker**: the chart you enter (its type, labels, numbers and titles), which our server uses only to draw the image and send it straight back to your browser; neither the chart nor the image is stored, only a count of requests per IP address (IPv6: per /64 network) for the rate limit | You enter it on the [chart maker](/tools/chart-maker) pages. |
+<!-- /feature:charts -->
 | **Open Graph checker**: the page address you enter, the tags and measurements read from that page, and a count of checks per IP address (IPv6: per /64 network) for the current hour | You enter the address on the [Open Graph checker](/tools/og-checker), or send it to `GET /v1/inspect` with an API key, which counts checks per key for the day instead. |
 | **Website statistics**: which pages of this website are viewed, from which referring site, with which kind of browser and device, from which country, and how fast they load, counted by Cloudflare Web Analytics so we can see how the website is used and how fast it is. It is cookieless: it sets no cookie and stores nothing on your device, and Cloudflare says it does not fingerprint visitors. Cloudflare works out the country from the connection's IP address. We see only totals, not individual visitors. | Reported by Cloudflare's analytics script when a page of this website loads in your browser. |
 | **Messages to us**: the email address and message you enter in the contact form, and emails you send to support | You send them to us. The contact form is not stored by the service; it is delivered to our support mailbox as an email. |

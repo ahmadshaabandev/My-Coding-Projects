@@ -9,7 +9,8 @@
 // Nothing else may change: every old page reads as before except the footer's tool links and the
 // pricing page's two free-tool lines, no link is broken, and no page outside the four docs pages says
 // that bulk documents, the PDF toolkit API, cards from links, email images or PDF documents are
-// available. The production Worker switches (wrangler.toml) are checked to be off for every API
+// available. Chart images (site feature "charts", staging only since 2026-11-28) leave no trace: no
+// page, tile, link, sentence, script or OpenAPI path (tests/node/charts-site.test.ts checks the rest). The production Worker switches (wrangler.toml) are checked to be off for every API
 // whose site feature is off. Builds go to temp directories, so site/dist is left alone.
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,6 +57,7 @@ const API_SWITCHES: Readonly<Record<string, string>> = {
   toolkit: 'PDF_TOOLKIT_ENABLED',
   linkcards: 'LINK_CARDS_ENABLED',
   email: 'EMAIL_FIELDS_ENABLED',
+  charts: 'CHARTS_ENABLED',
 };
 
 /** Words that say one of the switched-off tools is there. None may appear outside the four docs pages. */
@@ -87,6 +89,14 @@ const OFF_TOOL_PHRASES = [
   'n8n',
   // The PDF toolkit's API is off: nothing outside its docs page may offer to automate a PDF tool.
   'Automate this with the API',
+  // Chart images are off in production (CHARTS_ENABLED "false", site feature "charts" left out).
+  '/v1/chart',
+  '/api/tools/chart',
+  'chart maker',
+  'Chart maker',
+  'Chart images',
+  'chart image',
+  'graph maker',
 ];
 
 const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
@@ -287,7 +297,8 @@ describe('the production build', () => {
       for (const phrase of OFF_TOOL_PHRASES) if (visible.includes(phrase) && !before.includes(phrase)) found.push(`${outPath}: ${phrase}`);
       // No page outside the approved docs pages links to one: they document tools that are off
       // (review EXP-1: the in-browser tools sent "Automate this with the API" to /docs/pdf-tools).
-      for (const match of page.matchAll(/href="(\/docs\/(?:bulk|pdf-tools|link-cards|email-images|integrations))[#"]/g)) found.push(`${outPath} links to ${match[1]}`);
+      for (const match of page.matchAll(/href="(\/docs\/(?:bulk|pdf-tools|link-cards|email-images|integrations|charts))[#"]/g)) found.push(`${outPath} links to ${match[1]}`);
+      for (const match of page.matchAll(/(?:href|src)="(\/(?:tools\/[a-z-]*(?:chart|graph)[a-z-]*|assets\/(?:js|css)\/chart-maker\.(?:js|css)))"/g)) found.push(`${outPath} links to ${match[1]}`);
       expect(page, outPath).not.toContain('id="not-switched-on"');
     }
     expect(found).toEqual([]);

@@ -1078,7 +1078,10 @@ describe('the drafts, built', () => {
     const hub = main(html(all, HUB));
     const tools = readdirSync(join(ROOT, 'site/pages/tools'))
       .filter((name) => /\.html(?:\.draft)?$/.test(name))
-      .map((name) => `/tools/${name.replace(/\.html(?:\.draft)?$/, '')}`);
+      .map((name) => `/tools/${name.replace(/\.html(?:\.draft)?$/, '')}`)
+      // The chart pages belong to "charts", which this draft build leaves out; tests/node/charts-site.test.ts
+      // checks that the staging hub lists all four.
+      .filter((tool) => !/(?:chart|graph)-maker$/.test(tool));
     expect(tools.length).toBeGreaterThanOrEqual(11);
     for (const tool of tools) expect(hub, tool).toContain(`href="${tool}"`);
     expect(hub).toContain('href="/#playground"');

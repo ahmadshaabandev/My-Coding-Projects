@@ -12,7 +12,7 @@
  * so published prices and limits cannot drift from the enforced ones.
  *
  * Feature switches (FEATURES: pdf, batch, toolkit, linkcards, email, previews, integrations,
- * localpdf, apidocs), so a feature can be published on staging before production. SITE_FEATURES
+ * localpdf, apidocs, charts), so a feature can be published on staging before production. SITE_FEATURES
  * is a comma list of the features to publish; SITE_PDF=on is the older spelling of "pdf". SITE_PDF must be "on", "off" or unset (= off), and SITE_FEATURES may
  * name only known features; anything else stops the build, so a typo cannot silently publish
  * the wrong site. "batch" and "toolkit" need "pdf" (their documents are PDFs, and their legal text
@@ -27,6 +27,11 @@
  *   - openapi.yaml uses the same blocks as YAML comment lines (# feature:pdf ... # /feature:pdf):
  *     the copy in the repository describes everything, the published copy only what is switched on.
  *   - site/public files listed in FEATURE_PUBLIC_FILES are copied only when their feature is on.
+ *   - `styles: name` in a page's front matter adds /assets/css/name.css (comma list) at the start of
+ *     the page's body, for a stylesheet that only that feature's pages load, so it can stay out of
+ *     other builds. It is not in <head> because site/layouts/base.html is copied by the Worker's own
+ *     pages (src/batch/verify-page.ts); a stylesheet link in the body is valid HTML and blocks
+ *     rendering of what follows it, so the page does not flash unstyled.
  *   - A docs page whose front matter also has `unlaunched: <notice>` documents an API that may not be
  *     switched on yet. It is built with its own feature as usual, and also with "apidocs" while its
  *     feature is off: then the notice (inline Markdown, [[tokens]] allowed) opens the page, the page is
@@ -52,9 +57,10 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Marked, Renderer, type Tokens } from 'marked';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd, type Plan } from '../src/billing/plans';
-import { AUTH, BATCH, DAY_MS, EMAIL_FIELDS, FORMATS, HTTP_CACHE, LIMITS, LOCAL_PDF, PDF, RATE_LIMITS, SIZES, pdfUnits, type PdfFormat, type RateLimitName } from '../src/config';
+import { AUTH, BATCH, CHARTS, DAY_MS, EMAIL_FIELDS, FORMATS, HTTP_CACHE, LIMITS, LOCAL_PDF, PDF, RATE_LIMITS, SIZES, pdfUnits, type PdfFormat, type RateLimitName } from '../src/config';
 import { PDF_TEMPLATES, type PdfStarterTemplate } from '../src/pdf/templates';
 import { STARTER_TEMPLATES as RENDER_TEMPLATES } from '../src/render/templates';
+import { chartsSiteTokens } from './charts-site-tokens';
 import { emailSiteTokens } from './email-site-tokens';
 import { previewsSiteTokens } from './previews-site-tokens';
 import { toolPartials } from './tools-site';
@@ -161,6 +167,8 @@ interface PageSource {
   order: number;
   indexed: boolean;
   scripts: string[];
+  /** Extra stylesheets (front matter `styles:`), loaded after site.css. */
+  styles: string[];
   content: string;
   /** The page's "Last updated" date in this build, YYYY-MM-DD: legalUpdated, or a later one of its front matter (pageUpdated()). */
   updated: string;
@@ -230,9 +238,11 @@ function loadConfig(file: string, env: Record<string, string | undefined>): Site
  * from links. email: personalized email images. previews: the one-app link preview pages and the
  * tool hub. integrations: the Zapier, Make and n8n docs page. localpdf: the in-browser Merge PDF and
  * Image to PDF pages, which need no server feature. apidocs: the docs pages with an `unlaunched`
- * notice, published with that notice while their own feature is off.
+ * notice, published with that notice while their own feature is off. charts: chart images, the four
+ * free chart maker pages and /docs/charts (Worker switch CHARTS_ENABLED); it has no `unlaunched`
+ * page, so a build without it has no trace of charts.
  */
-export const FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs'] as const;
+export const FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs', 'charts'] as const;
 export type Feature = (typeof FEATURES)[number];
 export type SiteFeatures = Record<Feature, boolean>;
 
@@ -256,6 +266,9 @@ const FEATURE_PUBLIC_FILES: Readonly<Record<string, Feature>> = {
   'assets/js/dashboard/bulk-helpers.js': 'batch',
   'assets/js/dashboard/csv.js': 'batch',
   'assets/css/dashboard-bulk.css': 'batch',
+  // The four chart maker pages (/tools/chart-maker and the pie, bar and line pages).
+  'assets/js/chart-maker.js': 'charts',
+  'assets/css/chart-maker.css': 'charts',
 };
 
 /**
@@ -553,7 +566,7 @@ function buildTokens(config: SiteConfig, now: Date): Record<string, string> {
   };
   for (const id of PLAN_ORDER) Object.assign(tokens, planTokens(PLANS[id]));
   // The v3 modules print the numbers of their own pages; no token name is defined twice.
-  for (const extra of [pdfTokens(), localPdfTokens(), v3SiteTokens(), previewsSiteTokens(), emailSiteTokens()]) {
+  for (const extra of [pdfTokens(), localPdfTokens(), v3SiteTokens(), previewsSiteTokens(), emailSiteTokens(), chartsSiteTokens()]) {
     for (const [name, value] of Object.entries(extra)) {
       if (Object.hasOwn(tokens, name)) throw new Error(`token [[${name}]] is defined twice`);
       tokens[name] = value;
@@ -808,9 +821,12 @@ export function rateLimitScope(name: RateLimitName, site: SiteFeatures): string 
       ...(site.linkcards ? ['POST /v1/cards/from-url'] : []),
       ...(site.batch ? ['every /v1/batches request', 'POST /v1/certificates/{id}/revoke'] : []),
     ];
-    return also.length === 0 ? scope : scope.replace('(POST /v1/images)', `(POST /v1/images, ${also.join(', ')})`);
+    const withRoutes = also.length === 0 ? scope : scope.replace('(POST /v1/images)', `(POST /v1/images, ${also.join(', ')})`);
+    return site.charts ? `${withRoutes}; also ${CHARTS.rateLimitScopes.RL_KEY}` : withRoutes;
   }
   if (name === 'RL_IP' && site.batch) return `${scope}; also GET /v/{id} and /v/{id}.json`;
+  // The chart maker's previews have their own counter in the playground's limiter (src/routes/charts.ts).
+  if (name === 'RL_PLAYGROUND' && site.charts) return `${scope}; also ${CHARTS.rateLimitScopes.RL_PLAYGROUND}`;
   return scope;
 }
 
@@ -1157,6 +1173,7 @@ function loadPage(root: string, rel: string, kind: 'content' | 'page', ctx: Toke
     // Not advertised while the API it documents is off: no sitemap entry, noindex.
     indexed: data.noindex !== 'true' && !unlaunched,
     scripts: (data.scripts ?? '').split(',').map((name) => name.trim()).filter(Boolean),
+    styles: (data.styles ?? '').split(',').map((name) => name.trim()).filter(Boolean),
     content: unlaunched ? unlaunchedNotice(data.unlaunched ?? '', pageCtx, source) + content : content,
     updated,
     unlaunched,
@@ -1235,14 +1252,16 @@ function renderPage(page: PageSource, layouts: Record<Layout | 'base', string>, 
   const updated = /last updated/i.test(page.content)
     ? ''
     : `<p class="eyebrow">Last updated <time datetime="${page.updated}">${longDate(page.updated)}</time></p>`;
+  const styles = page.styles.map((name) => `<link rel="stylesheet" href="/assets/css/${name}.css">\n`).join('');
   const body =
-    page.layout === 'site'
+    styles +
+    (page.layout === 'site'
       ? page.content
       : fill(
           layouts[page.layout],
           { heading, updated, content: page.content, sidebar: docsSidebar(docs, page), pager: docsPager(docs, page) },
           `site/layouts/${page.layout}.html`,
-        );
+        ));
   const title = page.title.includes(config.name) ? page.title : `${page.title} - ${config.name}`;
   return fill(
     layouts.base,

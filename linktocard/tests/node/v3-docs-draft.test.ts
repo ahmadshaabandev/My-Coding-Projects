@@ -59,7 +59,7 @@ const DRAFTS: readonly Draft[] = [
  * connectors page, and localpdf and apidocs (owner decision of 2026-11-27: the in-browser PDF pages and these docs
  * pages, with their "unlaunched" notice, in production while the APIs stay off).
  */
-const KNOWN_FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs'];
+const KNOWN_FEATURES = ['pdf', 'batch', 'toolkit', 'linkcards', 'email', 'previews', 'integrations', 'localpdf', 'apidocs', 'charts'];
 
 /** The page as published (.md) once renamed, the draft (.md.draft) before. */
 function draftFile(name: Draft['name']): string {
