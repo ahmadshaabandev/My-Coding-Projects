@@ -40,6 +40,7 @@ import { parseTemplate } from '../render/template';
 import type { Env, UserRow } from '../types';
 import { ApiError } from './errors';
 import { codePointLength } from './http';
+import { chargeRecordBucket, chargeRecordRange, hasChargeRecord } from './quota';
 import {
   SIG_PARAM,
   SIZE_PARAM,
@@ -497,20 +498,17 @@ export function openFieldsCapError(limit: number, now: number): ApiError {
  * an account's rows with the account (src/lib/cleanup.ts). Re-renders still take one of the site's
  * unique renders of the day (reserveOpenFieldRender), so the CPU they cost stays capped.
  */
-const CHARGE_PREFIX = 'emailpaid:';
-
-/** tool_usage bucket that remembers one charged email image of an account. */
+/** tool_usage bucket that remembers one charged email image of an account (src/lib/quota.ts chargeRecordBucket). */
 export function emailChargeBucket(userId: string, cacheKey: string): string {
-  return `${CHARGE_PREFIX}${userId}:${cacheKey}`;
+  return chargeRecordBucket(userId, cacheKey);
 }
 
-/** Every bucket of one account lies strictly between these two (";" follows ":"; ids hold neither). */
+/** Every bucket of one account lies strictly between these two. Charts' charge records are in the same range. */
 export function emailChargeRange(userId: string): { from: string; to: string } {
-  return { from: `${CHARGE_PREFIX}${userId}:`, to: `${CHARGE_PREFIX}${userId};` };
+  return chargeRecordRange(userId);
 }
 
 /** True while the account's charge for this image is remembered: a render of it now is free. */
-export async function hasEmailCharge(db: D1Database, userId: string, cacheKey: string, now: number): Promise<boolean> {
-  const row = await db.prepare('SELECT 1 AS paid FROM tool_usage WHERE bucket = ?1 AND expires_at > ?2').bind(emailChargeBucket(userId, cacheKey), now).first<{ paid: number }>();
-  return row !== null;
+export function hasEmailCharge(db: D1Database, userId: string, cacheKey: string, now: number): Promise<boolean> {
+  return hasChargeRecord(db, userId, cacheKey, now);
 }

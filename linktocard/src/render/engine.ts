@@ -263,14 +263,17 @@ export interface EncodedImage {
   encodeMs: number
 }
 
-/** SVG -> encoded image on an opaque white background. */
-export async function encodeSvg(svg: string, width: number, format: ImageFormat): Promise<EncodedImage> {
+/**
+ * SVG -> encoded image on an opaque background (white unless given). Only a PNG may be given a
+ * background with transparency: the JPEG and WebP encoders need opaque pixels (see rasterize()).
+ */
+export async function encodeSvg(svg: string, width: number, format: ImageFormat, background = BACKGROUND): Promise<EncodedImage> {
   const started = performance.now()
   if (format === 'png') {
-    const bytes = await svgToPng(svg, width)
+    const bytes = await svgToPng(svg, width, background)
     return { bytes, rasterMs: performance.now() - started, encodeMs: 0 }
   }
-  const raster = await rasterize(svg, width)
+  const raster = await rasterize(svg, width, background)
   const rastered = performance.now()
   const bytes = format === 'jpeg' ? await encodeRasterJpeg(raster) : await encodeRasterWebp(raster)
   return { bytes, rasterMs: rastered - started, encodeMs: performance.now() - rastered }

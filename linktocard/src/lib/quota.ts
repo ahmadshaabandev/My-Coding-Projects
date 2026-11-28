@@ -67,8 +67,8 @@ export interface RenderCharge {
   /** How long the image stays cached, i.e. how long the same cache key is not charged again. */
   ttlMs: number;
   /**
-   * Charge once (email images): the tool_usage row that remembers this image was paid for
-   * (src/lib/open-fields.ts emailChargeBucket), kept ttlMs from the charge. It is written in the
+   * Charge once (email images, charts): the tool_usage row that remembers this image was paid for
+   * (chargeRecordBucket below), kept ttlMs from the charge. It is written in the
    * batch that takes the image, guarded by the take's own condition, so it exists if and only if
    * the image was taken; see CHARGE_RECORD_* below.
    */
@@ -183,7 +183,7 @@ const COUNT_TOPUP_USE_SQL = `UPDATE usage_periods SET topup_used = topup_used + 
 const TAKE_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - 1 WHERE id = (${NEXT_TOPUP})`;
 
 /*
- * Charge once (email images): the record that an image was paid for. An image's ledger row says
+ * Charge once (email images, and charts: src/charts/service.ts): the record that an image was paid for. An image's ledger row says
  * 'plan' from its claim, before anything is taken, and is deleted again when nothing was left, so
  * the row is no proof of payment and the record is never written from it. It is written only here,
  * inside the batch that takes the image: placed before the take and guarded by exactly the take's
@@ -192,6 +192,29 @@ const TAKE_FROM_TOPUP_SQL = `UPDATE topups SET remaining = remaining - 1 WHERE i
  * as it is (its time is the first charge); an expired one the cleanup has not removed yet is
  * replaced.
  */
+const CHARGE_RECORD_PREFIX = 'emailpaid:';
+
+/**
+ * tool_usage bucket of the record that one image of an account was charged. `imageKey` is a
+ * sha256 over the account and the image (an email image's cache key, a chart's charge key from
+ * src/charts/service.ts): a one-way hash, no text of the image. Email images were the first to be
+ * charged once, hence the prefix; it stays, because the stored records carry it.
+ */
+export function chargeRecordBucket(userId: string, imageKey: string): string {
+  return `${CHARGE_RECORD_PREFIX}${userId}:${imageKey}`;
+}
+
+/** Every charge record of one account lies strictly between these two (";" follows ":"; ids hold neither). */
+export function chargeRecordRange(userId: string): { from: string; to: string } {
+  return { from: `${CHARGE_RECORD_PREFIX}${userId}:`, to: `${CHARGE_RECORD_PREFIX}${userId};` };
+}
+
+/** True while the account's charge for this image is remembered: drawing it again now is free. */
+export async function hasChargeRecord(db: D1Database, userId: string, imageKey: string, now: number): Promise<boolean> {
+  const row = await db.prepare('SELECT 1 AS paid FROM tool_usage WHERE bucket = ?1 AND expires_at > ?2').bind(chargeRecordBucket(userId, imageKey), now).first<{ paid: number }>();
+  return row !== null;
+}
+
 // Allowance batch: ?1 user, ?2 period start, ?3 plan monthly images, ?4 bucket, ?5 record expiry, ?6 now.
 const CHARGE_RECORD_ALLOWANCE_SQL = `INSERT INTO tool_usage (bucket, count, expires_at)
   SELECT ?4, 1, ?5 WHERE EXISTS (SELECT 1 FROM usage_periods WHERE user_id = ?1 AND period_start = ?2 AND used < MAX(0, ?3 + allowance_adjust))

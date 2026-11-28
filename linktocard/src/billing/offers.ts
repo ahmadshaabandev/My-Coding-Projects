@@ -7,8 +7,13 @@
  * deployment: a top-up is offered only while checkout is open here
  * (CHECKOUT_ENABLED and the Paddle values, paddleClientConfig), so a message
  * never sends anyone to buy what is not on sale yet. While checkout is closed
- * the messages read exactly as they did before top-ups were opened to the Free
- * plan (owner decision of 2026-11-28).
+ * the remedy and the emails of a Free account read exactly as they did before
+ * top-ups were opened to the Free plan (owner decision of 2026-11-28).
+ *
+ * Where a PDF or toolkit 402 says what a block is charged from ("the monthly
+ * allowance or from a single top-up"), that follows the plan alone, not this
+ * file: a balance an account already holds is used whether or not more can be
+ * bought.
  */
 import type { Env } from '../types';
 import { paddleClientConfig } from './paddle';

@@ -1,15 +1,51 @@
 ---
-title: Link To Card - Turn every link into a beautiful share card
-description: Open Graph and social card images rendered from your own HTML and CSS templates, served from one signed og:image URL. For sites that are not on Vercel.
-scripts: playground, pricing
+title: Link To Card - Every tool for share cards and link previews
+<!-- feature:no-localpdf -->
+description: Every Link To Card tool on one page. Check how a link looks when it is shared, and make share card images from your own HTML and CSS with one signed og:image URL.
+<!-- /feature:no-localpdf -->
+<!-- feature:localpdf -->
+description: Every Link To Card tool on one page. Check how a link looks when it is shared, make share card images from your own HTML and CSS, and work on PDF files in your browser.
+<!-- /feature:localpdf -->
+scripts: playground, pricing, tool-finder
 ---
+<!--
+  The first screen is the tool grid: the headline, the search box, the filter chips, the legend and
+  one tile per tool. The chips, the grid and the labels are printed by scripts/tools-site.ts from
+  site/tools.catalog.ts (the tool-chips, tool-grid and tool-label partials): to add a tool,
+  add an entry there, not here. site/public/assets/js/tool-finder.js switches the search box and the
+  chips on; without JavaScript they stay off and every tile is visible. The page has one h1, the
+  headline of the grid; everything below it is the page as it was, with its section ids.
+-->
 <main>
+
+<section class="tools" id="tools">
+<div class="tools-inner">
+<div class="tools-top">
+<h1>Every tool, <em>one click</em> away.</h1>
+<div class="tools-search" role="search">
+<label class="visually-hidden" for="tool-q">Search the tools</label>
+<svg class="tools-search-ico" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+<input class="input" id="tool-q" type="text" inputmode="search" enterkeyhint="search" placeholder="Search tools" autocomplete="off" autocapitalize="off" spellcheck="false" aria-controls="tool-grid" aria-keyshortcuts="/" disabled>
+<kbd class="tools-key" aria-hidden="true">/</kbd>
+</div>
+[[> tool-chips]]
+<p class="tools-legend tools-legend-wide">[[> tool-label-free]] No account, no cost. [[> tool-label-credits]] Needs an account and uses the images of your plan: [[plan.free.name]] includes [[plan.free.images]] a month. [[> tool-label-both]] A free page, plus an API that uses credits.</p>
+<p class="tools-legend tools-legend-narrow">[[> tool-label-free]] no account &middot; [[> tool-label-credits]] credits, [[plan.free.images]] a month on [[plan.free.name]] &middot; [[> tool-label-both]] both</p>
+</div>
+[[> tool-grid]]
+<p class="visually-hidden" id="tool-status" role="status"></p>
+<div class="tools-empty" id="tool-empty" hidden>
+<p>No tool matches that. Try another word.</p>
+<button class="btn btn-secondary btn-sm" type="button" id="tool-reset">Show every tool</button>
+</div>
+</div>
+</section>
 
 <section class="hero">
 <div class="container hero-grid">
 <div class="hero-copy">
 <p class="eyebrow">Open Graph images from HTML and CSS</p>
-<h1>Turn every link into a <em>beautiful</em> share card.</h1>
+<h2>Turn every link into a <em>beautiful</em> share card.</h2>
 <p class="lead">The signed og:image URL for sites that are not on Vercel.</p>
 <p>Write a card in HTML and CSS, put one signed URL in your meta tags, and every page gets its own preview image wherever its link is shared.</p>
 <div class="cluster hero-actions">

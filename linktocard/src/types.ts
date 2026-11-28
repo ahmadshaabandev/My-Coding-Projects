@@ -72,6 +72,8 @@ export interface Env extends Partial<Record<RateLimitName, RateLimitBinding>> {
   PDF_TOOLKIT_ENABLED?: string;
   LINK_CARDS_ENABLED?: string;
   EMAIL_FIELDS_ENABLED?: string;
+  /** Chart images (src/charts): must be exactly "true"; anything else and every chart route answers 503. */
+  CHARTS_ENABLED?: string;
   /** Producer binding of the bulk-documents queue; the consumer is this Worker's queue() handler. */
   BATCH_QUEUE?: Queue<BatchQueueMessage>;
 

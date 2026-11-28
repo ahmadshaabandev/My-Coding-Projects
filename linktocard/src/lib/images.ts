@@ -14,11 +14,16 @@
  * Email images (CardRequest.chargeOnce, a signed URL with open fields) are charged once: step 5
  * writes the record that the image was paid for in the same D1 batch that takes it
  * (RenderCharge.chargeRecord), so the record exists if and only if the image was taken. When the
- * charge of an image is remembered (src/lib/open-fields.ts hasEmailCharge), step 3 is skipped and
+ * charge of an image is remembered (src/lib/quota.ts hasChargeRecord), step 3 is skipped and
  * step 5 records an uncharged ledger row instead (recordUnchargedRender), so a copy rendered again
  * after its stored period ended costs nothing.
  *
  * A starter template renders only at the size presets it is laid out for (assertTemplateSize).
+ *
+ * Steps 2-6 are getImage, which knows nothing about templates: it takes an ImageJob (who pays, the
+ * format, a label, how to draw it, and whether it is charged once). A card is one kind of job
+ * (getCard builds it); a chart image is the other (src/charts/service.ts), charged once like an
+ * email image, with CHARTS.chargeMemoryDays.
  *
  * The dashboard preview and the playground render through the same renderer
  * but skip steps 2-6: they are watermarked, never stored here and never counted.
@@ -45,7 +50,7 @@ import { renderCard } from '../render';
 import { createEmojiLoader } from '../render/emoji';
 import { createImageFetcher } from '../render/proxy';
 import { EMAIL_TEMPLATES, STARTER_TEMPLATES, getStarterTemplate, type StarterTemplate } from '../render/templates';
-import type { Env, RenderDeps, TemplateData, TemplateRow, UsageSummary, UserRow, WatermarkMode } from '../types';
+import type { Env, RenderDeps, RenderOutput, TemplateData, TemplateRow, UsageSummary, UserRow, WatermarkMode } from '../types';
 import { sha256Hex } from './crypto';
 import { featureEnabled } from './features';
 import { sendEmail, quotaWarningEmail } from './email';
@@ -62,8 +67,7 @@ import {
   type Background,
   type JsonObject,
 } from './http';
-import { emailChargeBucket, hasEmailCharge } from './open-fields';
-import { chargeRender, getUsage, recordUnchargedRender, type RenderCharge } from './quota';
+import { chargeRecordBucket, chargeRender, getUsage, hasChargeRecord, recordUnchargedRender, type RenderCharge } from './quota';
 import { enforceRateLimit } from './rate-limit';
 
 /** Bump only when the meaning of a cache key changes; it re-bills every cached card. */
@@ -424,6 +428,29 @@ export interface CardRequest {
   chargeOnce?: boolean;
 }
 
+/**
+ * One image that is cached, charged and stored by getImage: a card (cardJob below) or a chart
+ * (src/charts/service.ts). The cache key is passed beside it and must already be scoped to the account.
+ */
+export interface ImageJob {
+  user: UserRow;
+  format: ImageFormat;
+  source: 'og' | 'api';
+  siteId: string | null;
+  /** RL_KEY bucket applied only when a render is really needed (signed URLs: the site id). */
+  renderRateLimitKey?: string;
+  /** What the ledger and the stored copy call the image: a template's label, or "chart". */
+  label: string;
+  /**
+   * Charged once: `key` names the image in its charge record (src/lib/quota.ts chargeRecordBucket),
+   * which is kept memoryMs from the charge. While it is kept, a copy whose stored period ended is
+   * rendered again for free.
+   */
+  chargeOnce?: { key: string; memoryMs: number };
+  /** Draws the image. Throws on any failure; nothing is stored or counted then. */
+  render: () => Promise<RenderOutput>;
+}
+
 export interface Card {
   image: StoredImage;
   /** Served from R2 without rendering. */
@@ -436,8 +463,9 @@ export interface Card {
   /** Images this request was charged: 1 for 'charged', else 0. */
   creditsUsed: number;
   /**
-   * cached: served from R2, nothing rendered. charged: rendered and charged. rerendered: an email
-   * image charged before, rendered again after its copy expired, not charged. duplicate: rendered,
+   * cached: served from R2, nothing rendered. charged: rendered and charged. rerendered: an image
+   * that is charged once (an email image, a chart) and was charged before, rendered again after
+   * its copy expired, not charged. duplicate: rendered,
    * but the ledger already covered the image (a concurrent request, or an object that never
    * reached R2), not charged.
    */
@@ -487,10 +515,10 @@ function sendQuotaEmail(env: Env, user: UserRow, percent: 90 | 100, usage: Usage
   });
 }
 
-/** Looks a card up in R2 without ever rendering (also what HEAD uses). */
+/** Looks a card (or any image job) up in R2 without ever rendering (also what HEAD uses). */
 export async function findStoredCard(
   env: Pick<Env, 'BUCKET'>,
-  request: CardRequest,
+  request: Pick<ImageJob, 'user' | 'format'>,
   cacheKey: string,
   now: number,
   withBody: boolean,
@@ -498,19 +526,36 @@ export async function findStoredCard(
   return readStoredImage(env.BUCKET, request.user.id, cacheKey, request.format, now, withBody);
 }
 
-async function renderAndCharge(env: Env, background: Background, request: CardRequest, cacheKey: string, now: number): Promise<Card> {
+/** The job of one card: the template's renderer, and "charged once" for an email image. */
+function cardJob(env: Env, request: CardRequest, cacheKey: string): ImageJob {
   const { user, template, size, format } = request;
-  // An email image that was charged before renders again for free, also with no images left.
-  const prepaid = request.chargeOnce === true && (await hasEmailCharge(env.DB, user.id, cacheKey, now));
+  return {
+    user,
+    format,
+    source: request.source,
+    siteId: request.siteId,
+    ...(request.renderRateLimitKey ? { renderRateLimitKey: request.renderRateLimitKey } : {}),
+    label: template.label,
+    // An email image's charge record is named by its cache key.
+    ...(request.chargeOnce === true ? { chargeOnce: { key: cacheKey, memoryMs: EMAIL_FIELDS.chargeMemoryDays * DAY_MS } } : {}),
+    render: () =>
+      renderCard(
+        { html: template.html, css: template.css, data: request.data, width: size.width, height: size.height, format, watermark: planWatermark(user) },
+        renderDeps(env, user),
+      ),
+  };
+}
+
+async function renderAndCharge(env: Env, background: Background, request: ImageJob, cacheKey: string, now: number): Promise<Card> {
+  const { user, format, chargeOnce } = request;
+  // An image that is charged once and was charged before renders again for free, also with no images left.
+  const prepaid = chargeOnce !== undefined && (await hasChargeRecord(env.DB, user.id, chargeOnce.key, now));
   const before = await getUsage(env.DB, user, now);
   if (before.total_remaining <= 0 && !prepaid) throw quotaExceededError(env, before);
   if (request.renderRateLimitKey) await enforceRateLimit(env, 'RL_KEY', request.renderRateLimitKey);
 
   // Throws on any failure: from here to chargeRender nothing has been stored or counted.
-  const output = await renderCard(
-    { html: template.html, css: template.css, data: request.data, width: size.width, height: size.height, format, watermark: planWatermark(user) },
-    renderDeps(env, user),
-  );
+  const output = await request.render();
 
   const ttlMs = getPlan(user.plan).cacheDays * DAY_MS;
   const image: StoredImage = {
@@ -520,7 +565,7 @@ async function renderAndCharge(env: Env, background: Background, request: CardRe
     bytes: output.bytes.byteLength,
     width: output.width,
     height: output.height,
-    template: template.label,
+    template: request.label,
     createdAt: now,
     expiresAt: now + ttlMs,
   };
@@ -528,7 +573,7 @@ async function renderAndCharge(env: Env, background: Background, request: CardRe
     cacheKey,
     siteId: request.siteId,
     source: request.source,
-    template: template.label,
+    template: request.label,
     width: image.width,
     height: image.height,
     format,
@@ -536,7 +581,7 @@ async function renderAndCharge(env: Env, background: Background, request: CardRe
     r2Key: renderR2Key(user.id, cacheKey, format),
     ttlMs,
     // Written in the batch that takes the image, and only then (src/lib/quota.ts CHARGE_RECORD_*).
-    ...(request.chargeOnce === true ? { chargeRecord: { bucket: emailChargeBucket(user.id, cacheKey), ttlMs: EMAIL_FIELDS.chargeMemoryDays * DAY_MS } } : {}),
+    ...(chargeOnce ? { chargeRecord: { bucket: chargeRecordBucket(user.id, chargeOnce.key), ttlMs: chargeOnce.memoryMs } } : {}),
   };
 
   const fresh: Card = { image, cached: false, body: output.bytes, warnings: output.warnings, usage: null, creditsUsed: 0, outcome: 'duplicate' };
@@ -565,7 +610,7 @@ async function renderAndCharge(env: Env, background: Background, request: CardRe
   // duplicate: the ledger already covers this card (a concurrent request, or an
   // earlier charge whose object never reached R2). Serve it without charging and
   // make sure the object exists, expiring together with the ledger row. It never
-  // writes an email image's charge record: an image row says 'plan' from its
+  // writes a charge record: an image row says 'plan' from its
   // claim, before anything is taken, so the row is no proof that it was paid.
   const ledger = await first<{ created_at: number; expires_at: number }>(
     env.DB,
@@ -594,7 +639,20 @@ export async function getCard(
   // The routes refuse a size a starter is not laid out for while parsing; this keeps every caller to it.
   assertTemplateSize(request.template, request.size, templateOptions(env));
   const cacheKey = options.cacheKey ?? (await cardCacheKey(request));
-  const stored = await findStoredCard(env, request, cacheKey, options.now, options.withBody);
+  return getImage(env, background, cardJob(env, request, cacheKey), { now: options.now, withBody: options.withBody, cacheKey });
+}
+
+/**
+ * Steps 2-6 of the module comment for any image job: from R2 when it is stored, otherwise
+ * rendered, charged and stored. Throws ApiError (402 quota_exceeded, the job's render errors).
+ */
+export async function getImage(
+  env: Env,
+  background: Background,
+  job: ImageJob,
+  options: { now: number; withBody: boolean; cacheKey: string },
+): Promise<Card> {
+  const stored = await findStoredCard(env, job, options.cacheKey, options.now, options.withBody);
   if (stored) return { image: stored.image, cached: true, body: stored.body, warnings: [], usage: null, creditsUsed: 0, outcome: 'cached' };
-  return renderAndCharge(env, background, request, cacheKey, options.now);
+  return renderAndCharge(env, background, job, options.cacheKey, options.now);
 }

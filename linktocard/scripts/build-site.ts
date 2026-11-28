@@ -34,6 +34,9 @@
  *     this build does not publish, or to an anchor the target does not have, is printed as plain text.
  *   - assets/partials/footer.html is the footer of this build as every page prints it, for pages the
  *     Worker renders (src/batch/verify-page.ts reads it through env.ASSETS).
+ *   - The home page's tool grid ([[> tool-grid]], [[> tool-chips]]) is made from site/tools.catalog.ts by
+ *     scripts/tools-site.ts: a tile for each tool whose features are on and whose page this build
+ *     publishes as launched (launchedUrls()), so never for a page built only through "apidocs".
  *
  * Legal pages print "Last updated" from legalUpdated in site.config.json. A legal page whose wording
  * changed later than that can say when in its front matter: `updated: YYYY-MM-DD` for its text in
@@ -54,6 +57,7 @@ import { PDF_TEMPLATES, type PdfStarterTemplate } from '../src/pdf/templates';
 import { STARTER_TEMPLATES as RENDER_TEMPLATES } from '../src/render/templates';
 import { emailSiteTokens } from './email-site-tokens';
 import { previewsSiteTokens } from './previews-site-tokens';
+import { toolPartials } from './tools-site';
 import { rateLimitText, v3SiteTokens } from './v3-site-tokens';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -409,7 +413,7 @@ function topUpTokens(): Record<string, string> {
   return {
     'topup.plans': buyers.length === plans.length ? everyPlan : nameList(buyers.map((plan) => plan.name)),
     'topup.keepsPlan': marked
-      ? `${addsOnly} On ${marked}, what you make with top-up images still carries the watermark, and the other ${marked} limits still apply.`
+      ? `${addsOnly} On ${marked}, what you make with top-up images still carries the watermark, and the plan's cache time, fonts and other limits stay the same.`
       : addsOnly,
     'topup.keepsPlanShort': marked
       ? `A top-up adds images only: it does not change your plan, and on ${marked} the watermark stays.`
@@ -682,14 +686,14 @@ const topUpAllowance = (plan: Plan): string =>
 
 /**
  * The top-up line of a plan card. On a plan whose images carry the watermark it says that a
- * top-up does not take it away. The line ends with a note that only shows while checkout is
- * closed (CLOSED_NOTE_ATTR), so the card of a plan that is open now does not promise a purchase
- * that cannot be made yet.
+ * top-up does not take it away. Right after the price sits a note that only shows while checkout
+ * is closed (CLOSED_NOTE_ATTR), so the card of a plan that is open now does not promise a purchase
+ * that cannot be made yet: "Top-ups: $8 per 1,000 images (coming soon); the watermark stays".
  */
 function topUpCardLine(plan: Plan): string {
   if (!plan.topUps) return escapeHtml('No top-ups: a hard stop at the limit');
-  const line = `Top-ups: ${topUpAllowance(plan)}${plan.watermark ? '; the watermark stays' : ''}`;
-  return `${escapeHtml(line)}<span ${CLOSED_NOTE_ATTR} hidden> (coming soon)</span>`;
+  const closed = `<span ${CLOSED_NOTE_ATTR} hidden> (coming soon)</span>`;
+  return `${escapeHtml(`Top-ups: ${topUpAllowance(plan)}`)}${closed}${plan.watermark ? escapeHtml('; the watermark stays') : ''}`;
 }
 
 /** What a plan's PDFs look like: the Free plan prints the mark in every page's footer (src/pdf/service.ts planMark). */
@@ -965,8 +969,30 @@ function walk(dir: string): string[] {
   return files.sort();
 }
 
+/**
+ * The URL of every page this build publishes as launched: the page has no feature, or its feature
+ * is on. A docs page built only through "apidocs", under its "not switched on yet" notice, is not
+ * in the set, and neither is a page the build leaves out. The home page's tool grid prints a tile
+ * only for a tool whose page is in it (scripts/tools-site.ts).
+ */
+function launchedUrls(paths: Paths, features: SiteFeatures): Set<string> {
+  const urls = new Set<string>();
+  const add = (root: string, extension: string): void => {
+    for (const rel of walk(root).filter((file) => file.endsWith(extension))) {
+      const source = display(join(root, rel));
+      const { data } = parseFrontMatter(applyFeatureBlocks(readFileSync(join(root, rel), 'utf8'), features, source), source);
+      if (data.feature === undefined || switchedOn(parseSwitch(data.feature, source), features)) urls.add(urlOf(rel));
+    }
+  };
+  add(join(paths.siteDir, 'pages'), '.html');
+  add(paths.contentDir, '.md');
+  return urls;
+}
+
 function loadPartials(paths: Paths, features: SiteFeatures): Record<string, string> {
   const partials: Record<string, string> = {
+    // The home page's tool grid, its filter chips and the labels of its legend (site/tools.catalog.ts).
+    ...toolPartials(features, launchedUrls(paths, features)),
     'topup-closed-note': TOPUP_CLOSED_NOTE,
     'pricing-table': pricingTable(features),
     'limits-table': limitsTable(features),

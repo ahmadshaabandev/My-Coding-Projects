@@ -207,6 +207,13 @@ store the new one alone.
      when `subscription.updated` arrives.
    - **Buy a top-up** from the app: `transaction.completed` with result `ok`,
      and 1,000 extra images on the account.
+   - **Buy a top-up without a subscription** (allowed since 2026-11-28): sign
+     in with a second email address, so that account is on Free, and press
+     **Buy top-up** in its dashboard. Expected: `transaction.completed` with
+     result `ok` and that account's id in `user_id`, 1,000 top-up images on
+     the account, and the account still on Free: `plan` is `free` in the
+     `users` table and a new card still carries the corner mark. It uses the
+     same top-up price; nothing in the catalog changes for it.
    - **Cancel** through the billing portal. Paddle's default is to cancel at
      the end of the paid period: the plan stays, `cancel_at` in the `users`
      table holds the end date, and on that date the account returns to Free

@@ -3,7 +3,8 @@
 // `topUps` on the Free plan). These tests drive the real Worker app, as the acceptance list does:
 //   - a completed top-up transaction credits a Free account, which stays on Free;
 //   - at its monthly limit, a Free account with top-up images keeps rendering and is charged to
-//     the top-up, with the Free mark, cache days and plan unchanged;
+//     the top-up, with the Free mark, cache days and plan unchanged; a PDF is paid from it as one
+//     block and keeps the Free footer line;
 //   - the 402 and the quota email of a Free account offer the top-up, and only while checkout is
 //     open on the deployment (src/billing/offers.ts): production runs with CHECKOUT_ENABLED "false",
 //     and nothing may send a customer to buy what is not on sale;
@@ -13,7 +14,7 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PLANS, PLAN_ORDER, TOPUP, formatCount, formatUsd } from '../src/billing/plans';
-import { DAY_MS } from '../src/config';
+import { DAY_MS, PDF } from '../src/config';
 import type { Env } from '../src/types';
 import {
   ORIGIN,
@@ -39,6 +40,7 @@ import {
   usageOf,
   userRow,
 } from './app-helpers';
+import { footerOf, mockBrowser, pdfEnv, postPdf } from './pdf-helpers';
 import adjustmentUpdated from './fixtures/paddle/adjustment.updated.json';
 import transactionCompleted from './fixtures/paddle/transaction.completed.json';
 
@@ -281,6 +283,32 @@ describe('the top-up without a subscription (owner decision of 2026-11-28)', () 
     const closed = (await errorOf(await call('/v1/images', request, CHECKOUT_CLOSED))).message;
     expect(closed.endsWith('Images that are already cached keep working.')).toBe(true);
     expect(closed).not.toContain('top-up');
+  });
+
+  it('a PDF on Free is paid from the top-up as one block and keeps the Free footer line; its 402 names the top-up only while one is on sale', async () => {
+    const user = await createUser('free');
+    const key = await apiKeyFor(user.id);
+    await setUsed(user, PLANS.free.monthlyImages);
+    const browser = mockBrowser();
+    const request = { html: '<p>{{title}}</p>', data: { title: 'A PDF on Free' } };
+
+    // Nothing left: the message says where a block can come from, and offers what can be bought here.
+    const refused = await postPdf(key.secret, request, pdfEnv(browser));
+    expect(refused.status).toBe(402);
+    const open = (await errorOf(refused)).message;
+    expect(open).toContain(`A PDF counts as at least ${PDF.baseUnits} images and is charged as one block, from the monthly allowance or from a single top-up; not enough is left (0 of the 100 images on the Free plan this period).`);
+    expect(open.endsWith(`Stored PDFs and images keep working; to render new ones now, upgrade or buy a top-up at ${ORIGIN}/pricing.`)).toBe(true);
+    const closed = (await errorOf(await postPdf(key.secret, request, pdfEnv(browser, { CHECKOUT_ENABLED: 'false' })))).message;
+    expect(closed.endsWith(`Stored PDFs and images keep working; to render new ones now, upgrade at ${ORIGIN}/pricing.`)).toBe(true);
+    expect(browser.calls).toHaveLength(0);
+
+    await buyTopUp(user.id);
+    const made = await postPdf(key.secret, request, pdfEnv(browser));
+    expect(made.status).toBe(200);
+    // One block from the top-up; the monthly counter does not move and the plan is still Free.
+    expect(await usageOf(user.id)).toMatchObject({ plan: 'free', used: PLANS.free.monthlyImages, remaining: 0, topup_remaining: TOPUP.images - PDF.baseUnits, watermark: true });
+    expect(browser.calls).toHaveLength(1);
+    expect(footerOf(browser.calls[0]!.options)).toContain(PDF.freeMark);
   });
 
   it('the quota emails of a Free account offer the top-up and say that the Free mark stays', async () => {

@@ -1,0 +1,628 @@
+[
+ {
+  "id": "01-bar-simple",
+  "spec": {
+   "type": "bar",
+   "title": "Monthly revenue",
+   "labels": [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun"
+   ],
+   "series": [
+    {
+     "name": "Revenue",
+     "data": [
+      4200,
+      5100,
+      4800,
+      6300,
+      7100,
+      6900
+     ]
+    }
+   ],
+   "options": {
+    "values": true,
+    "prefix": "$"
+   },
+   "width": 600,
+   "height": 360,
+   "scale": 2
+  }
+ },
+ {
+  "id": "02-bar-grouped-big-numbers",
+  "spec": {
+   "type": "bar",
+   "title": "Revenue, cost and profit by month",
+   "subtitle": "Fiscal year 2026, all regions",
+   "labels": [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec"
+   ],
+   "series": [
+    {
+     "name": "Revenue",
+     "data": [
+      812000,
+      845000,
+      910000,
+      990000,
+      1040000,
+      1120000,
+      1180000,
+      1210000,
+      1290000,
+      1330000,
+      1380000,
+      1420000
+     ]
+    },
+    {
+     "name": "Cost",
+     "data": [
+      610000,
+      620000,
+      650000,
+      700000,
+      720000,
+      760000,
+      790000,
+      800000,
+      845000,
+      860000,
+      880000,
+      905000
+     ]
+    },
+    {
+     "name": "Profit",
+     "data": [
+      202000,
+      225000,
+      260000,
+      290000,
+      320000,
+      360000,
+      390000,
+      410000,
+      445000,
+      470000,
+      500000,
+      515000
+     ]
+    }
+   ],
+   "options": {
+    "prefix": "$",
+    "y_title": "US dollars"
+   },
+   "width": 800,
+   "height": 420,
+   "scale": 2
+  }
+ },
+ {
+  "id": "03-bar-stacked-horizontal-long-labels",
+  "spec": {
+   "type": "bar",
+   "title": "Tickets by team and priority",
+   "labels": [
+    "Customer support and success",
+    "Billing and payments",
+    "Platform engineering",
+    "Data and analytics",
+    "Security and compliance"
+   ],
+   "series": [
+    {
+     "name": "Low",
+     "data": [
+      120,
+      80,
+      45,
+      30,
+      12
+     ]
+    },
+    {
+     "name": "Medium",
+     "data": [
+      90,
+      60,
+      70,
+      25,
+      18
+     ]
+    },
+    {
+     "name": "High",
+     "data": [
+      30,
+      22,
+      41,
+      9,
+      27
+     ]
+    }
+   ],
+   "options": {
+    "horizontal": true,
+    "stacked": true,
+    "values": true
+   },
+   "width": 700,
+   "height": 380,
+   "scale": 2
+  }
+ },
+ {
+  "id": "04-line-negative-24-points",
+  "spec": {
+   "type": "line",
+   "title": "Net cash flow",
+   "labels": [
+    "Jan 2025",
+    "Feb 2025",
+    "Mar 2025",
+    "Apr 2025",
+    "May 2025",
+    "Jun 2025",
+    "Jul 2025",
+    "Aug 2025",
+    "Sep 2025",
+    "Oct 2025",
+    "Nov 2025",
+    "Dec 2025",
+    "Jan 2026",
+    "Feb 2026",
+    "Mar 2026",
+    "Apr 2026",
+    "May 2026",
+    "Jun 2026",
+    "Jul 2026",
+    "Aug 2026",
+    "Sep 2026",
+    "Oct 2026",
+    "Nov 2026",
+    "Dec 2026"
+   ],
+   "series": [
+    {
+     "name": "Operating",
+     "data": [
+      12,
+      8,
+      -3,
+      -9,
+      -14,
+      -6,
+      2,
+      9,
+      15,
+      21,
+      18,
+      25,
+      30,
+      27,
+      22,
+      14,
+      5,
+      -4,
+      -11,
+      -2,
+      8,
+      19,
+      28,
+      35
+     ]
+    },
+    {
+     "name": "Investing",
+     "data": [
+      -5,
+      -7,
+      -6,
+      -12,
+      -9,
+      -8,
+      -15,
+      -11,
+      -6,
+      -4,
+      -9,
+      -13,
+      -10,
+      -8,
+      -5,
+      -7,
+      -12,
+      -16,
+      -9,
+      -6,
+      -3,
+      -5,
+      -8,
+      -4
+     ]
+    }
+   ],
+   "options": {
+    "x_title": "Month",
+    "y_title": "USD thousands",
+    "suffix": "k"
+   },
+   "width": 800,
+   "height": 400,
+   "scale": 2
+  }
+ },
+ {
+  "id": "05-area-stacked",
+  "spec": {
+   "type": "area",
+   "title": "Traffic by channel",
+   "labels": [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec"
+   ],
+   "series": [
+    {
+     "name": "Search",
+     "data": [
+      3100,
+      3400,
+      3900,
+      4200,
+      4800,
+      5200,
+      5600,
+      5900,
+      6400,
+      7000,
+      7300,
+      7900
+     ]
+    },
+    {
+     "name": "Direct",
+     "data": [
+      1200,
+      1250,
+      1300,
+      1280,
+      1350,
+      1400,
+      1500,
+      1480,
+      1550,
+      1600,
+      1700,
+      1750
+     ]
+    },
+    {
+     "name": "Referral",
+     "data": [
+      400,
+      420,
+      500,
+      610,
+      580,
+      640,
+      700,
+      820,
+      790,
+      860,
+      900,
+      980
+     ]
+    }
+   ],
+   "options": {
+    "stacked": true
+   },
+   "width": 700,
+   "height": 360,
+   "scale": 2
+  }
+ },
+ {
+  "id": "06-pie-five",
+  "spec": {
+   "type": "pie",
+   "title": "Budget split",
+   "labels": [
+    "Salaries",
+    "Marketing",
+    "Infrastructure",
+    "Office",
+    "Other"
+   ],
+   "series": [
+    {
+     "data": [
+      52,
+      18,
+      14,
+      9,
+      7
+     ]
+    }
+   ],
+   "options": {
+    "values": true,
+    "suffix": "%"
+   },
+   "width": 600,
+   "height": 400,
+   "scale": 2
+  }
+ },
+ {
+  "id": "07-doughnut-nine-dark",
+  "spec": {
+   "type": "doughnut",
+   "title": "Sessions by country",
+   "labels": [
+    "United States",
+    "India",
+    "Germany",
+    "United Kingdom",
+    "Brazil",
+    "France",
+    "Canada",
+    "Japan",
+    "Lebanon"
+   ],
+   "series": [
+    {
+     "data": [
+      4200,
+      2600,
+      1500,
+      1300,
+      900,
+      700,
+      450,
+      120,
+      40
+     ]
+    }
+   ],
+   "options": {
+    "theme": "dark",
+    "values": true
+   },
+   "width": 640,
+   "height": 420,
+   "scale": 2
+  }
+ },
+ {
+  "id": "08-bar-thirty-categories",
+  "spec": {
+   "type": "bar",
+   "labels": [
+    "Day 1",
+    "Day 2",
+    "Day 3",
+    "Day 4",
+    "Day 5",
+    "Day 6",
+    "Day 7",
+    "Day 8",
+    "Day 9",
+    "Day 10",
+    "Day 11",
+    "Day 12",
+    "Day 13",
+    "Day 14",
+    "Day 15",
+    "Day 16",
+    "Day 17",
+    "Day 18",
+    "Day 19",
+    "Day 20",
+    "Day 21",
+    "Day 22",
+    "Day 23",
+    "Day 24",
+    "Day 25",
+    "Day 26",
+    "Day 27",
+    "Day 28",
+    "Day 29",
+    "Day 30"
+   ],
+   "series": [
+    {
+     "name": "Signups",
+     "data": [
+      12,
+      15,
+      9,
+      22,
+      31,
+      28,
+      19,
+      17,
+      25,
+      33,
+      41,
+      38,
+      29,
+      24,
+      36,
+      44,
+      52,
+      47,
+      39,
+      35,
+      49,
+      58,
+      63,
+      55,
+      46,
+      42,
+      61,
+      70,
+      74,
+      66
+     ]
+    }
+   ],
+   "options": {},
+   "width": 800,
+   "height": 320,
+   "scale": 2
+  }
+ },
+ {
+  "id": "09-line-cyrillic-greek-percent",
+  "spec": {
+   "type": "line",
+   "title": "Конверсия по неделям · Μετατροπή",
+   "labels": [
+    "Неделя 1",
+    "Неделя 2",
+    "Неделя 3",
+    "Εβδομάδα 4",
+    "Εβδομάδα 5",
+    "Tuần 6",
+    "Żółć 7"
+   ],
+   "series": [
+    {
+     "name": "Конверсия",
+     "data": [
+      2.4,
+      2.9,
+      3.1,
+      2.7,
+      3.6,
+      4.2,
+      3.9
+     ]
+    }
+   ],
+   "options": {
+    "suffix": "%",
+    "decimals": 1,
+    "values": true
+   },
+   "width": 1200,
+   "height": 630,
+   "scale": 1
+  }
+ },
+ {
+  "id": "10-small-long-title",
+  "spec": {
+   "type": "bar",
+   "title": "A very long chart title that cannot possibly fit on one line of a small chart and must be cut cleanly",
+   "labels": [
+    "Alpha",
+    "Beta",
+    "Gamma"
+   ],
+   "series": [
+    {
+     "name": "Score",
+     "data": [
+      3,
+      7,
+      5
+     ]
+    }
+   ],
+   "options": {
+    "values": true
+   },
+   "width": 300,
+   "height": 200,
+   "scale": 2
+  }
+ },
+ {
+  "id": "11-edge-zeros-and-single-point",
+  "spec": {
+   "type": "line",
+   "title": "No data yet",
+   "labels": [
+    "Mon"
+   ],
+   "series": [
+    {
+     "name": "Orders",
+     "data": [
+      0
+     ]
+    }
+   ],
+   "options": {},
+   "width": 600,
+   "height": 300,
+   "scale": 2
+  }
+ },
+ {
+  "id": "12-bar-negative-positive",
+  "spec": {
+   "type": "bar",
+   "title": "Profit and loss by quarter",
+   "labels": [
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+    "Q1",
+    "Q2"
+   ],
+   "series": [
+    {
+     "name": "P&L",
+     "data": [
+      -42000,
+      -18000,
+      6500,
+      31000,
+      -9000,
+      48000
+     ]
+    }
+   ],
+   "options": {
+    "values": true,
+    "prefix": "$"
+   },
+   "width": 600,
+   "height": 360,
+   "scale": 2
+  }
+ }
+]

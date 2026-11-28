@@ -25,6 +25,11 @@
  *                   .steps .gallery .sample .plans .plan .topup .rules .rule-tag .faq .cta
  *   8  Small pages  .auth .auth-card .lost .contact-grid
  *   9  Motion       keyframes; everything is switched off under prefers-reduced-motion
+ *   10 Tools        the Open Graph checker and its previews
+ *   11 PDF tools    the free PDF tool pages
+ *   12 In-browser PDF tools   Merge PDF and Image to PDF
+ *   13 Home tools   the home page's first screen: .tools .tools-top .tools-search .tool-chips
+ *                   .tools-legend .tool-grid .tool-col .tool-tile .tool-ico .tool-label .tools-empty
  */
 
 /* ---------------------------------------------------------------- 1 Tokens */
@@ -932,7 +937,8 @@ mark.placeholder {
   align-items: center;
 }
 .hero-copy > * + * { margin-top: var(--space-5); }
-.hero-copy h1 { font-size: var(--text-hero); line-height: 0.98; }
+/* The home page's h1 is the headline of the tool grid (section 13), so this headline is an h2 there. */
+.hero-copy :is(h1, h2) { font-size: var(--text-hero); line-height: 0.98; }
 .hero-copy > p:not([class]) { max-width: 30rem; font-size: var(--text-lg); color: var(--text-muted); }
 .hero-actions { margin-top: var(--space-6); }
 .hero-actions .btn { min-height: 3.5rem; padding-inline: 1.9rem; font-size: 1.1875rem; font-weight: 700; box-shadow: 5px 5px 0 var(--shadow-ink); }
@@ -1613,4 +1619,245 @@ mark.placeholder {
 }
 @media (max-width: 30rem) {
   .local-options { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------------------------------------------------------- 13 Home tools
+ * The first screen of the home page: every tool as one compact tile, in a column per category.
+ * scripts/tools-site.ts prints the chips, the grid and the labels from site/tools.catalog.ts;
+ * assets/js/tool-finder.js hides and shows tiles. Three layouts:
+ *   78rem and wider   one column per category; a tile is icon, name, one-line description, and
+ *                     its label as a tag stuck on its top edge. Sized so that every tile is on
+ *                     the first screen from 1280 x 720 up.
+ *   44rem to 78rem    three columns of the same tiles.
+ *   under 44rem       two columns, names only (the short name where the catalogue has one), the
+ *                     label as a letter that the legend explains.
+ * Built from the tokens of section 1, so it follows the dark scheme by itself.
+ */
+.tools { position: relative; padding-block: clamp(0.75rem, 1.5vw, 1.25rem) clamp(1rem, 2vw, 1.5rem); border-bottom: 2px solid var(--line); }
+/* The paper's dot grid, as in the hero below it. */
+.tools::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle at 1.5px 1.5px, color-mix(in srgb, var(--border) 65%, transparent) 1.5px, transparent 0);
+  background-size: 24px 24px;
+  pointer-events: none;
+}
+.tools > * { position: relative; }
+.tools-inner { width: 100%; max-width: 88rem; margin-inline: auto; padding-inline: clamp(1rem, 2.4vw, 2rem); }
+
+.tools-top { display: flex; flex-wrap: wrap; align-items: center; gap: 0.55rem 1.1rem; }
+.tools-top h1 { flex: none; font-size: clamp(1.5rem, 0.9rem + 1.1vw, 1.875rem); line-height: 1.15; white-space: nowrap; }
+
+.tools-search { position: relative; flex: 1 1 12rem; min-width: 10rem; }
+.tools-search .input { padding-inline: 2.4rem 2.5rem; box-shadow: 3px 3px 0 var(--shadow-ink); }
+.tools-search .input:focus-visible { box-shadow: 4px 4px 0 var(--accent); }
+/* Printed disabled and switched on by the script: it must not look faded for the moment in between. */
+.tools-search .input:disabled { opacity: 1; cursor: text; }
+.tools-search-ico {
+  position: absolute;
+  left: 0.8rem;
+  top: 50%;
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.tools-key {
+  position: absolute;
+  right: 0.7rem;
+  top: 50%;
+  min-width: 1.5rem;
+  padding-inline: 0.35rem;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--paper-2);
+  border: 1.5px solid var(--border);
+  border-radius: 5px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.tool-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  min-height: 2.125rem;
+  padding: 0.2rem 0.75rem;
+  font: 600 0.8125rem/1.2 var(--font-sans);
+  white-space: nowrap;
+  color: var(--ink);
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.tool-chip:hover { box-shadow: 2px 2px 0 var(--shadow-ink); transform: translate(-1px, -1px); }
+.tool-chip[aria-pressed='true'] { color: var(--on-accent); background: var(--accent); box-shadow: 2px 2px 0 var(--shadow-ink); }
+.tool-chip:disabled { cursor: default; box-shadow: none; transform: none; }
+.tool-chip[aria-pressed='true']:disabled { box-shadow: 2px 2px 0 var(--shadow-ink); }
+.tool-chip-n { font: 400 0.75rem/1 var(--font-mono); color: var(--text-muted); }
+.tool-chip[aria-pressed='true'] .tool-chip-n { color: inherit; }
+
+.tools-legend { flex: 1 0 100%; font-size: 0.8125rem; line-height: 1.6; color: var(--text-muted); }
+.tools-legend .tool-label { margin-right: 0.35em; vertical-align: 0.1em; }
+.tools-legend .tool-label:not(:first-child) { margin-left: 0.9em; }
+.tools-legend-narrow { display: none; }
+
+/* Without JavaScript the search box and the chips can do nothing, so they are not shown; the tiles are all there. */
+@media (scripting: none) {
+  .tools-search, .tool-chips { display: none; }
+}
+
+.tool-grid {
+  --tool-cols: 5;
+  display: grid;
+  grid-template-columns: repeat(var(--tool-cols), minmax(0, 21rem));
+  gap: 0 1rem;
+  align-items: start;
+  margin-top: 0.9rem;
+}
+.tool-grid-1 { --tool-cols: 1; }
+.tool-grid-2 { --tool-cols: 2; }
+.tool-grid-3 { --tool-cols: 3; }
+.tool-grid-4 { --tool-cols: 4; }
+
+/* A category heading: the mono label on an ink tag, stuck on slightly crooked, a dotted leader and the count. */
+.tool-col-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+  font: 400 var(--text-xs)/1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tool-col-name { padding: 0.25em 0.65em; color: var(--paper); background: var(--ink); border-radius: 4px; transform: rotate(-1.5deg); }
+.tool-col-head::after { content: ''; flex: 1; order: 1; border-top: 2px dotted var(--border); }
+.tool-col-count { order: 2; color: var(--text-muted); }
+
+/* A tile is a small card: surface, 2px ink outline, hard offset shadow. The whole tile is the link. */
+.tool-tile {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  column-gap: 0.6rem;
+  align-content: center;
+  align-items: center;
+  min-height: 3.5rem;
+  margin-bottom: 0.9rem;
+  padding: 0.3rem 0.6rem 0.3rem 0.65rem;
+  color: var(--ink);
+  text-decoration: none;
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 3px 3px 0 var(--shadow-ink);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.tool-tile:hover { box-shadow: 5px 5px 0 var(--accent); transform: translate(-2px, -2px); }
+.tool-tile:active { box-shadow: 1px 1px 0 var(--shadow-ink); transform: translate(2px, 2px); }
+/* Above its neighbours, so the tag of the tile below does not cover the focus ring. */
+.tool-tile:focus-visible { z-index: 1; outline-offset: 3px; }
+
+/* The pictograms of site/tool-icons.ts: 24px grid, 2px ink strokes, a little tangerine. */
+.tool-ico {
+  grid-row: 1 / span 2;
+  width: 1.5rem;
+  height: 1.5rem;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tool-ico .a { stroke: var(--accent); }
+.tool-ico .af { fill: var(--accent); stroke: none; }
+.tool-ico .k { fill: var(--surface); }
+
+.tool-name { font-size: 0.90625rem; font-weight: 600; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tool-desc { grid-column: 2; font-size: 0.78125rem; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+.tn-short, .tl-short { display: none; }
+
+/* The label: a mono tag. Free is marker yellow, credits is ink, "Free + credits" is one half of each. */
+.tool-label {
+  display: inline-flex;
+  overflow: hidden;
+  font: 400 0.625rem/1.5 var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1.5px solid var(--line);
+  border-radius: 4px;
+}
+.tl-full { display: flex; }
+.tl-f, .tl-c { padding-inline: 0.45em; }
+.tl-f { color: #18150f; background: var(--hl); }
+.tl-c { color: var(--paper); background: var(--ink); }
+.tool-tile .tool-label { position: absolute; top: -0.7rem; right: 0.6rem; }
+
+.tools-empty { margin-top: var(--space-4); padding: var(--space-5); text-align: center; color: var(--text-muted); border: 2px dashed var(--text-muted); border-radius: var(--radius-lg); }
+.tools-empty > * + * { margin-top: var(--space-3); }
+
+/* A short laptop screen: slightly lower rows, so a longer column still ends on the first screen. */
+@media (min-width: 78rem) and (max-height: 45rem) {
+  .tool-tile { min-height: 3.25rem; margin-bottom: 0.8rem; }
+  .tool-col-head { margin-bottom: 0.8rem; }
+}
+
+@media (max-width: 77.99rem) {
+  .tool-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 0.4rem; }
+}
+
+@media (max-width: 43.99rem) {
+  .tools-top { gap: 0.5rem; }
+  .tools-top h1 { flex-basis: 100%; white-space: normal; }
+  .tools-search { flex-basis: 100%; }
+  .tools-search .input { padding-right: 0.75rem; }
+  .tools-key { display: none; }
+  .tool-chips { gap: 0.35rem; }
+  .tool-chip { min-height: 2rem; padding-inline: 0.6rem; }
+  .tools-legend { font-size: 0.6875rem; line-height: 1.7; }
+  .tools-legend-wide { display: none; }
+  .tools-legend-narrow { display: block; }
+  .tools-legend .tool-label:not(:first-child) { margin-left: 0; }
+
+  .tool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 0.6rem; margin-top: 0.25rem; }
+  .tool-col { display: contents; }
+  .tool-col-head { grid-column: 1 / -1; margin: 0.25rem 0 0.45rem; }
+  .tool-tile {
+    grid-template-columns: 1.125rem minmax(0, 1fr) auto;
+    column-gap: 0.35rem;
+    min-height: 2.625rem;
+    margin-bottom: 0.45rem;
+    padding: 0.2rem 0.35rem 0.2rem 0.4rem;
+    box-shadow: 2px 2px 0 var(--shadow-ink);
+  }
+  .tool-ico { grid-row: 1; width: 1.125rem; height: 1.125rem; }
+  .tool-name { font-size: 0.8125rem; }
+  .tool-tile .tool-label { position: static; }
+  .tl-short { display: flex; }
+  .tn-short { display: inline; }
+  .tool-tile .tool-label { letter-spacing: 0; }
+  .tool-tile .tl-f, .tool-tile .tl-c { padding-inline: 0.3em; }
+  /* Still read out, not shown: the description, the full name and the label in words. */
+  .tool-desc, .tn-full, .tl-full {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }

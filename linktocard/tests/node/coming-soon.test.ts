@@ -49,6 +49,7 @@ describe('pricing buttons while checkout is off', () => {
     const page = readFileSync(join(ROOT, 'site/pages/pricing.html'), 'utf8');
     // Top-ups are named too: since 2026-11-28 a Free account can buy one, and the Free plan is open while checkout is not.
     expect(page).toContain('<p class="alert alert-info" id="coming-soon" role="note" hidden>Paid plans and top-ups are coming soon. The [[plan.free.name]] plan is open now:');
-    expect(readFileSync(join(ROOT, 'site/pages/index.html'), 'utf8')).toMatch(/^scripts: playground, pricing$/m);
+    // The home page loads pricing.js too (its plan cards), after the playground and before the tool grid's script.
+    expect(readFileSync(join(ROOT, 'site/pages/index.html'), 'utf8')).toMatch(/^scripts: playground, pricing, tool-finder$/m);
   });
 });

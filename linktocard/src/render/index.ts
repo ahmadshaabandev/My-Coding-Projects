@@ -59,7 +59,7 @@ const shorten = (text: string, max: number): string => (text.length > max ? `${t
 /* Time budget                                                         */
 /* ------------------------------------------------------------------ */
 
-interface Budget {
+export interface Budget {
   /** Rejects with render_timeout if `work` is still pending when the budget runs out. */
   race<T>(work: Promise<T>): Promise<T>;
   /** Throws render_timeout if the budget ran out during synchronous work. */
@@ -72,7 +72,7 @@ interface Budget {
  * interrupted, so the budget is enforced around the async stages and checked
  * between the synchronous ones; the input limits bound the rest.
  */
-function startBudget(ms: number): Budget {
+export function startBudget(ms: number): Budget {
   const deadline = Date.now() + ms;
   const expired = (): ApiError => new ApiError('render_timeout', `Rendering took longer than ${ms} ms and was stopped.`);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -178,8 +178,8 @@ async function loadCustomFonts(families: readonly string[], deps: RenderDeps): P
   );
 }
 
-/** Answers Satori's requests for glyphs no loaded font has. Never does network I/O itself. */
-function assetLoader(deps: RenderDeps, warn: Warn): NonNullable<SvgOptions['loadAdditionalAsset']> {
+/** Answers Satori's requests for glyphs no loaded font has. Never does network I/O itself. Charts use it too (src/charts/render.ts). */
+export function assetLoader(deps: Pick<RenderDeps, 'loadEmoji'>, warn: Warn): NonNullable<SvgOptions['loadAdditionalAsset']> {
   return async (languageCode, segment) => {
     if (languageCode !== 'emoji') {
       warn(`No bundled font covers ${scriptName(languageCode)} characters ("${shorten(segment, 24)}"); they render as empty boxes.`);

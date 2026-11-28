@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { RATE_LIMITS, WORKER_PATHS } from '../../src/config';
+import { FEATURE_FLAGS, RATE_LIMITS, WORKER_PATHS } from '../../src/config';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const read = (file: string): string => readFileSync(path.join(root, file), 'utf8');
@@ -103,6 +103,20 @@ describe('wrangler.toml agrees with src/config.ts', () => {
     expect(Object.fromEntries(declared)).toEqual(
       Object.fromEntries(Object.entries(RATE_LIMITS).map(([limiter, rule]) => [limiter, { limit: rule.limit, periodSeconds: rule.periodSeconds }])),
     );
+  });
+
+  it('declares every kill switch of FEATURE_FLAGS (chart images included): on for development and staging, off in production', () => {
+    expect(Object.values(FEATURE_FLAGS)).toContain('CHARTS_ENABLED');
+    for (const flag of Object.values(FEATURE_FLAGS)) {
+      const valueIn = (section: string): string[] => [...section.matchAll(new RegExp(`^${flag} = "([^"]*)"$`, 'gm'))].map((entry) => entry[1]!);
+      expect(valueIn(sections.development), `${flag} in development`).toEqual(['true']);
+      expect(valueIn(sections.staging), `${flag} in staging`).toEqual(['true']);
+      expect(valueIn(sections.production), `${flag} in production`).toEqual(['false']);
+    }
+  });
+
+  it('adds no rate limiter for chart images: they count against existing ones', () => {
+    expect(Object.keys(RATE_LIMITS).filter((name) => /CHART/.test(name))).toEqual([]);
   });
 
   it.each(Object.keys(sections) as Array<keyof typeof sections>)('%s runs the cleanup once a day', (name) => {

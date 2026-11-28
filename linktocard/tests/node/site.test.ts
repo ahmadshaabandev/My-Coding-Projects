@@ -204,10 +204,16 @@ describe('built site', () => {
     expect(html).toContain('<script type="module" src="/assets/js/pricing.js"></script>');
   });
 
-  it('builds the landing page around the promise, the playground and honest copy', () => {
+  it('builds the landing page around the tool grid, the promise, the playground and honest copy', () => {
     const html = pageHtml(site, 'index.html');
-    const h1 = /<h1>(.*?)<\/h1>/.exec(html)?.[1] ?? '';
-    expect(stripTags(h1)).toBe('Turn every link into a beautiful share card.');
+    // The page leads with the grid of every tool (tests/node/home-tools.test.ts); its headline is the one h1.
+    expect([...html.matchAll(/<h1>(.*?)<\/h1>/g)].map((match) => stripTags(match[1] ?? ''))).toEqual(['Every tool, one click away.']);
+    // The promise follows as an h2, word for word as before, and the grid comes before it.
+    const promise = /<h2>(Turn .*?)<\/h2>/.exec(html)?.[1] ?? '';
+    expect(stripTags(promise)).toBe('Turn every link into a beautiful share card.');
+    expect(html.indexOf('id="tool-grid"')).toBeGreaterThan(0);
+    expect(html.indexOf('id="tool-grid"')).toBeLessThan(html.indexOf('<section class="hero">'));
+    expect(html).toContain('<title>Link To Card - Every tool for share cards and link previews</title>');
     expect(html).toContain('The signed og:image URL for sites that are not on Vercel.');
     expect(html).toContain('<a class="btn btn-primary" href="/login">Start free</a>');
     expect(html).toContain('href="/docs">Read the docs</a>');

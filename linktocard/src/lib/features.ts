@@ -1,5 +1,5 @@
 /**
- * Kill switches of the v3 tools. Each is an env var that must be exactly "true"; anything else
+ * Kill switches of the v3 tools and of chart images. Each is an env var that must be exactly "true"; anything else
  * (unset included) keeps the feature off, and its routes answer 503 not_configured.
  */
 import { FEATURE_FLAGS, type FeatureName } from '../config';
@@ -15,6 +15,7 @@ const NAMES: Record<FeatureName, string> = {
   toolkit: 'The PDF toolkit is',
   linkcards: 'Cards from links are',
   emailfields: 'Open fields for email images are',
+  charts: 'Chart images are',
 };
 
 /** 503 not_configured: what a switched-off feature answers. */

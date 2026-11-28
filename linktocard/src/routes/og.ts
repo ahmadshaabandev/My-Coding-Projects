@@ -65,8 +65,8 @@ import type { AppEnv, Env, SiteRow, TemplateData } from '../types';
 
 export const ogRouter = new Hono<AppEnv>();
 
-/** The edge cache is an optimisation: when it is unavailable the request simply continues. */
-async function edgeCacheMatch(url: string): Promise<Response | undefined> {
+/** The edge cache is an optimisation: when it is unavailable the request simply continues. Signed chart URLs use it too (src/routes/charts.ts). */
+export async function edgeCacheMatch(url: string): Promise<Response | undefined> {
   try {
     return await caches.default.match(url);
   } catch {
@@ -74,7 +74,7 @@ async function edgeCacheMatch(url: string): Promise<Response | undefined> {
   }
 }
 
-function fromEdgeCache(request: Request, cached: Response): Response {
+export function fromEdgeCache(request: Request, cached: Response): Response {
   const etag = cached.headers.get('etag');
   return etag !== null && matchesEtag(request, etag) ? notModified(cached.headers) : cached;
 }

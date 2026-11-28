@@ -10,6 +10,8 @@
  *   /playground/card.png    homepage playground (and /playground/from-check/..., link cards)
  *   /v/{id}, /v/{id}.json   certificate verification pages (public; BATCH_ENABLED)
  *   /v1/og/...              signed card URLs (public)
+ *   /v1/chart/...           signed chart image URLs (public; CHARTS_ENABLED, routes/charts.ts)
+ *   /v1/charts              chart images through the API (API key; CHARTS_ENABLED)
  *   /v1/pdf, /v1/pdf/...    PDF documents: API key, and signed PDF links (public)
  *   /v1/link/...            signed link-card URLs (public; LINK_CARDS_ENABLED)
  *   /v1/certificates/...    revoking certificate records (API key)
@@ -17,7 +19,7 @@
  *   /v1/pdf-tools/{op}      the PDF toolkit, no browser (API key; PDF_TOOLKIT_ENABLED, routes/pdf-toolkit.ts)
  *   /v1/*                   API-key endpoints
  *   /i/...                  stored images and PDFs
- *   /api/tools/*            free tools (public, no session): the OG checker, the PDF tools
+ *   /api/tools/*            free tools (public, no session): the OG checker, the PDF tools, the chart maker (/api/tools/chart; CHARTS_ENABLED)
  *   /api/certificates/...   the dashboard's certificate records (session cookie)
  *   /api/batches/...        the dashboard's bulk documents (session cookie)
  *   /api/*                  dashboard API (session cookie)
@@ -37,6 +39,7 @@ import { getPdf } from './pdf/service';
 import { apiRouter } from './routes/api';
 import { authRouter } from './routes/auth';
 import { batchesApiRouter, batchesDashboardRouter } from './routes/batches';
+import { chartToolRouter, chartUrlRouter, chartsApiRouter } from './routes/charts';
 import { dashboardRouter } from './routes/dashboard';
 import { imagesRouter } from './routes/images';
 import { createLinkRouter } from './routes/link';
@@ -84,15 +87,18 @@ app.route('/playground', playgroundRouter);
 app.route('/v', verifyRouter);
 // Before the API-key routes: signed URLs share the /v1 prefix but carry no key.
 app.route('/v1/og', ogRouter);
+app.route('/v1/chart', chartUrlRouter);
 app.route('/v1/pdf', pdfRouter);
 app.route('/v1/link', createLinkRouter(LINK_CARDS));
 app.route('/v1/certificates', certificatesApiRouter);
 app.route('/v1/batches', batchesApiRouter);
 app.route('/v1/pdf-tools', pdfToolkitRouter);
+app.route('/v1/charts', chartsApiRouter);
 app.route('/v1', apiRouter);
 app.route('/i', imagesRouter);
 app.route('/api/tools', toolsRouter);
 app.route('/api/tools', toolsPdfRouter);
+app.route('/api/tools', chartToolRouter);
 app.route('/api/certificates', certificatesDashboardRouter);
 app.route('/api/batches', batchesDashboardRouter);
 app.route('/api', dashboardRouter);

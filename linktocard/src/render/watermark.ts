@@ -54,6 +54,15 @@ function badge(text: string, height: number, scale: number): VNode {
   };
 }
 
+/**
+ * Height of the strip at the bottom of a canvas this wide that the badge and its margin take up.
+ * A layout that leaves this strip empty (charts do) is never covered by the badge.
+ */
+export function watermarkStrip(width: number): number {
+  const scale = width / REFERENCE_WIDTH;
+  return Math.round(BADGE_HEIGHT * scale) + Math.round(BADGE_MARGIN * scale);
+}
+
 async function renderBadge(width: number, height: number, mode: Mode): Promise<string> {
   const scale = width / REFERENCE_WIDTH;
   const badgeHeight = Math.round(BADGE_HEIGHT * scale);

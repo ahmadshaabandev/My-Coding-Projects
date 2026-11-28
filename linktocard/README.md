@@ -37,6 +37,13 @@ Ahmad approved only the free pages for production; every v3 API stays off there.
   `npm run deploy:production` refuses to run if a placeholder ever returns to a page.
 - Whether Paddle can pay out to an individual in Lebanon is unverified. Read
   [GO-LIVE.md](GO-LIVE.md) step 0 before spending money on anything.
+- **The home page as a grid of every tool is in the code, not deployed** (owner decision of
+  2026-11-28). Its first screen lists every tool the build publishes, from `site/tools.catalog.ts`.
+  Checked in headless Chromium only. Changelog, 2026-11-28.
+- **The top-up without a subscription is in the code, not deployed** (owner decision of
+  2026-11-28). A Free account can buy the $8 top-up; it stays on Free, with the corner mark.
+  Production keeps checkout closed, so there nothing can be bought and the pages say top-ups are
+  coming soon. Not run with a real sandbox checkout yet. Changelog, 2026-11-28.
 - **Build v3 (2026-11-26) is on staging; production has only the approved free pages (2026-11-27).**
   Checked on staging with real renders
   the same day: a 3-row certificate batch ran through the queue (6 images charged, each PDF with its
@@ -693,6 +700,41 @@ it if it is wrong.
 
 ## Changelog
 
+- **2026-11-28: The home page leads with every tool** (owner decision: "compact rows in category
+  columns", in the look of the old page; not deployed). The first screen of `/` is a grid of tool
+  tiles under the one h1, "Every tool, one click away.": a search box, filter chips with counts, a
+  legend, and one column per category (Link previews, Images, PDF files, PDF documents,
+  Automation). Under it the page is what it was, in the same order and with the same section ids;
+  the old headline is now an h2.
+  - **One catalogue.** `site/tools.catalog.ts` lists each tool once (name, phone name, one-line
+    description, link, column, label, site features, search words, icon); its header documents the
+    format. `scripts/tools-site.ts` prints the chips, the grid and the labels from it at build
+    time, as the partials `tool-chips`, `tool-grid` and `tool-label-*`. Adding a tool is one new
+    entry. The pictograms are our own drawings in `site/tool-icons.ts`; none is another company's
+    mark.
+  - **A tile follows the build.** It is printed only when every feature of its entry is on and the
+    page it links to is published as launched: a docs page that `apidocs` publishes under its "not
+    switched on yet" notice gets no tile. A column or chip without tiles is not printed, and the
+    counts are counted. Production (`previews,localpdf,apidocs`) lists 11 tools in four columns,
+    the staging list 19 in five.
+  - **Labels.** "Free": a page that works without an account, at no cost. "Credits": needs an
+    account and uses the plan's images, of which the Free plan has a monthly allowance. "Free +
+    credits": a free page, plus an API that uses credits. There is no "Paid" label, because every
+    tool listed can be used on the Free plan. The "Free only" chip keeps the tools with a free page
+    (the first and the third label), the same tools `/tools` calls free.
+  - **Zapier, Make and n8n are one tile**, "The API in a workflow step", linking to
+    `/docs/integrations`, because the connectors are not published: three tiles named after the
+    platforms would have presented three products that cannot be installed yet.
+  - **Script and styles.** `site/public/assets/js/tool-finder.js` (about 3 KB) filters the static
+    tiles: typing, the chips (`aria-pressed`), "/" to focus, Escape to clear, a polite live region
+    and an empty state. The controls are printed disabled and switched on by the script; where
+    scripts cannot run they are hidden (`@media (scripting: none)`) and every tile stays. The CSS
+    is section 13 of `site.css`, built from the existing tokens, so the dark scheme follows.
+  - **Measured in Chromium** at 1366 x 768, 1440 x 900 and 1280 x 720: every tile of the staging
+    list is fully on the first screen and no name or description is cut. At 390 x 844, 16 of 19
+    are; every chip is on the first screen. Not looked at in Safari or Firefox, or on a real phone.
+  - **Tests:** `tests/node/home-tools.test.ts` (new); `site.test.ts`, `production-site.test.ts` and
+    `coming-soon.test.ts` follow the new first screen.
 - **2026-11-28: The top-up without a subscription** (owner decision: "$8 top-up without a
   subscription: yes, allow it"; not deployed). A Free account can buy the same one-time top-up as
   Starter and Pro: `topUps` is `true` on the Free plan in `src/billing/plans.ts`. Nothing about the
@@ -718,9 +760,11 @@ it if it is wrong.
     `[[topup.keepsPlan]]` and `[[topup.keepsPlanShort]]`, computed from `topUps` and `watermark`
     of each plan, so no page names the plans by hand. Checkout is a switch of the Worker, not of
     the build, so each sentence that says a top-up can be bought ends with a hidden note
-    (`data-checkout-closed`: "Top-ups are not on sale yet.", "(coming soon)" on the plan cards)
-    that `site.js` shows while `/api/config` reports no Paddle configuration. The pricing page's
-    notice for that state now reads "Paid plans and top-ups are coming soon."
+    (`data-checkout-closed`: "Top-ups are not on sale yet.", and "(coming soon)" right after the
+    price on the plan cards) that `site.js` shows while `/api/config` reports no Paddle
+    configuration. The pricing page's notice for that state now reads "Paid plans and top-ups are
+    coming soon." Like the "Coming soon" buttons, the notes need JavaScript: without it a page
+    reads as if checkout were open.
   - **Terms.** Two lines of section 6, in every build, dated 28 November 2026. Free, before:
     "When the monthly allowance is used up, new images are not rendered until the next month: it
     is a hard stop, and there are no charges." Now: "When the monthly allowance and any top-up you
@@ -731,16 +775,19 @@ it if it is wrong.
     Free-plan images keep their mark." The privacy policy and the refund policy are unchanged.
   - **Tests.** New: `tests/topup-free.test.ts` (through the Worker: a completed transaction
     credits a Free account; at its limit it renders from the top-up, charged to it, with the same
-    bytes as a Free image from the allowance; the 402 and the emails with checkout open and
-    closed; a refund) and `tests/node/topup-site.test.ts` (the built pages of the production,
-    staging and all-off builds, the hidden notes and `site.js`, the checkout rule and its memo).
+    bytes as a Free image from the allowance; a PDF paid from it as one block, with the Free
+    footer line; the 402 and the emails with checkout open and closed; a refund) and
+    `tests/node/topup-site.test.ts` (the built pages of the production, staging and all-off
+    builds, the hidden notes and `site.js`, the checkout rule and its memo).
     Changed because the rule changed: `tests/email.test.ts`, `tests/api.test.ts`,
     `tests/pdftools-route.test.ts`, `tests/node/site.test.ts`, `tests/node/dashboard.test.ts`,
     `tests/node/coming-soon.test.ts`, `tests/node/legal-pages.test.ts`.
   - **Not verified.** A real sandbox checkout of the top-up by a Free account. The two halves are
     each proven on staging with other accounts (a Free account's first checkout carries its
     account id; a top-up's `transaction.completed` credits), and the tests replay Paddle's
-    example event for a Free account. `scripts/seed-paddle-sandbox.md` step 5 has the check.
+    example event for a Free account. `scripts/seed-paddle-sandbox.md` section 8, step 5 has the
+    check ("Buy a top-up without a subscription"), and GO-LIVE.md section 6 the same check for
+    live Paddle.
 - **2026-11-27: Owner decisions on analytics and the Terms** (deployed to staging, Worker
   `eea07147`, and production, Worker `65d05a46`, the same day; rollback `bb46082a`). Checked live on
   production: in Chromium the beacon loads and reports on every page tried, with no CSP violation,
@@ -996,6 +1043,7 @@ src/auth/               magic links, sessions, API keys, middleware
 src/billing/            plans and Paddle
 src/db/migrations/      D1 schema
 site/                   pages, layouts, partials, Markdown content, static assets
+site/tools.catalog.ts   every tool the home page lists, one entry each (icons: site/tool-icons.ts)
 site/src-browser/       the in-browser PDF engine, bundled by scripts/build-browser-bundles.mts
 scripts/                site build, sample renders, smoke test, Paddle catalog instructions
 integrations/           Zapier, Make and n8n connectors, each its own package (not published)

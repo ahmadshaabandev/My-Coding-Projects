@@ -61,6 +61,8 @@ EMAIL_FIELDS_ENABLED = "true"
 BATCH_ENABLED = "true"
 PDF_TOOLKIT_ENABLED = "true"
 LINK_CARDS_ENABLED = "true"
+# Chart images (src/charts): "true" turns the chart routes on. Off in production.
+CHARTS_ENABLED = "true"
 
 [[d1_databases]]
 binding = "DB"
@@ -161,6 +163,8 @@ EMAIL_FIELDS_ENABLED = "true"
 BATCH_ENABLED = "true"
 PDF_TOOLKIT_ENABLED = "true"
 LINK_CARDS_ENABLED = "true"
+# Chart images (src/charts): "true" turns the chart routes on. Off in production.
+CHARTS_ENABLED = "true"
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -265,6 +269,8 @@ EMAIL_FIELDS_ENABLED = "false"
 BATCH_ENABLED = "false"
 PDF_TOOLKIT_ENABLED = "false"
 LINK_CARDS_ENABLED = "false"
+# Chart images stay off in production until they are approved: every chart route answers 503.
+CHARTS_ENABLED = "false"
 
 [[env.production.d1_databases]]
 binding = "DB"

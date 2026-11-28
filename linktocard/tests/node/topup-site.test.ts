@@ -57,7 +57,10 @@ const images = formatCount(TOPUP.images);
 const NOTE = 'Top-ups are not on sale yet.';
 /** What the tokens must say for the plans as they are: every plan can buy one, and Free keeps its watermark. */
 const EVERY_PLAN = `every plan, ${PLANS.free.name} included`;
-const KEEPS_PLAN = `A top-up adds images and nothing else: it is not a subscription and it does not change your plan. On ${PLANS.free.name}, what you make with top-up images still carries the watermark, and the other ${PLANS.free.name} limits still apply.`;
+const KEEPS_PLAN = `A top-up adds images and nothing else: it is not a subscription and it does not change your plan. On ${PLANS.free.name}, what you make with top-up images still carries the watermark, and the plan's cache time, fonts and other limits stay the same.`;
+/** The top-up line of a plan card: the price, the note that shows only while checkout is closed, and on a marked plan that the mark stays. */
+const cardLine = (plan: { watermark: boolean }): string =>
+  `<li>Top-ups: ${price} per ${images} images<span ${CLOSED_NOTE_ATTR} hidden> (coming soon)</span>${plan.watermark ? '; the watermark stays' : ''}</li>`;
 const KEEPS_PLAN_SHORT = `A top-up adds images only: it does not change your plan, and on ${PLANS.free.name} the watermark stays.`;
 
 let builds: Array<[string, RenderedSite]>;
@@ -103,8 +106,7 @@ describe('plans.ts decides who can buy the top-up, and the site says so', () => 
       for (const id of PLAN_ORDER) {
         const plan = PLANS[id];
         const card = html.slice(html.indexOf(`data-plan="${id}"`), html.indexOf('</article>', html.indexOf(`data-plan="${id}"`)));
-        const line = `Top-ups: ${price} per ${images} images${plan.watermark ? '; the watermark stays' : ''}`;
-        expect(card, `${name} ${id}`).toContain(`<li>${line}<span ${CLOSED_NOTE_ATTR} hidden> (coming soon)</span></li>`);
+        expect(card, `${name} ${id}`).toContain(cardLine(plan));
         expect(card, `${name} ${id}`).not.toContain('No top-ups');
         expect(card, `${name} ${id}`).not.toContain('hard stop');
       }
@@ -129,7 +131,8 @@ describe('plans.ts decides who can buy the top-up, and the site says so', () => 
     for (const [name, site] of builds) {
       const html = page(site, 'index.html');
       const free = html.slice(html.indexOf('data-plan="free"'), html.indexOf('</article>', html.indexOf('data-plan="free"')));
-      expect(free, name).toContain(`<li>Top-ups: ${price} per ${images} images; the watermark stays<span ${CLOSED_NOTE_ATTR} hidden> (coming soon)</span></li>`);
+      expect(free, name).toContain(cardLine(PLANS.free));
+      expect(text(cardLine(PLANS.free))).toBe(`Top-ups: ${price} per ${images} images (coming soon); the watermark stays `);
       const visible = main(site, 'index.html');
       expect(visible, name).toContain(
         `Busy month? On ${EVERY_PLAN}, a ${price} top-up adds ${images} images. You buy it yourself; nothing is ever billed automatically. ${KEEPS_PLAN_SHORT} ${NOTE}`,

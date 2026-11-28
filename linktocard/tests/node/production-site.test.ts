@@ -187,7 +187,7 @@ describe('the production build', () => {
     expect(old.files.filter((file) => !production.files.includes(file))).toEqual([]);
   });
 
-  it('changes no old page, except the footer\'s tool links and the pricing page\'s free-tool lines', () => {
+  it('changes no old page, except the footer\'s tool links, the pricing page\'s free-tool lines and the home page\'s tool grid', () => {
     const freeToolLines = [
       '<p class="section-foot">The same goes for the one-app link preview checkers among the <a href="/tools">free tools</a>.</p>\n',
       '<p class="section-foot">The free <a href="/tools/merge-pdf">Merge PDF</a> and <a href="/tools/image-to-pdf">Image to PDF</a> tools run in your browser: no account, the files are not uploaded, and nothing is counted.</p>\n',
@@ -202,7 +202,31 @@ describe('the production build', () => {
           page = page.replace(line, '');
         }
       }
-      if (page !== withoutFooter(html(old, outPath))) changed.push(outPath);
+      let before = withoutFooter(html(old, outPath));
+      if (outPath === 'index.html') {
+        // The home page lists the tools of its build: its description, the chips' counts and the tiles follow the
+        // features (tests/node/home-tools.test.ts says which tiles). Everything else on it is the same, byte for byte.
+        const toolIds = (text: string): string[] => [...text.matchAll(/ data-tool="([a-z-]+)"/g)].map((match) => match[1]!);
+        expect(toolIds(before)).toEqual(['og-checker', 'card-builder', 'api', 'signed-urls']);
+        expect(toolIds(page).filter((id) => !toolIds(before).includes(id))).toEqual([
+          'x-card-validator',
+          'linkedin-post-preview',
+          'slack-link-preview',
+          'discord-embed-preview',
+          'whatsapp-link-preview',
+          'merge-pdf',
+          'image-to-pdf',
+        ]);
+        const withoutTools = (text: string): string =>
+          text
+            .replace(/<meta (?:name="description"|property="og:description") content="[^"]*">/g, '')
+            .replace(/<div class="tool-chips"[\s\S]*?<\/div>/, '')
+            .replace(/<div class="tool-grid[\s\S]*?<\/div>\n(?=<p class="visually-hidden" id="tool-status")/, '');
+        expect(withoutTools(page)).not.toContain('tool-tile');
+        page = withoutTools(page);
+        before = withoutTools(before);
+      }
+      if (page !== before) changed.push(outPath);
       let footer = footerOf(html(production, outPath));
       for (const line of footerLinks) {
         expect(footer, `${outPath}: ${line}`).toContain(line);

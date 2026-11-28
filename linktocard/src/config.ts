@@ -435,12 +435,82 @@ export const EMAIL_FIELDS = {
   chargeMemoryDays: 400,
 } as const;
 
-/** Kill switches of the v3 tools (env var names). */
+/**
+ * Chart images: a chart described as JSON, drawn as an image (src/charts, src/routes/charts.ts).
+ * Every limit of the chart JSON and of the three ways in (signed URL, POST /v1/charts, the free
+ * chart maker's endpoint) is here; validation, docs and tests read them from this object.
+ */
+export const CHARTS = {
+  types: ['bar', 'line', 'area', 'pie', 'doughnut'],
+  /** Width and height in CSS pixels (whole numbers); the defaults apply when the JSON has none. */
+  minWidth: 200,
+  maxWidth: 1200,
+  minHeight: 200,
+  maxHeight: 1200,
+  defaultWidth: 600,
+  defaultHeight: 400,
+  /** Output pixels are width x scale by height x scale. */
+  scales: [1, 2],
+  /** Total output pixels of one chart: the renderer's own cap. */
+  maxPixels: LIMITS.maxRenderPixels,
+  maxSeries: 12,
+  /** Labels, which is also the number of points in every series. */
+  maxPoints: 200,
+  /** Labels of a pie or doughnut chart. */
+  maxSlices: 24,
+  /** Characters (code points). */
+  maxTitleChars: 200,
+  maxSubtitleChars: 200,
+  maxAxisTitleChars: 100,
+  maxLabelChars: 100,
+  maxSeriesNameChars: 100,
+  /** options.prefix and options.suffix, each. */
+  maxAffixChars: 12,
+  /** options.decimals: 0 to this. */
+  maxDecimals: 4,
+  /** A number in the chart is 0, or at least minAbsValue and at most maxAbsValue in size. */
+  maxAbsValue: 1e15,
+  minAbsValue: 1e-6,
+  /** The chart JSON in bytes of UTF-8: the body of POST /v1/charts and of the free endpoint, and the "c" parameter. */
+  maxJsonBytes: 64 * 1024,
+  /** Longest signed chart URL (path and query) that is accepted. */
+  maxSignedUrlChars: 8192,
+  /** Value labels drawn on one chart; the less important ones are left out beyond this. */
+  maxValueLabels: 400,
+  /**
+   * Charge once: how long the record that a chart was charged is kept, from that charge. While it
+   * is kept, a copy whose stored period (the plan's cache days) ended is drawn and stored again
+   * without a new charge. The same number of days as EMAIL_FIELDS.chargeMemoryDays, by decision;
+   * the record is the same kind of row (src/lib/quota.ts "Charge once").
+   */
+  chargeMemoryDays: 400,
+  /** Cache lifetime sent with a signed chart URL's image (email clients' image proxies), never past the stored copy's expiry. */
+  maxAgeSeconds: 30 * 24 * 60 * 60,
+  /**
+   * The corner mark of a Free chart is drawn as for a canvas at least this wide, so that it stays
+   * readable on a small chart, in steps of markWidthStep up to the card width it was designed for.
+   */
+  markMinWidth: 720,
+  markWidthStep: 120,
+  markMaxWidth: 1200,
+  /**
+   * What chart requests count against, for the published rate-limit table. RATE_LIMITS' own scope
+   * texts are printed on every build of the site, so they do not name the chart routes; the site
+   * adds these while its "charts" feature is on.
+   */
+  rateLimitScopes: {
+    RL_KEY: 'POST /v1/charts (per API key) and uncached signed chart URLs (per site)',
+    RL_PLAYGROUND: 'the free chart maker (POST /api/tools/chart), counted apart from the playground',
+  },
+} as const;
+
+/** Kill switches of the v3 tools and of chart images (env var names). */
 export const FEATURE_FLAGS = {
   batch: 'BATCH_ENABLED',
   toolkit: 'PDF_TOOLKIT_ENABLED',
   linkcards: 'LINK_CARDS_ENABLED',
   emailfields: 'EMAIL_FIELDS_ENABLED',
+  charts: 'CHARTS_ENABLED',
 } as const;
 export type FeatureName = keyof typeof FEATURE_FLAGS;
 

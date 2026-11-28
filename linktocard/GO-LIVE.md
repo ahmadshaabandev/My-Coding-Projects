@@ -230,7 +230,7 @@ each sale (check the current rate on Paddle's pricing page).
 ## 6. Paddle live
 
 **State on 2026-11-23: live account and code ready; checkout closed until Paddle approves the domain.**
-For the day Paddle approves, follow [GO-LIVE-PAID.md](GO-LIVE-PAID.md): the short checklist that opens checkout and switches on the paid tools, in order.
+For the day Paddle approves, follow [GO-LIVE-PAID.md](GO-LIVE-PAID.md): the short checklist that opens checkout and then, once you say "PDF approved, enable it", switches on the paid tools, in order.
 
 Done through the Paddle API with a temporary setup key (additive only, nothing edited or deleted):
 
@@ -282,6 +282,10 @@ Left to do, in order:
       wire fees.
 - [ ] Buy your own Starter plan with a real card, check the plan flips, then refund it from
       Paddle. That proves checkout, webhook, entitlement and refund on live.
+- [ ] From a second account that is on Free, buy the top-up (allowed without a subscription
+      since 2026-11-28): the top-up images arrive, the account stays on Free and a new card still
+      carries the corner mark. Refund it from Paddle. Run it in the sandbox on staging first
+      (`scripts/seed-paddle-sandbox.md` section 8, step 5).
 
 ## 7. After launch
 
